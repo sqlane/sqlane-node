@@ -1,0 +1,15 @@
+{
+    // JS/TS: no formatter. On save, oxlint applies its fixes, including formatting (@stylistic rules)
+    "editor.formatOnSave": false,
+    "editor.codeActionsOnSave": {
+        "source.fixAll.oxc": "explicit"
+    },
+    // Other files: oxfmt formats on save
+    "[json][jsonc][yaml][markdown][toml][github-actions-workflow][dockercompose]": {
+        "editor.defaultFormatter": "oxc.oxc-vscode",
+        "editor.formatOnSave": true,
+        "editor.formatOnSaveMode": "file"
+    },
+    "eslint.enable": false,
+    "prettier.enable": false
+}
