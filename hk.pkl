@@ -1,0 +1,30 @@
+amends "package://github.com/jdx/hk/releases/download/v2.10.0/hk@2.10.0#/Config.pkl"
+
+import "package://github.com/jdx/hk/releases/download/v2.10.0/hk@2.10.0#/Builtins.pkl"
+
+// Shared by the pre-commit, check and fix hooks
+steps {
+    // JS/TS: lint and formatting (@stylistic rules); the fix applies them
+    ["oxlint"] = Builtins.ox_lint
+    // Other files: formatting
+    ["oxfmt"] = (Builtins.oxfmt) {
+        glob = List("**/*.json", "**/*.jsonc", "**/*.json5", "**/*.yaml", "**/*.yml", "**/*.toml", "**/*.md", "**/*.markdown")
+    }
+    // JSDoc type check of the whole project (the builtin only matches *.ts)
+    ["tsc"] = (Builtins.tsc) {
+        glob = List("**/*.js", "**/*.mjs", "**/*.cjs", "tsconfig.json")
+    }
+    ["betterleaks"] = Builtins.betterleaks
+    ["typos"] = Builtins.typos
+    ["check_merge_conflict"] = Builtins.check_merge_conflict
+    ["trailing_whitespace"] = Builtins.trailing_whitespace
+    ["newlines"] = Builtins.newlines
+}
+
+hooks {
+    ["commit-msg"] {
+        steps {
+            ["conventional-commit"] = Builtins.check_conventional_commit
+        }
+    }
+}
