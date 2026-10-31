@@ -1,0 +1,10 @@
+[tools]
+# Node.js for development; CI covers 22, 24 and 26
+node = "24"
+pnpm = "12.16.1"
+hk = "2.10.0"
+betterleaks = "1.9"
+typos = "1.51"
+
+[env]
+_.path = ["node_modules/.bin"]

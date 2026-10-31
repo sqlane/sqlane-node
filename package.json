@@ -1,33 +1,55 @@
 {
-  "name": "sqlane",
-  "version": "0.0.0",
-  "description": "Transactional SQL job queue for Node.js (MySQL, PostgreSQL)",
-  "license": "MIT",
-  "author": "Klim Pal",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/sqlane/sqlane-node.git"
-  },
-  "homepage": "https://github.com/sqlane/sqlane-node#readme",
-  "bugs": "https://github.com/sqlane/sqlane-node/issues",
-  "keywords": [
-    "job",
-    "queue",
-    "background-jobs",
-    "mysql",
-    "postgres",
-    "postgresql",
-    "transactional",
-    "outbox"
-  ],
-  "type": "module",
-  "exports": {
-    ".": "./src/index.js"
-  },
-  "files": [
-    "src"
-  ],
-  "engines": {
-    "node": ">=22"
-  }
+    "name": "sqlane",
+    "version": "0.0.0",
+    "description": "Transactional SQL job queue for Node.js (MySQL, PostgreSQL)",
+    "keywords": [
+        "background-jobs",
+        "job",
+        "mysql",
+        "outbox",
+        "postgres",
+        "postgresql",
+        "queue",
+        "transactional"
+    ],
+    "homepage": "https://github.com/sqlane/sqlane-node#readme",
+    "bugs": "https://github.com/sqlane/sqlane-node/issues",
+    "license": "MIT",
+    "author": "Klim Pal",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/sqlane/sqlane-node.git"
+    },
+    "files": [
+        "src",
+        "!src/**/*.test.js"
+    ],
+    "type": "module",
+    "exports": {
+        ".": "./src/index.js"
+    },
+    "scripts": {
+        "lint": "oxlint --deny-warnings",
+        "lint:fix": "oxlint --fix",
+        "format": "oxfmt",
+        "format:check": "oxfmt --check",
+        "typecheck": "tsc -p tsconfig.json",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage",
+        "check": "hk check --all"
+    },
+    "devDependencies": {
+        "@stylistic/eslint-plugin": "^5.10.0",
+        "@types/node": "^22.20.5",
+        "@vitest/coverage-v8": "^5.0.5",
+        "oxfmt": "^0.75.0",
+        "oxlint": "^1.90.0",
+        "typescript": "^7.0.2",
+        "vitest": "^5.0.5"
+    },
+    "engines": {
+        "node": ">=22.12.0"
+    },
+    "packageManager": "pnpm@12.16.1"
 }
