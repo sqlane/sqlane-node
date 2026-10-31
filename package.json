@@ -1,0 +1,33 @@
+{
+  "name": "sqlane",
+  "version": "0.0.0",
+  "description": "Transactional SQL job queue for Node.js (MySQL, PostgreSQL)",
+  "license": "MIT",
+  "author": "Klim Pal",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sqlane/sqlane-node.git"
+  },
+  "homepage": "https://github.com/sqlane/sqlane-node#readme",
+  "bugs": "https://github.com/sqlane/sqlane-node/issues",
+  "keywords": [
+    "job",
+    "queue",
+    "background-jobs",
+    "mysql",
+    "postgres",
+    "postgresql",
+    "transactional",
+    "outbox"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}
