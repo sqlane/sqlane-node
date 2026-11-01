@@ -1,5 +1,5 @@
 {
-    "name": "sqlane",
+    "name": "@sqlane/core",
     "version": "0.0.0",
     "description": "Transactional SQL job queue for Node.js (MySQL, PostgreSQL)",
     "keywords": [
@@ -27,6 +27,9 @@
     "type": "module",
     "exports": {
         ".": "./src/index.js"
+    },
+    "publishConfig": {
+        "access": "public"
     },
     "scripts": {
         "lint": "oxlint --deny-warnings",

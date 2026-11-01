@@ -49,9 +49,9 @@ adds a job in its business transaction: no commit, no job.
 
 ```js
 // jobs/build_report.js: the definition, imported by producers and workers
-import { defineJob } from 'sqlane';
+import { defineJob } from '@sqlane/core';
 
-/** @type {import('sqlane').JobDefinition<{ reportId: string }>} */
+/** @type {import('@sqlane/core').JobDefinition<{ reportId: string }>} */
 export const buildReport = defineJob({
     name: 'build_report',
     attempts: 3,
@@ -64,8 +64,8 @@ export const buildReport = defineJob({
 
 ```js
 // app.js
-import { createSqlane } from 'sqlane';
-import { mysql2Executor } from 'sqlane/mysql2';
+import { createSqlane } from '@sqlane/core';
+import { mysql2Executor } from '@sqlane/core/mysql2';
 
 const sqlane = createSqlane({
     dialect: 'mysql', // or 'postgres'
@@ -106,7 +106,7 @@ Choices:
 - **Enqueue by name too.** `enqueue(tx, 'job_name', …)` is for producers without the definition (another service,
   a script). It uses the definition registered in the instance (`sqlane.register([definitions])` or `handle()`),
   else the defaults; then `mutexKeys` and `failureJob` come only from the enqueue options.
-- **Explicit executor, no implicit context.** `enqueue` takes the transaction. Adapters: `sqlane/mysql2` and `sqlane/pg` in v0.1;
+- **Explicit executor, no implicit context.** `enqueue` takes the transaction. Adapters: `@sqlane/core/mysql2` and `@sqlane/core/pg` in v0.1;
   Knex, Kysely, Drizzle, Sequelize, Prisma, TypeORM, MikroORM later, as separate packages (`@sqlane/knex`, …).
 - **Handlers own their transactions.** sqlane does not wrap the handler in a transaction or any other app wrapper. A
   handler that needs one opens it with its own connection.
@@ -351,10 +351,10 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 ## Package layout
 
 ```text
-sqlane                    core: definitions, runner, dispatcher, SQL of both dialects, migrations
-sqlane/mysql2             executor adapter for mysql2
-sqlane/pg                 executor adapter for pg, postgresNotifyHint
-sqlane/redis              redisHint (ioredis or node-redis)
+@sqlane/core              core: definitions, runner, dispatcher, SQL of both dialects, migrations
+@sqlane/core/mysql2       executor adapter for mysql2
+@sqlane/core/pg           executor adapter for pg, postgresNotifyHint
+@sqlane/core/redis        redisHint (ioredis or node-redis)
 @sqlane/<orm>             later: knex, kysely, drizzle, sequelize, prisma, typeorm, mikro-orm
 ```
 

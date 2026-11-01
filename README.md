@@ -1,5 +1,7 @@
 # sqlane
 
+`@sqlane/core` on npm.
+
 Transactional SQL job queue for Node.js, backed by MySQL or PostgreSQL.
 
 > Work in progress: this version is a name placeholder, with no code yet. See the [design](docs/design.md).
