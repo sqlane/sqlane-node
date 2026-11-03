@@ -12,13 +12,16 @@ steps {
     }
     // JSDoc type check of the whole project (the builtin only matches *.ts)
     ["tsc"] = (Builtins.tsc) {
-        glob = List("**/*.js", "**/*.mjs", "**/*.cjs", "tsconfig.json")
+        glob = List("**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "tsconfig.json")
     }
     // The package that npm would publish: exports, files, types
     ["publint"] {
         glob = List("package.json")
         check = "publint --strict"
     }
+    // GitHub Actions workflows: errors, then security issues
+    ["actionlint"] = Builtins.actionlint
+    ["zizmor"] = Builtins.zizmor
     ["betterleaks"] = Builtins.betterleaks
     ["typos"] = Builtins.typos
     ["check_merge_conflict"] = Builtins.check_merge_conflict
