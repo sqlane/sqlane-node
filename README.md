@@ -34,7 +34,8 @@ hk install --global --mise   # Git hooks, also for GUI Git clients: lint, format
 | `pnpm typecheck`    | Type-check the JSDoc (`tsc`, no emit)                      |
 | `pnpm check`        | Run all hook checks on all files (`hk check --all`)        |
 
-Commit messages follow [Conventional Commits](https://www.conventionalcommits.org).
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org). A change of the package adds a
+changeset (`pnpm changeset`); see [releasing](docs/releasing.md).
 
 ## License
 

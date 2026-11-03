@@ -44,9 +44,13 @@
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
         "check": "hk check --all",
-        "prepublishOnly": "publint --strict"
+        "prepublishOnly": "publint --strict",
+        "changeset": "changeset",
+        "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern CHANGELOG.md"
     },
     "devDependencies": {
+        "@changesets/changelog-github": "1.0.1",
+        "@changesets/cli": "3.0.3",
         "@stylistic/eslint-plugin": "5.10.0",
         "@testcontainers/mysql": "12.2.1",
         "@testcontainers/postgresql": "12.2.1",
