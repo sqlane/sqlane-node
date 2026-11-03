@@ -1,33 +1,73 @@
 {
-  "name": "sqlane",
-  "version": "0.0.0",
-  "description": "Transactional SQL job queue for Node.js (MySQL, PostgreSQL)",
-  "license": "MIT",
-  "author": "Klim Pal",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/sqlane/sqlane-node.git"
-  },
-  "homepage": "https://github.com/sqlane/sqlane-node#readme",
-  "bugs": "https://github.com/sqlane/sqlane-node/issues",
-  "keywords": [
-    "job",
-    "queue",
-    "background-jobs",
-    "mysql",
-    "postgres",
-    "postgresql",
-    "transactional",
-    "outbox"
-  ],
-  "type": "module",
-  "exports": {
-    ".": "./src/index.js"
-  },
-  "files": [
-    "src"
-  ],
-  "engines": {
-    "node": ">=22"
-  }
+    "name": "@sqlane/core",
+    "version": "0.0.0",
+    "description": "Transactional SQL job queue for Node.js (MySQL, PostgreSQL)",
+    "keywords": [
+        "background-jobs",
+        "job",
+        "mysql",
+        "outbox",
+        "postgres",
+        "postgresql",
+        "queue",
+        "transactional"
+    ],
+    "homepage": "https://github.com/sqlane/sqlane-node#readme",
+    "bugs": "https://github.com/sqlane/sqlane-node/issues",
+    "license": "MIT",
+    "author": "Klim Pal",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/sqlane/sqlane-node.git"
+    },
+    "files": [
+        "src",
+        "!src/**/*.test.js"
+    ],
+    "type": "module",
+    "exports": {
+        ".": "./src/index.js"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "scripts": {
+        "lint": "oxlint --deny-warnings",
+        "lint:fix": "oxlint --fix",
+        "lint:package": "publint --strict",
+        "format": "oxfmt",
+        "format:check": "oxfmt --check",
+        "typecheck": "tsc -p tsconfig.json",
+        "test": "vitest run",
+        "test:unit": "vitest run --project unit",
+        "test:integration": "vitest run --project 'integration:*'",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage",
+        "check": "hk check --all",
+        "prepublishOnly": "publint --strict",
+        "changeset": "changeset",
+        "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern CHANGELOG.md"
+    },
+    "devDependencies": {
+        "@changesets/changelog-github": "1.0.1",
+        "@changesets/cli": "3.0.3",
+        "@stylistic/eslint-plugin": "5.10.0",
+        "@testcontainers/mysql": "12.2.1",
+        "@testcontainers/postgresql": "12.2.1",
+        "@types/node": "22.20.5",
+        "@types/pg": "8.23.1",
+        "@vitest/coverage-v8": "5.0.5",
+        "mysql2": "3.24.6",
+        "oxfmt": "0.75.0",
+        "oxlint": "1.90.0",
+        "pg": "8.23.1",
+        "publint": "0.3.25",
+        "testcontainers": "12.2.1",
+        "typescript": "7.0.2",
+        "vitest": "5.0.5"
+    },
+    "engines": {
+        "node": ">=22.12.0"
+    },
+    "packageManager": "pnpm@12.16.1"
 }
