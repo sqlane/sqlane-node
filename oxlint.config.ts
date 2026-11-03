@@ -90,6 +90,7 @@ const selectedRules: DummyRuleMap = {
     'unicorn/no-useless-promise-resolve-reject': 'error',
 
     // JSDoc: a JSDoc block lists all the params and the return value, with their types
+    'jsdoc/require-property-description': 'off', // property names and types are often enough
     'jsdoc/require-param': 'error',
     'jsdoc/require-param-name': 'error',
     'jsdoc/require-param-type': 'error',
