@@ -1,0 +1,11 @@
+# pnpm settings (single package, no workspace packages)
+
+# `pnpm add` writes exact versions, not ^ ranges
+saveExact: true
+
+# Install scripts that are not needed: optional native speedups (ssh2, cpu-features), a version notice (protobufjs).
+# All are dependencies of testcontainers.
+allowBuilds:
+  cpu-features: false
+  protobufjs: false
+  ssh2: false

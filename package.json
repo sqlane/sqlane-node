@@ -47,20 +47,20 @@
         "prepublishOnly": "publint --strict"
     },
     "devDependencies": {
-        "@stylistic/eslint-plugin": "^5.10.0",
-        "@testcontainers/mysql": "^12.2.1",
-        "@testcontainers/postgresql": "^12.2.1",
-        "@types/node": "^22.20.5",
-        "@types/pg": "^8.23.1",
-        "@vitest/coverage-v8": "^5.0.5",
-        "mysql2": "^3.24.6",
-        "oxfmt": "^0.75.0",
-        "oxlint": "^1.90.0",
-        "pg": "^8.23.1",
-        "publint": "^0.3.25",
-        "testcontainers": "^12.2.1",
-        "typescript": "^7.0.2",
-        "vitest": "^5.0.5"
+        "@stylistic/eslint-plugin": "5.10.0",
+        "@testcontainers/mysql": "12.2.1",
+        "@testcontainers/postgresql": "12.2.1",
+        "@types/node": "22.20.5",
+        "@types/pg": "8.23.1",
+        "@vitest/coverage-v8": "5.0.5",
+        "mysql2": "3.24.6",
+        "oxfmt": "0.75.0",
+        "oxlint": "1.90.0",
+        "pg": "8.23.1",
+        "publint": "0.3.25",
+        "testcontainers": "12.2.1",
+        "typescript": "7.0.2",
+        "vitest": "5.0.5"
     },
     "engines": {
         "node": ">=22.12.0"
