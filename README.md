@@ -24,14 +24,15 @@ pnpm install
 hk install --global --mise   # Git hooks, also for GUI Git clients: lint, format, type check, secrets, typos, Conventional Commits
 ```
 
-| Command          | Does                                                       |
-| ---------------- | ---------------------------------------------------------- |
-| `pnpm test`      | Run the tests (Vitest)                                     |
-| `pnpm lint`      | Lint, including formatting (oxlint, @stylistic)            |
-| `pnpm lint:fix`  | Fix lint and formatting                                    |
-| `pnpm format`    | Format the other files: JSON, YAML, Markdown, TOML (oxfmt) |
-| `pnpm typecheck` | Type-check the JSDoc (`tsc`, no emit)                      |
-| `pnpm check`     | Run all hook checks on all files (`hk check --all`)        |
+| Command             | Does                                                       |
+| ------------------- | ---------------------------------------------------------- |
+| `pnpm test`         | Run the tests (Vitest)                                     |
+| `pnpm lint`         | Lint, including formatting (oxlint, @stylistic)            |
+| `pnpm lint:fix`     | Fix lint and formatting                                    |
+| `pnpm format`       | Format the other files: JSON, YAML, Markdown, TOML (oxfmt) |
+| `pnpm lint:package` | Check the package that npm would publish (publint)         |
+| `pnpm typecheck`    | Type-check the JSDoc (`tsc`, no emit)                      |
+| `pnpm check`        | Run all hook checks on all files (`hk check --all`)        |
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org).
 
