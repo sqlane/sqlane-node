@@ -115,7 +115,7 @@ const stats = await sqlane.getStats(); // [{ name, pending, due, running, stuck,
 sqlane.wake('build_report'); // low-level: probe this name now
 
 // Shutdown
-await sqlane.close({ deadline: '30s', mode: 'release' }); // 'release' | 'abandon'
+await sqlane.close({ deadline: '30s', mode: 'release', exitsBy }); // mode: 'release' | 'abandon'
 ```
 
 Choices:
@@ -161,7 +161,7 @@ Choices:
 | `backoff`     | `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }` |
 | `retention`   | `{ completed: '1h', failed: '30d' }`                                |
 | `timeout`     | none                                                                |
-| `close()`     | `{ deadline: '30s', mode: 'release' }`                              |
+| `close()`     | `{ deadline: '30s', mode: 'release', exitsBy: deadline }`           |
 | `concurrency` | 10                                                                  |
 | `unknownJobs` | `'allow'`                                                           |
 
@@ -184,9 +184,11 @@ All extend `SqlaneError` and have a `code`:
 | `JobTimeoutError`      | `JOB_TIMEOUT`       | The `signal.reason` on a timeout; recorded as the error of the attempt. |
 | `ShutdownError`        | `SHUTDOWN`          | The `signal.reason` at the close deadline.                              |
 | `LeaseLostError`       | `LEASE_LOST`        | The `signal.reason` when the lease could not be renewed in time.        |
+| `MissingPayloadError`  | `MISSING_PAYLOAD`   | Recorded as the error of a job without its payload.                     |
 
 `ConfigError` cases: an unknown lane, `lane` with `concurrency`, a duplicate `handle()`, two definitions with one name,
-a failure job (in `jobs` or handled) whose definition has a `failureJob`. `handle()` also throws it for a keyed
+a handled definition whose `failureJob` is a name that is neither in `jobs` nor handled, a failure job whose
+definition has a `failureJob` of its own. `handle()` also throws it for a keyed
 definition whose resolved timeout (`handle()` options, else the definition, else `defaults`) is none; `defineJob` never
 checks the timeout.
 
@@ -198,32 +200,32 @@ Thrown by handlers:
 
 ## Data
 
-Five tables per prefix (default `sqlane_`), snake_case, the four below and `sqlane_migrations`. Times use the DB clock only
+Four tables per prefix (default `sqlane_`), snake_case: the three below and `sqlane_migrations`. Times use the DB clock only
 (`UTC_TIMESTAMP(3)` / `clock_timestamp()`): no clock skew between processes. `ts(3)` is `DATETIME(3)` holding UTC on
 MySQL (no session time zone, no 2038 limit) and `timestamptz(3)` on PostgreSQL. A `runAt: Date` is sent as a UTC
 string (MySQL) or a `timestamptz` (PostgreSQL), never in the session time zone.
 
 ### `sqlane_jobs`
 
-| Column                                                                | Type              | Notes                                                 |
-| --------------------------------------------------------------------- | ----------------- | ----------------------------------------------------- |
-| `id`                                                                  | varchar(255), PK  | `<job_name>:<job_id>`, or a new ULID without `jobId`. |
-| `job_name`                                                            | varchar(128)      |                                                       |
-| `status`                                                              | varchar(16)       | `pending`, `running`, `completed`, `failed`.          |
-| `run_at`                                                              | ts(3)             | Due time.                                             |
-| `attempts`, `max_attempts`                                            | int               |                                                       |
-| `stalls`, `max_stalls`                                                | int               |                                                       |
-| `has_mutex_keys`                                                      | boolean           | Avoids a join for the jobs without keys.              |
-| `enqueue_token`                                                       | char(26)          | Per enqueue call: tells created rows from duplicates. |
-| `lock_token`                                                          | char(26) null     | Set by the claim. Every final write checks it.        |
-| `locked_by`                                                           | varchar(255) null | `<host>:<pid>:<ULID>`.                                |
-| `locked_until`                                                        | ts(3) null        | The lease.                                            |
-| `last_error`                                                          | json null         |                                                       |
-| `completed_retention_ms`, `failed_retention_ms`                       | bigint            | Frozen at enqueue.                                    |
-| `failure_job`                                                         | varchar(128) null | Frozen at enqueue.                                    |
-| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)             |                                                       |
+| Column                                                                | Type               | Notes                                                 |
+| --------------------------------------------------------------------- | ------------------ | ----------------------------------------------------- |
+| `id`                                                                  | varchar(255), PK   | `<job_name>:<job_id>`, or a new ULID without `jobId`. |
+| `job_name`                                                            | varchar(128)       |                                                       |
+| `status`                                                              | varchar(16)        | `pending`, `running`, `completed`, `failed`.          |
+| `run_at`                                                              | ts(3)              | Due time.                                             |
+| `attempts`, `max_attempts`                                            | int                |                                                       |
+| `stalls`, `max_stalls`                                                | int                |                                                       |
+| `mutex_keys`                                                          | json / text[] null | Frozen at enqueue, sorted. Written with the job row.  |
+| `enqueue_token`                                                       | char(26)           | Per enqueue call: tells created rows from duplicates. |
+| `lock_token`                                                          | char(26) null      | Set by the claim. Every final write checks it.        |
+| `locked_by`                                                           | varchar(255) null  | `<host>:<pid>:<ULID>`.                                |
+| `locked_until`                                                        | ts(3) null         | The lease.                                            |
+| `last_error`                                                          | json null          |                                                       |
+| `completed_retention_ms`, `failed_retention_ms`                       | bigint             | Frozen at enqueue.                                    |
+| `failure_job`                                                         | varchar(128) null  | Frozen at enqueue.                                    |
+| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)              |                                                       |
 
-`id`, `job_name` and `mutex_key` (below) are case-sensitive: `ascii_bin` on MySQL, `COLLATE "C"` on PostgreSQL.
+`id`, `job_name`, the mutex keys and `mutex_key` (below) are case-sensitive: `ascii_bin` on MySQL, `COLLATE "C"` on PostgreSQL.
 
 Indexes:
 
@@ -233,17 +235,16 @@ Indexes:
 
 ### `sqlane_payloads`
 
-`id` (PK), `payload` (json). Apart from the hot table: the claim and the probe do not read it.
+`id` (PK), `payload` (json). Apart from the hot table: the claim and the probe do not read it. Deleted when the job
+completes; kept for a failed job.
 
-### `sqlane_job_keys`
-
-`job_id`, `mutex_key`, PK `(mutex_key, job_id)`, index `(job_id)`. The keys of each job, written at enqueue. A table,
-not a JSON column: the FIFO query is a plain join on both databases, without `JSON_TABLE`.
+The keys are a column of the job row, not a table: they commit with the job even in autocommit, and a duplicate
+cannot add keys to an existing job. The FIFO reads them with `JSON_TABLE` (MySQL) or `unnest` (PostgreSQL).
 
 ### `sqlane_mutexes`
 
 `mutex_key` (PK), `job_id`, `lock_token`, `held_until` (null: held by a running job), `created_at`. One row per key
-that a job holds, or that lingers after a release on close.
+that a job holds, or that lingers after a release on close or a stall.
 
 ### Migrations
 
@@ -271,9 +272,9 @@ In the caller's transaction, with its connection (with a pool: in a transaction 
 1. Check the payload (JSON, at most `maxPayloadBytes`, default 256 KiB) and the options (`jobId`, `delay` or `runAt`,
    `maxAttempts`, `maxStalls`, `retention`, `failureJob`, `mutexKeys`).
 2. The mutex keys: the enqueue option if given, else the definition's function of the payload.
-3. `INSERT` the job, the payload and the keys. With a `jobId`, an existing row means a duplicate: the enqueue returns
+3. `INSERT` the payload and the job (with its keys). With a `jobId`, an existing row means a duplicate: the enqueue returns
    `{ id, created: false }` and adds nothing. Deduplication lasts while the row exists, in any state: the retention
-   is the dedupe window. After cleanup, the same `jobId` adds a new job. A duplicate inserts no payload and no keys.
+   is the dedupe window. After cleanup, the same `jobId` adds a new job. A duplicate changes nothing: its payload insert is skipped too.
    PostgreSQL: one statement (a CTE), atomic even outside a transaction.
 4. PostgreSQL with the NOTIFY hint: `pg_notify` in the same transaction, delivered on commit.
 
@@ -282,8 +283,8 @@ can then retry, stall or fail the job without its definition. Read from the work
 and `timeout`.
 
 `enqueueMany` inserts many jobs in one statement per table and returns `{ id, created }[]` in input order. `created`
-comes from the call's `enqueue_token` (MySQL has no `RETURNING`): the payloads and keys are inserted only for the
-rows with this token, never for a duplicate committed by another transaction. A `jobId`
+comes from the call's `enqueue_token` (MySQL has no `RETURNING`): the payloads are inserted only for the rows with
+this token, never for a duplicate committed by another transaction. A `jobId`
 repeated in one batch: the first is created, the rest are `created: false`.
 
 ### Dispatcher: one loop per process
@@ -365,7 +366,8 @@ One short transaction on the queue's pool:
    LOCKED`.
 2. For keyed jobs: take the mutex keys (below). Drop the jobs whose keys are busy.
 3. `UPDATE` to `running` with a new `lock_token`, `locked_by`, `locked_until = now + lease` (default 4 min).
-4. Read the payloads, start the handlers.
+4. Read the payloads, start the handlers. A job without its payload (a broken enqueue outside a transaction, a
+   manual change) fails for good with a `MissingPayloadError`, without retries; its failure job runs.
 
 ### Leases and stalls
 
@@ -393,13 +395,13 @@ One short transaction on the queue's pool:
   that no process handles (a retired name, a typo enqueued by name) never blocks a key. Processes that handle
   different names see different windows, so the FIFO across names is approximate. More than 500 due jobs on one key
   delay the jobs behind them: coalesce such jobs.
-- **Timeout.** JS cannot stop a handler. On a timeout, `signal` aborts with a `JobTimeoutError`, the attempt fails
-  (retry by backoff, or fail for good) and a `timed_out` event fires. The handler keeps its lane and process slot
-  until it settles (`stuck` in `getStats()`). A late result of the old run is ignored (its `lock_token` changed).
-- **Linger.** After a timeout or a release on close, the keys stay held while the old handler has not settled. When
-  it settles, the process deletes them at once. `held_until` (one lease, 4 min) caps the linger for a process that
-  crashed or exited, and the linger after a stall. So the old and new runs do not overlap, unless a handler ignores
-  `signal` past the lease.
+- **Timeout.** JS cannot stop a handler. On a timeout, `signal` aborts with a `JobTimeoutError` and a `timed_out`
+  event fires. The job stays `running` (the lease is renewed), with its keys, lane slot and process slot, until the
+  handler settles, at most one more lease (`stuck` in `getStats()`). Then the attempt fails (retry by backoff, or fail
+  for good) with the `JobTimeoutError`, and the keys are freed. Applies to all jobs, keyed or not.
+- **Linger.** Keys outlive their job row only in two cases, as `held_until` rows: a release on close of a handler
+  that still runs (until `exitsBy + 2 s`, see [Close](#close)), and a stall (one lease: the old handler may still
+  run). So the old and new runs do not overlap, unless a handler ignores `signal` past the lease or `exitsBy`.
 - **A keyed job needs a timeout.** The lease is renewed while a handler runs, so a hung keyed handler would hold its
   keys in the whole cluster forever. `handle()` throws `ConfigError` if the definition has `mutexKeys` and no timeout.
   A job with keys only from the enqueue options, on a handler without a timeout, fails for good at claim with a
@@ -414,23 +416,24 @@ When a job fails for good (no attempts left, too many stalls, or a `FatalJobErro
 - Payload (`FailedJobPayload`): `{ job: { id, name, payload, attempt, maxAttempts }, error: { name, message, stack } }`.
   Exempt from `maxPayloadBytes`; `error.stack` is cut to 8 KiB.
 - A `FatalJobError` fails the job at once, with the same failure job.
-- The failure job is an ordinary job. Its options come from its definition, if the failing process knows it, else
-  from the defaults: list the failure job's definition in the `jobs` of every worker. Its row always gets
-  `failure_job = null` (no chains), and it is exempt from `unknownJobs: 'reject'`. A failure job whose definition has
-  a `failureJob` is a `ConfigError`.
+- The failure job is an ordinary job. Its options come from its definition: `handle()` checks that it resolves (a
+  definition object, or a name in `jobs` or handled) and has no `failureJob` of its own (`ConfigError`). A stall-fail
+  in a process that does not know the definition uses the defaults. Its row always gets `failure_job = null` (no
+  chains), and it is exempt from `unknownJobs: 'reject'`.
 - A replayed fail (lost acknowledgment) or a lost lease adds no second failure job.
 
 ### Close
 
-`close({ deadline, mode })` stops claiming and waits for the running handlers until the deadline. At the deadline
+`close({ deadline, mode, exitsBy })` stops claiming and waits for the running handlers until the deadline. At the deadline
 the handlers get an aborted `signal`, and for each unfinished job:
 
-| `mode`    | Effect                                                                                                       |
-| --------- | ------------------------------------------------------------------------------------------------------------ |
-| `release` | Back to `pending`, no attempt used, `run_at = now`. Its keys linger while the handler runs (see Mutex keys). |
-| `abandon` | Nothing written. The lease ends, recovery counts one stall. For crashes.                                     |
+| `mode`    | Effect                                                                                                                                         |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `release` | Back to `pending`, no attempt used. Handler settled: `run_at = now`. Handler still runs: `run_at = exitsBy + 2 s`, its keys linger until then. |
+| `abandon` | Nothing written. The lease ends, recovery counts one stall. For crashes.                                                                       |
 
-A handler that throws after this abort counts as unfinished: no attempt is used. `close()` resolves when the
+`exitsBy` (default: the deadline) is the latest time the process exits: then the old run is surely gone. A handler
+that throws after this abort counts as unfinished: no attempt is used. `close()` resolves when the
 handlers have settled or the deadline has passed, and the releases are written. It ends only what sqlane opened (the
 LISTEN connection, the hint subscription), never the app's pool.
 
