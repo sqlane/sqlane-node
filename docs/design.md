@@ -198,8 +198,10 @@ Thrown by handlers:
 
 ## Data
 
-Five tables per prefix (default `sqlane_`), snake_case, the four below and `sqlane_migrations`. Times use the DB clock only (`NOW(3)` /
-`clock_timestamp()`): no clock skew between processes.
+Five tables per prefix (default `sqlane_`), snake_case, the four below and `sqlane_migrations`. Times use the DB clock only
+(`UTC_TIMESTAMP(3)` / `clock_timestamp()`): no clock skew between processes. `ts(3)` is `DATETIME(3)` holding UTC on
+MySQL (no session time zone, no 2038 limit) and `timestamptz(3)` on PostgreSQL. A `runAt: Date` is sent as a UTC
+string (MySQL) or a `timestamptz` (PostgreSQL), never in the session time zone.
 
 ### `sqlane_jobs`
 
@@ -208,18 +210,18 @@ Five tables per prefix (default `sqlane_`), snake_case, the four below and `sqla
 | `id`                                                                  | varchar(255), PK  | `<job_name>:<job_id>`, or a new ULID without `jobId`. |
 | `job_name`                                                            | varchar(128)      |                                                       |
 | `status`                                                              | varchar(16)       | `pending`, `running`, `completed`, `failed`.          |
-| `run_at`                                                              | timestamp(3)      | Due time.                                             |
+| `run_at`                                                              | ts(3)             | Due time.                                             |
 | `attempts`, `max_attempts`                                            | int               |                                                       |
 | `stalls`, `max_stalls`                                                | int               |                                                       |
 | `has_mutex_keys`                                                      | boolean           | Avoids a join for the jobs without keys.              |
 | `enqueue_token`                                                       | char(26)          | Per enqueue call: tells created rows from duplicates. |
 | `lock_token`                                                          | char(26) null     | Set by the claim. Every final write checks it.        |
 | `locked_by`                                                           | varchar(255) null | `<host>:<pid>:<ULID>`.                                |
-| `locked_until`                                                        | timestamp(3) null | The lease.                                            |
+| `locked_until`                                                        | ts(3) null        | The lease.                                            |
 | `last_error`                                                          | json null         |                                                       |
 | `completed_retention_ms`, `failed_retention_ms`                       | bigint            | Frozen at enqueue.                                    |
 | `failure_job`                                                         | varchar(128) null | Frozen at enqueue.                                    |
-| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | timestamp(3)      |                                                       |
+| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)             |                                                       |
 
 `id`, `job_name` and `mutex_key` (below) are case-sensitive: `ascii_bin` on MySQL, `COLLATE "C"` on PostgreSQL.
 
@@ -292,9 +294,11 @@ loop while started
   if no names: wait for a wake
   probe: the next run_at of each job name that has pending jobs (one statement)
   if nothing due: wait until the next run_at (at most the poll interval) or a wake
-  claim the oldest due jobs, at most the free slots of each lane and of the process
+  claim the oldest due jobs that pass the key check (not held, FIFO in the window), at most the free slots
+  of each lane and of the process
   claimed: start the handlers, loop at once
   none (other processes took them): back off 10–200 ms
+  none (all due jobs wait for keys): wait for a key-release wake or the poll interval
 ```
 
 **The probe is the key to cheap idle names.** One statement reads only the names that have pending rows:
