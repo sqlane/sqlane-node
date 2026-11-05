@@ -74,7 +74,7 @@ const sqlane = createSqlane({
     concurrency: 10, // running handlers in this process
     lanes: { heavy: { concurrency: 2 } }, // limits shared by several job names
     defaults: { maxAttempts, maxStalls, backoff, retention, timeout }, // a definition overrides them
-    unknownJobs: 'allow', // or 'reject': enqueue of a name not in `jobs` throws UnknownJobError
+    unknownJobs: 'allow', // or 'reject': enqueue of an unknown name (not in `jobs`, not handled) throws
     hint: null, // or { publish, subscribe }: any pub/sub
     logger, // pino-compatible: { debug, info, warn, error }
     onEvent, // (event) => void, a typed union
@@ -100,7 +100,7 @@ await sqlane.enqueue(conn, 'build_report', { reportId }); // by name
 // Worker
 sqlane.handle(buildReport, async ({ payload, job, signal }) => {
     // job: { id, name, attempt, maxAttempts, enqueuedAt, mutexKeys }
-    // signal: AbortSignal; reason JobTimeoutError on timeout, ShutdownError at the close deadline
+    // signal: AbortSignal; reason JobTimeoutError, LeaseLostError or ShutdownError
 }, { concurrency: 2, timeout: '5m' }); // a private lane; or { lane: 'heavy' }; not both
 sqlane.handle(exportCsv, runExportCsv, { lane: 'heavy' });
 sqlane.handle(pingWebhook, runPing); // the process concurrency only
@@ -130,7 +130,7 @@ Choices:
   printable ASCII characters. Both are case-sensitive on both databases.
 - **Enqueue by name too.** `enqueue(conn, 'job_name', …)` is for producers without the definition (another service,
   a script). It uses the definition in `jobs` (or registered by `handle()`), else the defaults; then `mutexKeys` and
-  `failureJob` come only from the enqueue options. `unknownJobs: 'reject'` makes an unknown name an error. List every
+  `failureJob` come only from the enqueue options. A name is known if it is in `jobs` or handled; `unknownJobs: 'reject'` makes an unknown name an error. List every
   definition in `jobs`: a by-name enqueue before `handle()` registers it would get the defaults. Two different
   definitions with one name throw `ConfigError`.
 - **One adapter, raw connections.** The adapter gives the dialect and the queue's pool. `enqueue` takes the driver's
@@ -183,6 +183,7 @@ All extend `SqlaneError` and have a `code`:
 | `DrainTimeoutError`    | `DRAIN_TIMEOUT`     | `drain()` did not finish in its `timeout`.                              |
 | `JobTimeoutError`      | `JOB_TIMEOUT`       | The `signal.reason` on a timeout; recorded as the error of the attempt. |
 | `ShutdownError`        | `SHUTDOWN`          | The `signal.reason` at the close deadline.                              |
+| `LeaseLostError`       | `LEASE_LOST`        | The `signal.reason` when the lease could not be renewed in time.        |
 
 `ConfigError` cases: an unknown lane, `lane` with `concurrency`, a duplicate `handle()`, two definitions with one name,
 a failure job (in `jobs` or handled) whose definition has a `failureJob`. `handle()` also throws it for a keyed
@@ -211,6 +212,7 @@ Five tables per prefix (default `sqlane_`), snake_case, the four below and `sqla
 | `attempts`, `max_attempts`                                            | int               |                                                       |
 | `stalls`, `max_stalls`                                                | int               |                                                       |
 | `has_mutex_keys`                                                      | boolean           | Avoids a join for the jobs without keys.              |
+| `enqueue_token`                                                       | char(26)          | Per enqueue call: tells created rows from duplicates. |
 | `lock_token`                                                          | char(26) null     | Set by the claim. Every final write checks it.        |
 | `locked_by`                                                           | varchar(255) null | `<host>:<pid>:<ULID>`.                                |
 | `locked_until`                                                        | timestamp(3) null | The lease.                                            |
@@ -277,7 +279,9 @@ Frozen in the row at enqueue: `maxAttempts`, `maxStalls`, both retentions, `fail
 can then retry, stall or fail the job without its definition. Read from the worker's definition at run time: `backoff`
 and `timeout`.
 
-`enqueueMany` inserts many jobs in one statement per table and returns `{ id, created }[]` in input order. A `jobId`
+`enqueueMany` inserts many jobs in one statement per table and returns `{ id, created }[]` in input order. `created`
+comes from the call's `enqueue_token` (MySQL has no `RETURNING`): the payloads and keys are inserted only for the
+rows with this token, never for a duplicate committed by another transaction. A `jobId`
 repeated in one batch: the first is created, the rest are `created: false`.
 
 ### Dispatcher: one loop per process
@@ -364,9 +368,12 @@ One short transaction on the queue's pool:
 - The process renews the leases of its running jobs every 30 s, in one statement.
 - Every final write (complete, retry, fail, release) has `WHERE lock_token = :own`. A process that lost its lease
   changes nothing.
+- If the renewal has not succeeded 30 s before the lease ends (the DB is unreachable, the pool is exhausted), the
+  process aborts the handler's `signal` with a `LeaseLostError` and emits `lease_lost`. The job is no longer its own.
 - Stall recovery (each process, every 30 s, in small batches with SKIP LOCKED): a `running` job whose lease ended
   gets one more stall and goes back to `pending` with a delay of 30 s × 2^stalls (at most 1 h). After `maxStalls`
-  (default 2), the next stall fails it.
+  (default 2), the next stall fails it. Its keys linger for one more lease (`held_until`) instead of being deleted:
+  the old handler may still run.
 - A failed DB write of a result is retried for up to 10 min, while the lease is renewed.
 
 ### Mutex keys
@@ -374,7 +381,7 @@ One short transaction on the queue's pool:
 - At most 10 keys per job, 1–255 printable ASCII characters. The keys are global strings: jobs of different names
   share them.
 - **Hold.** The claim inserts one `sqlane_mutexes` row per key, in the claim transaction: a job holds all its keys or
-  none. Every transition out of `running` deletes them in the same transaction. Keys are locked in ascending order:
+  none. Every transition out of `running` deletes them in the same transaction, except where they linger (below). Keys are locked in ascending order:
   no deadlocks between queue transactions.
 - **FIFO per key.** A job starts only if none of its keys is held and no older due job has one of its keys. A job
   with keys A and B does not starve behind newer jobs of A or B.
@@ -385,7 +392,8 @@ One short transaction on the queue's pool:
   until it settles (`stuck` in `getStats()`). A late result of the old run is ignored (its `lock_token` changed).
 - **Linger.** After a timeout or a release on close, the keys stay held while the old handler has not settled. When
   it settles, the process deletes them at once. `held_until` (one lease, 4 min) caps the linger for a process that
-  crashed or exited. So the old and new runs do not overlap, unless a handler ignores `signal` past the lease.
+  crashed or exited, and the linger after a stall. So the old and new runs do not overlap, unless a handler ignores
+  `signal` past the lease.
 - **A keyed job needs a timeout.** The lease is renewed while a handler runs, so a hung keyed handler would hold its
   keys in the whole cluster forever. `handle()` throws `ConfigError` if the definition has `mutexKeys` and no timeout.
   A job with keys only from the enqueue options, on a handler without a timeout, fails for good at claim with a
