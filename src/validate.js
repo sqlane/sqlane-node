@@ -3,6 +3,9 @@ import { parseDuration } from './duration.js';
 /** A job name: no `:` (the job id is `<name>:<jobId>`), lowercase. */
 export const JOB_NAME_REGEXP = /^[a-z][a-z0-9_.-]{0,127}$/;
 
+/** A table prefix: the longest table name, `<prefix>migrations`, stays within the 63 characters of PostgreSQL. */
+export const TABLE_PREFIX_REGEXP = /^[a-z][a-z0-9_]{0,31}$/;
+
 /** Printable ASCII, no space at the ends: MySQL `ascii_bin` ignores trailing spaces in comparisons. */
 export const PRINTABLE_ID_REGEXP = /^[\x21-\x7E](?:[\x20-\x7E]*[\x21-\x7E])?$/;
 
@@ -165,4 +168,14 @@ export function checkFailureJob(value, jobName, { where, ErrorClass }) {
     }
 
     return name;
+}
+
+/**
+ * @param {unknown} tablePrefix
+ * @param {Scope} scope
+ */
+export function checkTablePrefix(tablePrefix, { where, ErrorClass }) {
+    if (typeof tablePrefix !== 'string' || !TABLE_PREFIX_REGEXP.test(tablePrefix)) {
+        throw new ErrorClass(`${where}: "tablePrefix" must match ${TABLE_PREFIX_REGEXP}`);
+    }
 }

@@ -1,4 +1,6 @@
 import { ConfigError } from './errors.js';
+import { runMigrations } from './migrations.js';
+import { checkTablePrefix } from './validate.js';
 
 /**
  * @param {string} method
@@ -20,6 +22,10 @@ export function createSqlane(options) {
         throw new ConfigError('createSqlane: "adapter" is required');
     }
 
+    const tablePrefix = options.tablePrefix ?? 'sqlane_';
+
+    checkTablePrefix(tablePrefix, { where: 'createSqlane', ErrorClass: ConfigError });
+
     return {
         enqueue: () => notImplemented('enqueue'),
         enqueueMany: () => notImplemented('enqueueMany'),
@@ -27,7 +33,9 @@ export function createSqlane(options) {
         start: () => notImplemented('start'),
         drain: () => notImplemented('drain'),
         close: () => notImplemented('close'),
-        migrate: () => notImplemented('migrate'),
+        migrate: async migrateOptions => ({
+            applied: await runMigrations(options.adapter, tablePrefix, migrateOptions),
+        }),
         getStats: () => notImplemented('getStats'),
         wake: () => notImplemented('wake'),
     };

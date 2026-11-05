@@ -31,5 +31,14 @@ export function mysql2Adapter(pool) {
         dialect: 'mysql',
         wrap: toExecutor,
         queue: toExecutor(pool),
+        withConnection: async (func) => {
+            const connection = await pool.getConnection();
+
+            try {
+                return await func(toExecutor(connection));
+            } finally {
+                connection.release();
+            }
+        },
     };
 }

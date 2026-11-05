@@ -78,13 +78,13 @@ const sqlane = createSqlane({
     hint: null, // or { publish, subscribe }: any pub/sub
     logger, // pino-compatible: { debug, info, warn, error }
     onEvent, // (event) => void, a typed union
-    tablePrefix: 'sqlane_',
+    tablePrefix: 'sqlane_', // ^[a-z][a-z0-9_]{0,31}$
     pollInterval: '5s',
     maxPayloadBytes: 256 * 1024,
     cleanup: true, // built-in deletion of expired jobs
 });
 
-await sqlane.migrate(); // waits for the lock up to 10 min; or getMigrations({ dialect, tablePrefix }) for the app's own tool
+const { applied } = await sqlane.migrate(); // ids; or getMigrations({ dialect, tablePrefix }) for the app's own tool
 
 // Producer: in the business transaction, with the raw driver connection
 const { id, created } = await sqlane.enqueue(conn, buildReport, { reportId }, {
@@ -172,19 +172,20 @@ Backoff: `exponential` (`delay × 2^(attempt − 1)`, at most `maxDelay`) or `fi
 
 All extend `SqlaneError` and have a `code`:
 
-| Class                  | `code`              | When                                                                    |
-| ---------------------- | ------------------- | ----------------------------------------------------------------------- |
-| `ConfigError`          | `CONFIG`            | Bad `createSqlane`, `defineJob` or `handle()` options (see below).      |
-| `InvalidOptionsError`  | `INVALID_OPTIONS`   | Bad enqueue options: a bad name or `jobId`, `delay` with `runAt`.       |
-| `PayloadTooLargeError` | `PAYLOAD_TOO_LARGE` | The payload is above `maxPayloadBytes`.                                 |
-| `InvalidMutexKeyError` | `INVALID_MUTEX_KEY` | More than 10 keys, or a key that breaks the rules.                      |
-| `UnknownJobError`      | `UNKNOWN_JOB`       | Enqueue of an unknown name with `unknownJobs: 'reject'`.                |
-| `ClosedError`          | `CLOSED`            | `start`, `handle` or `drain` after `close()`.                           |
-| `DrainTimeoutError`    | `DRAIN_TIMEOUT`     | `drain()` did not finish in its `timeout`.                              |
-| `JobTimeoutError`      | `JOB_TIMEOUT`       | The `signal.reason` on a timeout; recorded as the error of the attempt. |
-| `ShutdownError`        | `SHUTDOWN`          | The `signal.reason` at the close deadline.                              |
-| `LeaseLostError`       | `LEASE_LOST`        | The `signal.reason` when the lease could not be renewed in time.        |
-| `MissingPayloadError`  | `MISSING_PAYLOAD`   | Recorded as the error of a job without its payload.                     |
+| Class                       | `code`                   | When                                                                    |
+| --------------------------- | ------------------------ | ----------------------------------------------------------------------- |
+| `ConfigError`               | `CONFIG`                 | Bad `createSqlane`, `defineJob` or `handle()` options (see below).      |
+| `InvalidOptionsError`       | `INVALID_OPTIONS`        | Bad enqueue options: a bad name or `jobId`, `delay` with `runAt`.       |
+| `PayloadTooLargeError`      | `PAYLOAD_TOO_LARGE`      | The payload is above `maxPayloadBytes`.                                 |
+| `InvalidMutexKeyError`      | `INVALID_MUTEX_KEY`      | More than 10 keys, or a key that breaks the rules.                      |
+| `UnknownJobError`           | `UNKNOWN_JOB`            | Enqueue of an unknown name with `unknownJobs: 'reject'`.                |
+| `ClosedError`               | `CLOSED`                 | `start`, `handle` or `drain` after `close()`.                           |
+| `DrainTimeoutError`         | `DRAIN_TIMEOUT`          | `drain()` did not finish in its `timeout`.                              |
+| `JobTimeoutError`           | `JOB_TIMEOUT`            | The `signal.reason` on a timeout; recorded as the error of the attempt. |
+| `ShutdownError`             | `SHUTDOWN`               | The `signal.reason` at the close deadline.                              |
+| `LeaseLostError`            | `LEASE_LOST`             | The `signal.reason` when the lease could not be renewed in time.        |
+| `MissingPayloadError`       | `MISSING_PAYLOAD`        | Recorded as the error of a job without its payload.                     |
+| `MigrationLockTimeoutError` | `MIGRATION_LOCK_TIMEOUT` | `migrate()` did not get the migration lock in its `lockTimeout`.        |
 
 `ConfigError` cases: an unknown lane, `lane` with `concurrency`, a duplicate `handle()`, two definitions with one name,
 a handled definition whose `failureJob` is a name that is neither in `jobs` nor handled, a failure job whose
@@ -253,9 +254,11 @@ that a job holds, or that lingers after a release on close or a stall.
 
 sqlane ships its schema as versioned SQL per dialect. Two ways to apply it:
 
-- `sqlane.migrate({ lockTimeout })`: applies the missing versions, records them in `sqlane_migrations`, under a DB
-  lock (`GET_LOCK` / `pg_advisory_lock`). It waits for the lock up to `lockTimeout` (default `'10m'`), on its own
-  connection without the statement timeout of the queue: a long migration of a big table is not cancelled.
+- `sqlane.migrate({ lockTimeout })`: resolves to `{ applied }`, the ids it applied. It applies the missing versions, records them in `sqlane_migrations`, under a DB
+  lock. It waits for the lock up to `lockTimeout` (default `'10m'`), on its own connection without the statement
+  timeout of the queue: a long migration of a big table is not cancelled. PostgreSQL: one transaction under
+  `pg_advisory_xact_lock` (transactional DDL). MySQL: `GET_LOCK`; each statement is idempotent (`IF NOT EXISTS`), as
+  MySQL commits each DDL statement and a cut migration runs again from its start.
 - `getMigrations({ dialect, tablePrefix })`: returns the SQL, for the app's own migration tool.
 
 ## Job states
