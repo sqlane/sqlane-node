@@ -37,63 +37,76 @@ adds a job in its business transaction: no commit, no job.
 | ------------------ | ------------------------------------------------------------------------------------------- |
 | **Job**            | One row: a payload, a state, attempts, a lease.                                             |
 | **Job name**       | The kind of a job, e.g. `build_report`. It is also the "queue": there is no separate queue. |
-| **Job definition** | The name, the payload type and the enqueue options of a job name. Producers import it.      |
+| **Job definition** | The name and the options of a job name. Producers and workers import it.                    |
 | **Handler**        | The function that runs a job. Only workers register it.                                     |
-| **Lane**           | A concurrency limit inside one process. Costs no connection.                                |
+| **Lane**           | A per-process concurrency limit shared by handlers. Costs no connection.                    |
 | **Mutex key**      | A string (`order:42`). Jobs with a common key run one at a time, in the cluster.            |
 | **Failure job**    | The job that a job adds when it fails for good.                                             |
-| **Executor**       | A minimal adapter over a connection or a transaction: `query(sql, params)`.                 |
-| **Hint**           | A message "jobs of these names are ready" between processes. Only an optimization.          |
+| **Adapter**        | Wraps a driver: the dialect, the queue's pool, and the raw connections given to `enqueue`.  |
+| **Hint**           | A message "jobs of this name are ready" between processes. Only an optimization.            |
 
-## API sketch
+## API
 
 ```js
 // jobs/build_report.js: the definition, imported by producers and workers
 import { defineJob } from '@sqlane/core';
 
-/** @type {import('@sqlane/core').JobDefinition<{ reportId: string }>} */
 export const buildReport = defineJob({
     name: 'build_report',
-    attempts: 3,
-    backoff: { type: 'exponential', delay: '5s', maxDelay: '1h' },
-    mutexKeys: ({ reportId }) => [`report:${reportId}`], // optional, sync, from the payload only
-    failureJob: 'fail_report', // optional
-    retention: { completed: '1h', failed: '180d' },
+    maxAttempts: 3,
+    backoff: { type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 },
+    mutexKeys: (payload) => [`report:${payload.reportId}`], // optional, sync, from the payload only
+    failureJob: 'fail_report', // optional: a definition or a name
+    retention: { completed: '1h', failed: '30d' },
+    timeout: '5m', // optional, no default
 });
 ```
 
 ```js
 // app.js
 import { createSqlane } from '@sqlane/core';
-import { mysql2Executor } from '@sqlane/core/mysql2';
+import { mysql2Adapter } from '@sqlane/core/mysql2'; // or pgAdapter(pool, { notify: true }) from '@sqlane/core/pg'
 
 const sqlane = createSqlane({
-    dialect: 'mysql', // or 'postgres'
-    executor: mysql2Executor(queuePool), // the queue's own connections: claims, leases, results
-    tablePrefix: 'sqlane_',
-    hint: null, // or redisHint(redis), postgresNotifyHint(client)
+    adapter: mysql2Adapter(queuePool), // the queue's own connections: claims, leases, results
+    jobs: [buildReport, failReport], // definitions known by name
+    concurrency: 10, // running handlers in this process
+    lanes: { heavy: { concurrency: 2 } }, // limits shared by several job names
+    defaults: { maxAttempts: 3, backoff, retention, timeout }, // a definition overrides them
+    unknownJobs: 'allow', // or 'reject': enqueue of a name not in `jobs` throws UnknownJobError
+    hint: null, // or { publish, subscribe }: any pub/sub
     logger, // pino-compatible: { debug, info, warn, error }
-    metrics, // optional event callbacks
+    onEvent, // (event) => void, a typed union
+    tablePrefix: 'sqlane_',
     pollInterval: '5s',
     maxPayloadBytes: 256 * 1024,
     cleanup: true, // built-in deletion of expired jobs
 });
 
-// Producer: in the business transaction
-const tx = mysql2Executor(transactionConnection);
+await sqlane.migrate(); // or getMigrations({ dialect, tablePrefix }) for the app's own tool
 
-await sqlane.enqueue(tx, buildReport, { reportId }, { jobId: reportId, delay: '10s' });
-// Or by name: the definition registered in this instance, or the defaults (no payload type check)
-await sqlane.enqueue(tx, 'build_report', { reportId });
+// Producer: in the business transaction, with the raw driver connection
+const { id, created } = await sqlane.enqueue(conn, buildReport, { reportId }, {
+    jobId: reportId, // dedupe: created is false if the job exists
+    delay: '10s', // or runAt: Date
+    maxAttempts: 5,
+    mutexKeys: [`report:${reportId}`], // replaces the definition's keys; [] clears them
+});
+await sqlane.enqueueMany(conn, buildReport, [{ payload, options }]); // one INSERT per table
+await sqlane.enqueue(conn, 'build_report', { reportId }); // by name
 
 // Worker
 sqlane.handle(buildReport, async ({ payload, job, signal }) => {
+    // job: { id, name, attempt, maxAttempts, enqueuedAt, mutexKeys }
     // signal: AbortSignal, aborted on timeout and on close
-}, { lane: 'reports', timeout: '5m' });
+}, { concurrency: 2 }); // a private lane; or { lane: 'heavy' }; not both
+sqlane.handle(exportCsv, runExportCsv, { lane: 'heavy' });
+sqlane.handle(pingWebhook, runPing); // the process concurrency only
 
-sqlane.defineLane('reports', { concurrency: 2 });
+await sqlane.start();
 
-await sqlane.start({ maxRunningJobs: 10 });
+// Tests: run the ready jobs until none is left, without start()
+await sqlane.drain({ timeout: '10s' });
 
 // Shutdown
 await sqlane.close({ deadline: '30s', mode: 'release' }); // 'release' | 'abandon'
@@ -102,16 +115,57 @@ await sqlane.close({ deadline: '30s', mode: 'release' }); // 'release' | 'abando
 Choices:
 
 - **Definition apart from the handler.** Producers import a small definition, not the handler and its dependencies.
-  The definition carries the payload type (JSDoc generic), so `enqueue` checks the payload.
-- **Enqueue by name too.** `enqueue(tx, 'job_name', …)` is for producers without the definition (another service,
-  a script). It uses the definition registered in the instance (`sqlane.register([definitions])` or `handle()`),
-  else the defaults; then `mutexKeys` and `failureJob` come only from the enqueue options.
-- **Explicit executor, no implicit context.** `enqueue` takes the transaction. Adapters: `@sqlane/core/mysql2` and `@sqlane/core/pg` in v0.1;
-  Knex, Kysely, Drizzle, Sequelize, Prisma, TypeORM, MikroORM later, as separate packages (`@sqlane/knex`, …).
+  `enqueue` and `handle` take a definition or a name.
+- **No payload types, no validation.** A payload is a `JsonValue`: a `Date`, a `Map` or a class instance is a type
+  error. At runtime: `JSON.stringify` and the size limit, no revivers. The app validates its own payloads.
+- **Enqueue by name too.** `enqueue(conn, 'job_name', …)` is for producers without the definition (another service,
+  a script). It uses the definition in `jobs` (or registered by `handle()`), else the defaults; then `mutexKeys` and
+  `failureJob` come only from the enqueue options. `unknownJobs: 'reject'` makes an unknown name an error.
+- **One adapter, raw connections.** The adapter gives the dialect and the queue's pool. `enqueue` takes the driver's
+  own connection, transaction client or pool (a pool means autocommit, outside any transaction). Adapters:
+  `@sqlane/core/mysql2` (`Connection`, `PoolConnection`, `Pool`) and `@sqlane/core/pg` (`Client`, `PoolClient`,
+  `Pool`) in v0.1; Knex, Kysely, Drizzle, Sequelize, Prisma, TypeORM, MikroORM later, as separate packages
+  (`@sqlane/knex`, …).
+- **Worker settings in worker code.** `concurrency` and `lane` are `handle()` options, not definition fields: they are
+  per process. A handler takes `concurrency` (a private lane) or `lane` (a lane of `lanes`), not both (a type error).
+  An unknown lane is a type error and a runtime error. A lane is capped by the process `concurrency`.
 - **Handlers own their transactions.** sqlane does not wrap the handler in a transaction or any other app wrapper. A
-  handler that needs one opens it with its own connection.
-- **AbortSignal** for timeouts and close, instead of a hidden race.
+  handler that needs one opens it with its own connection. Its return value is ignored: no result storage.
+- **AbortSignal** for timeouts and close, instead of a hidden race. The lease is renewed while the handler runs, so a
+  long job needs no timeout.
 - **Durations** as strings (`'5s'`) or milliseconds.
+- **No implicit work.** `createSqlane` connects, migrates and starts nothing.
+- **Lifecycle.** `enqueue` and `enqueueMany` keep working after `close()` (they use only the caller's connection);
+  `start`, `handle` and `drain` throw `ClosedError`.
+
+### Defaults
+
+| Option        | Default                                                             |
+| ------------- | ------------------------------------------------------------------- |
+| `maxAttempts` | 3                                                                   |
+| `backoff`     | `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }` |
+| `retention`   | `{ completed: '1h', failed: '30d' }`                                |
+| `timeout`     | none                                                                |
+
+Backoff: `exponential` (`delay × 2^(attempt − 1)`, at most `maxDelay`) or `fixed` (`delay`). Then jitter (0–1):
+`delay × (1 − jitter × random())`, never above the computed delay. `jitter: 0` turns it off.
+
+### Errors
+
+All extend `SqlaneError` and have a `code`:
+
+| Class                  | When                                                     |
+| ---------------------- | -------------------------------------------------------- |
+| `PayloadTooLargeError` | The payload is above `maxPayloadBytes`.                  |
+| `InvalidMutexKeyError` | More than 10 keys, or a key that breaks the rules.       |
+| `UnknownJobError`      | Enqueue of an unknown name with `unknownJobs: 'reject'`. |
+| `ClosedError`          | `start`, `handle` or `drain` after `close()`.            |
+
+Thrown by handlers:
+
+- `new FatalJobError(message, { cause })`: fail at once, without retries; the failure job runs.
+- `new RetryJobError(message, { delay: '1m' })`: retry after this delay instead of the backoff (e.g. a rate limit).
+  It still uses an attempt.
 
 ## Data
 
@@ -177,13 +231,14 @@ pending ──claim──▶ running ──OK──▶ completed ──retention
 
 ### Enqueue
 
-In the caller's transaction, through its executor:
+In the caller's transaction, with its connection:
 
-1. Validate the payload (JSON, at most `maxPayloadBytes`, default 256 KiB) and the options (`jobId`, `attempts`,
-   `delay`).
-2. Compute the mutex keys from the payload.
+1. Check the payload (JSON, at most `maxPayloadBytes`, default 256 KiB) and the options (`jobId`, `maxAttempts`,
+   `delay` or `runAt`, `mutexKeys`).
+2. The mutex keys: the enqueue option if given, else the definition's function of the payload.
 3. `INSERT` the job, the payload and the keys. With a `jobId`, an existing row means a duplicate: the enqueue returns
-   `{ id, duplicate: true }` and adds nothing. Deduplication lasts while the row exists, retention included.
+   `{ id, created: false }` and adds nothing. Deduplication lasts while the row exists, in any state: the retention
+   is the dedupe window. After cleanup, the same `jobId` adds a new job.
 4. PostgreSQL with the NOTIFY hint: `pg_notify` in the same transaction, delivered on commit.
 
 `enqueueMany` inserts many jobs in one statement per table.
@@ -192,7 +247,7 @@ In the caller's transaction, through its executor:
 
 ```text
 loop while started
-  names = registered job names whose lane has a free slot (none if maxRunningJobs run)
+  names = registered job names whose lane has a free slot (none if `concurrency` handlers run)
   if no names: wait for a wake
   probe: the next run_at of each job name that has pending jobs (one statement)
   if nothing due: wait until the next run_at (at most the poll interval) or a wake
@@ -234,22 +289,31 @@ calls nothing:
 
 ### Hints
 
+A generic pub/sub interface, implemented by the app (Redis, NATS, …). The README shows it for ioredis and
+node-redis.
+
 ```js
-/** @typedef {{ publish(jobNames: string[]): Promise<void>, subscribe(onHint: (jobNames: string[]) => void): Promise<() => Promise<void>> }} HintTransport */
+/**
+ * @typedef {object} Hint
+ * @property {(channel: string, message: string) => Promise<void>} publish
+ * @property {(channel: string, onMessage: (message: string) => void) => Promise<() => Promise<void>>} subscribe
+ *     Resolves to the unsubscribe function.
+ */
 ```
 
-- `null`: polling only.
-- `postgresNotifyHint(client)`: LISTEN on a dedicated connection; the enqueue sends `pg_notify` in its transaction, so
-  the hint arrives only after the commit. At most one NOTIFY per transaction and job name: NOTIFY takes a global lock
-  at commit and limits the commit rate under heavy write load.
-- `redisHint(redis)`: publish after an enqueue. A process sends a hint only for the jobs it cannot start itself.
-- Throttled: at most one message per interval (100 ms) per process.
+- `hint: null`: polling only.
+- `hint: { publish, subscribe }`: the channel is `<tablePrefix>ready`, the message is a job name. Published after an
+  enqueue. A process sends a hint only for the jobs it cannot start itself.
+- `pgAdapter(pool, { notify: true })`: LISTEN on a dedicated connection; the enqueue sends `pg_notify` in its
+  transaction, so the hint arrives only after the commit. At most one NOTIFY per transaction and job name: NOTIFY
+  takes a global lock at commit and limits the commit rate under heavy write load.
+- Throttled: at most one message per interval (100 ms) per process and job name.
 
 A lost hint delays a job until the next poll. It never loses a job.
 
 ### Claim
 
-One short transaction on the queue's executor:
+One short transaction on the queue's pool:
 
 1. `SELECT … WHERE id IN (candidates) AND status = 'pending' AND run_at <= now ORDER BY run_at, id FOR UPDATE SKIP
    LOCKED`.
@@ -289,7 +353,8 @@ When a job fails for good (no attempts left, or too many stalls), and its defini
 
 - The fail and the insert of the failure job commit together. The insert runs under a savepoint: if the database
   refuses it, the job still fails, without it (`error` log, `failure_job_not_added` event).
-- Payload: `{ payload, failedJob: { id, jobName, attempts, stalls, error: { name, message, stack } } }`.
+- Payload (`FailedJobPayload`): `{ job: { id, name, payload, attempt, maxAttempts }, error: { name, message, stack } }`.
+- A `FatalJobError` fails the job at once, with the same failure job.
 - The failure job is an ordinary job with its own definition, attempts, retention and mutex keys. A failure job cannot
   have a `failureJob` (checked at `start()`).
 - A replayed fail (lost acknowledgment) or a lost lease adds no second failure job.
@@ -313,9 +378,9 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 
 ### Connections
 
-- `enqueue`: the caller's transaction.
-- Everything else: the queue's executor (a small pool, `READ COMMITTED`, statement timeout 10 s).
-- Handlers: whatever they open. `maxRunningJobs` limits the running handlers of a process, so they cannot exhaust the
+- `enqueue`: the caller's connection or transaction.
+- Everything else: the adapter's pool (small, `READ COMMITTED`, statement timeout 10 s).
+- Handlers: whatever they open. `concurrency` limits the running handlers of a process, so they cannot exhaust the
   app's pool.
 
 ## Guarantees
@@ -333,38 +398,40 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 
 ## Observability
 
-- **Logs:** an injected pino-compatible logger. No logger: no logs.
-- **Events:** `onEvent({ type, jobName, … })` for `claimed`, `completed`, `retried`, `failed`, `stalled`, `released`,
+- **Logs:** an injected pino-compatible logger, for internal diagnostics (probe errors, reconnects). No logger: no
+  logs.
+- **Events:** `onEvent(event)`, a typed union by `type`, for the job lifecycle: `claimed`, `completed`, `retried`, `failed`, `stalled`, `released`,
   `lease_lost`, `failure_job_not_added`, `error`. The app maps them to its metrics.
 - **Gauges:** `getStats()` returns the pending, due, running and failed counts and the oldest due age per job name,
   for "queue stuck" alerts. OpenTelemetry later, as a separate package.
 
 ## Supported versions
 
-| Component  | Minimum                                      | Why                                                                        |
-| ---------- | -------------------------------------------- | -------------------------------------------------------------------------- |
-| Node.js    | 22.12                                        | Node 22, 24 and 26 in CI.                                                  |
-| MySQL      | 8.4 LTS                                      | 8.0 reached end of life (April 2026). SKIP LOCKED, window functions, CTEs. |
-| PostgreSQL | 15                                           | 14 reaches end of life in November 2026.                                   |
-| Drivers    | `mysql2`, `pg`; peer dependencies, optional. |
+| Component  | Minimum                                     | Why                                                                        |
+| ---------- | ------------------------------------------- | -------------------------------------------------------------------------- |
+| Node.js    | 22.12                                       | Node 22, 24 and 26 in CI.                                                  |
+| MySQL      | 8.4 LTS                                     | 8.0 reached end of life (April 2026). SKIP LOCKED, window functions, CTEs. |
+| PostgreSQL | 15                                          | 14 reaches end of life in November 2026.                                   |
+| Drivers    | `mysql2`, `pg`; optional peer dependencies. |
 
 ## Package layout
 
 ```text
 @sqlane/core              core: definitions, runner, dispatcher, SQL of both dialects, migrations
-@sqlane/core/mysql2       executor adapter for mysql2
-@sqlane/core/pg           executor adapter for pg, postgresNotifyHint
-@sqlane/core/redis        redisHint (ioredis or node-redis)
+@sqlane/core/mysql2       mysql2Adapter
+@sqlane/core/pg           pgAdapter (with the NOTIFY hint)
 @sqlane/<orm>             later: knex, kysely, drizzle, sequelize, prisma, typeorm, mikro-orm
 ```
 
 Source (`src/`, snake_case files): `define_job.js`, `sqlane.js` (facade), `dispatcher.js`, `lanes.js`,
-`lease_keeper.js`, `stall_recovery.js`, `cleanup.js`, `store/` (one SQL module per dialect behind one store
-interface), `adapters/`, `hints/`.
+`lease_keeper.js`, `stall_recovery.js`, `cleanup.js`, `errors.js`, `store/` (one SQL module per dialect behind one
+store interface), `adapters/`.
 
 ## Testing
 
-- Unit: dispatcher, lanes, backoff, validation, with an in-memory store fake.
+- Unit: dispatcher, lanes, backoff, option checks, with an in-memory store fake.
+- Types: the examples (`examples/`) and type tests (`expectTypeOf`, `@ts-expect-error`) run in CI, so the public API
+  cannot change by accident.
 - Integration (most of the value): the same suite against MySQL 8.4 and PostgreSQL 15 and 18 in Docker, for the
   store and the runner: claims under contention, leases, stalls, mutex FIFO, failure jobs, close modes.
 - Benchmark: 1000 idle names (probe cost), enqueue-to-start latency, throughput.
