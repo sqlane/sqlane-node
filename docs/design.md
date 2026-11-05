@@ -115,7 +115,7 @@ const stats = await sqlane.getStats(); // [{ name, pending, due, running, stuck,
 sqlane.wake('build_report'); // low-level: probe this name now
 
 // Shutdown
-await sqlane.close({ deadline: '30s', mode: 'release', exitsBy }); // mode: 'release' | 'abandon'
+await sqlane.close({ deadline: '30s', mode: 'release', exitsBy: '1m' }); // durations from this call
 ```
 
 Choices:
@@ -154,16 +154,16 @@ Choices:
 
 ### Defaults
 
-| Option        | Default                                                             |
-| ------------- | ------------------------------------------------------------------- |
-| `maxAttempts` | 3                                                                   |
-| `maxStalls`   | 2                                                                   |
-| `backoff`     | `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }` |
-| `retention`   | `{ completed: '1h', failed: '30d' }`                                |
-| `timeout`     | none                                                                |
-| `close()`     | `{ deadline: '30s', mode: 'release', exitsBy: deadline + 4 min }`   |
-| `concurrency` | 10                                                                  |
-| `unknownJobs` | `'allow'`                                                           |
+| Option        | Default                                                                         |
+| ------------- | ------------------------------------------------------------------------------- |
+| `maxAttempts` | 3                                                                               |
+| `maxStalls`   | 2                                                                               |
+| `backoff`     | `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }`             |
+| `retention`   | `{ completed: '1h', failed: '30d' }`                                            |
+| `timeout`     | none                                                                            |
+| `close()`     | `{ deadline: '30s', mode: 'release', exitsBy: '4m30s' }` (deadline + one lease) |
+| `concurrency` | 10                                                                              |
+| `unknownJobs` | `'allow'`                                                                       |
 
 Backoff: `exponential` (`delay × 2^(attempt − 1)`, at most `maxDelay`) or `fixed` (`delay`). Then jitter (0–1):
 `delay × (1 − jitter × random())`, never above the computed delay. `jitter: 0` turns it off.
@@ -207,24 +207,24 @@ string (MySQL) or a `timestamptz` (PostgreSQL), never in the session time zone.
 
 ### `sqlane_jobs`
 
-| Column                                                                | Type               | Notes                                                 |
-| --------------------------------------------------------------------- | ------------------ | ----------------------------------------------------- |
-| `id`                                                                  | varchar(255), PK   | `<job_name>:<job_id>`, or a new ULID without `jobId`. |
-| `job_name`                                                            | varchar(128)       |                                                       |
-| `status`                                                              | varchar(16)        | `pending`, `running`, `completed`, `failed`.          |
-| `run_at`                                                              | ts(3)              | Due time.                                             |
-| `attempts`, `max_attempts`                                            | int                |                                                       |
-| `stalls`, `max_stalls`                                                | int                |                                                       |
-| `mutex_keys`                                                          | json / text[] null | Frozen at enqueue, sorted. Written with the job row.  |
-| `enqueue_token`                                                       | char(26)           | Per enqueue call: tells created rows from duplicates. |
-| `lock_token`                                                          | char(26) null      | Set by the claim. Every final write checks it.        |
-| `locked_by`                                                           | varchar(255) null  | `<host>:<pid>:<ULID>`.                                |
-| `locked_until`                                                        | ts(3) null         | The lease.                                            |
-| `timed_out_at`                                                        | ts(3) null         | Set on a timeout; for `stuck` in `getStats()`.        |
-| `last_error`                                                          | json null          |                                                       |
-| `completed_retention_ms`, `failed_retention_ms`                       | bigint             | Frozen at enqueue.                                    |
-| `failure_job`                                                         | varchar(128) null  | Frozen at enqueue.                                    |
-| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)              |                                                       |
+| Column                                                                | Type               | Notes                                                                                         |
+| --------------------------------------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
+| `id`                                                                  | varchar(255), PK   | `<job_name>:<job_id>`, or a new ULID without `jobId`.                                         |
+| `job_name`                                                            | varchar(128)       |                                                                                               |
+| `status`                                                              | varchar(16)        | `pending`, `running`, `completed`, `failed`.                                                  |
+| `run_at`                                                              | ts(3)              | Due time.                                                                                     |
+| `attempts`, `max_attempts`                                            | int                |                                                                                               |
+| `stalls`, `max_stalls`                                                | int                |                                                                                               |
+| `mutex_keys`                                                          | json / text[] null | Frozen at enqueue, sorted. Written with the job row.                                          |
+| `enqueue_token`                                                       | char(26)           | Per enqueue call: tells created rows from duplicates.                                         |
+| `lock_token`                                                          | char(26) null      | Set by the claim. Every final write checks it.                                                |
+| `locked_by`                                                           | varchar(255) null  | `<host>:<pid>:<ULID>`.                                                                        |
+| `locked_until`                                                        | ts(3) null         | The lease.                                                                                    |
+| `timed_out_at`                                                        | ts(3) null         | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`. |
+| `last_error`                                                          | json null          |                                                                                               |
+| `completed_retention_ms`, `failed_retention_ms`                       | bigint             | Frozen at enqueue.                                                                            |
+| `failure_job`                                                         | varchar(128) null  | Frozen at enqueue.                                                                            |
+| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)              |                                                                                               |
 
 `id`, `job_name`, the mutex keys and `mutex_key` (below) are case-sensitive: `ascii_bin` on MySQL, `COLLATE "C"` on PostgreSQL.
 
@@ -435,8 +435,10 @@ the handlers get an aborted `signal`, and for each unfinished job:
 | `release` | Back to `pending`, no attempt used. Handler settled: `run_at = now`. Handler still runs: `run_at = exitsBy + 2 s`, its keys linger until then. |
 | `abandon` | Nothing written. The lease ends, recovery counts one stall. For crashes.                                                                       |
 
-`exitsBy` (default: the deadline plus one lease, 4 min) is the latest time the process exits: then the old run is
-surely gone. Set it lower if the app exits sooner. `exitsBy` before the deadline is a `ConfigError`. A handler
+`deadline` and `exitsBy` are durations counted from the `close()` call. `exitsBy` (default: the deadline plus one
+lease) is the latest time the process exits: then the old run is surely gone. Set it lower if the app exits sooner.
+`close()` never rejects on its options, so a shutdown always releases: an invalid `exitsBy` (not a duration, or
+before the deadline) logs a warning and uses the default. A handler
 that throws after this abort counts as unfinished: no attempt is used. `close()` resolves when the
 handlers have settled or the deadline has passed, and the releases are written. It ends only what sqlane opened (the
 LISTEN connection, the hint subscription), never the app's pool.
