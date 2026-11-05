@@ -15,7 +15,7 @@ adds a job in its business transaction: no commit, no job.
    hint transport, and within the poll interval (default 5 s) without one. See [Wake after commit](#wake-after-commit).
 4. **At-least-once execution.** A committed job runs at least once, also after a crash, a stall or a deploy.
 5. **MySQL and PostgreSQL** with the same features and the same API.
-6. **Mutex keys.** Two jobs with a common key never run at the same time in the cluster.
+6. **Mutex keys.** Two jobs with a common key do not run at the same time in the cluster (see [Guarantees](#guarantees)).
 7. **Failure jobs.** A job that fails for good adds a job of another name, in the same transaction as the fail.
 8. **Library hygiene.** No global state, no `process.env`, no console output, no exit. The app injects the
    connections, the logger and the metrics.
@@ -59,7 +59,7 @@ export const buildReport = defineJob({
     failureJob: 'fail_report', // optional: a definition or a name
     maxStalls: 2,
     retention: { completed: '1h', failed: '30d' },
-    timeout: '5m', // no default; required with mutexKeys
+    timeout: '5m', // no default; a keyed job needs one (here, in handle() options or in defaults)
 });
 ```
 
@@ -100,7 +100,7 @@ await sqlane.enqueue(conn, 'build_report', { reportId }); // by name
 // Worker
 sqlane.handle(buildReport, async ({ payload, job, signal }) => {
     // job: { id, name, attempt, maxAttempts, enqueuedAt, mutexKeys }
-    // signal: AbortSignal, aborted on timeout and at the close deadline
+    // signal: AbortSignal; reason JobTimeoutError on timeout, ShutdownError at the close deadline
 }, { concurrency: 2, timeout: '5m' }); // a private lane; or { lane: 'heavy' }; not both
 sqlane.handle(exportCsv, runExportCsv, { lane: 'heavy' });
 sqlane.handle(pingWebhook, runPing); // the process concurrency only
@@ -108,7 +108,11 @@ sqlane.handle(pingWebhook, runPing); // the process concurrency only
 await sqlane.start();
 
 // Tests: run the due jobs of the handled names until none is left, without start()
-const { completed, failed } = await sqlane.drain({ timeout: '10s', includeDelayed: true });
+const { completed, retried, failed } = await sqlane.drain({ timeout: '10s', includeDelayed: true });
+
+// Ops
+const stats = await sqlane.getStats(); // [{ name, pending, due, running, stuck, failed, oldestDueAgeMs }]
+sqlane.wake('build_report'); // low-level: probe this name now
 
 // Shutdown
 await sqlane.close({ deadline: '30s', mode: 'release' }); // 'release' | 'abandon'
@@ -118,8 +122,9 @@ Choices:
 
 - **Definition apart from the handler.** Producers import a small definition, not the handler and its dependencies.
   `enqueue` and `handle` take a definition or a name.
-- **No payload types, no validation.** An enqueued payload is a `JsonValue`: a `Date`, a `Map` or a class instance is
-  a type error. The read side (the handler's `payload`, the argument of `mutexKeys`) is `any`. At runtime:
+- **No payload types, no validation.** An enqueued payload must be JSON: `enqueue` checks it with a `Jsonable<T>`
+  type inferred from the argument (TS interfaces and optional fields pass; a `Date`, a `Map` or a class instance is
+  a type error; no generics to write). The read side (the handler's `payload`, the argument of `mutexKeys`) is `any`. At runtime:
   `JSON.stringify` and the size limit, no revivers. The app validates its own payloads.
 - **Names and ids.** A job name matches `^[a-z][a-z0-9_.-]{0,127}$` (no `:`). A `jobId` is a string of 1–120
   printable ASCII characters. Both are case-sensitive on both databases.
@@ -157,6 +162,8 @@ Choices:
 | `retention`   | `{ completed: '1h', failed: '30d' }`                                |
 | `timeout`     | none                                                                |
 | `close()`     | `{ deadline: '30s', mode: 'release' }`                              |
+| `concurrency` | 10                                                                  |
+| `unknownJobs` | `'allow'`                                                           |
 
 Backoff: `exponential` (`delay × 2^(attempt − 1)`, at most `maxDelay`) or `fixed` (`delay`). Then jitter (0–1):
 `delay × (1 − jitter × random())`, never above the computed delay. `jitter: 0` turns it off.
@@ -165,16 +172,22 @@ Backoff: `exponential` (`delay × 2^(attempt − 1)`, at most `maxDelay`) or `fi
 
 All extend `SqlaneError` and have a `code`:
 
-| Class                  | `code`              | When                                                                                                                                                                                                                               |
-| ---------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ConfigError`          | `CONFIG`            | Bad `createSqlane`, `defineJob` or `handle()` options: an unknown lane, `lane` with `concurrency`, a duplicate `handle()`, two definitions with one name, a keyed definition without a timeout, a failure job with a `failureJob`. |
-| `InvalidOptionsError`  | `INVALID_OPTIONS`   | Bad enqueue options: a bad name or `jobId`, `delay` with `runAt`.                                                                                                                                                                  |
-| `PayloadTooLargeError` | `PAYLOAD_TOO_LARGE` | The payload is above `maxPayloadBytes`.                                                                                                                                                                                            |
-| `InvalidMutexKeyError` | `INVALID_MUTEX_KEY` | More than 10 keys, or a key that breaks the rules.                                                                                                                                                                                 |
-| `UnknownJobError`      | `UNKNOWN_JOB`       | Enqueue of an unknown name with `unknownJobs: 'reject'`.                                                                                                                                                                           |
-| `ClosedError`          | `CLOSED`            | `start`, `handle` or `drain` after `close()`.                                                                                                                                                                                      |
-| `DrainTimeoutError`    | `DRAIN_TIMEOUT`     | `drain()` did not finish in its `timeout`.                                                                                                                                                                                         |
-| `JobTimeoutError`      | `JOB_TIMEOUT`       | The `signal.reason` on a timeout; recorded as the error of the attempt.                                                                                                                                                            |
+| Class                  | `code`              | When                                                                    |
+| ---------------------- | ------------------- | ----------------------------------------------------------------------- |
+| `ConfigError`          | `CONFIG`            | Bad `createSqlane`, `defineJob` or `handle()` options (see below).      |
+| `InvalidOptionsError`  | `INVALID_OPTIONS`   | Bad enqueue options: a bad name or `jobId`, `delay` with `runAt`.       |
+| `PayloadTooLargeError` | `PAYLOAD_TOO_LARGE` | The payload is above `maxPayloadBytes`.                                 |
+| `InvalidMutexKeyError` | `INVALID_MUTEX_KEY` | More than 10 keys, or a key that breaks the rules.                      |
+| `UnknownJobError`      | `UNKNOWN_JOB`       | Enqueue of an unknown name with `unknownJobs: 'reject'`.                |
+| `ClosedError`          | `CLOSED`            | `start`, `handle` or `drain` after `close()`.                           |
+| `DrainTimeoutError`    | `DRAIN_TIMEOUT`     | `drain()` did not finish in its `timeout`.                              |
+| `JobTimeoutError`      | `JOB_TIMEOUT`       | The `signal.reason` on a timeout; recorded as the error of the attempt. |
+| `ShutdownError`        | `SHUTDOWN`          | The `signal.reason` at the close deadline.                              |
+
+`ConfigError` cases: an unknown lane, `lane` with `concurrency`, a duplicate `handle()`, two definitions with one name,
+a failure job (in `jobs` or handled) whose definition has a `failureJob`. `handle()` also throws it for a keyed
+definition whose resolved timeout (`handle()` options, else the definition, else `defaults`) is none; `defineJob` never
+checks the timeout.
 
 Thrown by handlers:
 
@@ -304,7 +317,7 @@ calls nothing:
 
 - **Default, any driver: re-probe.** After an enqueue, the dispatcher of this process probes only that job name again
   with a short backoff (about 20, 50, 100, 200 ms … up to the poll interval), until it sees the job. The hint transport
-  sends the name to the other processes at enqueue time; they do the same. Throttled per job name: a burst of
+  sends the name to the other processes at enqueue time (fire-and-forget); they do the same. Throttled per job name: a burst of
   enqueues gives one series of re-probes. The latency is the commit time plus at most one backoff step, and never more
   than the poll interval. A rolled-back transaction costs only the re-probes.
 - **PostgreSQL NOTIFY.** `pg_notify` runs in the transaction and is delivered on commit: no re-probe.
@@ -327,7 +340,8 @@ node-redis.
 
 - `hint: null`: polling only.
 - `hint: { publish, subscribe }`: the channel is `<tablePrefix>ready`, the message is a job name. Published after an
-  enqueue. A process sends a hint only for the jobs it cannot start itself.
+  enqueue, fire-and-forget: `enqueue` does not wait for `publish`, and a failed publish never rejects it (an `error`
+  event). A process sends a hint only for the jobs it cannot start itself.
 - `pgAdapter(pool, { notify: true })`: LISTEN on a dedicated connection; the enqueue sends `pg_notify` in its
   transaction, so the hint arrives only after the commit. At most one NOTIFY per transaction and job name: NOTIFY
   takes a global lock at commit and limits the commit rate under heavy write load.
@@ -367,11 +381,11 @@ One short transaction on the queue's pool:
 - **Window.** The FIFO looks at the oldest 500 due jobs of each keyed name. More than 500 due jobs on one key delay
   the jobs behind them: coalesce such jobs.
 - **Timeout.** JS cannot stop a handler. On a timeout, `signal` aborts with a `JobTimeoutError`, the attempt fails
-  (retry by backoff, or fail for good) and a `timed_out` event fires. The keys linger for a grace period of one lease
-  (4 min, `held_until`), so the next run cannot overlap the old one in it. A late result of the old run is ignored
-  (its `lock_token` changed).
-- **Close.** On a release, the keys linger until the job may run again (`held_until`): the old and new runs never
-  overlap.
+  (retry by backoff, or fail for good) and a `timed_out` event fires. The handler keeps its lane and process slot
+  until it settles (`stuck` in `getStats()`). A late result of the old run is ignored (its `lock_token` changed).
+- **Linger.** After a timeout or a release on close, the keys stay held while the old handler has not settled. When
+  it settles, the process deletes them at once. `held_until` (one lease, 4 min) caps the linger for a process that
+  crashed or exited. So the old and new runs do not overlap, unless a handler ignores `signal` past the lease.
 - **A keyed job needs a timeout.** The lease is renewed while a handler runs, so a hung keyed handler would hold its
   keys in the whole cluster forever. `handle()` throws `ConfigError` if the definition has `mutexKeys` and no timeout.
   A job with keys only from the enqueue options, on a handler without a timeout, fails for good at claim with a
@@ -386,8 +400,10 @@ When a job fails for good (no attempts left, too many stalls, or a `FatalJobErro
 - Payload (`FailedJobPayload`): `{ job: { id, name, payload, attempt, maxAttempts }, error: { name, message, stack } }`.
   Exempt from `maxPayloadBytes`; `error.stack` is cut to 8 KiB.
 - A `FatalJobError` fails the job at once, with the same failure job.
-- The failure job is an ordinary job with its own definition, attempts, retention and mutex keys. A failure job cannot
-  have a `failureJob` (checked at `start()`).
+- The failure job is an ordinary job. Its options come from its definition, if the failing process knows it, else
+  from the defaults: list the failure job's definition in the `jobs` of every worker. Its row always gets
+  `failure_job = null` (no chains), and it is exempt from `unknownJobs: 'reject'`. A failure job whose definition has
+  a `failureJob` is a `ConfigError`.
 - A replayed fail (lost acknowledgment) or a lost lease adds no second failure job.
 
 ### Close
@@ -395,10 +411,10 @@ When a job fails for good (no attempts left, too many stalls, or a `FatalJobErro
 `close({ deadline, mode })` stops claiming and waits for the running handlers until the deadline. At the deadline
 the handlers get an aborted `signal`, and for each unfinished job:
 
-| `mode`    | Effect                                                                                       |
-| --------- | -------------------------------------------------------------------------------------------- |
-| `release` | Back to `pending`, no attempt used, `run_at` after the deadline. Its keys linger until then. |
-| `abandon` | Nothing written. The lease ends, recovery counts one stall. For crashes.                     |
+| `mode`    | Effect                                                                                                       |
+| --------- | ------------------------------------------------------------------------------------------------------------ |
+| `release` | Back to `pending`, no attempt used, `run_at = now`. Its keys linger while the handler runs (see Mutex keys). |
+| `abandon` | Nothing written. The lease ends, recovery counts one stall. For crashes.                                     |
 
 A handler that throws after this abort counts as unfinished: no attempt is used. `close()` resolves when the
 handlers have settled or the deadline has passed, and the releases are written. It ends only what sqlane opened (the
@@ -411,7 +427,8 @@ LISTEN connection, the hint subscription), never the app's pool.
 - Only the names this instance handles, and only the due jobs. Pending jobs of other names are not waited for.
 - `includeDelayed: true` also runs the delayed jobs and the retries in backoff at once: for tests like "fails 3 times,
   then the failure job runs".
-- Returns `{ completed, failed }` (counts). On timeout it rejects with `DrainTimeoutError`.
+- Returns counts: `completed`, `retried` (failed attempts that were retried), `failed` (jobs that failed for good).
+  On timeout it rejects with `DrainTimeoutError`.
 
 ### Cleanup
 
@@ -427,16 +444,16 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 
 ## Guarantees
 
-| Guarantee                                                                                                              | Mechanism                                                         |
-| ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| A job exists only if the caller's transaction commits.                                                                 | INSERT in the caller's transaction (a connection must be in one). |
-| A job does not start before its data is visible.                                                                       | Other connections see only committed rows.                        |
-| A committed job runs at least once.                                                                                    | Leases, stall recovery, release on close.                         |
-| Only the current owner saves the result of a job.                                                                      | SKIP LOCKED claim, `lock_token` on writes.                        |
-| A job with a `jobId` is added once while its row exists.                                                               | Primary key `<job_name>:<job_id>`.                                |
-| Two jobs with a common mutex key do not run at the same time, unless a handler ignores `signal` past the grace period. | `sqlane_mutexes` primary key, claim, linger.                      |
-| A job that fails for good adds its failure job (if the DB accepts it).                                                 | INSERT in the fail transaction.                                   |
-| A lost hint does not lose a job.                                                                                       | Hints only wake; the database keeps the jobs.                     |
+| Guarantee                                                                                                       | Mechanism                                                         |
+| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| A job exists only if the caller's transaction commits.                                                          | INSERT in the caller's transaction (a connection must be in one). |
+| A job does not start before its data is visible.                                                                | Other connections see only committed rows.                        |
+| A committed job runs at least once.                                                                             | Leases, stall recovery, release on close.                         |
+| Only the current owner saves the result of a job.                                                               | SKIP LOCKED claim, `lock_token` on writes.                        |
+| A job with a `jobId` is added once while its row exists.                                                        | Primary key `<job_name>:<job_id>`.                                |
+| Two jobs with a common mutex key do not run at the same time, unless a handler ignores `signal` past the lease. | `sqlane_mutexes` primary key, claim, linger.                      |
+| A job that fails for good adds its failure job (if the DB accepts it).                                          | INSERT in the fail transaction.                                   |
+| A lost hint does not lose a job.                                                                                | Hints only wake; the database keeps the jobs.                     |
 
 ## Observability
 
@@ -444,7 +461,8 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
   logs.
 - **Events:** `onEvent(event)`, a typed union by `type`, for the job lifecycle: `claimed`, `completed`, `retried`, `failed`, `timed_out`, `stalled`,
   `released`, `lease_lost`, `failure_job_not_added`, `error`. The app maps them to its metrics.
-- **Gauges:** `getStats()` returns the pending, due, running and failed counts and the oldest due age per job name,
+- **Gauges:** `getStats()` returns the pending, due, running, stuck (timed out, not settled) and failed counts and
+  the oldest due age per job name,
   for "queue stuck" alerts. OpenTelemetry later, as a separate package.
 
 ## Supported versions
