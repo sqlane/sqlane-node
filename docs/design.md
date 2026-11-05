@@ -383,10 +383,12 @@ One short transaction on the queue's pool:
 - **Hold.** The claim inserts one `sqlane_mutexes` row per key, in the claim transaction: a job holds all its keys or
   none. Every transition out of `running` deletes them in the same transaction, except where they linger (below). Keys are locked in ascending order:
   no deadlocks between queue transactions.
-- **FIFO per key.** A job starts only if none of its keys is held and no older due job has one of its keys. A job
-  with keys A and B does not starve behind newer jobs of A or B.
-- **Window.** The FIFO looks at the oldest 500 due jobs of each keyed name. More than 500 due jobs on one key delay
-  the jobs behind them: coalesce such jobs.
+- **FIFO per key.** A job starts only if none of its keys is held (by a job of any name) and no older due job has one
+  of its keys. A job with keys A and B does not starve behind newer jobs of A or B.
+- **Window.** The FIFO looks at the oldest 500 due jobs of each keyed name that the claiming process handles. A name
+  that no process handles (a retired name, a typo enqueued by name) never blocks a key. Processes that handle
+  different names see different windows, so the FIFO across names is approximate. More than 500 due jobs on one key
+  delay the jobs behind them: coalesce such jobs.
 - **Timeout.** JS cannot stop a handler. On a timeout, `signal` aborts with a `JobTimeoutError`, the attempt fails
   (retry by backoff, or fail for good) and a `timed_out` event fires. The handler keeps its lane and process slot
   until it settles (`stuck` in `getStats()`). A late result of the old run is ignored (its `lock_token` changed).
