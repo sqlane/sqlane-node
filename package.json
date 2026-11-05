@@ -26,7 +26,9 @@
     ],
     "type": "module",
     "exports": {
-        ".": "./src/index.js"
+        ".": "./src/index.js",
+        "./mysql2": "./src/adapters/mysql2.js",
+        "./pg": "./src/adapters/pg.js"
     },
     "publishConfig": {
         "access": "public"
@@ -65,6 +67,18 @@
         "testcontainers": "12.2.1",
         "typescript": "7.0.2",
         "vitest": "5.0.5"
+    },
+    "peerDependencies": {
+        "mysql2": "^3.11.0",
+        "pg": "^8.13.0"
+    },
+    "peerDependenciesMeta": {
+        "mysql2": {
+            "optional": true
+        },
+        "pg": {
+            "optional": true
+        }
     },
     "engines": {
         "node": ">=22.12.0"
