@@ -1,5 +1,12 @@
 # @sqlane/core
 
+## 0.0.2
+
+### Patch Changes
+
+- [#7](https://github.com/sqlane/sqlane-node/pull/7) [`46010b7`](https://github.com/sqlane/sqlane-node/commit/46010b7d6471d2fba61774185d6de6562c0a0327) Thanks [@KlimPal](https://github.com/KlimPal)! - Add the public API as typed stubs: `createSqlane`, `defineJob`, `getMigrations`, the error classes, and the
+  `@sqlane/core/mysql2` and `@sqlane/core/pg` adapters. The methods throw "not implemented" until the implementation lands.
+
 ## 0.0.1
 
 ### Patch Changes
