@@ -161,7 +161,7 @@ Choices:
 | `backoff`     | `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }` |
 | `retention`   | `{ completed: '1h', failed: '30d' }`                                |
 | `timeout`     | none                                                                |
-| `close()`     | `{ deadline: '30s', mode: 'release', exitsBy: deadline }`           |
+| `close()`     | `{ deadline: '30s', mode: 'release', exitsBy: deadline + 4 min }`   |
 | `concurrency` | 10                                                                  |
 | `unknownJobs` | `'allow'`                                                           |
 
@@ -220,6 +220,7 @@ string (MySQL) or a `timestamptz` (PostgreSQL), never in the session time zone.
 | `lock_token`                                                          | char(26) null      | Set by the claim. Every final write checks it.        |
 | `locked_by`                                                           | varchar(255) null  | `<host>:<pid>:<ULID>`.                                |
 | `locked_until`                                                        | ts(3) null         | The lease.                                            |
+| `timed_out_at`                                                        | ts(3) null         | Set on a timeout; for `stuck` in `getStats()`.        |
 | `last_error`                                                          | json null          |                                                       |
 | `completed_retention_ms`, `failed_retention_ms`                       | bigint             | Frozen at enqueue.                                    |
 | `failure_job`                                                         | varchar(128) null  | Frozen at enqueue.                                    |
@@ -367,7 +368,9 @@ One short transaction on the queue's pool:
 2. For keyed jobs: take the mutex keys (below). Drop the jobs whose keys are busy.
 3. `UPDATE` to `running` with a new `lock_token`, `locked_by`, `locked_until = now + lease` (default 4 min).
 4. Read the payloads, start the handlers. A job without its payload (a broken enqueue outside a transaction, a
-   manual change) fails for good with a `MissingPayloadError`, without retries; its failure job runs.
+   manual change) goes back to `pending` with a 1 s delay and no attempt used, while it is younger than 60 s (its
+   payload can still be on the way). After that it fails for good with a `MissingPayloadError`, without retries;
+   its failure job runs.
 
 ### Leases and stalls
 
@@ -432,7 +435,8 @@ the handlers get an aborted `signal`, and for each unfinished job:
 | `release` | Back to `pending`, no attempt used. Handler settled: `run_at = now`. Handler still runs: `run_at = exitsBy + 2 s`, its keys linger until then. |
 | `abandon` | Nothing written. The lease ends, recovery counts one stall. For crashes.                                                                       |
 
-`exitsBy` (default: the deadline) is the latest time the process exits: then the old run is surely gone. A handler
+`exitsBy` (default: the deadline plus one lease, 4 min) is the latest time the process exits: then the old run is
+surely gone. Set it lower if the app exits sooner. `exitsBy` before the deadline is a `ConfigError`. A handler
 that throws after this abort counts as unfinished: no attempt is used. `close()` resolves when the
 handlers have settled or the deadline has passed, and the releases are written. It ends only what sqlane opened (the
 LISTEN connection, the hint subscription), never the app's pool.
@@ -461,16 +465,16 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 
 ## Guarantees
 
-| Guarantee                                                                                                       | Mechanism                                                         |
-| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| A job exists only if the caller's transaction commits.                                                          | INSERT in the caller's transaction (a connection must be in one). |
-| A job does not start before its data is visible.                                                                | Other connections see only committed rows.                        |
-| A committed job runs at least once.                                                                             | Leases, stall recovery, release on close.                         |
-| Only the current owner saves the result of a job.                                                               | SKIP LOCKED claim, `lock_token` on writes.                        |
-| A job with a `jobId` is added once while its row exists.                                                        | Primary key `<job_name>:<job_id>`.                                |
-| Two jobs with a common mutex key do not run at the same time, unless a handler ignores `signal` past the lease. | `sqlane_mutexes` primary key, claim, linger.                      |
-| A job that fails for good adds its failure job (if the DB accepts it).                                          | INSERT in the fail transaction.                                   |
-| A lost hint does not lose a job.                                                                                | Hints only wake; the database keeps the jobs.                     |
+| Guarantee                                                                                                                    | Mechanism                                                         |
+| ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| A job exists only if the caller's transaction commits.                                                                       | INSERT in the caller's transaction (a connection must be in one). |
+| A job does not start before its data is visible.                                                                             | Other connections see only committed rows.                        |
+| A committed job runs at least once.                                                                                          | Leases, stall recovery, release on close.                         |
+| Only the current owner saves the result of a job.                                                                            | SKIP LOCKED claim, `lock_token` on writes.                        |
+| A job with a `jobId` is added once while its row exists.                                                                     | Primary key `<job_name>:<job_id>`.                                |
+| Two jobs with a common mutex key do not run at the same time, unless a handler ignores `signal` past the lease or `exitsBy`. | `sqlane_mutexes` primary key, claim, linger.                      |
+| A job that fails for good adds its failure job (if the DB accepts it).                                                       | INSERT in the fail transaction.                                   |
+| A lost hint does not lose a job.                                                                                             | Hints only wake; the database keeps the jobs.                     |
 
 ## Observability
 
@@ -478,7 +482,7 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
   logs.
 - **Events:** `onEvent(event)`, a typed union by `type`, for the job lifecycle: `claimed`, `completed`, `retried`, `failed`, `timed_out`, `stalled`,
   `released`, `lease_lost`, `failure_job_not_added`, `error`. The app maps them to its metrics.
-- **Gauges:** `getStats()` returns the pending, due, running, stuck (timed out, not settled) and failed counts and
+- **Gauges:** `getStats()` returns the pending, due, running, stuck (`running` with `timed_out_at`: timed out, not settled) and failed counts and
   the oldest due age per job name,
   for "queue stuck" alerts. OpenTelemetry later, as a separate package.
 
