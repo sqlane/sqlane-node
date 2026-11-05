@@ -345,7 +345,10 @@ One short transaction on the queue's pool:
 - **Timeout and close.** A timeout does not end a handler: the job keeps its keys until the handler settles (at most
   the lease). On a release, the keys linger until the job may run again (`held_until`): the old and new runs never
   overlap.
-- A keyed handler must have a timeout of at most the lease.
+- **A keyed job needs a timeout.** The lease is renewed while a handler runs, so a hung keyed handler would hold its
+  keys in the whole cluster forever. `handle()` throws if the definition has `mutexKeys` and no timeout is set (in the
+  definition, `defaults` or the `handle()` options). A job with keys only from the enqueue options, on a handler
+  without a timeout, uses the lease (4 min) as its timeout.
 
 ### Failure jobs
 
