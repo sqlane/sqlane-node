@@ -203,7 +203,9 @@ Thrown by handlers:
 Four tables per prefix (default `sqlane_`), snake_case: the three below and `sqlane_migrations`. Times use the DB clock only
 (`UTC_TIMESTAMP(3)` / `clock_timestamp()`): no clock skew between processes. `ts(3)` is `DATETIME(3)` holding UTC on
 MySQL (no session time zone, no 2038 limit) and `timestamptz(3)` on PostgreSQL. A `runAt: Date` is sent as a UTC
-string (MySQL) or a `timestamptz` (PostgreSQL), never in the session time zone.
+string (MySQL) or a `timestamptz` (PostgreSQL), never in the session time zone. Times are read back as epoch
+milliseconds computed in SQL, and every due or wait computation (`run_at - now`) runs in SQL: sqlane does not depend
+on the pool's `timezone` or `dateStrings` settings.
 
 ### `sqlane_jobs`
 
