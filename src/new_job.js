@@ -1,8 +1,8 @@
+import { monotonicFactory } from 'ulid';
 import { parseDuration } from './duration.js';
 import { InvalidOptionsError } from './errors.js';
 import { normalizeMutexKeys } from './mutex_keys.js';
 import { serializePayload } from './payload.js';
-import { ulid } from './ulid.js';
 import {
     checkFailureJob,
     checkJobFields,
@@ -15,6 +15,8 @@ const ENQUEUE_OPTION_NAMES = [
     'jobId', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureJob', 'mutexKeys',
 ];
 const MAX_JOB_ID_LENGTH = 120;
+/** Sorted by creation order in this process, also within one millisecond */
+const ulid = monotonicFactory();
 
 /**
  * A job to insert, with every value frozen at enqueue.

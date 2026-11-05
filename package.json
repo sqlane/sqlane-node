@@ -50,6 +50,9 @@
         "changeset": "changeset",
         "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern CHANGELOG.md"
     },
+    "dependencies": {
+        "ulid": "^3.0.2"
+    },
     "devDependencies": {
         "@changesets/changelog-github": "1.0.1",
         "@changesets/cli": "3.0.3",
