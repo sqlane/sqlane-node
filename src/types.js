@@ -1,7 +1,7 @@
 // The public types of sqlane. See docs/design.md.
 
 /**
- * A duration: a string (`'500ms'`, `'5s'`, `'10m'`, `'1h'`, `'30d'`) or milliseconds.
+ * A duration: milliseconds, or a string of parse-duration (`'500ms'`, `'5s'`, `'4m30s'`, `'1h'`, `'2 days'`).
  * @typedef {string | number} Duration
  */
 

@@ -51,6 +51,7 @@
         "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern CHANGELOG.md"
     },
     "dependencies": {
+        "parse-duration": "^2.1.11",
         "ulid": "^3.0.2"
     },
     "devDependencies": {
