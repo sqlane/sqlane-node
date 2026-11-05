@@ -84,7 +84,7 @@ const sqlane = createSqlane({
     cleanup: true, // built-in deletion of expired jobs
 });
 
-await sqlane.migrate(); // or getMigrations({ dialect, tablePrefix }) for the app's own tool
+await sqlane.migrate(); // waits for the lock up to 10 min; or getMigrations({ dialect, tablePrefix }) for the app's own tool
 
 // Producer: in the business transaction, with the raw driver connection
 const { id, created } = await sqlane.enqueue(conn, buildReport, { reportId }, {
@@ -253,8 +253,9 @@ that a job holds, or that lingers after a release on close or a stall.
 
 sqlane ships its schema as versioned SQL per dialect. Two ways to apply it:
 
-- `sqlane.migrate()`: applies the missing versions, records them in `sqlane_migrations`, under a DB lock (`GET_LOCK` /
-  `pg_advisory_lock`).
+- `sqlane.migrate({ lockTimeout })`: applies the missing versions, records them in `sqlane_migrations`, under a DB
+  lock (`GET_LOCK` / `pg_advisory_lock`). It waits for the lock up to `lockTimeout` (default `'10m'`), on its own
+  connection without the statement timeout of the queue: a long migration of a big table is not cancelled.
 - `getMigrations({ dialect, tablePrefix })`: returns the SQL, for the app's own migration tool.
 
 ## Job states
@@ -389,7 +390,7 @@ One short transaction on the queue's pool:
 
 ### Mutex keys
 
-- At most 10 keys per job, 1–255 printable ASCII characters. The keys are global strings: jobs of different names
+- At most 10 keys per job, 1–255 printable ASCII characters. Duplicates are removed at enqueue, before the count. The keys are global strings: jobs of different names
   share them.
 - **Hold.** The claim inserts one `sqlane_mutexes` row per key, in the claim transaction: a job holds all its keys or
   none. Every transition out of `running` deletes them in the same transaction, except where they linger (below). Keys are locked in ascending order:
@@ -463,7 +464,7 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 ### Connections
 
 - `enqueue`: the caller's connection or transaction.
-- Everything else: the adapter's pool (small, `READ COMMITTED`, statement timeout 10 s).
+- Everything else: the adapter's pool (small, `READ COMMITTED`, statement timeout 10 s; not for `migrate()`).
 - Handlers: whatever they open. `concurrency` limits the running handlers of a process, so they cannot exhaust the
   app's pool.
 
