@@ -23,7 +23,12 @@ steps {
     ["actionlint"] = Builtins.actionlint
     ["zizmor"] = Builtins.zizmor
     ["betterleaks"] = Builtins.betterleaks
-    ["typos"] = Builtins.typos
+    // Spelling: reports only, never rewrites (a fix could change an intended name). Fix by hand, or `typos -w`.
+    ["typos"] = (Builtins.typos) {
+        check = "typos --force-exclude {{files}}"
+        check_diff = null
+        fix = null
+    }
     ["check_merge_conflict"] = Builtins.check_merge_conflict
     ["trailing_whitespace"] = Builtins.trailing_whitespace
     ["newlines"] = Builtins.newlines
