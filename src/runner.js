@@ -801,6 +801,8 @@ export function createRunner({ store, registry, concurrency, defaults, cleanup, 
         const deadline = Date.now() + timeoutMs;
         const names = registry.entries().map(entry => entry.name);
 
+        let quietRounds = 0;
+
         try {
             while (Date.now() < deadline) {
                 // A job that finishes during this round can add a job (a retry, a failure job) that the round misses
@@ -814,7 +816,10 @@ export function createRunner({ store, registry, concurrency, defaults, cleanup, 
                 // oxlint-disable-next-line no-await-in-loop -- one round after the other
                 const { claimed } = await claimAndStart(names);
 
-                if (!claimed && !running.size && finishedCount === finishedBefore) {
+                quietRounds = !claimed && !running.size && finishedCount === finishedBefore ? quietRounds + 1 : 0;
+
+                // Two quiet rounds in a row: a write that commits late still gets a round
+                if (quietRounds >= 2) {
                     return {
                         completed: counts.completed - before.completed,
                         retried: counts.retried - before.retried,
@@ -823,7 +828,7 @@ export function createRunner({ store, registry, concurrency, defaults, cleanup, 
                 }
 
                 // oxlint-disable-next-line no-await-in-loop -- one round after the other
-                await Promise.race([...[...running.values()].map(job => job.done), sleep(claimed ? 0 : 20)]);
+                await Promise.race([...[...running.values()].map(job => job.done), sleep(claimed ? 0 : 10)]);
             }
 
             throw new DrainTimeoutError(`drain() did not finish in ${timeoutMs} ms`);
