@@ -17,6 +17,12 @@ function toExecutor(connection) {
 
             return Array.isArray(rows) ? /** @type {Record<string, unknown>[]} */ (rows) : [];
         },
+        run: async (sql, params) => {
+            const queryable = /** @type {import('mysql2/promise').Connection} */ (connection);
+            const [result] = await queryable.query(sql, [...params]);
+
+            return /** @type {import('mysql2/promise').ResultSetHeader} */ (result).affectedRows;
+        },
     };
 }
 

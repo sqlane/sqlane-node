@@ -17,6 +17,11 @@ function toExecutor(connection) {
 
             return result.rows;
         },
+        run: async (sql, params) => {
+            const result = await connection.query(sql, [...params]);
+
+            return result.rowCount ?? 0;
+        },
     };
 }
 

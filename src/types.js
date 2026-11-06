@@ -195,6 +195,8 @@
  * Runs SQL. Used by sqlane, through an adapter.
  * @typedef {object} Executor
  * @property {(sql: string, params: readonly unknown[]) => Promise<readonly Record<string, unknown>[]>} query
+ * @property {(sql: string, params: readonly unknown[]) => Promise<number>} run Runs an INSERT, UPDATE or DELETE:
+ *     the number of rows it changed.
  */
 
 /**
