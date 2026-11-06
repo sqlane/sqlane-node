@@ -312,8 +312,9 @@ loop while started
 
 **The probe is the key to cheap idle names.** One statement reads only the names that have pending rows:
 
-- MySQL: `SELECT job_name, MIN(run_at) FROM sqlane_jobs WHERE status = 'pending' GROUP BY job_name`. With the index
-  `(status, job_name, run_at)`, MySQL uses a loose index scan: one index dive per pending name.
+- MySQL: `SELECT job_name, MIN(run_at) FROM sqlane_jobs WHERE status = 'pending' GROUP BY status, job_name`. With the
+  index `(status, job_name, run_at)`, MySQL uses a loose index scan: one index dive per pending name. The `GROUP BY`
+  names the whole index prefix: `GROUP BY job_name` alone gets a full index scan.
 - PostgreSQL has no loose index scan. A recursive CTE skips from one pending name to the next on the partial index:
   two index probes per pending name.
 
@@ -401,7 +402,9 @@ One short transaction on the queue's pool:
   no deadlocks between queue transactions.
 - **FIFO per key.** A job starts only if none of its keys is held (by a job of any name) and no older due job has one
   of its keys. A job with keys A and B does not starve behind newer jobs of A or B.
-- **Window.** The FIFO looks at the oldest 500 due jobs of each keyed name that the claiming process handles. A name
+- **Window.** The FIFO looks at the oldest 500 due jobs of each keyed name that the claiming process handles (a
+  handled name whose definition has `mutexKeys`). Keys given only in the enqueue options of another name still exclude
+  each other at the claim, without the FIFO. A name
   that no process handles (a retired name, a typo enqueued by name) never blocks a key. Processes that handle
   different names see different windows, so the FIFO across names is approximate. More than 500 due jobs on one key
   delay the jobs behind them: coalesce such jobs.

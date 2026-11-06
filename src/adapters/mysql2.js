@@ -33,12 +33,18 @@ function isPool(connection) {
  * @template T
  * @param {import('mysql2/promise').Pool} pool
  * @param {(executor: import('../types.js').Executor) => Promise<T>} func
+ * @param {boolean} [readCommitted] Default: false: the isolation level of the session.
  * @returns {Promise<T>}
  */
-async function inOwnTransaction(pool, func) {
+async function inOwnTransaction(pool, func, readCommitted = false) {
     const connection = await pool.getConnection();
 
     try {
+        if (readCommitted) {
+            // For the next transaction only
+            await connection.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+        }
+
         await connection.beginTransaction();
 
         try {
@@ -76,6 +82,7 @@ export function mysql2Adapter(pool) {
                 connection.release();
             }
         },
+        queueTransaction: func => inOwnTransaction(pool, func, true),
         inTransaction: (connection, func) => (isPool(connection)
             ? inOwnTransaction(connection, func)
             : func(toExecutor(connection))),

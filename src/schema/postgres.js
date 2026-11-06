@@ -20,8 +20,8 @@ export function postgresMigrations(p) {
                     stalls integer NOT NULL DEFAULT 0,
                     max_stalls integer NOT NULL,
                     mutex_keys text[] COLLATE "C",
-                    enqueue_token char(26) COLLATE "C" NOT NULL,
-                    lock_token char(26) COLLATE "C",
+                    enqueue_token varchar(26) COLLATE "C" NOT NULL,
+                    lock_token varchar(26) COLLATE "C",
                     locked_by varchar(255),
                     locked_until timestamptz(3),
                     timed_out_at timestamptz(3),
@@ -45,7 +45,7 @@ export function postgresMigrations(p) {
                 `CREATE TABLE IF NOT EXISTS ${p}mutexes (
                     mutex_key varchar(255) COLLATE "C" NOT NULL PRIMARY KEY,
                     job_id varchar(255) COLLATE "C" NOT NULL,
-                    lock_token char(26) COLLATE "C" NOT NULL,
+                    lock_token varchar(26) COLLATE "C" NOT NULL,
                     held_until timestamptz(3),
                     created_at timestamptz(3) NOT NULL
                 )`,
