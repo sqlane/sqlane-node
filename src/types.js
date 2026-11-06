@@ -185,6 +185,8 @@
  * @property {Executor} queue Used by sqlane: the queue's own pool.
  * @property {<T>(func: (executor: Executor) => Promise<T>) => Promise<T>} withConnection Used by sqlane: runs func on
  *     one connection of the queue's pool, then releases it.
+ * @property {<T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T>} inTransaction Used by sqlane:
+ *     a pool → func in a transaction of its own; a connection or a client → func on it, in the caller's transaction.
  */
 
 /**

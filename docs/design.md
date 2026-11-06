@@ -125,7 +125,7 @@ Choices:
 - **No payload types, no validation.** An enqueued payload must be JSON: `enqueue` checks it with a `Jsonable<T>`
   type inferred from the argument (TS interfaces and optional fields pass; a `Date`, a `Map` or a class instance is
   a type error; no generics to write). The read side (the handler's `payload`, the argument of `mutexKeys`) is `any`. At runtime:
-  `JSON.stringify` and the size limit, no revivers. The app validates its own payloads.
+  `JSON.stringify`, well-formed strings without NUL (PostgreSQL `jsonb` refuses it), and the size limit, no revivers. The app validates its own payloads.
 - **Names and ids.** A job name matches `^[a-z][a-z0-9_.-]{0,127}$` (no `:`). A `jobId` is a string of 1–120
   printable ASCII characters. Both are case-sensitive on both databases.
 - **Enqueue by name too.** `enqueue(conn, 'job_name', …)` is for producers without the definition (another service,
@@ -279,7 +279,8 @@ In the caller's transaction, with its connection (with a pool: in a transaction 
 1. Check the payload (JSON, at most `maxPayloadBytes`, default 256 KiB) and the options (`jobId`, `delay` or `runAt`,
    `maxAttempts`, `maxStalls`, `retention`, `failureJob`, `mutexKeys`).
 2. The mutex keys: the enqueue option if given, else the definition's function of the payload.
-3. `INSERT` the payload and the job (with its keys). With a `jobId`, an existing row means a duplicate: the enqueue returns
+3. `INSERT` the jobs (with their keys) in the order of their ids (no deadlocks between concurrent enqueues), then the
+   payloads of the rows with this call's `enqueue_token`. With a `jobId`, an existing row means a duplicate: the enqueue returns
    `{ id, created: false }` and adds nothing. Deduplication lasts while the row exists, in any state: the retention
    is the dedupe window. After cleanup, the same `jobId` adds a new job. A duplicate changes nothing: its payload insert is skipped too.
    PostgreSQL: one statement (a CTE), atomic even outside a transaction.
