@@ -33,13 +33,14 @@ function isPool(connection) {
  * @template T
  * @param {import('pg').Pool} pool
  * @param {(executor: import('../types.js').Executor) => Promise<T>} func
+ * @param {boolean} [readCommitted] Default: false: the isolation level of the session.
  * @returns {Promise<T>}
  */
-async function inOwnTransaction(pool, func) {
+async function inOwnTransaction(pool, func, readCommitted = false) {
     const client = await pool.connect();
 
     try {
-        await client.query('BEGIN');
+        await client.query(readCommitted ? 'BEGIN ISOLATION LEVEL READ COMMITTED' : 'BEGIN');
 
         try {
             const result = await func(toExecutor(client));
@@ -76,6 +77,7 @@ export function pgAdapter(pool, options = {}) {
                 client.release();
             }
         },
+        queueTransaction: func => inOwnTransaction(pool, func, true),
         inTransaction: (connection, func) => (isPool(connection)
             ? inOwnTransaction(connection, func)
             : func(toExecutor(connection))),
