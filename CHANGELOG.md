@@ -1,5 +1,15 @@
 # @sqlane/core
 
+## 0.0.4
+
+### Patch Changes
+
+- [#15](https://github.com/sqlane/sqlane-node/pull/15) [`37221b6`](https://github.com/sqlane/sqlane-node/commit/37221b61d2bb6d6e47a515fe75d1f17aac8111be) - Internal: the worker side of the store (probe, candidates, claim with mutex keys). The lock and enqueue tokens are
+  `varchar(26)` in the schema.
+
+- [#17](https://github.com/sqlane/sqlane-node/pull/17) [`2946241`](https://github.com/sqlane/sqlane-node/commit/2946241dbac858276663a4c9c309f79d799e2e38) - Internal: the final writes of the store (lease renewal, complete, retry, fail with the failure job, release, stall
+  recovery, mutex sweeps, cleanup).
+
 ## 0.0.3
 
 ### Patch Changes
