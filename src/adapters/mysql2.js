@@ -21,6 +21,42 @@ function toExecutor(connection) {
 }
 
 /**
+ * @param {Mysql2Connection} connection
+ * @returns {connection is import('mysql2/promise').Pool}
+ */
+function isPool(connection) {
+    return typeof (/** @type {{ getConnection?: unknown }} */ (connection).getConnection) === 'function';
+}
+
+/**
+ * Runs func in a transaction of its own, on a connection of the pool.
+ * @template T
+ * @param {import('mysql2/promise').Pool} pool
+ * @param {(executor: import('../types.js').Executor) => Promise<T>} func
+ * @returns {Promise<T>}
+ */
+async function inOwnTransaction(pool, func) {
+    const connection = await pool.getConnection();
+
+    try {
+        await connection.beginTransaction();
+
+        try {
+            const result = await func(toExecutor(connection));
+
+            await connection.commit();
+
+            return result;
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        }
+    } finally {
+        connection.release();
+    }
+}
+
+/**
  * The adapter for mysql2 (its promise API). `enqueue` then takes a `Connection`, a `PoolConnection` (in a
  * transaction) or a `Pool`.
  * @param {import('mysql2/promise').Pool} pool The queue's own pool: claims, leases, results.
@@ -40,5 +76,8 @@ export function mysql2Adapter(pool) {
                 connection.release();
             }
         },
+        inTransaction: (connection, func) => (isPool(connection)
+            ? inOwnTransaction(connection, func)
+            : func(toExecutor(connection))),
     };
 }
