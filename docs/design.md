@@ -188,8 +188,9 @@ All extend `SqlaneError` and have a `code`:
 | `MigrationLockTimeoutError` | `MIGRATION_LOCK_TIMEOUT` | `migrate()` did not get the migration lock in its `lockTimeout`.        |
 
 `ConfigError` cases: an unknown lane, `lane` with `concurrency`, a duplicate `handle()`, two definitions with one name,
-a handled definition whose `failureJob` is a name that is neither in `jobs` nor handled, a failure job whose
-definition has a `failureJob` of its own. `handle()` also throws it for a keyed
+`handle()` after `start()`. `start()` and `drain()` throw it for a handled definition whose `failureJob` is a name
+that is neither in `jobs` nor handled, or a failure job whose definition has a `failureJob` of its own: they check the
+handlers together, so the order of the `handle()` calls does not matter. `handle()` also throws it for a keyed
 definition whose resolved timeout (`handle()` options, else the definition, else `defaults`) is none; `defineJob` never
 checks the timeout.
 
@@ -429,7 +430,7 @@ When a job fails for good (no attempts left, too many stalls, or a `FatalJobErro
 - Payload (`FailedJobPayload`): `{ job: { id, name, payload, attempt, maxAttempts }, error: { name, message, stack } }`.
   Exempt from `maxPayloadBytes`; `error.stack` is cut to 8 KiB.
 - A `FatalJobError` fails the job at once, with the same failure job.
-- The failure job is an ordinary job. Its options come from its definition: `handle()` checks that it resolves (a
+- The failure job is an ordinary job. Its options come from its definition: `start()` and `drain()` check that it resolves (a
   definition object, or a name in `jobs` or handled) and has no `failureJob` of its own (`ConfigError`). A stall-fail
   in a process that does not know the definition uses the defaults. Its row always gets `failure_job = null` (no
   chains), and it is exempt from `unknownJobs: 'reject'`.
@@ -458,8 +459,8 @@ LISTEN connection, the hint subscription), never the app's pool.
 `drain({ timeout, includeDelayed })` claims and runs jobs until none is left, without `start()`:
 
 - Only the names this instance handles, and only the due jobs. Pending jobs of other names are not waited for.
-- `includeDelayed: true` also runs the delayed jobs and the retries in backoff at once: for tests like "fails 3 times,
-  then the failure job runs".
+- `includeDelayed: true` also runs the delayed jobs and the retries in backoff at once (each round makes the pending
+  jobs of the handled names due now): for tests like "fails 3 times, then the failure job runs".
 - Returns counts: `completed`, `retried` (failed attempts that were retried), `failed` (jobs that failed for good).
   On timeout it rejects with `DrainTimeoutError`.
 

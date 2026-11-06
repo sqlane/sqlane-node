@@ -90,6 +90,7 @@ import * as postgresWorker from './postgres_worker.js';
  *     => Promise<{ result: 'released' | 'failed' | null, failureJob: FailureJobResult | null }>} recoverStaleJob
  * @property {(limit: number) => Promise<{ lingers: number, orphans: number }>} sweepMutexes
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
+ * @property {(names: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
  */
 
 /**
@@ -128,5 +129,6 @@ export function createStore(adapter, tablePrefix) {
         recoverStaleJob: (id, params) => inQueue(executor => final.recoverStaleJob(executor, p, id, params)),
         sweepMutexes: limit => inQueue(executor => final.sweepMutexes(executor, p, limit)),
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
+        makeDue: names => final.makeDue(adapter.queue, p, names),
     };
 }

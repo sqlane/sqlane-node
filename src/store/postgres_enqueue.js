@@ -34,7 +34,8 @@ export async function insertJobsPostgres(executor, p, jobs, enqueueToken) {
             INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, mutex_keys, enqueue_token,
                 completed_retention_ms, failed_retention_ms, failure_job, created_at, updated_at)
             SELECT id, job_name, 'pending',
-                   COALESCE(run_at, clock_timestamp() + delay_ms * interval '1 millisecond'),
+                   -- Truncated: timestamptz(3) rounds, and a rounded-up time is not due for the claim
+                   COALESCE(run_at, date_trunc('milliseconds', clock_timestamp() + delay_ms * interval '1 millisecond')),
                    max_attempts, max_stalls, mutex_keys, $2, completed_retention_ms, failed_retention_ms, failure_job,
                    clock_timestamp(), clock_timestamp()
               FROM input ORDER BY id
