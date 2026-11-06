@@ -222,7 +222,7 @@ test('unknownJobs: reject: an unknown name throws, a name of "jobs" passes', asy
         unknownJobs: 'reject',
     });
 
-    await expect(strict.enqueue(testAdapter.pool, 'build_report', {})).rejects.toThrow(UnknownJobError);
+    await expect(strict.enqueue(testAdapter.pool, 'not_registered', {})).rejects.toThrow(UnknownJobError);
     await expect(strict.enqueue(testAdapter.pool, 'build_report', { reportId: 'u1' }))
         .resolves.toMatchObject({ created: true });
 });
