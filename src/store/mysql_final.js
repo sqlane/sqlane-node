@@ -371,3 +371,21 @@ export async function deleteExpiredJobs(executor, p, limit) {
 
     return deleted;
 }
+
+/**
+ * For drain({ includeDelayed }): the pending jobs of the names are due now.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} names
+ * @returns {Promise<void>}
+ */
+export async function makeDue(executor, p, names) {
+    if (!names.length) {
+        return;
+    }
+
+    await executor.run(`
+        UPDATE ${p}jobs SET run_at = ${NOW}
+         WHERE status = 'pending' AND job_name IN (${placeholders(names.length)}) AND run_at > ${NOW}
+    `, names);
+}
