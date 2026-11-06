@@ -174,3 +174,15 @@ export class RetryJobError extends SqlaneError {
         this.delay = delay;
     }
 }
+
+/** `migrate()` did not get the migration lock in its `lockTimeout`. */
+export class MigrationLockTimeoutError extends SqlaneError {
+    /**
+     * @param {string} message
+     * @param {ErrorOptions} [options]
+     */
+    constructor(message, options) {
+        super('MIGRATION_LOCK_TIMEOUT', message, options);
+        this.name = 'MigrationLockTimeoutError';
+    }
+}

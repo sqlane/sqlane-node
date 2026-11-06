@@ -183,6 +183,8 @@
  * @property {'mysql' | 'postgres'} dialect
  * @property {(connection: C) => Executor} wrap Used by sqlane: wraps a connection given to `enqueue`.
  * @property {Executor} queue Used by sqlane: the queue's own pool.
+ * @property {<T>(func: (executor: Executor) => Promise<T>) => Promise<T>} withConnection Used by sqlane: runs func on
+ *     one connection of the queue's pool, then releases it.
  */
 
 /**
@@ -273,7 +275,8 @@
  * @property {(options?: DrainOptions) => Promise<DrainResult>} drain For tests: runs the due jobs of the handled
  *     names until none is left, without `start()`.
  * @property {(options?: CloseOptions) => Promise<void>} close
- * @property {(options?: MigrateOptions) => Promise<void>} migrate
+ * @property {(options?: MigrateOptions) => Promise<{ applied: string[] }>} migrate Applies the missing migrations:
+ *     their ids.
  * @property {() => Promise<JobStats[]>} getStats
  * @property {(jobName: string) => void} wake Low level: probes this name now.
  */

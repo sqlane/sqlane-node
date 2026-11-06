@@ -31,6 +31,15 @@ export function pgAdapter(pool, options = {}) {
         dialect: 'postgres',
         wrap: toExecutor,
         queue: toExecutor(pool),
+        withConnection: async (func) => {
+            const client = await pool.connect();
+
+            try {
+                return await func(toExecutor(client));
+            } finally {
+                client.release();
+            }
+        },
         notify: options.notify ?? false,
     };
 }
