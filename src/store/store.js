@@ -130,7 +130,7 @@ export function createStore(adapter, tablePrefix) {
         recoverStaleJob: (id, params) => inQueue(executor => final.recoverStaleJob(executor, p, id, params)),
         sweepMutexes: limit => inQueue(executor => final.sweepMutexes(executor, p, limit)),
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
-        makeDue: names => final.makeDue(adapter.queue, p, names),
+        makeDue: names => inQueue(executor => final.makeDue(executor, p, names)),
         getStats: () => final.getStats(adapter.queue, p),
     };
 }

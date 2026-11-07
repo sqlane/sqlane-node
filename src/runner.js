@@ -19,6 +19,7 @@ import {
 } from './errors.js';
 import { ANY_NAME } from './hint_channel.js';
 import { buildNewJob } from './new_job.js';
+import { isTransientDbError } from './transient_error.js';
 
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
@@ -835,15 +836,30 @@ export function createRunner({
                 // A job that finishes during this round can add a job (a retry, a failure job) that the round misses
                 const finishedBefore = finishedCount;
 
-                if (options.includeDelayed) {
+                let claimed = 0;
+                let lostRace = false;
+
+                try {
+                    if (options.includeDelayed) {
+                        // oxlint-disable-next-line no-await-in-loop -- one round after the other
+                        await store.makeDue(names);
+                    }
+
                     // oxlint-disable-next-line no-await-in-loop -- one round after the other
-                    await store.makeDue(names);
+                    ({ claimed } = await claimAndStart(names));
+                } catch (error) {
+                    if (!isTransientDbError(error)) {
+                        throw error;
+                    }
+
+                    // A deadlock with a write of a job: the next round does the work again
+                    reportError('drain', error);
+                    lostRace = true;
                 }
 
-                // oxlint-disable-next-line no-await-in-loop -- one round after the other
-                const { claimed } = await claimAndStart(names);
+                const quiet = !claimed && !lostRace && !running.size && finishedCount === finishedBefore;
 
-                quietRounds = !claimed && !running.size && finishedCount === finishedBefore ? quietRounds + 1 : 0;
+                quietRounds = quiet ? quietRounds + 1 : 0;
 
                 // Two quiet rounds in a row: a write that commits late still gets a round
                 if (quietRounds >= 2) {
