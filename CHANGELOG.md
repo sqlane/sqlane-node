@@ -1,6 +1,15 @@
 # @sqlane/core
 
-## 0.0.4
+## 0.1.0
+
+The first usable version: jobs are enqueued in the caller's transaction and run by the workers, on MySQL 8.4+ and
+PostgreSQL 15+. It includes the versions 0.0.3 and 0.0.4, which were not published.
+
+### Minor Changes
+
+- [#19](https://github.com/sqlane/sqlane-node/pull/19) [`5a71cf7`](https://github.com/sqlane/sqlane-node/commit/5a71cf7bd81bb0db0ed171a4f2e83f60f3962a8b) - `getStats()` gives the pending, due, running, stuck and failed counts and the oldest due age of each job name. Hints wake
+  the other processes: a `hint: { publish, subscribe }` over any pub/sub, or `pgAdapter(pool, { notify: true })` for
+  PostgreSQL LISTEN/NOTIFY (delivered on commit). The README shows the usage.
 
 ### Patch Changes
 
@@ -13,11 +22,7 @@
 - [#18](https://github.com/sqlane/sqlane-node/pull/18) [`f290097`](https://github.com/sqlane/sqlane-node/commit/f29009721aa7da35bae23220ad0094a404ba5e7e) - Jobs run: `handle()`, `start()`, `drain()`, `close()` and `wake()` work. Handlers get `{ payload, job, signal }`; jobs
   retry by their backoff, fail into their failure job, respect the lanes, the process `concurrency` and the mutex keys,
   and time out with an aborted `signal`. `close()` releases or abandons the unfinished jobs; `drain()` runs the due jobs
-  for tests. `getStats()` is not implemented yet.
-
-## 0.0.3
-
-### Patch Changes
+  for tests.
 
 - [#9](https://github.com/sqlane/sqlane-node/pull/9) [`555bb6c`](https://github.com/sqlane/sqlane-node/commit/555bb6ce6e2c7cd48c11f589fdb9385d7b84bffa) - `defineJob()` checks its options and throws a `ConfigError` for a bad name, an unknown option, or a bad
   `maxAttempts`, `maxStalls`, `backoff`, `retention`, `timeout`, `mutexKeys` or `failureJob`.
