@@ -17,6 +17,7 @@ import {
     RetryJobError,
     ShutdownError,
 } from './errors.js';
+import { ANY_NAME } from './hint_channel.js';
 import { buildNewJob } from './new_job.js';
 
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
@@ -75,6 +76,7 @@ const BATCH = 1000;
  * @property {boolean} cleanup
  * @property {import('./types.js').Logger | undefined} logger
  * @property {((event: import('./types.js').SqlaneEvent) => void) | undefined} onEvent
+ * @property {import('./hint_channel.js').HintChannel} hintChannel
  * @property {Partial<Timings>} [timings] For tests.
  */
 
@@ -87,6 +89,7 @@ const BATCH = 1000;
  * @property {(names: string[]) => void} onEnqueued
  * @property {() => boolean} isClosed
  * @property {() => boolean} isStarted
+ * @property {(name: string) => boolean} canStartNow This process handles the name and has a free slot for it.
  */
 
 /**
@@ -114,7 +117,17 @@ function contextOf(job) {
  * @param {RunnerParams} params
  * @returns {Runner}
  */
-export function createRunner({ store, registry, concurrency, defaults, cleanup, logger, onEvent, timings = {} }) {
+export function createRunner({
+    store,
+    registry,
+    concurrency,
+    defaults,
+    cleanup,
+    logger,
+    onEvent,
+    hintChannel,
+    timings = {},
+}) {
     const t = { ...DEFAULT_TIMINGS, ...timings };
     const lockedBy = `${hostname()}:${process.pid}:${monotonicFactory()()}`;
     const lockToken = monotonicFactory();
@@ -320,6 +333,7 @@ export function createRunner({ store, registry, concurrency, defaults, cleanup, 
             });
         } else if (result && 'added' in result) {
             onEnqueued([result.added.name]);
+            hintChannel.publish(result.added.name);
         }
     }
 
@@ -529,6 +543,11 @@ export function createRunner({ store, registry, concurrency, defaults, cleanup, 
                 running.delete(job.key);
                 finishedCount++;
                 wakeUp();
+
+                if (claimed.mutexKeys.length) {
+                    // Its keys are free: the jobs that wait for them can start, here or elsewhere
+                    hintChannel.publish(ANY_NAME);
+                }
             }
         })();
     }
@@ -715,6 +734,7 @@ export function createRunner({ store, registry, concurrency, defaults, cleanup, 
 
         if (freedKeys || lingers || orphans) {
             wakeUp();
+            hintChannel.publish(ANY_NAME);
         }
     }
 
@@ -737,7 +757,7 @@ export function createRunner({ store, registry, concurrency, defaults, cleanup, 
         }
 
         for (const name of names) {
-            if (!registry.getEntry(name) || reprobing.has(name)) {
+            if ((name !== ANY_NAME && !registry.getEntry(name)) || reprobing.has(name)) {
                 continue;
             }
 
@@ -773,6 +793,13 @@ export function createRunner({ store, registry, concurrency, defaults, cleanup, 
         }
 
         loopDone = loop();
+
+        try {
+            // A hint is sent before the commit of its enqueue: re-probe until the job is visible
+            await hintChannel.listen(name => onEnqueued([name]));
+        } catch (error) {
+            reportError('hint_listen', error);
+        }
     }
 
     /**
@@ -867,6 +894,7 @@ export function createRunner({ store, registry, concurrency, defaults, cleanup, 
 
         state = 'closing';
         wakeUp();
+        await hintChannel.stop();
         await loopDone;
 
         const deadline = startedAt + deadlineMs;
@@ -921,5 +949,10 @@ export function createRunner({ store, registry, concurrency, defaults, cleanup, 
         onEnqueued,
         isClosed: () => state === 'closing' || state === 'closed',
         isStarted: () => state === 'started',
+        canStartNow: (name) => {
+            const entry = registry.getEntry(name);
+
+            return state === 'started' && Boolean(entry) && freeSlots(/** @type {HandlerEntry} */ (entry).lane) > 0;
+        },
     };
 }

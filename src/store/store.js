@@ -91,6 +91,7 @@ import * as postgresWorker from './postgres_worker.js';
  * @property {(limit: number) => Promise<{ lingers: number, orphans: number }>} sweepMutexes
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
  * @property {(names: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
+ * @property {() => Promise<import('../types.js').JobStats[]>} getStats
  */
 
 /**
@@ -130,5 +131,6 @@ export function createStore(adapter, tablePrefix) {
         sweepMutexes: limit => inQueue(executor => final.sweepMutexes(executor, p, limit)),
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
         makeDue: names => final.makeDue(adapter.queue, p, names),
+        getStats: () => final.getStats(adapter.queue, p),
     };
 }

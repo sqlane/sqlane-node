@@ -189,6 +189,9 @@
  *     in a `READ COMMITTED` transaction on a connection of the queue's pool.
  * @property {<T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T>} inTransaction Used by sqlane:
  *     a pool → func in a transaction of its own; a connection or a client → func on it, in the caller's transaction.
+ * @property {boolean} [notify] PostgreSQL: hints by LISTEN/NOTIFY.
+ * @property {(channel: string, onMessage: (message: string) => void) => Promise<() => Promise<void>>} [listen] Used by
+ *     sqlane, with `notify`: LISTEN on a connection of its own; resolves to the unlisten function.
  */
 
 /**
