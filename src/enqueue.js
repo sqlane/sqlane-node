@@ -17,6 +17,8 @@ const enqueueToken = monotonicFactory();
  * @property {'allow' | 'reject'} unknownJobs
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {number} maxPayloadBytes
+ * @property {string | null} notifyChannel PostgreSQL NOTIFY: `pg_notify` in the enqueue transaction, delivered on
+ *     commit. Null: no NOTIFY.
  */
 
 /**
@@ -32,7 +34,15 @@ const enqueueToken = monotonicFactory();
  * @param {EnqueuerOptions<C>} options
  * @returns {Enqueuer<C>}
  */
-export function createEnqueuer({ adapter, tablePrefix, findDefinition, unknownJobs, defaults, maxPayloadBytes }) {
+export function createEnqueuer({
+    adapter,
+    tablePrefix,
+    findDefinition,
+    unknownJobs,
+    defaults,
+    maxPayloadBytes,
+    notifyChannel,
+}) {
     const insertJobs = adapter.dialect === 'mysql' ? insertJobsMysql : insertJobsPostgres;
 
     /**
@@ -88,10 +98,16 @@ export function createEnqueuer({ adapter, tablePrefix, findDefinition, unknownJo
         }
 
         const token = enqueueToken();
-        const created = await adapter.inTransaction(
-            connection,
-            executor => insertJobs(executor, tablePrefix, [...firstById.values()], token),
-        );
+        const created = await adapter.inTransaction(connection, async (executor) => {
+            const createdIds = await insertJobs(executor, tablePrefix, [...firstById.values()], token);
+
+            if (notifyChannel && createdIds.size) {
+                // One NOTIFY per transaction and name: PostgreSQL drops the repeated ones
+                await executor.query('SELECT pg_notify($1, $2)', [notifyChannel, name]);
+            }
+
+            return createdIds;
+        });
 
         return newJobs.map(newJob => ({
             id: newJob.id,

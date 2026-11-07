@@ -1,5 +1,6 @@
 import { resolveDefaults } from './defaults.js';
 import { createEnqueuer } from './enqueue.js';
+import { createHintChannel } from './hint_channel.js';
 import { ClosedError, ConfigError } from './errors.js';
 import { runMigrations } from './migrations.js';
 import { DEFAULT_MAX_PAYLOAD_BYTES } from './payload.js';
@@ -12,14 +13,6 @@ const OPTION_NAMES = [
     'adapter', 'jobs', 'concurrency', 'lanes', 'defaults', 'unknownJobs', 'hint', 'logger', 'onEvent', 'tablePrefix',
     'pollInterval', 'maxPayloadBytes', 'cleanup', 'timings',
 ];
-
-/**
- * @param {string} method
- * @returns {never}
- */
-function notImplemented(method) {
-    throw new Error(`sqlane: ${method}() is not implemented yet`);
-}
 
 /**
  * @param {unknown} jobs
@@ -49,6 +42,39 @@ function indexJobs(jobs, scope) {
     }
 
     return byName;
+}
+
+/**
+ * The hint of an instance: the `hint` option, or the LISTEN/NOTIFY of a pg adapter with `notify`.
+ * @param {import('./types.js').Adapter<any>} adapter
+ * @param {unknown} hint
+ * @returns {import('./types.js').Hint | null}
+ */
+function resolveHint(adapter, hint) {
+    if (hint !== undefined && hint !== null) {
+        if (!isPlainObject(hint) || typeof hint.publish !== 'function' || typeof hint.subscribe !== 'function') {
+            throw new ConfigError('createSqlane: "hint" must be { publish(channel, message), subscribe(channel, onMessage) }');
+        }
+
+        if (adapter.notify) {
+            throw new ConfigError('createSqlane: "hint" or pgAdapter(pool, { notify: true }), not both');
+        }
+
+        return /** @type {import('./types.js').Hint} */ (hint);
+    }
+
+    if (!adapter.notify || !adapter.listen) {
+        return null;
+    }
+
+    const { listen } = adapter;
+
+    return {
+        publish: async (channel, message) => {
+            await adapter.queue.query('SELECT pg_notify($1, $2)', [channel, message]);
+        },
+        subscribe: listen,
+    };
 }
 
 /**
@@ -98,16 +124,29 @@ export function createSqlane(options) {
         concurrency,
         defaultTimeoutMs: defaults.timeoutMs,
     });
+    const hint = resolveHint(adapter, options.hint);
+    const hintChannel = createHintChannel({
+        hint,
+        channel: `${tablePrefix}ready`,
+        reportError: (operation, error) => {
+            options.logger?.warn({ error, operation }, `sqlane: ${operation} failed`);
+            options.onEvent?.({ type: 'error', operation, error });
+        },
+    });
+    // NOTIFY in the enqueue transaction: no publish after the enqueue
+    const notifyChannel = adapter.notify ? `${tablePrefix}ready` : null;
     // Undocumented, for the tests of sqlane
     const testTimings = /** @type {{ timings?: object }} */ (options).timings;
+    const store = createStore(adapter, tablePrefix);
     const runner = createRunner({
-        store: createStore(adapter, tablePrefix),
+        store,
         registry,
         concurrency,
         defaults,
         cleanup,
         logger: options.logger,
         onEvent: options.onEvent,
+        hintChannel,
         timings: { pollIntervalMs, ...testTimings },
     });
     const enqueuer = createEnqueuer({
@@ -117,14 +156,24 @@ export function createSqlane(options) {
         unknownJobs,
         defaults,
         maxPayloadBytes,
+        notifyChannel,
     });
+    /** @param {string} name */
+    const onCreated = (name) => {
+        runner.onEnqueued([name]);
+
+        // A process sends a hint only for the jobs that it cannot start itself
+        if (!notifyChannel && !runner.canStartNow(name)) {
+            hintChannel.publish(name);
+        }
+    };
 
     return {
         enqueue: async (connection, job, payload, enqueueOptions) => {
             const result = await enqueuer.enqueue(connection, job, payload, enqueueOptions);
 
             if (result.created) {
-                runner.onEnqueued([typeof job === 'string' ? job : job.name]);
+                onCreated(typeof job === 'string' ? job : job.name);
             }
 
             return result;
@@ -133,7 +182,7 @@ export function createSqlane(options) {
             const results = await enqueuer.enqueueMany(connection, job, items);
 
             if (results.some(result => result.created)) {
-                runner.onEnqueued([typeof job === 'string' ? job : job.name]);
+                onCreated(typeof job === 'string' ? job : job.name);
             }
 
             return results;
@@ -155,7 +204,7 @@ export function createSqlane(options) {
         migrate: async migrateOptions => ({
             applied: await runMigrations(adapter, tablePrefix, migrateOptions),
         }),
-        getStats: () => notImplemented('getStats'),
+        getStats: () => store.getStats(),
         wake: name => runner.wake(name),
     };
 }

@@ -360,7 +360,9 @@ node-redis.
 - `hint: null`: polling only.
 - `hint: { publish, subscribe }`: the channel is `<tablePrefix>ready`, the message is a job name. Published after an
   enqueue, fire-and-forget: `enqueue` does not wait for `publish`, and a failed publish never rejects it (an `error`
-  event). A process sends a hint only for the jobs it cannot start itself.
+  event). A process sends a hint only for the jobs it cannot start itself. When a job frees mutex keys, the message is
+  `*`: every process probes all its names. A receiver re-probes the name for a short while (the hint can come before
+  the commit).
 - `pgAdapter(pool, { notify: true })`: LISTEN on a dedicated connection; the enqueue sends `pg_notify` in its
   transaction, so the hint arrives only after the commit. At most one NOTIFY per transaction and job name: NOTIFY
   takes a global lock at commit and limits the commit rate under heavy write load.

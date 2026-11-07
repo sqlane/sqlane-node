@@ -389,3 +389,36 @@ export async function makeDue(executor, p, names) {
          WHERE status = 'pending' AND job_name IN (${placeholders(names.length)}) AND run_at > ${NOW}
     `, names);
 }
+
+/**
+ * The counts per job name, for alerts such as "queue stuck". Reads the status index only.
+ * @param {Executor} executor
+ * @param {string} p
+ * @returns {Promise<import('../types.js').JobStats[]>}
+ */
+export async function getStats(executor, p) {
+    const rows = await executor.query(`
+        SELECT job_name,
+               SUM(status = 'pending') AS pending,
+               SUM(status = 'pending' AND run_at <= ${NOW}) AS due,
+               SUM(status = 'running') AS running,
+               SUM(status = 'running' AND timed_out_at IS NOT NULL) AS stuck,
+               SUM(status = 'failed') AS failed,
+               TIMESTAMPDIFF(MICROSECOND, MIN(IF(status = 'pending' AND run_at <= ${NOW}, run_at, NULL)), ${NOW})
+                   DIV 1000 AS oldest_due_age_ms
+          FROM ${p}jobs
+         WHERE status IN ('pending', 'running', 'failed')
+         GROUP BY job_name
+         ORDER BY job_name
+    `, []);
+
+    return rows.map(row => ({
+        name: String(row.job_name),
+        pending: Number(row.pending),
+        due: Number(row.due),
+        running: Number(row.running),
+        stuck: Number(row.stuck),
+        failed: Number(row.failed),
+        oldestDueAgeMs: row.oldest_due_age_ms === null ? null : Number(row.oldest_due_age_ms),
+    }));
+}

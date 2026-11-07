@@ -63,10 +63,82 @@ async function inOwnTransaction(pool, func, readCommitted = false) {
 }
 
 /**
+ * LISTEN on a client of its own, taken from the pool; on an error of the client, listens again on a new one.
+ * @param {import('pg').Pool} pool
+ * @param {string} channel A safe identifier: `<tablePrefix>ready`.
+ * @param {(message: string) => void} onMessage
+ * @returns {Promise<() => Promise<void>>} Unlisten.
+ */
+async function listen(pool, channel, onMessage) {
+    /** @type {import('pg').PoolClient | null} */
+    let client = null;
+    let stopped = false;
+
+    /** @param {import('pg').Notification} notification */
+    const onNotification = (notification) => {
+        if (notification.channel === channel) {
+            onMessage(notification.payload ?? '');
+        }
+    };
+
+    /** @returns {Promise<void>} */
+    const connect = async () => {
+        const next = await pool.connect();
+
+        next.on('notification', onNotification);
+        next.once('error', (error) => {
+            next.release(error);
+
+            if (client === next) {
+                client = null;
+            }
+
+            reconnectLater();
+        });
+        await next.query(`LISTEN "${channel}"`);
+        client = next;
+    };
+
+    /** Listens again in 1 s, until it works or the listener stops. */
+    function reconnectLater() {
+        if (stopped) {
+            return;
+        }
+
+        setTimeout(async () => {
+            try {
+                await connect();
+            } catch {
+                reconnectLater();
+            }
+        }, 1000).unref();
+    }
+
+    await connect();
+
+    return async () => {
+        stopped = true;
+
+        const current = client;
+
+        client = null;
+
+        if (current) {
+            try {
+                await current.query(`UNLISTEN "${channel}"`);
+            } finally {
+                current.removeListener('notification', onNotification);
+                current.release();
+            }
+        }
+    };
+}
+
+/**
  * The adapter for pg. `enqueue` then takes a `Client`, a `PoolClient` (in a transaction) or a `Pool`.
  * @param {import('pg').Pool} pool The queue's own pool: claims, leases, results.
  * @param {PgAdapterOptions} [options]
- * @returns {import('../types.js').Adapter<PgConnection> & { notify: boolean }}
+ * @returns {import('../types.js').Adapter<PgConnection>}
  */
 export function pgAdapter(pool, options = {}) {
     return {
@@ -87,5 +159,6 @@ export function pgAdapter(pool, options = {}) {
             ? inOwnTransaction(connection, func)
             : func(toExecutor(connection))),
         notify: options.notify ?? false,
+        listen: (channel, onMessage) => listen(pool, channel, onMessage),
     };
 }
