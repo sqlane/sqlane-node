@@ -1,5 +1,13 @@
 # @sqlane/core
 
+## 0.0.5
+
+### Patch Changes
+
+- [#19](https://github.com/sqlane/sqlane-node/pull/19) [`5a71cf7`](https://github.com/sqlane/sqlane-node/commit/5a71cf7bd81bb0db0ed171a4f2e83f60f3962a8b) - `getStats()` gives the pending, due, running, stuck and failed counts and the oldest due age of each job name. Hints wake
+  the other processes: a `hint: { publish, subscribe }` over any pub/sub, or `pgAdapter(pool, { notify: true })` for
+  PostgreSQL LISTEN/NOTIFY (delivered on commit). The README shows the usage.
+
 ## 0.0.4
 
 ### Patch Changes
