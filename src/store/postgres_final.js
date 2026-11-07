@@ -9,6 +9,12 @@ import { insertJobsPostgres } from './postgres_enqueue.js';
 /** @typedef {import('./store.js').FailureJobResult} FailureJobResult */
 
 const NOW = 'clock_timestamp()';
+/**
+ * A due time from now, truncated to the ms of the column: timestamptz(3) rounds, and a rounded-up time is not due.
+ * @param {string} offset An interval.
+ * @returns {string}
+ */
+const runAt = offset => `date_trunc('milliseconds', ${NOW} + ${offset})`;
 const MS = 'interval \'1 millisecond\'';
 const CLEAR_LOCK = 'lock_token = NULL, locked_by = NULL, locked_until = NULL, timed_out_at = NULL';
 const enqueueToken = monotonicFactory();
@@ -120,7 +126,7 @@ export async function completeJob(executor, p, job) {
 export async function retryJob(executor, p, job, { delayMs, error }) {
     const changed = await executor.run(`
         UPDATE ${p}jobs
-           SET status = 'pending', run_at = ${NOW} + $3 * ${MS}, attempts = attempts + 1, ${CLEAR_LOCK},
+           SET status = 'pending', run_at = ${runAt(`$3 * ${MS}`)}, attempts = attempts + 1, ${CLEAR_LOCK},
                last_error = $4::jsonb, updated_at = ${NOW}
          WHERE id = $1 AND lock_token = $2
     `, [job.id, job.lockToken, delayMs, JSON.stringify(error)]);
@@ -231,7 +237,7 @@ export async function failJob(executor, p, job, { error, buildFailureJob }) {
  */
 export async function releaseJob(executor, p, job, { delayMs, lingerMs }) {
     const changed = await executor.run(`
-        UPDATE ${p}jobs SET status = 'pending', run_at = ${NOW} + $3 * ${MS}, ${CLEAR_LOCK}, updated_at = ${NOW}
+        UPDATE ${p}jobs SET status = 'pending', run_at = ${runAt(`$3 * ${MS}`)}, ${CLEAR_LOCK}, updated_at = ${NOW}
          WHERE id = $1 AND lock_token = $2
     `, [job.id, job.lockToken, delayMs]);
 
@@ -280,7 +286,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
     if (Number(row.stalls) < Number(row.max_stalls)) {
         await executor.run(`
             UPDATE ${p}jobs
-               SET status = 'pending', run_at = ${NOW} + LEAST(30000 * power(2, stalls), 3600000) * ${MS},
+               SET status = 'pending', run_at = ${runAt(`LEAST(30000 * power(2, stalls), 3600000) * ${MS}`)},
                    stalls = stalls + 1, ${CLEAR_LOCK}, last_error = $2::jsonb, updated_at = ${NOW}
              WHERE id = $1
         `, [id, JSON.stringify(error)]);
@@ -351,4 +357,18 @@ export async function deleteExpiredJobs(executor, p, limit) {
     `, [limit]);
 
     return Number(rows[0].count);
+}
+
+/**
+ * For drain({ includeDelayed }): the pending jobs of the names are due now.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} names
+ * @returns {Promise<void>}
+ */
+export async function makeDue(executor, p, names) {
+    await executor.run(`
+        UPDATE ${p}jobs SET run_at = ${runAt('interval \'0\'')}
+         WHERE status = 'pending' AND job_name = ANY($1::text[]) AND run_at > ${NOW}
+    `, [names]);
 }
