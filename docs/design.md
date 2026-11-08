@@ -139,7 +139,8 @@ Choices:
   `@sqlane/core/adapter-mysql2` (`Connection`, `PoolConnection`, `Pool`) and `@sqlane/core/adapter-pg` (`Client`,
   `PoolClient`, `Pool`) in v0.1; `@sqlane/core/adapter-knex` (a knex instance or transaction, with `mysql2` or `pg`) in
   v0.2; `@sqlane/core/adapter-kysely` (a Kysely instance or transaction; the dialect is an option: Kysely does not tell
-  it) in v0.4. Drizzle, Sequelize, Prisma, TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver
+  it) in v0.4; `@sqlane/core/adapter-drizzle` (a Drizzle database or transaction, with mysql2 or node-postgres) in
+  v0.5. Sequelize, Prisma, TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver
   connection under the ORM, or through its raw-SQL API: one SQL per dialect, and the ORM does not log it.
 - **Adapters are subpaths of the core**, not packages: `@sqlane/core/adapter-<name>`. The paths before 0.4
   (`@sqlane/core/mysql2`, `/pg`, `/knex`) stay as aliases until 1.0. None needs a dependency of its own:
@@ -551,7 +552,8 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 @sqlane/core/adapter-pg       pgAdapter (with the NOTIFY hint)
 @sqlane/core/adapter-knex     knexAdapter
 @sqlane/core/adapter-kysely   kyselyAdapter
-@sqlane/core/adapter-<orm>    later: drizzle, sequelize, prisma, typeorm, mikro-orm
+@sqlane/core/adapter-drizzle  drizzleAdapter
+@sqlane/core/adapter-<orm>    later: sequelize, prisma, typeorm, mikro-orm
 ```
 
 One repository, a pnpm workspace: `packages/<name>` for each published package, `test/` for the test databases of all
