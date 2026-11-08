@@ -1,5 +1,13 @@
 # @sqlane/core
 
+## 0.2.0
+
+### Minor Changes
+
+- [#32](https://github.com/sqlane/sqlane-node/pull/32) [`746ecac`](https://github.com/sqlane/sqlane-node/commit/746ecaceb73fef34f2f80aef4072d0469524e3bc) - An adapter can tell when the transaction of an enqueue commits (`afterCommit`): the processes wake at once after the
+  commit, and still re-probe after it. With `mysql2Adapter` and `pgAdapter`, an enqueue on a pool wakes at once. The
+  hint of an enqueue in a transaction of an ORM adapter is sent after the commit.
+
 ## 0.1.3
 
 ### Patch Changes
