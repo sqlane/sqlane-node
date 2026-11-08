@@ -1,5 +1,18 @@
 # @sqlane/core
 
+## 0.1.2
+
+### Patch Changes
+
+- [#29](https://github.com/sqlane/sqlane-node/pull/29) [`c465aa1`](https://github.com/sqlane/sqlane-node/commit/c465aa1bede1edf6703e66ad90a69c85039f895a) - Complete the finished jobs of a process in batches: one transaction for the jobs that finish during the previous
+  write. 2–3× the jobs per second for short jobs.
+
+- [#29](https://github.com/sqlane/sqlane-node/pull/29) [`c465aa1`](https://github.com/sqlane/sqlane-node/commit/c465aa1bede1edf6703e66ad90a69c85039f895a) - `close()` no longer keeps the process alive until its deadline: its timers end with it.
+
+- [#27](https://github.com/sqlane/sqlane-node/pull/27) [`8408a0c`](https://github.com/sqlane/sqlane-node/commit/8408a0cd8c949fa8e808ad48b9def7852269142e) - Start a job within milliseconds of its commit under steady traffic too. An enqueue made while the re-probes of an
+  earlier one were running waited for their late steps (up to 1 s); now each enqueue restarts the re-probes. A
+  PostgreSQL NOTIFY now wakes the workers at once, with no re-probe.
+
 ## 0.1.1
 
 ### Patch Changes
