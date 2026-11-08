@@ -141,7 +141,8 @@ Choices:
   v0.2; `@sqlane/core/adapter-kysely` (a Kysely instance or transaction; the dialect is an option: Kysely does not tell
   it) in v0.4; `@sqlane/core/adapter-drizzle` (a Drizzle database or transaction, with mysql2 or node-postgres) in
   v0.5; `@sqlane/core/adapter-prisma` (a Prisma 7 client or the client of an interactive transaction; the dialect is an
-  option) in v0.6. Sequelize, TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver
+  option) in v0.6; `@sqlane/core/adapter-sequelize` (a Sequelize 6 instance or transaction; after-commit hook of the
+  outermost transaction) in v0.7. TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver
   connection under the ORM, or through its raw-SQL API: one SQL per dialect, and the ORM does not log it.
 - **Adapters are subpaths of the core**, not packages: `@sqlane/core/adapter-<name>`. The paths before 0.4
   (`@sqlane/core/mysql2`, `/pg`, `/knex`) stay as aliases until 1.0. None needs a dependency of its own:
@@ -553,14 +554,15 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 ## Package layout
 
 ```text
-@sqlane/core                  core: definitions, runner, dispatcher, SQL of both dialects, migrations
-@sqlane/core/adapter-mysql2   mysql2Adapter
-@sqlane/core/adapter-pg       pgAdapter (with the NOTIFY hint)
-@sqlane/core/adapter-knex     knexAdapter
-@sqlane/core/adapter-kysely   kyselyAdapter
-@sqlane/core/adapter-drizzle  drizzleAdapter
-@sqlane/core/adapter-prisma   prismaAdapter
-@sqlane/core/adapter-<orm>    later: sequelize, typeorm, mikro-orm
+@sqlane/core                    core: definitions, runner, dispatcher, SQL of both dialects, migrations
+@sqlane/core/adapter-mysql2     mysql2Adapter
+@sqlane/core/adapter-pg         pgAdapter (with the NOTIFY hint)
+@sqlane/core/adapter-knex       knexAdapter
+@sqlane/core/adapter-kysely     kyselyAdapter
+@sqlane/core/adapter-drizzle    drizzleAdapter
+@sqlane/core/adapter-prisma     prismaAdapter
+@sqlane/core/adapter-sequelize  sequelizeAdapter
+@sqlane/core/adapter-<orm>      later: typeorm, mikro-orm
 ```
 
 One repository, a pnpm workspace: `packages/<name>` for each published package, `test/` for the test databases of all

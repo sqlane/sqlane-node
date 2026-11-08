@@ -12,9 +12,9 @@ Transactional SQL job queue for Node.js, backed by MySQL or PostgreSQL.
 
 ## Packages
 
-| Package                         | Contains                                                                                                       |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| [`@sqlane/core`](packages/core) | The queue, the SQL of both dialects, migrations; adapters for `mysql2`, `pg`, knex, Kysely, Drizzle and Prisma |
+| Package                         | Contains                                                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [`@sqlane/core`](packages/core) | The queue, the SQL of both dialects, migrations; adapters for `mysql2`, `pg`, knex, Kysely, Drizzle, Prisma and Sequelize |
 
 Docs: [design](docs/design.md), [benchmarks](docs/benchmarks.md), [releasing](docs/releasing.md).
 

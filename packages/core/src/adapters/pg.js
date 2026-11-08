@@ -1,3 +1,5 @@
+import { pgExecutor as toExecutor } from './executors.js';
+
 /** @typedef {import('pg').Pool | import('pg').PoolClient | import('pg').Client} PgConnection */
 
 /**
@@ -5,25 +7,6 @@
  * @property {boolean} [notify] Hints by LISTEN/NOTIFY: `pg_notify` in the enqueue transaction, delivered on commit.
  *     Default: false.
  */
-
-/**
- * @param {PgConnection} connection
- * @returns {import('../types.js').Executor}
- */
-function toExecutor(connection) {
-    return {
-        query: async (sql, params) => {
-            const result = await connection.query(sql, [...params]);
-
-            return result.rows;
-        },
-        run: async (sql, params) => {
-            const result = await connection.query(sql, [...params]);
-
-            return result.rowCount ?? 0;
-        },
-    };
-}
 
 /**
  * @param {PgConnection} connection

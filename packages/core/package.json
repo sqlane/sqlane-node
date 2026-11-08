@@ -14,6 +14,7 @@
         "postgresql",
         "prisma",
         "queue",
+        "sequelize",
         "transactional"
     ],
     "homepage": "https://github.com/sqlane/sqlane-node/tree/main/packages/core#readme",
@@ -60,6 +61,10 @@
             "types": "./types/adapters/prisma.d.ts",
             "default": "./src/adapters/prisma.js"
         },
+        "./adapter-sequelize": {
+            "types": "./types/adapters/sequelize.d.ts",
+            "default": "./src/adapters/sequelize.js"
+        },
         "./mysql2": {
             "types": "./types/adapters/mysql2.d.ts",
             "default": "./src/adapters/mysql2.js"
@@ -102,7 +107,8 @@
         "mariadb": "3.5.5",
         "mysql2": "3.24.6",
         "pg": "8.23.1",
-        "prisma": "7.10.1"
+        "prisma": "7.10.1",
+        "sequelize": "6.37.8"
     },
     "peerDependencies": {
         "mysql2": "^3.11.0",
