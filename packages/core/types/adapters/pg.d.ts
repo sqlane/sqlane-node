@@ -1,4 +1,3 @@
-/** @typedef {import('pg').Pool | import('pg').PoolClient | import('pg').Client} PgConnection */
 export type PgConnection = import('pg').Pool | import('pg').PoolClient | import('pg').Client;
 export type PgAdapterOptions = {
     /**

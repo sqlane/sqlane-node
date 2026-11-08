@@ -1,30 +1,10 @@
+import { mysql2Executor as toExecutor } from './executors.js';
+
 /**
  * @typedef {import('mysql2/promise').Pool
  *     | import('mysql2/promise').PoolConnection
  *     | import('mysql2/promise').Connection} Mysql2Connection
  */
-
-/**
- * @param {Mysql2Connection} connection
- * @returns {import('../types.js').Executor}
- */
-function toExecutor(connection) {
-    return {
-        query: async (sql, params) => {
-            // The three types have the same query(); TS cannot call a method of a union of overloads.
-            const queryable = /** @type {import('mysql2/promise').Connection} */ (connection);
-            const [rows] = await queryable.query(sql, [...params]);
-
-            return Array.isArray(rows) ? /** @type {Record<string, unknown>[]} */ (rows) : [];
-        },
-        run: async (sql, params) => {
-            const queryable = /** @type {import('mysql2/promise').Connection} */ (connection);
-            const [result] = await queryable.query(sql, [...params]);
-
-            return /** @type {import('mysql2/promise').ResultSetHeader} */ (result).affectedRows;
-        },
-    };
-}
 
 /**
  * @param {Mysql2Connection} connection
