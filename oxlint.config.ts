@@ -241,5 +241,5 @@ export default defineConfig({
             rules: { 'no-console': 'off', 'node/no-top-level-await': 'off' },
         },
     ],
-    ignorePatterns: ['coverage/**', 'types/**'],
+    ignorePatterns: ['coverage/**', 'packages/*/types/**'],
 });

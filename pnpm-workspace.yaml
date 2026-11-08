@@ -1,4 +1,7 @@
-# pnpm settings (single package, no workspace packages)
+# pnpm workspace: the published packages, and the test databases shared by their tests
+packages:
+  - packages/*
+  - test
 
 # `pnpm add` writes exact versions, not ^ ranges
 saveExact: true

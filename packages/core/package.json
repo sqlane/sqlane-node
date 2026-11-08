@@ -1,0 +1,79 @@
+{
+    "name": "@sqlane/core",
+    "version": "0.1.2",
+    "description": "Transactional SQL job queue for Node.js (MySQL, PostgreSQL)",
+    "keywords": [
+        "background-jobs",
+        "job",
+        "mysql",
+        "outbox",
+        "postgres",
+        "postgresql",
+        "queue",
+        "transactional"
+    ],
+    "homepage": "https://github.com/sqlane/sqlane-node/tree/main/packages/core#readme",
+    "bugs": "https://github.com/sqlane/sqlane-node/issues",
+    "license": "MIT",
+    "author": "Klim Pal",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/sqlane/sqlane-node.git",
+        "directory": "packages/core"
+    },
+    "files": [
+        "src",
+        "!src/**/*.test.js",
+        "types"
+    ],
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./types/index.d.ts",
+            "default": "./src/index.js"
+        },
+        "./mysql2": {
+            "types": "./types/adapters/mysql2.d.ts",
+            "default": "./src/adapters/mysql2.js"
+        },
+        "./pg": {
+            "types": "./types/adapters/pg.d.ts",
+            "default": "./src/adapters/pg.js"
+        }
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "scripts": {
+        "build:types": "node --eval \"require('node:fs').rmSync('types', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+        "check:types": "out=$(mktemp -d) && tsc -p tsconfig.build.json --declarationDir \"$out\" && diff -r types \"$out\"; status=$?; rm -rf \"$out\"; exit $status",
+        "lint:package": "publint --strict",
+        "lint:types": "attw --pack . --profile esm-only",
+        "prepublishOnly": "publint --strict && attw --pack . --profile esm-only"
+    },
+    "dependencies": {
+        "parse-duration": "^2.1.11",
+        "ulid": "^3.0.2"
+    },
+    "devDependencies": {
+        "@sqlane/testing": "workspace:*",
+        "@types/pg": "8.23.1",
+        "mysql2": "3.24.6",
+        "pg": "8.23.1"
+    },
+    "peerDependencies": {
+        "mysql2": "^3.11.0",
+        "pg": "^8.13.0"
+    },
+    "peerDependenciesMeta": {
+        "mysql2": {
+            "optional": true
+        },
+        "pg": {
+            "optional": true
+        }
+    },
+    "engines": {
+        "node": ">=22.12.0"
+    }
+}

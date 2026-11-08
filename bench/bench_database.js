@@ -1,14 +1,16 @@
 // A pool of the benchmarked database, with the raw driver objects that an app has.
 import mysql from 'mysql2/promise';
 import { Pool } from 'pg';
-import { mysql2Adapter } from '../src/adapters/mysql2.js';
-import { pgAdapter } from '../src/adapters/pg.js';
+import { mysql2Adapter } from '../packages/core/src/adapters/mysql2.js';
+import { pgAdapter } from '../packages/core/src/adapters/pg.js';
+
+/** @typedef {import('../packages/core/src/types.js').Adapter<any>} Adapter */
 
 /**
  * @typedef {object} BenchPool
  * @property {'mysql' | 'postgres'} dialect
  * @property {any} raw The mysql2 or pg pool.
- * @property {(options?: { notify?: boolean }) => import('../src/types.js').Adapter<any>} adapter `notify`: pg only.
+ * @property {(options?: { notify?: boolean }) => Adapter} adapter `notify`: pg only.
  * @property {(func: (connection: any) => Promise<void>) => Promise<void>} transaction Runs func in a transaction on
  *     a raw connection of the pool, as an app does.
  * @property {(sql: string) => Promise<void>} execute

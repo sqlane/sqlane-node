@@ -6,8 +6,9 @@
     "changedFilePatterns": ["src/**", "package.json", "README.md", "LICENSE"],
     "commit": false,
     "format": false,
-    "fixed": [],
+    "fixed": [["@sqlane/core"]],
     "linked": [],
     "ignore": [],
-    "updateInternalDependencies": "patch"
+    "updateInternalDependencies": "patch",
+    "privatePackages": { "version": false, "tag": false }
 }

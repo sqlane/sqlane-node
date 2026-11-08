@@ -1,58 +1,19 @@
 {
-    "name": "@sqlane/core",
-    "version": "0.1.2",
-    "description": "Transactional SQL job queue for Node.js (MySQL, PostgreSQL)",
-    "keywords": [
-        "background-jobs",
-        "job",
-        "mysql",
-        "outbox",
-        "postgres",
-        "postgresql",
-        "queue",
-        "transactional"
-    ],
-    "homepage": "https://github.com/sqlane/sqlane-node#readme",
-    "bugs": "https://github.com/sqlane/sqlane-node/issues",
+    "name": "sqlane-monorepo",
+    "private": true,
+    "description": "The sqlane packages: @sqlane/core and its adapters",
     "license": "MIT",
-    "author": "Klim Pal",
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/sqlane/sqlane-node.git"
-    },
-    "files": [
-        "src",
-        "!src/**/*.test.js",
-        "types"
-    ],
     "type": "module",
-    "exports": {
-        ".": {
-            "types": "./types/index.d.ts",
-            "default": "./src/index.js"
-        },
-        "./mysql2": {
-            "types": "./types/adapters/mysql2.d.ts",
-            "default": "./src/adapters/mysql2.js"
-        },
-        "./pg": {
-            "types": "./types/adapters/pg.d.ts",
-            "default": "./src/adapters/pg.js"
-        }
-    },
-    "publishConfig": {
-        "access": "public"
-    },
     "scripts": {
         "lint": "oxlint --deny-warnings",
         "lint:fix": "oxlint --fix",
-        "lint:package": "publint --strict",
-        "lint:types": "attw --pack . --profile esm-only",
+        "lint:package": "pnpm --recursive --filter './packages/*' lint:package",
+        "lint:types": "pnpm --recursive --filter './packages/*' lint:types",
         "format": "oxfmt",
         "format:check": "oxfmt --check",
         "typecheck": "tsc -p tsconfig.json",
-        "build:types": "node --eval \"require('node:fs').rmSync('types', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
-        "check:types": "out=$(mktemp -d) && tsc -p tsconfig.build.json --declarationDir \"$out\" && diff -r types \"$out\"; status=$?; rm -rf \"$out\"; exit $status",
+        "build:types": "pnpm --recursive --filter './packages/*' build:types",
+        "check:types": "pnpm --recursive --filter './packages/*' check:types",
         "test": "vitest run",
         "test:unit": "vitest run --project unit",
         "test:integration": "vitest run --project 'integration:*'",
@@ -60,21 +21,15 @@
         "test:coverage": "vitest run --coverage",
         "check": "hk check --all",
         "bench": "node bench/run.js",
-        "prepublishOnly": "publint --strict && attw --pack . --profile esm-only",
         "changeset": "changeset",
-        "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern CHANGELOG.md"
-    },
-    "dependencies": {
-        "parse-duration": "^2.1.11",
-        "ulid": "^3.0.2"
+        "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern packages/*/CHANGELOG.md"
     },
     "devDependencies": {
         "@arethetypeswrong/cli": "0.18.5",
         "@changesets/changelog-github": "1.0.1",
         "@changesets/cli": "3.0.3",
+        "@sqlane/testing": "workspace:*",
         "@stylistic/eslint-plugin": "5.10.0",
-        "@testcontainers/mysql": "12.2.1",
-        "@testcontainers/postgresql": "12.2.1",
         "@types/node": "22.20.5",
         "@types/pg": "8.23.1",
         "@vitest/coverage-v8": "5.0.5",
@@ -83,21 +38,8 @@
         "oxlint": "1.90.0",
         "pg": "8.23.1",
         "publint": "0.3.25",
-        "testcontainers": "12.2.1",
         "typescript": "7.0.2",
         "vitest": "5.0.5"
-    },
-    "peerDependencies": {
-        "mysql2": "^3.11.0",
-        "pg": "^8.13.0"
-    },
-    "peerDependenciesMeta": {
-        "mysql2": {
-            "optional": true
-        },
-        "pg": {
-            "optional": true
-        }
     },
     "engines": {
         "node": ">=22.12.0"

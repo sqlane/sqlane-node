@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { createSqlane, defineJob, InvalidOptionsError, UnknownJobError } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
-import { connectTestDatabase } from './helpers/test_database.js';
+import { connectTestDatabase } from '@sqlane/testing/database';
 
 /** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
 const READ_JOB_SQL = {
@@ -33,7 +33,7 @@ const buildReport = defineJob({
     failureJob: 'report_failed',
 });
 
-/** @type {import('./helpers/test_database.js').TestDatabaseConnection} */
+/** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
 let database;
 /** @type {import('./helpers/test_adapter.js').TestAdapter} */
 let testAdapter;
