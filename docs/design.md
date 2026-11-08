@@ -390,6 +390,9 @@ One short transaction on the queue's pool:
 - The process renews the leases of its running jobs every 30 s, in one statement.
 - Every final write (complete, retry, fail, release) has `WHERE lock_token = :own`. A process that lost its lease
   changes nothing.
+- Completions go in batches: one write at a time per process, and the jobs that finish during a write go together in
+  the next one (one transaction, one commit, at most 100 jobs). A lone job waits for no other. A commit flushes the
+  log to disk, so one commit per job would cap the throughput.
 - If the renewal has not succeeded 30 s before the lease ends (the DB is unreachable, the pool is exhausted), the
   process aborts the handler's `signal` with a `LeaseLostError` and emits `lease_lost`. The job is no longer its own.
 - Stall recovery (each process, every 30 s, in small batches with SKIP LOCKED): a `running` job whose lease ended

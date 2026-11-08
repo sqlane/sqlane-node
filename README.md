@@ -57,8 +57,9 @@ In tests, run the due jobs without `start()`: `await sqlane.drain()`. More in [`
 On a laptop (M1 Pro, Docker, default config), details in [benchmarks](docs/benchmarks.md):
 
 - 1000 handled job names, 10 with pending jobs: the probe takes under 1 ms. Idle names cost nothing.
-- From commit to handler start: about 30 ms (re-probe or hint), about 6 ms with PostgreSQL NOTIFY.
-- `enqueueMany`: 60,000–110,000 jobs/s; empty jobs run at 760–2,400 jobs/s.
+- From commit to handler start: about 25 ms (re-probe or hint), about 5 ms with PostgreSQL NOTIFY.
+- `enqueueMany`: 58,000–110,000 jobs/s. Empty jobs, one process: 1,000–1,800 jobs/s at concurrency 10,
+  3,800–5,800 at concurrency 50.
 
 ## Development
 

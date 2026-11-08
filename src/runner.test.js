@@ -140,3 +140,17 @@ test.each([
     expect(probes() - before).toBe(expected);
     await runner.close({ deadline: 0 });
 });
+
+/** @returns {number} The timers that keep the process alive. */
+function refTimers() {
+    return process.getActiveResourcesInfo().filter(resource => resource === 'Timeout').length;
+}
+
+test('close() leaves no timer that keeps the process alive', async () => {
+    const before = refTimers();
+    const { runner } = runnerWith([]);
+
+    await runner.start();
+    await runner.close({ deadline: '30s' });
+    expect(refTimers()).toBe(before);
+});

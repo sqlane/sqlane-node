@@ -52,6 +52,8 @@ const REPROBE_DELAYS_MS = [20, 50, 100, 200, 500, 1000, 2000];
 const RELEASE_EXTRA_DELAY_MS = 2000;
 const STALLED = { name: 'StalledError', message: 'The lease of the job ended: its process stopped or blocked' };
 const BATCH = 1000;
+/** The completed jobs of one write */
+const MAX_COMPLETE_BATCH = 100;
 
 /**
  * @typedef {object} RunningJob
@@ -94,6 +96,24 @@ const BATCH = 1000;
  * @property {() => boolean} isStarted
  * @property {(name: string) => boolean} canStartNow This process handles the name and has a free slot for it.
  */
+
+/**
+ * Waits for the promise, at most `ms`. The timer ends with the wait: it keeps no process alive after it.
+ * @param {Promise<unknown>} promise
+ * @param {number} ms
+ * @param {{ ref?: boolean }} [options] `ref: false`: the timer alone does not keep the process alive.
+ * @returns {Promise<void>}
+ */
+async function waitAtMost(promise, ms, { ref = true } = {}) {
+    const controller = new AbortController();
+
+    try {
+        // The race handles the rejection of the aborted timer
+        await Promise.race([promise, sleep(Math.max(ms, 0), undefined, { signal: controller.signal, ref })]);
+    } finally {
+        controller.abort();
+    }
+}
 
 /**
  * @param {RunningJob} job
@@ -154,6 +174,9 @@ export function createRunner({
     let reprobe = null;
     let contentionDelayMs = 0;
     const counts = { completed: 0, retried: 0, failed: 0 };
+    /** @type {{ job: import('./store/store.js').FinishedJob, written: PromiseWithResolvers<void> }[]} */
+    let toComplete = [];
+    let completing = false;
     /** The jobs that finished: their results are written */
     let finishedCount = 0;
 
@@ -347,6 +370,50 @@ export function createRunner({
     }
 
     /**
+     * Completes the job in the next write. One write at a time: the jobs that finish during a write go together in the
+     * next one, in one transaction. A lone job waits for no other.
+     * @param {import('./store/store.js').FinishedJob} job
+     * @returns {Promise<void>} Rejects with the error of its write.
+     */
+    function completeJob(job) {
+        const written = Promise.withResolvers();
+
+        toComplete.push({ job, written });
+
+        if (!completing) {
+            void writeCompletions();
+        }
+
+        return written.promise;
+    }
+
+    async function writeCompletions() {
+        completing = true;
+
+        while (toComplete.length) {
+            const batch = toComplete.slice(0, MAX_COMPLETE_BATCH);
+
+            toComplete = toComplete.slice(MAX_COMPLETE_BATCH);
+
+            try {
+                // In the order of the ids: the row locks of two writes come in one order
+                // oxlint-disable-next-line no-await-in-loop -- one write at a time
+                await store.completeJobs(batch.map(entry => entry.job).toSorted((a, b) => (a.id < b.id ? -1 : 1)));
+
+                for (const { written } of batch) {
+                    written.resolve();
+                }
+            } catch (error) {
+                for (const { written } of batch) {
+                    written.reject(error);
+                }
+            }
+        }
+
+        completing = false;
+    }
+
+    /**
      * Runs a write of the result until it succeeds; on errors, it retries with a backoff while the lease is renewed.
      * @param {RunningJob} job
      * @param {() => Promise<unknown>} write
@@ -386,7 +453,7 @@ export function createRunner({
         const durationMs = Date.now() - job.startedAt;
 
         if (error === null && !job.timedOut) {
-            await writeResult(job, () => store.completeJob(claimed));
+            await writeResult(job, () => completeJob(claimed));
             counts.completed++;
             emit({ type: 'completed', ...base, durationMs });
 
@@ -513,7 +580,7 @@ export function createRunner({
         }
 
         // The job keeps its keys and its slot until the handler settles, at most one more lease
-        await Promise.race([handlerDone, sleep(t.leaseMs, undefined, { ref: false })]);
+        await waitAtMost(handlerDone, t.leaseMs, { ref: false });
 
         return timeoutError;
     }
@@ -964,7 +1031,7 @@ export function createRunner({
         const deadline = startedAt + deadlineMs;
         const allDone = Promise.allSettled([...running.values()].map(job => job.done));
 
-        await Promise.race([allDone, sleep(Math.max(deadline - Date.now(), 0))]);
+        await waitAtMost(allDone, deadline - Date.now());
 
         const unfinished = [...running.values()].filter(job => !job.settled);
 
@@ -992,10 +1059,10 @@ export function createRunner({
         }
 
         // The writes of the finished handlers, until the deadline
-        await Promise.race([
+        await waitAtMost(
             Promise.allSettled([...running.values()].filter(job => job.settled).map(job => job.done)),
-            sleep(Math.max(deadline - Date.now(), 0)),
-        ]);
+            deadline - Date.now(),
+        );
 
         for (const timer of timers) {
             clearTimeout(timer);

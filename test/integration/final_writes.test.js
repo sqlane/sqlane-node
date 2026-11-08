@@ -170,12 +170,12 @@ test('renewLeases: the own jobs only', async () => {
     expect((await readJob(tables.p, job.id))?.lease_in_ms).toBeGreaterThan(590_000);
 });
 
-test('completeJob: completed until its retention, without payload and keys; a replay changes nothing', async () => {
+test('completeJobs: completed until its retention, without payload and keys; a replay changes nothing', async () => {
     const tables = await freshTables();
     const job = await claimedJob(tables, { retention: { completed: '10m' } });
 
-    await expect(tables.store.completeJob(job)).resolves.toBe(true);
-    await expect(tables.store.completeJob(job)).resolves.toBe(false);
+    await expect(tables.store.completeJobs([job])).resolves.toBe(1);
+    await expect(tables.store.completeJobs([job])).resolves.toBe(0);
 
     const row = await readJob(tables.p, job.id);
 
@@ -184,12 +184,32 @@ test('completeJob: completed until its retention, without payload and keys; a re
     await expect(readHolds(tables.p)).resolves.toStrictEqual([]);
 });
 
+test('completeJobs: one write for many jobs, the own ones only; the payload of a job not completed stays', async () => {
+    const tables = await freshTables();
+    const job = await claimedJob(tables);
+    const ids = (await tables.sqlane.enqueueMany(testAdapter.pool, 'plain', [{ payload: { n: 1 } }, { payload: { n: 2 } }]))
+        .map(result => result.id);
+    const [plain, lost] = await tables.store.claim({
+        candidateIds: ids,
+        lockToken: 'PLAINTOKEN',
+        lockedBy: 'test',
+        leaseMs: LEASE_MS,
+        pick: locked => locked,
+    });
+
+    await expect(tables.store.completeJobs([job, plain, { ...lost, lockToken: 'other' }])).resolves.toBe(2);
+    await expect(readJob(tables.p, job.id)).resolves.toMatchObject({ status: 'completed', payload: null });
+    await expect(readJob(tables.p, plain.id)).resolves.toMatchObject({ status: 'completed', payload: null });
+    await expect(readJob(tables.p, lost.id)).resolves.toMatchObject({ status: 'running', payload: { n: 2 } });
+    await expect(readHolds(tables.p)).resolves.toStrictEqual([]);
+});
+
 test('a write with another lock token changes nothing', async () => {
     const tables = await freshTables();
     const job = await claimedJob(tables);
-    const other = { id: job.id, lockToken: 'other' };
+    const other = { id: job.id, lockToken: 'other', mutexKeys: job.mutexKeys };
 
-    await expect(tables.store.completeJob(other)).resolves.toBe(false);
+    await expect(tables.store.completeJobs([other])).resolves.toBe(0);
     await expect(tables.store.retryJob(other, { delayMs: 0, error: toErrorJson('x') })).resolves.toBe(false);
     await expect(tables.store.releaseJob(other, { delayMs: 0, lingerMs: 0 })).resolves.toBe(false);
     await expect(tables.store.failJob(other, { error: toErrorJson('x'), buildFailureJob }))
@@ -358,7 +378,7 @@ test('deleteExpiredJobs: the finished jobs after their retention, with their pay
     // One after the other: the jobs share their mutex key
     const completed = await claimedJob(tables, { retention: { completed: 0 } });
 
-    await tables.store.completeJob(completed);
+    await tables.store.completeJobs([completed]);
 
     const failed = await claimedJob(tables, { retention: { failed: 0 } });
 
@@ -366,7 +386,7 @@ test('deleteExpiredJobs: the finished jobs after their retention, with their pay
 
     const kept = await claimedJob(tables, { retention: { completed: '1h' } });
 
-    await tables.store.completeJob(kept);
+    await tables.store.completeJobs([kept]);
     await sleep(5);
 
     await expect(tables.store.deleteExpiredJobs(100)).resolves.toBe(2);

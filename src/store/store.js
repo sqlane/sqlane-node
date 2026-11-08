@@ -51,6 +51,11 @@ import * as postgresWorker from './postgres_worker.js';
  */
 
 /**
+ * A job that this process ran, with its keys.
+ * @typedef {OwnedJob & { mutexKeys: readonly string[] }} FinishedJob
+ */
+
+/**
  * The job that fails for good, as the failure job gets it.
  * @typedef {object} FailedJob
  * @property {string} id
@@ -77,7 +82,7 @@ import * as postgresWorker from './postgres_worker.js';
  * @property {(ids: string[]) => Promise<Map<string, unknown>>} readPayloads
  * @property {(jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>} renewLeases
  * @property {(job: OwnedJob) => Promise<boolean>} markTimedOut
- * @property {(job: OwnedJob) => Promise<boolean>} completeJob
+ * @property {(jobs: FinishedJob[]) => Promise<number>} completeJobs In one transaction: the jobs that it completed.
  * @property {(job: OwnedJob, params: { delayMs: number, error: import('../error_json.js').ErrorJson })
  *     => Promise<boolean>} retryJob
  * @property {(
@@ -122,7 +127,7 @@ export function createStore(adapter, tablePrefix) {
         readPayloads: ids => sql.readPayloads(adapter.queue, tablePrefix, ids),
         renewLeases: (jobs, leaseMs) => inQueue(executor => final.renewLeases(executor, p, jobs, leaseMs)),
         markTimedOut: job => final.markTimedOut(adapter.queue, p, job),
-        completeJob: job => inQueue(executor => final.completeJob(executor, p, job)),
+        completeJobs: jobs => inQueue(executor => final.completeJobs(executor, p, jobs)),
         retryJob: (job, params) => inQueue(executor => final.retryJob(executor, p, job, params)),
         failJob: (job, params) => inQueue(executor => final.failJob(executor, p, job, params)),
         releaseJob: (job, params) => inQueue(executor => final.releaseJob(executor, p, job, params)),

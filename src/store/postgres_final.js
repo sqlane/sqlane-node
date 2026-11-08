@@ -92,27 +92,37 @@ async function lingerHolds(executor, p, job, lingerMs) {
 }
 
 /**
- * The job is done: completed until its retention ends, without its payload; its keys are freed.
+ * The jobs are done: completed until their retention ends, without their payloads; their keys are freed. One
+ * statement for many jobs.
  * @param {Executor} executor
  * @param {string} p
- * @param {OwnedJob} job
- * @returns {Promise<boolean>} False: no change (the lease was lost, or an earlier try committed).
+ * @param {import('./store.js').FinishedJob[]} jobs
+ * @returns {Promise<number>} The jobs that this call completed: the others lost their lease, or an earlier try
+ *     committed.
  */
-export async function completeJob(executor, p, job) {
-    const changed = await executor.run(`
-        UPDATE ${p}jobs
-           SET status = 'completed', finished_at = ${NOW}, expires_at = ${NOW} + completed_retention_ms * ${MS},
-               ${CLEAR_LOCK}, updated_at = ${NOW}
-         WHERE id = $1 AND lock_token = $2
-    `, [job.id, job.lockToken]);
+export async function completeJobs(executor, p, jobs) {
+    const [row] = await executor.query(`
+        WITH owned AS (
+            SELECT * FROM unnest($1::text[], $2::text[]) AS o(id, lock_token)
+        ),
+        done AS (
+            UPDATE ${p}jobs j
+               SET status = 'completed', finished_at = ${NOW}, expires_at = ${NOW} + completed_retention_ms * ${MS},
+                   ${CLEAR_LOCK}, updated_at = ${NOW}
+              FROM owned
+             WHERE j.id = owned.id AND j.lock_token = owned.lock_token
+            RETURNING j.id
+        ),
+        payloads AS (
+            DELETE FROM ${p}payloads WHERE id IN (SELECT id FROM done)
+        ),
+        holds AS (
+            DELETE FROM ${p}mutexes m USING owned WHERE m.job_id = owned.id AND m.lock_token = owned.lock_token
+        )
+        SELECT count(*)::integer AS changed FROM done
+    `, [jobs.map(job => job.id), jobs.map(job => job.lockToken)]);
 
-    if (changed) {
-        await executor.run(`DELETE FROM ${p}payloads WHERE id = $1`, [job.id]);
-    }
-
-    await deleteHolds(executor, p, job);
-
-    return changed > 0;
+    return Number(row?.changed ?? 0);
 }
 
 /**

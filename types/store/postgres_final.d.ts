@@ -21,13 +21,15 @@ export declare function renewLeases(executor: Executor, p: string, jobs: OwnedJo
  */
 export declare function markTimedOut(executor: Executor, p: string, job: OwnedJob): Promise<boolean>;
 /**
- * The job is done: completed until its retention ends, without its payload; its keys are freed.
+ * The jobs are done: completed until their retention ends, without their payloads; their keys are freed. One
+ * statement for many jobs.
  * @param {Executor} executor
  * @param {string} p
- * @param {OwnedJob} job
- * @returns {Promise<boolean>} False: no change (the lease was lost, or an earlier try committed).
+ * @param {import('./store.js').FinishedJob[]} jobs
+ * @returns {Promise<number>} The jobs that this call completed: the others lost their lease, or an earlier try
+ *     committed.
  */
-export declare function completeJob(executor: Executor, p: string, job: OwnedJob): Promise<boolean>;
+export declare function completeJobs(executor: Executor, p: string, jobs: import('./store.js').FinishedJob[]): Promise<number>;
 /**
  * The attempt failed: pending again after the delay, one more attempt used; its keys are freed.
  * @param {Executor} executor
