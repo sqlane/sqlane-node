@@ -1,5 +1,5 @@
 ---
-'@sqlane/knex': minor
+'@sqlane/adapter-knex': minor
 ---
 
 New package: the knex adapter. `enqueue` takes a knex instance (a transaction of its own) or a knex transaction, also

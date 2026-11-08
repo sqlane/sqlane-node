@@ -137,7 +137,7 @@ Choices:
   own connection, transaction client or pool. A connection or client must be in a transaction (MySQL cannot detect
   one safely). With a pool, sqlane runs the enqueue in its own transaction, outside the caller's. Adapters:
   `@sqlane/core/mysql2` (`Connection`, `PoolConnection`, `Pool`) and `@sqlane/core/pg` (`Client`, `PoolClient`,
-  `Pool`) in v0.1; `@sqlane/knex` (a knex instance or transaction, with `mysql2` or `pg`) in v0.2. Kysely, Drizzle,
+  `Pool`) in v0.1; `@sqlane/adapter-knex` (a knex instance or transaction, with `mysql2` or `pg`) in v0.2. Kysely, Drizzle,
   Sequelize, Prisma, TypeORM, MikroORM later, as separate packages. An ORM adapter runs sqlane's SQL on the driver
   connection under the ORM: one SQL per dialect, and the ORM does not log it.
 - **Worker settings in worker code.** `concurrency` and `lane` are `handle()` options, not definition fields: they are
@@ -343,7 +343,7 @@ calls nothing:
   backoff step, and never more than the poll interval. A rolled-back transaction costs only the re-probes.
 - **PostgreSQL NOTIFY.** `pg_notify` runs in the transaction and is delivered on commit: the receivers probe at once,
   with no re-probe.
-- **After-commit hook.** An adapter may have `afterCommit(connection, fn)`: the `@sqlane/<orm>` adapters, from the
+- **After-commit hook.** An adapter may have `afterCommit(connection, fn)`: the `@sqlane/adapter-<orm>` adapters, from the
   after-commit hook or promise of the ORM. An `enqueue` on a pool runs in its own transaction, committed when it
   returns: the same. After the commit, the process wakes at once and sends the hint, then re-probes as above, from the
   commit.
@@ -540,12 +540,14 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 @sqlane/core              core: definitions, runner, dispatcher, SQL of both dialects, migrations
 @sqlane/core/mysql2       mysql2Adapter
 @sqlane/core/pg           pgAdapter (with the NOTIFY hint)
-@sqlane/<orm>             later: knex, kysely, drizzle, sequelize, prisma, typeorm, mikro-orm
+@sqlane/adapter-knex      knexAdapter
+@sqlane/adapter-<orm>     later: kysely, drizzle, sequelize, prisma, typeorm, mikro-orm
 ```
 
 One repository, a pnpm workspace: `packages/<name>` for each published package, `test/` for the test databases of all
 of them (a private package, `@sqlane/testing`). The packages have one version (a fixed group of Changesets) and
-release together. An adapter has `@sqlane/core` and its ORM as peer dependencies.
+release together. An adapter is `@sqlane/adapter-<orm>`, in `packages/adapter-<orm>`; it has `@sqlane/core` and its
+ORM as peer dependencies.
 
 Source (`src/`, snake_case files): `define_job.js`, `sqlane.js` (facade), `dispatcher.js`, `lanes.js`,
 `lease_keeper.js`, `stall_recovery.js`, `cleanup.js`, `errors.js`, `store/` (one SQL module per dialect behind one

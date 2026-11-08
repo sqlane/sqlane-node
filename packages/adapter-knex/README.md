@@ -1,16 +1,16 @@
-# @sqlane/knex
+# @sqlane/adapter-knex
 
 The [knex](https://knexjs.org) adapter of [`@sqlane/core`](https://www.npmjs.com/package/@sqlane/core): enqueue jobs
 in your knex transactions. knex 3 with `mysql2` (MySQL 8.4+) or `pg` (PostgreSQL 15+).
 
 ```sh
-npm install @sqlane/core @sqlane/knex knex mysql2   # or pg
+npm install @sqlane/core @sqlane/adapter-knex knex mysql2   # or pg
 ```
 
 ```js
 import knexLib from 'knex';
 import { createSqlane, defineJob } from '@sqlane/core';
-import { knexAdapter } from '@sqlane/knex';
+import { knexAdapter } from '@sqlane/adapter-knex';
 
 const buildReport = defineJob({ name: 'build_report' });
 

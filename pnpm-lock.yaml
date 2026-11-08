@@ -212,6 +212,24 @@ importers:
         specifier: 5.0.5
         version: 5.0.5(@types/node@22.20.5)(@vitest/coverage-v8@5.0.5)(vite@8.3.5(@types/node@22.20.5)(yaml@2.9.1))
 
+  packages/adapter-knex:
+    devDependencies:
+      '@sqlane/core':
+        specifier: workspace:*
+        version: link:../core
+      '@sqlane/testing':
+        specifier: workspace:*
+        version: link:../../test
+      knex:
+        specifier: 3.3.0
+        version: 3.3.0(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(supports-color@7.2.0)
+      mysql2:
+        specifier: 3.24.6
+        version: 3.24.6(@types/node@22.20.5)
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
+
   packages/core:
     dependencies:
       parse-duration:
@@ -227,24 +245,6 @@ importers:
       '@types/pg':
         specifier: 8.23.1
         version: 8.23.1
-      mysql2:
-        specifier: 3.24.6
-        version: 3.24.6(@types/node@22.20.5)
-      pg:
-        specifier: 8.23.1
-        version: 8.23.1
-
-  packages/knex:
-    devDependencies:
-      '@sqlane/core':
-        specifier: workspace:*
-        version: link:../core
-      '@sqlane/testing':
-        specifier: workspace:*
-        version: link:../../test
-      knex:
-        specifier: 3.3.0
-        version: 3.3.0(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(supports-color@7.2.0)
       mysql2:
         specifier: 3.24.6
         version: 3.24.6(@types/node@22.20.5)
