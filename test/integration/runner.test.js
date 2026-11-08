@@ -214,6 +214,28 @@ describe('start()', () => {
         expect(Date.now() - startedAt).toBeLessThan(2000);
     });
 
+    test('a job enqueued soon after another one starts at once too', async () => {
+        const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
+        /** @type {Map<string, number>} */
+        const startedAt = new Map();
+
+        sqlane.handle('ping', ({ job }) => {
+            startedAt.set(job.id, Date.now());
+        });
+        await sqlane.start();
+        await sleep(100);
+        await sqlane.enqueue(testAdapter.pool, 'ping', {});
+        await waitFor(() => events.some(event => event.type === 'completed'));
+        // The re-probes of the first enqueue are at 500 ms, then 1 s from it: the second one must not wait for them
+        await sleep(250);
+
+        const enqueuedAt = Date.now();
+        const { id } = await sqlane.enqueue(testAdapter.pool, 'ping', {});
+
+        await waitFor(() => startedAt.has(id), 3000);
+        expect(Number(startedAt.get(id)) - enqueuedAt).toBeLessThan(150);
+    });
+
     test('retries by the backoff, then completes', async () => {
         const { sqlane, p } = await freshSqlane();
         const flaky = failingFirst(2, call => new Error(`fail ${call}`));

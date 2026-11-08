@@ -52,6 +52,14 @@ process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));
 
 In tests, run the due jobs without `start()`: `await sqlane.drain()`. More in [`examples/`](examples).
 
+## Performance
+
+On a laptop (M1 Pro, Docker, default config), details in [benchmarks](docs/benchmarks.md):
+
+- 1000 handled job names, 10 with pending jobs: the probe takes under 1 ms. Idle names cost nothing.
+- From commit to handler start: about 30 ms (re-probe or hint), about 6 ms with PostgreSQL NOTIFY.
+- `enqueueMany`: 60,000–110,000 jobs/s; empty jobs run at 760–2,400 jobs/s.
+
 ## Development
 
 Requires [mise](https://mise.jdx.dev). It installs Node.js, pnpm, hk, betterleaks and typos (`mise.toml`).
@@ -71,6 +79,7 @@ hk install --global --mise   # Git hooks, also for GUI Git clients: lint, format
 | `pnpm lint:package` | Check the package that npm would publish (publint)         |
 | `pnpm typecheck`    | Type-check the JSDoc (`tsc`, no emit)                      |
 | `pnpm check`        | Run all hook checks on all files (`hk check --all`)        |
+| `pnpm bench`        | Run the [benchmarks](docs/benchmarks.md) (Docker)          |
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org). A change of the package adds a
 changeset (`pnpm changeset`); see [releasing](docs/releasing.md).

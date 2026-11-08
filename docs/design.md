@@ -334,12 +334,14 @@ Wakes:
 A raw driver has no after-commit event, so `enqueue` does not know when the job becomes visible. The business logic
 calls nothing:
 
-- **Default, any driver: re-probe.** After an enqueue, the dispatcher of this process probes only that job name again
-  with a short backoff (about 20, 50, 100, 200 ms … up to the poll interval), until it sees the job. The hint transport
-  sends the name to the other processes at enqueue time (fire-and-forget); they do the same. Throttled per job name: a burst of
-  enqueues gives one series of re-probes. The latency is the commit time plus at most one backoff step, and never more
-  than the poll interval. A rolled-back transaction costs only the re-probes.
-- **PostgreSQL NOTIFY.** `pg_notify` runs in the transaction and is delivered on commit: no re-probe.
+- **Default, any driver: re-probe.** After an enqueue of a handled name, the dispatcher of this process probes again
+  with a short backoff from that enqueue (20, 50, 100, 200 ms … up to the poll interval). A probe reads all the names,
+  so a process has one series: each enqueue restarts it from its own time, and a re-probe due within the first step
+  stays. A burst of enqueues gives at most one re-probe per first step (20 ms). The hint transport sends the name to the
+  other processes at enqueue time (fire-and-forget); they do the same. The latency is the commit time plus at most one
+  backoff step, and never more than the poll interval. A rolled-back transaction costs only the re-probes.
+- **PostgreSQL NOTIFY.** `pg_notify` runs in the transaction and is delivered on commit: the receivers probe at once,
+  with no re-probe.
 - **`@sqlane/<orm>` adapters.** They wake from the after-commit hook of the ORM, where it has one.
 - **`sqlane.wake(name)`** stays public as a low-level escape hatch. The docs never require it.
 
@@ -361,8 +363,8 @@ node-redis.
 - `hint: { publish, subscribe }`: the channel is `<tablePrefix>ready`, the message is a job name. Published after an
   enqueue, fire-and-forget: `enqueue` does not wait for `publish`, and a failed publish never rejects it (an `error`
   event). A process sends a hint only for the jobs it cannot start itself. When a job frees mutex keys, the message is
-  `*`: every process probes all its names. A receiver re-probes the name for a short while (the hint can come before
-  the commit).
+  `*`: every process probes all its names. A receiver re-probes for a short while, as after its own enqueue (the hint
+  can come before the commit).
 - `pgAdapter(pool, { notify: true })`: LISTEN on a dedicated connection; the enqueue sends `pg_notify` in its
   transaction, so the hint arrives only after the commit. At most one NOTIFY per transaction and job name: NOTIFY
   takes a global lock at commit and limits the commit rate under heavy write load.
@@ -530,4 +532,5 @@ store interface), `adapters/`.
   cannot change by accident.
 - Integration (most of the value): the same suite against MySQL 8.4 and PostgreSQL 15 and 18 in Docker, for the
   store and the runner: claims under contention, leases, stalls, mutex FIFO, failure jobs, close modes.
-- Benchmark: 1000 idle names (probe cost), enqueue-to-start latency, throughput.
+- Benchmark (`pnpm bench`, not in CI): 1000 idle names (probe cost), enqueue-to-start latency, throughput. Results:
+  [benchmarks](benchmarks.md).

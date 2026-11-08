@@ -63,6 +63,11 @@ export type RunnerParams = {
     onEvent: ((event: import('./types.js').SqlaneEvent) => void) | undefined;
     hintChannel: import('./hint_channel.js').HintChannel;
     /**
+     * The hints come after the commit of their enqueue (PostgreSQL NOTIFY): they wake
+     * at once, with no re-probes.
+     */
+    hintsAfterCommit: boolean;
+    /**
      * For tests.
      */
     timings?: Partial<Timings>;
@@ -84,4 +89,4 @@ export type Runner = {
  * @param {RunnerParams} params
  * @returns {Runner}
  */
-export declare function createRunner({ store, registry, concurrency, defaults, cleanup, logger, onEvent, hintChannel, timings, }: RunnerParams): Runner;
+export declare function createRunner({ store, registry, concurrency, defaults, cleanup, logger, onEvent, hintChannel, hintsAfterCommit, timings, }: RunnerParams): Runner;
