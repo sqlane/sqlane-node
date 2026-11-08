@@ -1,5 +1,5 @@
-// The adapter for knex 3 (`@sqlane/core/knex`): `enqueue` takes a knex instance or a knex transaction. The SQL of
-// sqlane runs on the raw driver connection under knex (mysql2 or pg): knex does not run it, nor log it. No import of
+// The adapter for knex 3 (`@sqlane/core/adapter-knex`): `enqueue` takes a knex instance or a knex transaction. The SQL
+// of sqlane runs on the raw driver connection under knex (mysql2 or pg): knex does not run it, nor log it. No import of
 // knex: the adapter uses the instance it gets, and checks what it uses.
 import { ConfigError } from '../errors.js';
 

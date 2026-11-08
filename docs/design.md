@@ -66,7 +66,7 @@ export const buildReport = defineJob({
 ```js
 // app.js
 import { createSqlane } from '@sqlane/core';
-import { mysql2Adapter } from '@sqlane/core/mysql2'; // or pgAdapter(pool, { notify: true }) from '@sqlane/core/pg'
+import { mysql2Adapter } from '@sqlane/core/adapter-mysql2'; // or pgAdapter(pool, { notify: true }) from '@sqlane/core/adapter-pg'
 
 const sqlane = createSqlane({
     adapter: mysql2Adapter(queuePool), // the queue's own connections: claims, leases, results
@@ -136,11 +136,13 @@ Choices:
 - **One adapter, raw connections.** The adapter gives the dialect and the queue's pool. `enqueue` takes the driver's
   own connection, transaction client or pool. A connection or client must be in a transaction (MySQL cannot detect
   one safely). With a pool, sqlane runs the enqueue in its own transaction, outside the caller's. Adapters:
-  `@sqlane/core/mysql2` (`Connection`, `PoolConnection`, `Pool`) and `@sqlane/core/pg` (`Client`, `PoolClient`,
-  `Pool`) in v0.1; `@sqlane/core/knex` (a knex instance or transaction, with `mysql2` or `pg`) in v0.2. Kysely, Drizzle,
-  Sequelize, Prisma, TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver connection under the ORM,
-  or through its raw-SQL API: one SQL per dialect, and the ORM does not log it.
-- **ORM adapters are subpaths of the core**, not packages: `@sqlane/core/<orm>`. None needs a dependency of its own:
+  `@sqlane/core/adapter-mysql2` (`Connection`, `PoolConnection`, `Pool`) and `@sqlane/core/adapter-pg` (`Client`,
+  `PoolClient`, `Pool`) in v0.1; `@sqlane/core/adapter-knex` (a knex instance or transaction, with `mysql2` or `pg`) in
+  v0.2; `@sqlane/core/adapter-kysely` (a Kysely instance or transaction; the dialect is an option: Kysely does not tell
+  it) in v0.4. Drizzle, Sequelize, Prisma, TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver
+  connection under the ORM, or through its raw-SQL API: one SQL per dialect, and the ORM does not log it.
+- **Adapters are subpaths of the core**, not packages: `@sqlane/core/adapter-<name>`. The paths before 0.4
+  (`@sqlane/core/mysql2`, `/pg`, `/knex`) stay as aliases until 1.0. None needs a dependency of its own:
   each one uses the ORM instance that it gets. The core does not list the ORMs as peer dependencies: npm checks the
   range of an optional peer that the app has, so a new major of any ORM would break the install of the core for all
   its users. Instead, an adapter checks the ORM it gets (version or features) and throws a `ConfigError` with the
@@ -544,11 +546,12 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 ## Package layout
 
 ```text
-@sqlane/core              core: definitions, runner, dispatcher, SQL of both dialects, migrations
-@sqlane/core/mysql2       mysql2Adapter
-@sqlane/core/pg           pgAdapter (with the NOTIFY hint)
-@sqlane/core/knex         knexAdapter
-@sqlane/core/<orm>        later: kysely, drizzle, sequelize, prisma, typeorm, mikro-orm
+@sqlane/core                  core: definitions, runner, dispatcher, SQL of both dialects, migrations
+@sqlane/core/adapter-mysql2   mysql2Adapter
+@sqlane/core/adapter-pg       pgAdapter (with the NOTIFY hint)
+@sqlane/core/adapter-knex     knexAdapter
+@sqlane/core/adapter-kysely   kyselyAdapter
+@sqlane/core/adapter-<orm>    later: drizzle, sequelize, prisma, typeorm, mikro-orm
 ```
 
 One repository, a pnpm workspace: `packages/<name>` for each published package, `test/` for the test databases of all

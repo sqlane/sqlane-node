@@ -1,7 +1,7 @@
 // Scenarios: PostgreSQL with NOTIFY hints; migrations; a hint over any pub/sub; stats.
 import { Pool } from 'pg';
 import { createSqlane, getMigrations } from '@sqlane/core';
-import { pgAdapter } from '@sqlane/core/pg';
+import { pgAdapter } from '@sqlane/core/adapter-pg';
 
 const queuePool = new Pool({ connectionString: 'postgres://app@localhost/app', max: 3 });
 

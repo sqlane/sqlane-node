@@ -3,8 +3,8 @@ import mysql from 'mysql2/promise';
 import { Pool } from 'pg';
 import { expectTypeOf } from 'vitest';
 import { createSqlane, defineJob, RetryJobError } from '@sqlane/core';
-import { mysql2Adapter } from '@sqlane/core/mysql2';
-import { pgAdapter } from '@sqlane/core/pg';
+import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
+import { pgAdapter } from '@sqlane/core/adapter-pg';
 
 /** The type tests: never called. */
 export async function publicApiTypes() {
