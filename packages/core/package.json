@@ -12,6 +12,7 @@
         "outbox",
         "postgres",
         "postgresql",
+        "prisma",
         "queue",
         "transactional"
     ],
@@ -55,6 +56,10 @@
             "types": "./types/adapters/drizzle.d.ts",
             "default": "./src/adapters/drizzle.js"
         },
+        "./adapter-prisma": {
+            "types": "./types/adapters/prisma.d.ts",
+            "default": "./src/adapters/prisma.js"
+        },
         "./mysql2": {
             "types": "./types/adapters/mysql2.d.ts",
             "default": "./src/adapters/mysql2.js"
@@ -76,13 +81,17 @@
         "check:types": "out=$(mktemp -d) && tsc -p tsconfig.build.json --declarationDir \"$out\" && diff -r types \"$out\"; status=$?; rm -rf \"$out\"; exit $status",
         "lint:package": "publint --strict",
         "lint:types": "attw --pack . --profile esm-only",
-        "prepublishOnly": "publint --strict && attw --pack . --profile esm-only"
+        "prepublishOnly": "publint --strict && attw --pack . --profile esm-only",
+        "prisma:generate": "prisma generate --schema test/prisma/mysql/schema.prisma && prisma generate --schema test/prisma/postgres/schema.prisma"
     },
     "dependencies": {
         "parse-duration": "^2.1.11",
         "ulid": "^3.0.2"
     },
     "devDependencies": {
+        "@prisma/adapter-mariadb": "7.10.1",
+        "@prisma/adapter-pg": "7.10.1",
+        "@prisma/client": "7.10.1",
         "@sqlane/testing": "workspace:*",
         "@types/pg": "8.23.1",
         "drizzle-orm": "0.45.4",
@@ -90,8 +99,10 @@
         "knex": "3.3.0",
         "kysely": "0.29.8",
         "kysely-0.28": "npm:kysely@0.28.19",
+        "mariadb": "3.5.5",
         "mysql2": "3.24.6",
-        "pg": "8.23.1"
+        "pg": "8.23.1",
+        "prisma": "7.10.1"
     },
     "peerDependencies": {
         "mysql2": "^3.11.0",

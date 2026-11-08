@@ -99,13 +99,17 @@ async function migrateMysql(executor, p, lockTimeoutMs) {
 }
 
 /**
+ * One transaction: the lock, the DDL and the ids of the migrations.
  * @param {Executor} executor
  * @param {string} p
  * @param {number} lockTimeoutMs
+ * @param {boolean} inTransaction The connection is in a transaction already: its owner commits it.
  * @returns {Promise<string[]>}
  */
-async function migratePostgres(executor, p, lockTimeoutMs) {
-    await executor.query('BEGIN', []);
+async function migratePostgres(executor, p, lockTimeoutMs, inTransaction) {
+    if (!inTransaction) {
+        await executor.query('BEGIN', []);
+    }
 
     try {
         // SET LOCAL: until the end of the transaction, then the pooled connection gets its settings back
@@ -113,7 +117,8 @@ async function migratePostgres(executor, p, lockTimeoutMs) {
         await executor.query(`SET LOCAL lock_timeout = ${Math.max(1, lockTimeoutMs)}`, []);
 
         try {
-            await executor.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${p}migrations`]);
+            // In FROM: the function returns void, a type that some clients cannot read (Prisma)
+            await executor.query('SELECT true AS locked FROM pg_advisory_xact_lock(hashtext($1))', [`${p}migrations`]);
         } catch (error) {
             if (/** @type {{ code?: string }} */ (error).code === '55P03') {
                 throw new MigrationLockTimeoutError(
@@ -133,11 +138,16 @@ async function migratePostgres(executor, p, lockTimeoutMs) {
 
         await runInOrder(executor, toSteps(missing, `INSERT INTO ${p}migrations (id, applied_at) VALUES ($1, clock_timestamp())`));
 
-        await executor.query('COMMIT', []);
+        if (!inTransaction) {
+            await executor.query('COMMIT', []);
+        }
 
         return missing.map(({ id }) => id);
     } catch (error) {
-        await executor.query('ROLLBACK', []);
+        if (!inTransaction) {
+            await executor.query('ROLLBACK', []);
+        }
+
         throw error;
     }
 }
@@ -159,5 +169,5 @@ export function runMigrations(adapter, tablePrefix, options = {}) {
 
     return adapter.withConnection(executor => (adapter.dialect === 'mysql'
         ? migrateMysql(executor, tablePrefix, lockTimeoutMs)
-        : migratePostgres(executor, tablePrefix, lockTimeoutMs)));
+        : migratePostgres(executor, tablePrefix, lockTimeoutMs, adapter.transactionalConnection === true)));
 }

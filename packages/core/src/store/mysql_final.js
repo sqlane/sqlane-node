@@ -1,5 +1,6 @@
 // The final writes on MySQL: lease renewal, complete, retry, fail, release, stall recovery, sweeps. Each write of a
 // job checks its lock token: a process that lost the lease changes nothing. Each runs in a queue transaction.
+import { isTransientDbError } from '../transient_error.js';
 import { monotonicFactory } from 'ulid';
 import { insertJobsMysql } from './mysql_enqueue.js';
 
@@ -180,15 +181,21 @@ async function addFailureJob(executor, p, row, { error, buildFailureJob }) {
         return { notAdded: buildError };
     }
 
-    await executor.run('SAVEPOINT sqlane_failure_job', []);
+    const token = enqueueToken();
 
     try {
-        await insertJobsMysql(executor, p, [newJob], enqueueToken());
+        await insertJobsMysql(executor, p, [newJob], token);
 
         return { added: newJob };
     } catch (insertError) {
-        // MySQL rolls back only the failed statement: the job row can be there without its payload
-        await executor.run('ROLLBACK TO SAVEPOINT sqlane_failure_job', []);
+        // A deadlock rolls back the whole transaction: the write runs again
+        if (isTransientDbError(insertError)) {
+            throw insertError;
+        }
+
+        // MySQL rolls back only the failed statement: the job row can be there without its payload. No savepoint: some
+        // drivers send every statement as a prepared statement (Prisma), and MySQL cannot prepare SAVEPOINT.
+        await executor.run(`DELETE FROM ${p}jobs WHERE id = ? AND enqueue_token = ?`, [newJob.id, token]);
 
         return { notAdded: insertError };
     }

@@ -1,0 +1,14 @@
+// The Prisma client of the tests of the Prisma adapter: `pnpm prisma:generate` writes it to generated/ (not committed)
+generator client {
+  provider     = "prisma-client"
+  output       = "./generated"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model Report {
+  id String @id
+}

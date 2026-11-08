@@ -6,9 +6,11 @@ packages:
 # `pnpm add` writes exact versions, not ^ ranges
 saveExact: true
 
-# Install scripts that are not needed: optional native speedups (ssh2, cpu-features), a version notice (protobufjs).
-# All are dependencies of testcontainers.
+# Install scripts that are not needed: optional native speedups (ssh2, cpu-features), a version notice (protobufjs), all
+# dependencies of testcontainers; the engines of Prisma Migrate (the tests only generate a client: plain JS).
 allowBuilds:
+  '@prisma/engines': false
   cpu-features: false
+  prisma: false
   protobufjs: false
   ssh2: false

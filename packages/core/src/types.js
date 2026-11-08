@@ -193,6 +193,8 @@
  *     connection: calls onCommit once its transaction commits (at once when it has committed: a pool), never when it
  *     rolls back. Returns false when the adapter cannot tell (a connection in the caller's transaction): sqlane then
  *     re-probes until it sees the job. A call of onCommit without a commit costs one probe.
+ * @property {boolean} [transactionalConnection] `withConnection` runs func in a transaction (an ORM that has no
+ *     connection outside one): the migration of PostgreSQL does not begin and commit one of its own.
  * @property {boolean} [notify] PostgreSQL: hints by LISTEN/NOTIFY.
  * @property {(channel: string, onMessage: (message: string) => void) => Promise<() => Promise<void>>} [listen] Used by
  *     sqlane, with `notify`: LISTEN on a connection of its own; resolves to the unlisten function.
