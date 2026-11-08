@@ -6,6 +6,7 @@
         "background-jobs",
         "job",
         "knex",
+        "kysely",
         "mysql",
         "outbox",
         "postgres",
@@ -44,6 +45,10 @@
         "./knex": {
             "types": "./types/adapters/knex.d.ts",
             "default": "./src/adapters/knex.js"
+        },
+        "./kysely": {
+            "types": "./types/adapters/kysely.d.ts",
+            "default": "./src/adapters/kysely.js"
         }
     },
     "publishConfig": {
@@ -64,6 +69,8 @@
         "@sqlane/testing": "workspace:*",
         "@types/pg": "8.23.1",
         "knex": "3.3.0",
+        "kysely": "0.29.8",
+        "kysely-0.28": "npm:kysely@0.28.19",
         "mysql2": "3.24.6",
         "pg": "8.23.1"
     },

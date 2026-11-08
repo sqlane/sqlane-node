@@ -137,8 +137,9 @@ Choices:
   own connection, transaction client or pool. A connection or client must be in a transaction (MySQL cannot detect
   one safely). With a pool, sqlane runs the enqueue in its own transaction, outside the caller's. Adapters:
   `@sqlane/core/mysql2` (`Connection`, `PoolConnection`, `Pool`) and `@sqlane/core/pg` (`Client`, `PoolClient`,
-  `Pool`) in v0.1; `@sqlane/core/knex` (a knex instance or transaction, with `mysql2` or `pg`) in v0.2. Kysely, Drizzle,
-  Sequelize, Prisma, TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver connection under the ORM,
+  `Pool`) in v0.1; `@sqlane/core/knex` (a knex instance or transaction, with `mysql2` or `pg`) in v0.2;
+  `@sqlane/core/kysely` (a Kysely instance or transaction; the dialect is an option: Kysely does not tell it) in v0.4.
+  Drizzle, Sequelize, Prisma, TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver connection under the ORM,
   or through its raw-SQL API: one SQL per dialect, and the ORM does not log it.
 - **ORM adapters are subpaths of the core**, not packages: `@sqlane/core/<orm>`. None needs a dependency of its own:
   each one uses the ORM instance that it gets. The core does not list the ORMs as peer dependencies: npm checks the
@@ -548,7 +549,8 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 @sqlane/core/mysql2       mysql2Adapter
 @sqlane/core/pg           pgAdapter (with the NOTIFY hint)
 @sqlane/core/knex         knexAdapter
-@sqlane/core/<orm>        later: kysely, drizzle, sequelize, prisma, typeorm, mikro-orm
+@sqlane/core/kysely       kyselyAdapter
+@sqlane/core/<orm>        later: drizzle, sequelize, prisma, typeorm, mikro-orm
 ```
 
 One repository, a pnpm workspace: `packages/<name>` for each published package, `test/` for the test databases of all
