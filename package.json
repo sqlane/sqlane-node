@@ -22,13 +22,23 @@
     },
     "files": [
         "src",
-        "!src/**/*.test.js"
+        "!src/**/*.test.js",
+        "types"
     ],
     "type": "module",
     "exports": {
-        ".": "./src/index.js",
-        "./mysql2": "./src/adapters/mysql2.js",
-        "./pg": "./src/adapters/pg.js"
+        ".": {
+            "types": "./types/index.d.ts",
+            "default": "./src/index.js"
+        },
+        "./mysql2": {
+            "types": "./types/adapters/mysql2.d.ts",
+            "default": "./src/adapters/mysql2.js"
+        },
+        "./pg": {
+            "types": "./types/adapters/pg.d.ts",
+            "default": "./src/adapters/pg.js"
+        }
     },
     "publishConfig": {
         "access": "public"
@@ -37,16 +47,19 @@
         "lint": "oxlint --deny-warnings",
         "lint:fix": "oxlint --fix",
         "lint:package": "publint --strict",
+        "lint:types": "attw --pack . --profile esm-only",
         "format": "oxfmt",
         "format:check": "oxfmt --check",
         "typecheck": "tsc -p tsconfig.json",
+        "build:types": "node --eval \"require('node:fs').rmSync('types', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+        "check:types": "out=$(mktemp -d) && tsc -p tsconfig.build.json --declarationDir \"$out\" && diff -r types \"$out\"; status=$?; rm -rf \"$out\"; exit $status",
         "test": "vitest run",
         "test:unit": "vitest run --project unit",
         "test:integration": "vitest run --project 'integration:*'",
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
         "check": "hk check --all",
-        "prepublishOnly": "publint --strict",
+        "prepublishOnly": "publint --strict && attw --pack . --profile esm-only",
         "changeset": "changeset",
         "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern CHANGELOG.md"
     },
@@ -55,6 +68,7 @@
         "ulid": "^3.0.2"
     },
     "devDependencies": {
+        "@arethetypeswrong/cli": "0.18.5",
         "@changesets/changelog-github": "1.0.1",
         "@changesets/cli": "3.0.3",
         "@stylistic/eslint-plugin": "5.10.0",

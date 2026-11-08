@@ -14,10 +14,19 @@ steps {
     ["tsc"] = (Builtins.tsc) {
         glob = List("**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "tsconfig.json")
     }
-    // The package that npm would publish: exports, files, types
+    // The package that npm would publish: exports, files; TypeScript finds the declarations of each export (Are the
+    // Types Wrong). One step: both pack the package, in the same place.
     ["publint"] {
-        glob = List("package.json")
-        check = "publint --strict"
+        glob = List("package.json", "types/**")
+        check = "pnpm lint:package && pnpm lint:types"
+    }
+    // The declarations (types/): generated from the JSDoc of src/ and committed. A commit regenerates and stages them;
+    // the check fails if they differ from a fresh build.
+    ["types"] {
+        glob = List("src/**/*.js", "tsconfig.json", "tsconfig.build.json", "types/**")
+        check = "pnpm check:types"
+        fix = "pnpm build:types"
+        stage = "types/**"
     }
     // GitHub Actions workflows: errors, then security issues
     ["actionlint"] = Builtins.actionlint

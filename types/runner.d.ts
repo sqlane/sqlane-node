@@ -1,0 +1,87 @@
+export type ClaimedJob = import('./store/store.js').ClaimedJob;
+export type HandlerEntry = import('./registry.js').HandlerEntry;
+export type Lane = import('./registry.js').Lane;
+export type Timings = {
+    leaseMs: number;
+    renewIntervalMs: number;
+    recoveryIntervalMs: number;
+    cleanupIntervalMs: number;
+    pollIntervalMs: number;
+    /**
+     * How long a failed write of a result is retried.
+     */
+    maxFinalizingMs: number;
+    /**
+     * A job without its payload waits this long for it.
+     */
+    missingPayloadGraceMs: number;
+};
+/** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
+/** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
+/** @typedef {import('./registry.js').Lane} Lane */
+/**
+ * @typedef {object} Timings
+ * @property {number} leaseMs
+ * @property {number} renewIntervalMs
+ * @property {number} recoveryIntervalMs
+ * @property {number} cleanupIntervalMs
+ * @property {number} pollIntervalMs
+ * @property {number} maxFinalizingMs How long a failed write of a result is retried.
+ * @property {number} missingPayloadGraceMs A job without its payload waits this long for it.
+ */
+/** @type {Timings} */
+export declare const DEFAULT_TIMINGS: Timings;
+export type RunningJob = {
+    key: string;
+    claimed: ClaimedJob;
+    entry: HandlerEntry;
+    controller: AbortController;
+    /**
+     * Resolves when the result is written (or given up).
+     */
+    done: Promise<void>;
+    /**
+     * The handler settled.
+     */
+    settled: boolean;
+    /**
+     * Released or abandoned on close: the result is not written.
+     */
+    released: boolean;
+    timedOut: boolean;
+    leaseLost: boolean;
+    leaseEndsAt: number;
+    startedAt: number;
+};
+export type RunnerParams = {
+    store: import('./store/store.js').Store;
+    registry: import('./registry.js').Registry;
+    concurrency: number;
+    defaults: import('./defaults.js').ResolvedDefaults;
+    cleanup: boolean;
+    logger: import('./types.js').Logger | undefined;
+    onEvent: ((event: import('./types.js').SqlaneEvent) => void) | undefined;
+    hintChannel: import('./hint_channel.js').HintChannel;
+    /**
+     * For tests.
+     */
+    timings?: Partial<Timings>;
+};
+export type Runner = {
+    start: () => Promise<void>;
+    drain: (options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>;
+    close: (options?: import('./types.js').CloseOptions) => Promise<void>;
+    wake: (name: string) => void;
+    onEnqueued: (names: string[]) => void;
+    isClosed: () => boolean;
+    isStarted: () => boolean;
+    /**
+     * This process handles the name and has a free slot for it.
+     */
+    canStartNow: (name: string) => boolean;
+};
+/**
+ * @param {RunnerParams} params
+ * @returns {Runner}
+ */
+export declare function createRunner({ store, registry, concurrency, defaults, cleanup, logger, onEvent, hintChannel, timings, }: RunnerParams): Runner;
