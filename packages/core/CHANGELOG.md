@@ -1,5 +1,17 @@
 # @sqlane/core
 
+## 0.4.0
+
+### Minor Changes
+
+- [#36](https://github.com/sqlane/sqlane-node/pull/36) [`3581140`](https://github.com/sqlane/sqlane-node/commit/3581140e69703d81ca8039c8afd53fd15e990d98) - The adapters are imported from `@sqlane/core/adapter-<name>`: `adapter-mysql2`, `adapter-pg`, `adapter-knex`,
+  `adapter-kysely`. The paths before (`@sqlane/core/mysql2`, `/pg`, `/knex`) still work, until 1.0.
+
+- [#36](https://github.com/sqlane/sqlane-node/pull/36) [`3581140`](https://github.com/sqlane/sqlane-node/commit/3581140e69703d81ca8039c8afd53fd15e990d98) - The Kysely adapter: `import { kyselyAdapter } from '@sqlane/core/adapter-kysely'`, then `kyselyAdapter(db, { dialect })`.
+  `enqueue` takes a Kysely instance (a transaction of its own) or a Kysely transaction, also a controlled one. The SQL of
+  sqlane runs without the plugins of the instance (a `CamelCasePlugin` does not rename its columns). Kysely 0.28 and
+  0.29, with its MySQL or PostgreSQL dialect.
+
 ## 0.3.0
 
 ### Minor Changes
