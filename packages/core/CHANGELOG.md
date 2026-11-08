@@ -1,5 +1,11 @@
 # @sqlane/core
 
+## 0.1.3
+
+### Patch Changes
+
+- [#30](https://github.com/sqlane/sqlane-node/pull/30) [`47db15c`](https://github.com/sqlane/sqlane-node/commit/47db15cbee74d696e9b6674e6fb1b67918fa8c3b) - The repository is now a monorepo: the package is in `packages/core`. No change of the code.
+
 ## 0.1.2
 
 ### Patch Changes
