@@ -342,8 +342,26 @@ calls nothing:
   backoff step, and never more than the poll interval. A rolled-back transaction costs only the re-probes.
 - **PostgreSQL NOTIFY.** `pg_notify` runs in the transaction and is delivered on commit: the receivers probe at once,
   with no re-probe.
-- **`@sqlane/<orm>` adapters.** They wake from the after-commit hook of the ORM, where it has one.
+- **After-commit hook.** An adapter may have `afterCommit(connection, fn)`: the `@sqlane/<orm>` adapters, from the
+  after-commit hook or promise of the ORM. An `enqueue` on a pool runs in its own transaction, committed when it
+  returns: the same. After the commit, the process wakes at once and sends the hint, then re-probes as above, from the
+  commit.
 - **`sqlane.wake(name)`** stays public as a low-level escape hatch. The docs never require it.
+
+The commit event of an ORM is a hint, not a proof: a probe of the table decides. Checked in knex 3.3 and Sequelize
+6.37 against MySQL 8.4 and PostgreSQL 18:
+
+- **Too late is harmless, too early is not.** An event without a commit costs one probe. An event before the job is
+  visible would leave it to the poll; the re-probes from the event cover it.
+- **Events without a commit.** Sequelize runs its `afterCommit` hooks in a `finally`: also when `COMMIT` fails. On
+  PostgreSQL, a `COMMIT` after a failed statement whose error the app caught returns `ROLLBACK`: knex resolves its
+  transaction and Sequelize runs its hooks, with nothing committed.
+- **Early events.** A nested transaction (a savepoint) completes before the outer `COMMIT`, which can still roll back:
+  the adapters hook the top-level transaction (knex `parentTransaction`, Sequelize `parent`). They never read the state
+  flags of the ORM: Sequelize sets `finished = 'commit'` when it sends `COMMIT`, before the answer.
+- **The server.** MySQL and PostgreSQL make a transaction visible before they answer `COMMIT`, also with semi-sync or
+  synchronous replication. The queue pool connects to the server that the app writes to: on a replica, or another
+  member of a multi-primary cluster, the commit can show later.
 
 ### Hints
 
@@ -523,6 +541,10 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 @sqlane/core/pg           pgAdapter (with the NOTIFY hint)
 @sqlane/<orm>             later: knex, kysely, drizzle, sequelize, prisma, typeorm, mikro-orm
 ```
+
+One repository, a pnpm workspace: `packages/<name>` for each published package, `test/` for the test databases of all
+of them (a private package, `@sqlane/testing`). The packages have one version (a fixed group of Changesets) and
+release together. An adapter has `@sqlane/core` and its ORM as peer dependencies.
 
 Source (`src/`, snake_case files): `define_job.js`, `sqlane.js` (facade), `dispatcher.js`, `lanes.js`,
 `lease_keeper.js`, `stall_recovery.js`, `cleanup.js`, `errors.js`, `store/` (one SQL module per dialect behind one

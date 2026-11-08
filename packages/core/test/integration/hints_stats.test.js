@@ -5,13 +5,13 @@ import { pgAdapter } from '../../src/adapters/pg.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
-import { connectTestDatabase } from './helpers/test_database.js';
+import { connectTestDatabase } from '@sqlane/testing/database';
 
 /** @typedef {import('../../src/types.js').Sqlane<any, any>} Sqlane */
 
 const TIMINGS = { leaseMs: 5000, renewIntervalMs: 500, recoveryIntervalMs: 500 };
 
-/** @type {import('./helpers/test_database.js').TestDatabaseConnection} */
+/** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
 let database;
 /** @type {import('./helpers/test_adapter.js').TestAdapter} */
 let testAdapter;

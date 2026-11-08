@@ -4,7 +4,7 @@
 import { availableParallelism, cpus, totalmem } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
-import { TEST_DATABASES } from '../test/integration/databases.js';
+import { TEST_DATABASES } from '@sqlane/testing/databases';
 import { benchEnqueue, benchLatency, benchProbe, benchProcess, SIZES } from './scenarios.js';
 
 /** @typedef {import('./scenarios.js').BenchContext} BenchContext */

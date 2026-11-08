@@ -1,0 +1,18 @@
+{
+    "name": "@sqlane/testing",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Test databases of the sqlane packages: Docker containers (testcontainers), connections",
+    "type": "module",
+    "exports": {
+        "./databases": "./databases.js",
+        "./database": "./test_database.js"
+    },
+    "dependencies": {
+        "@testcontainers/mysql": "12.2.1",
+        "@testcontainers/postgresql": "12.2.1",
+        "mysql2": "3.24.6",
+        "pg": "8.23.1",
+        "testcontainers": "12.2.1"
+    }
+}
