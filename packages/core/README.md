@@ -50,6 +50,31 @@ process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));
 
 In tests, run the due jobs without `start()`: `await sqlane.drain()`. More in [`examples/`](https://github.com/sqlane/sqlane-node/tree/main/packages/core/examples).
 
+## Adapters
+
+| Import                | `enqueue` takes                                                        | Supported                 |
+| --------------------- | ---------------------------------------------------------------------- | ------------------------- |
+| `@sqlane/core/mysql2` | a mysql2 `Connection` or `PoolConnection` (in a transaction), a `Pool` | mysql2 3.11+              |
+| `@sqlane/core/pg`     | a pg `Client` or `PoolClient` (in a transaction), a `Pool`             | pg 8.13+                  |
+| `@sqlane/core/knex`   | a knex transaction (also nested), a knex instance                      | knex 3, with mysql2 or pg |
+
+With a pool or a knex instance, the enqueue runs in a transaction of its own. With a knex transaction, the workers wake
+at once after the commit of the outermost one.
+
+```js
+import { knexAdapter } from '@sqlane/core/knex';
+
+const sqlane = createSqlane({ adapter: knexAdapter(queueKnex), jobs: [buildReport] }); // the queue's own knex
+
+await knex.transaction(async (trx) => {
+    await trx('reports').insert({ id: reportId });
+    await sqlane.enqueue(trx, buildReport, { reportId }, { jobId: reportId });
+});
+```
+
+The SQL of sqlane runs on the driver connection under knex: knex does not log it. Kysely, Drizzle, Prisma, TypeORM,
+Sequelize and MikroORM: later.
+
 ## Performance
 
 On a laptop (M1 Pro, Docker, default config), details in [benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks.md):

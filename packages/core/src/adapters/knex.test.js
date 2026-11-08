@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
-import { ConfigError } from '@sqlane/core';
-import { knexAdapter } from './index.js';
+import { ConfigError } from '../errors.js';
+import { knexAdapter } from './knex.js';
 
 /**
  * @param {string} dialect
@@ -8,7 +8,7 @@ import { knexAdapter } from './index.js';
  * @returns {import('knex').Knex} A knex instance, as far as the adapter reads it.
  */
 function fakeKnex(dialect, driverName) {
-    return /** @type {any} */ ({ client: { dialect, driverName } });
+    return /** @type {any} */ ({ transaction: () => {}, client: { dialect, driverName, acquireConnection: () => {} } });
 }
 
 test.each([
@@ -26,6 +26,9 @@ test.each([
     expect(() => knexAdapter(fakeKnex(dialect, driverName))).toThrow(ConfigError);
 });
 
-test('no knex: a ConfigError', () => {
-    expect(() => knexAdapter(/** @type {any} */ (undefined))).toThrow('must be "mysql2" or "pg", not null');
+test.each([
+    { label: 'no knex', knex: undefined },
+    { label: 'a mysql2 pool', knex: { query: () => {} } },
+])('$label: a ConfigError', ({ knex }) => {
+    expect(() => knexAdapter(/** @type {any} */ (knex))).toThrow('expects a knex instance (knex 3)');
 });

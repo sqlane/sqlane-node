@@ -5,6 +5,7 @@
     "keywords": [
         "background-jobs",
         "job",
+        "knex",
         "mysql",
         "outbox",
         "postgres",
@@ -39,6 +40,10 @@
         "./pg": {
             "types": "./types/adapters/pg.d.ts",
             "default": "./src/adapters/pg.js"
+        },
+        "./knex": {
+            "types": "./types/adapters/knex.d.ts",
+            "default": "./src/adapters/knex.js"
         }
     },
     "publishConfig": {
@@ -58,6 +63,7 @@
     "devDependencies": {
         "@sqlane/testing": "workspace:*",
         "@types/pg": "8.23.1",
+        "knex": "3.3.0",
         "mysql2": "3.24.6",
         "pg": "8.23.1"
     },

@@ -12,10 +12,9 @@ Transactional SQL job queue for Node.js, backed by MySQL or PostgreSQL.
 
 ## Packages
 
-| Package                                         | Contains                                                                        |
-| ----------------------------------------------- | ------------------------------------------------------------------------------- |
-| [`@sqlane/core`](packages/core)                 | The queue, the SQL of both dialects, migrations; adapters for `mysql2` and `pg` |
-| [`@sqlane/adapter-knex`](packages/adapter-knex) | The adapter for knex: enqueue in knex transactions                              |
+| Package                         | Contains                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------- |
+| [`@sqlane/core`](packages/core) | The queue, the SQL of both dialects, migrations; adapters for `mysql2`, `pg` and knex |
 
 Docs: [design](docs/design.md), [benchmarks](docs/benchmarks.md), [releasing](docs/releasing.md).
 

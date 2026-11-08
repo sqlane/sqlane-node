@@ -137,9 +137,16 @@ Choices:
   own connection, transaction client or pool. A connection or client must be in a transaction (MySQL cannot detect
   one safely). With a pool, sqlane runs the enqueue in its own transaction, outside the caller's. Adapters:
   `@sqlane/core/mysql2` (`Connection`, `PoolConnection`, `Pool`) and `@sqlane/core/pg` (`Client`, `PoolClient`,
-  `Pool`) in v0.1; `@sqlane/adapter-knex` (a knex instance or transaction, with `mysql2` or `pg`) in v0.2. Kysely, Drizzle,
-  Sequelize, Prisma, TypeORM, MikroORM later, as separate packages. An ORM adapter runs sqlane's SQL on the driver
-  connection under the ORM: one SQL per dialect, and the ORM does not log it.
+  `Pool`) in v0.1; `@sqlane/core/knex` (a knex instance or transaction, with `mysql2` or `pg`) in v0.2. Kysely, Drizzle,
+  Sequelize, Prisma, TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver connection under the ORM,
+  or through its raw-SQL API: one SQL per dialect, and the ORM does not log it.
+- **ORM adapters are subpaths of the core**, not packages: `@sqlane/core/<orm>`. None needs a dependency of its own:
+  each one uses the ORM instance that it gets. The core does not list the ORMs as peer dependencies: npm checks the
+  range of an optional peer that the app has, so a new major of any ORM would break the install of the core for all
+  its users. Instead, an adapter checks the ORM it gets (version or features) and throws a `ConfigError` with the
+  supported versions; the README has the table, and CI tests each supported major. A new major of an ORM that needs
+  other code: a branch in the adapter, or a new subpath. A package of its own only for an adapter that needs heavy
+  dependencies.
 - **Worker settings in worker code.** `concurrency` and `lane` are `handle()` options, not definition fields: they are
   per process. A handler takes `concurrency` (a private lane) or `lane` (a lane of `lanes`), not both (a type error).
   An unknown lane is a type error and a `ConfigError`. A lane is capped by the process `concurrency`.
@@ -343,7 +350,7 @@ calls nothing:
   backoff step, and never more than the poll interval. A rolled-back transaction costs only the re-probes.
 - **PostgreSQL NOTIFY.** `pg_notify` runs in the transaction and is delivered on commit: the receivers probe at once,
   with no re-probe.
-- **After-commit hook.** An adapter may have `afterCommit(connection, fn)`: the `@sqlane/adapter-<orm>` adapters, from the
+- **After-commit hook.** An adapter may have `afterCommit(connection, fn)`: the ORM adapters, from the
   after-commit hook or promise of the ORM. An `enqueue` on a pool runs in its own transaction, committed when it
   returns: the same. After the commit, the process wakes at once and sends the hint, then re-probes as above, from the
   commit.
@@ -540,14 +547,13 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 @sqlane/core              core: definitions, runner, dispatcher, SQL of both dialects, migrations
 @sqlane/core/mysql2       mysql2Adapter
 @sqlane/core/pg           pgAdapter (with the NOTIFY hint)
-@sqlane/adapter-knex      knexAdapter
-@sqlane/adapter-<orm>     later: kysely, drizzle, sequelize, prisma, typeorm, mikro-orm
+@sqlane/core/knex         knexAdapter
+@sqlane/core/<orm>        later: kysely, drizzle, sequelize, prisma, typeorm, mikro-orm
 ```
 
 One repository, a pnpm workspace: `packages/<name>` for each published package, `test/` for the test databases of all
 of them (a private package, `@sqlane/testing`). The packages have one version (a fixed group of Changesets) and
-release together. An adapter is `@sqlane/adapter-<orm>`, in `packages/adapter-<orm>`; it has `@sqlane/core` and its
-ORM as peer dependencies.
+release together. Today it has one: `@sqlane/core`, with the adapters as subpaths.
 
 Source (`src/`, snake_case files): `define_job.js`, `sqlane.js` (facade), `dispatcher.js`, `lanes.js`,
 `lease_keeper.js`, `stall_recovery.js`, `cleanup.js`, `errors.js`, `store/` (one SQL module per dialect behind one

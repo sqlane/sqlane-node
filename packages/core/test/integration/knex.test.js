@@ -1,12 +1,12 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import knexLib from 'knex';
 import { afterAll, afterEach, beforeAll, expect, inject, test } from 'vitest';
-import { createSqlane, defineJob } from '@sqlane/core';
+import { createSqlane, defineJob } from '../../src/index.js';
 import { connectTestDatabase } from '@sqlane/testing/database';
-import { knexAdapter } from '../../src/index.js';
+import { knexAdapter } from '../../src/adapters/knex.js';
 
-/** @typedef {import('@sqlane/core').Sqlane<import('../../src/index.js').KnexConnection, never>} Sqlane */
-/** @typedef {import('@sqlane/core').SqlaneEvent} SqlaneEvent */
+/** @typedef {import('../../src/types.js').Sqlane<import('../../src/adapters/knex.js').KnexConnection, never>} Sqlane */
+/** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
 /** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
 let database;
@@ -46,7 +46,7 @@ afterAll(async () => {
 
 /**
  * A sqlane instance over knex, on tables of its own, migrated.
- * @param {Partial<import('@sqlane/core').SqlaneOptions<any, never>>} [options]
+ * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
  * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
  */
 async function freshSqlane(options = {}) {

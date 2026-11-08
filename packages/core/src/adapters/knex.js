@@ -1,10 +1,11 @@
-// The adapter for knex: `enqueue` takes a knex instance or a knex transaction. The SQL of sqlane runs on the raw driver
-// connection under knex (mysql2 or pg): knex does not run it, nor log it.
-import { ConfigError } from '@sqlane/core';
+// The adapter for knex 3 (`@sqlane/core/knex`): `enqueue` takes a knex instance or a knex transaction. The SQL of
+// sqlane runs on the raw driver connection under knex (mysql2 or pg): knex does not run it, nor log it. No import of
+// knex: the adapter uses the instance it gets, and checks what it uses.
+import { ConfigError } from '../errors.js';
 
 /** @typedef {import('knex').Knex} Knex */
 /** @typedef {import('knex').Knex.Transaction} KnexTransaction */
-/** @typedef {import('@sqlane/core').Executor} Executor */
+/** @typedef {import('../types.js').Executor} Executor */
 
 /**
  * The connections that `enqueue` takes: a knex instance (a transaction of its own) or a knex transaction.
@@ -94,7 +95,13 @@ function executorOf(knex, toExecutor) {
  * @returns {{ dialect: 'mysql' | 'postgres', toExecutor: ToExecutor }}
  */
 function resolveDriver(knex) {
-    const client = /** @type {{ dialect?: unknown, driverName?: unknown } | undefined} */ (knex?.client);
+    const client = /** @type {{ dialect?: unknown, driverName?: unknown, acquireConnection?: unknown } | undefined} */ (
+        knex?.client
+    );
+
+    if (typeof knex?.transaction !== 'function' || typeof client?.acquireConnection !== 'function') {
+        throw new ConfigError('knexAdapter: expects a knex instance (knex 3)');
+    }
 
     if (client?.dialect === 'mysql' && client.driverName === 'mysql2') {
         return { dialect: 'mysql', toExecutor: mysql2Executor };
@@ -114,7 +121,7 @@ function resolveDriver(knex) {
  * transaction (the caller's: the job commits with it). After the commit of the outermost transaction, the processes
  * wake at once.
  * @param {Knex} knex The queue's own knex: claims, leases, results. A small pool of its own is best.
- * @returns {import('@sqlane/core').Adapter<KnexConnection>}
+ * @returns {import('../types.js').Adapter<KnexConnection>}
  */
 export function knexAdapter(knex) {
     const { dialect, toExecutor } = resolveDriver(knex);
