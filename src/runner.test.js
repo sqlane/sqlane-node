@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { expect, test } from 'vitest';
 import { resolveDefaults } from './defaults.js';
 import { createHintChannel } from './hint_channel.js';
@@ -41,6 +42,7 @@ function runnerWith(makeDueErrors) {
             logger: undefined,
             onEvent: event => events.push(event),
             hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+            hintsAfterCommit: false,
         }),
         events,
     };
@@ -62,4 +64,79 @@ test('drain: another error rejects', async () => {
     const { runner } = runnerWith([new Error('syntax error')]);
 
     await expect(runner.drain({ includeDelayed: true })).rejects.toThrow('syntax error');
+});
+
+/**
+ * @typedef {object} HintedRunner
+ * @property {import('./runner.js').Runner} runner
+ * @property {() => number} probes The probes so far.
+ * @property {(name: string) => void} deliver Delivers a hint message.
+ */
+
+/**
+ * A started runner of the name `ping`, over a store of no jobs, with a hint whose messages the test delivers.
+ * @param {boolean} hintsAfterCommit
+ * @returns {Promise<HintedRunner>}
+ */
+async function runnerWithHint(hintsAfterCommit) {
+    const registry = createRegistry({
+        jobsByName: new Map(),
+        lanes: undefined,
+        concurrency: 10,
+        defaultTimeoutMs: null,
+    });
+    let probes = 0;
+    /** @type {((message: string) => void) | null} */
+    let deliver = null;
+    const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
+        probe: async () => {
+            probes++;
+
+            return [];
+        },
+    }));
+
+    registry.handle('ping', () => {});
+
+    const runner = createRunner({
+        store,
+        registry,
+        concurrency: 10,
+        defaults: resolveDefaults(),
+        cleanup: false,
+        logger: undefined,
+        onEvent: undefined,
+        hintChannel: createHintChannel({
+            hint: {
+                publish: async () => {},
+                subscribe: async (_channel, onMessage) => {
+                    deliver = onMessage;
+
+                    return async () => {};
+                },
+            },
+            channel: 'c',
+            reportError: () => {},
+        }),
+        hintsAfterCommit,
+    });
+
+    await runner.start();
+    // The first turn
+    await sleep(50);
+
+    return { runner, probes: () => probes, deliver: name => deliver?.(name) };
+}
+
+test.each([
+    { hint: 'NOTIFY, after the commit: probes at once', hintsAfterCommit: true, probes: 1 },
+    { hint: 'other, before the commit: re-probes from 20 ms', hintsAfterCommit: false, probes: 0 },
+])('a hint: $hint', async ({ hintsAfterCommit, probes: expected }) => {
+    const { runner, probes, deliver } = await runnerWithHint(hintsAfterCommit);
+    const before = probes();
+
+    deliver('ping');
+    await sleep(10);
+    expect(probes() - before).toBe(expected);
+    await runner.close({ deadline: 0 });
 });

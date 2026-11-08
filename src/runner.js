@@ -47,7 +47,7 @@ export const DEFAULT_TIMINGS = {
     missingPayloadGraceMs: 60_000,
 };
 
-/** The wakes after an enqueue in this process, until the commit makes the job visible */
+/** The wakes after the last enqueue (or hint), until its commit makes the job visible */
 const REPROBE_DELAYS_MS = [20, 50, 100, 200, 500, 1000, 2000];
 const RELEASE_EXTRA_DELAY_MS = 2000;
 const STALLED = { name: 'StalledError', message: 'The lease of the job ended: its process stopped or blocked' };
@@ -78,6 +78,8 @@ const BATCH = 1000;
  * @property {import('./types.js').Logger | undefined} logger
  * @property {((event: import('./types.js').SqlaneEvent) => void) | undefined} onEvent
  * @property {import('./hint_channel.js').HintChannel} hintChannel
+ * @property {boolean} hintsAfterCommit The hints come after the commit of their enqueue (PostgreSQL NOTIFY): they wake
+ *     at once, with no re-probes.
  * @property {Partial<Timings>} [timings] For tests.
  */
 
@@ -127,6 +129,7 @@ export function createRunner({
     logger,
     onEvent,
     hintChannel,
+    hintsAfterCommit,
     timings = {},
 }) {
     const t = { ...DEFAULT_TIMINGS, ...timings };
@@ -145,8 +148,10 @@ export function createRunner({
     let closeDone = null;
     /** @type {Set<NodeJS.Timeout>} */
     const timers = new Set();
-    /** @type {Set<string>} The names with a series of re-probes */
-    const reprobing = new Set();
+    /** The time of the last enqueue (or hint): the re-probes follow it */
+    let reprobeFrom = 0;
+    /** @type {{ timer: NodeJS.Timeout, at: number } | null} The next re-probe */
+    let reprobe = null;
     let contentionDelayMs = 0;
     const counts = { completed: 0, retried: 0, failed: 0 };
     /** The jobs that finished: their results are written */
@@ -175,6 +180,7 @@ export function createRunner({
     /**
      * @param {() => void} func
      * @param {number} delayMs
+     * @returns {NodeJS.Timeout}
      */
     function setTimer(func, delayMs) {
         const timer = setTimeout(() => {
@@ -184,6 +190,8 @@ export function createRunner({
 
         timer.unref();
         timers.add(timer);
+
+        return timer;
     }
 
     /**
@@ -757,22 +765,55 @@ export function createRunner({
             return;
         }
 
-        for (const name of names) {
-            if ((name !== ANY_NAME && !registry.getEntry(name)) || reprobing.has(name)) {
-                continue;
-            }
-
-            reprobing.add(name);
-
-            let elapsedMs = 0;
-
-            for (const delayMs of REPROBE_DELAYS_MS.filter(delay => delay < t.pollIntervalMs)) {
-                elapsedMs = delayMs;
-                setTimer(wakeUp, delayMs);
-            }
-
-            setTimer(() => reprobing.delete(name), elapsedMs);
+        if (!handlesAny(names)) {
+            return;
         }
+
+        // A wake probes all the names: one series of re-probes, from the last enqueue
+        reprobeFrom = Date.now();
+
+        // A re-probe that comes sooner stays: then the series goes on from this enqueue. A burst of enqueues gives a
+        // re-probe at most each first step, not one per enqueue.
+        if (reprobe && reprobe.at <= reprobeFrom + REPROBE_DELAYS_MS[0]) {
+            return;
+        }
+
+        if (reprobe) {
+            clearTimeout(reprobe.timer);
+            timers.delete(reprobe.timer);
+        }
+
+        scheduleReprobe();
+    }
+
+    /**
+     * @param {string[]} names
+     * @returns {boolean} This process handles one of the names, or one is `*`.
+     */
+    function handlesAny(names) {
+        return names.some(name => name === ANY_NAME || registry.getEntry(name));
+    }
+
+    /** Sets the timer of the next step of the series, if one is left before the poll. */
+    function scheduleReprobe() {
+        const now = Date.now();
+        const at = REPROBE_DELAYS_MS
+            .filter(delay => delay < t.pollIntervalMs)
+            .map(delay => reprobeFrom + delay)
+            .find(time => time > now);
+
+        if (at === undefined || state !== 'started') {
+            reprobe = null;
+
+            return;
+        }
+
+        const timer = setTimer(() => {
+            wakeUp();
+            scheduleReprobe();
+        }, at - now);
+
+        reprobe = { at, timer };
     }
 
     async function start() {
@@ -796,8 +837,15 @@ export function createRunner({
         loopDone = loop();
 
         try {
-            // A hint is sent before the commit of its enqueue: re-probe until the job is visible
-            await hintChannel.listen(name => onEnqueued([name]));
+            // NOTIFY comes after the commit: the job is visible. Another hint is sent before the commit of its enqueue:
+            // re-probe until the job is visible.
+            await hintChannel.listen((name) => {
+                if (!hintsAfterCommit) {
+                    onEnqueued([name]);
+                } else if (state === 'started' && handlesAny([name])) {
+                    wakeUp();
+                }
+            });
         } catch (error) {
             reportError('hint_listen', error);
         }

@@ -147,6 +147,7 @@ export function createSqlane(options) {
         logger: options.logger,
         onEvent: options.onEvent,
         hintChannel,
+        hintsAfterCommit: Boolean(adapter.notify),
         timings: { pollIntervalMs, ...testTimings },
     });
     const enqueuer = createEnqueuer({
