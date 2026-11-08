@@ -236,5 +236,5 @@ export default defineConfig({
             rules: { 'import/no-default-export': 'off' },
         },
     ],
-    ignorePatterns: ['coverage/**'],
+    ignorePatterns: ['coverage/**', 'types/**'],
 });
