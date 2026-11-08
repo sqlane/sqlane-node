@@ -1,5 +1,13 @@
 # @sqlane/core
 
+## 0.1.1
+
+### Patch Changes
+
+- [#24](https://github.com/sqlane/sqlane-node/pull/24) [`cc72758`](https://github.com/sqlane/sqlane-node/commit/cc7275887261b61ff817d70ecda94f56c2748704) - TypeScript declarations: the package ships `types/*.d.ts`, generated from its JSDoc, with a `types` condition for `.`,
+  `./mysql2` and `./pg`. A strict TypeScript project no longer needs `allowJs`. The `pg` adapter types come from
+  `@types/pg`.
+
 ## 0.1.0
 
 The first usable version: jobs are enqueued in the caller's transaction and run by the workers, on MySQL 8.4+ and
