@@ -125,14 +125,16 @@ export function createSqlane(options) {
         defaultTimeoutMs: defaults.timeoutMs,
     });
     const hint = resolveHint(adapter, options.hint);
-    const hintChannel = createHintChannel({
-        hint,
-        channel: `${tablePrefix}ready`,
-        reportError: (operation, error) => {
-            options.logger?.warn({ error, operation }, `sqlane: ${operation} failed`);
-            options.onEvent?.({ type: 'error', operation, error });
-        },
-    });
+    /**
+     * An error of an optimization (hints, wakes): logged as a warning, never thrown.
+     * @param {string} operation
+     * @param {unknown} error
+     */
+    const reportError = (operation, error) => {
+        options.logger?.warn({ error, operation }, `sqlane: ${operation} failed`);
+        options.onEvent?.({ type: 'error', operation, error });
+    };
+    const hintChannel = createHintChannel({ hint, channel: `${tablePrefix}ready`, reportError });
     // NOTIFY in the enqueue transaction: no publish after the enqueue
     const notifyChannel = adapter.notify ? `${tablePrefix}ready` : null;
     // Undocumented, for the tests of sqlane
@@ -159,13 +161,45 @@ export function createSqlane(options) {
         maxPayloadBytes,
         notifyChannel,
     });
-    /** @param {string} name */
-    const onCreated = (name) => {
-        runner.onEnqueued([name]);
+    /**
+     * Wakes this process, sends the hint to the others.
+     * @param {string} name
+     * @param {boolean} committed False: the commit is to come.
+     */
+    const wakeFor = (name, committed) => {
+        if (committed) {
+            runner.onCommitted([name]);
+        } else {
+            runner.onEnqueued([name]);
+        }
 
         // A process sends a hint only for the jobs that it cannot start itself
         if (!notifyChannel && !runner.canStartNow(name)) {
             hintChannel.publish(name);
+        }
+    };
+    /**
+     * After the commit when the adapter knows it, else at once.
+     * @param {unknown} connection
+     * @param {string} name
+     */
+    const onCreated = (connection, name) => {
+        let hooked = false;
+
+        try {
+            hooked = adapter.afterCommit?.(/** @type {any} */ (connection), () => {
+                try {
+                    wakeFor(name, true);
+                } catch (error) {
+                    reportError('after_commit', error);
+                }
+            }) ?? false;
+        } catch (error) {
+            reportError('after_commit', error);
+        }
+
+        if (!hooked) {
+            wakeFor(name, false);
         }
     };
 
@@ -174,7 +208,7 @@ export function createSqlane(options) {
             const result = await enqueuer.enqueue(connection, job, payload, enqueueOptions);
 
             if (result.created) {
-                onCreated(typeof job === 'string' ? job : job.name);
+                onCreated(connection, typeof job === 'string' ? job : job.name);
             }
 
             return result;
@@ -183,7 +217,7 @@ export function createSqlane(options) {
             const results = await enqueuer.enqueueMany(connection, job, items);
 
             if (results.some(result => result.created)) {
-                onCreated(typeof job === 'string' ? job : job.name);
+                onCreated(connection, typeof job === 'string' ? job : job.name);
             }
 
             return results;

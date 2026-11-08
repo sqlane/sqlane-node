@@ -137,8 +137,9 @@ Choices:
   own connection, transaction client or pool. A connection or client must be in a transaction (MySQL cannot detect
   one safely). With a pool, sqlane runs the enqueue in its own transaction, outside the caller's. Adapters:
   `@sqlane/core/mysql2` (`Connection`, `PoolConnection`, `Pool`) and `@sqlane/core/pg` (`Client`, `PoolClient`,
-  `Pool`) in v0.1; Knex, Kysely, Drizzle, Sequelize, Prisma, TypeORM, MikroORM later, as separate packages
-  (`@sqlane/knex`, …).
+  `Pool`) in v0.1; `@sqlane/knex` (a knex instance or transaction, with `mysql2` or `pg`) in v0.2. Kysely, Drizzle,
+  Sequelize, Prisma, TypeORM, MikroORM later, as separate packages. An ORM adapter runs sqlane's SQL on the driver
+  connection under the ORM: one SQL per dialect, and the ORM does not log it.
 - **Worker settings in worker code.** `concurrency` and `lane` are `handle()` options, not definition fields: they are
   per process. A handler takes `concurrency` (a private lane) or `lane` (a lane of `lanes`), not both (a type error).
   An unknown lane is a type error and a `ConfigError`. A lane is capped by the process `concurrency`.

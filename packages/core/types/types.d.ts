@@ -220,6 +220,13 @@ export type Adapter<C> = {
      */
     inTransaction: <T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T>;
     /**
+     * Used by sqlane, after an enqueue on the
+     * connection: calls onCommit once its transaction commits (at once when it has committed: a pool), never when it
+     * rolls back. Returns false when the adapter cannot tell (a connection in the caller's transaction): sqlane then
+     * re-probes until it sees the job. A call of onCommit without a commit costs one probe.
+     */
+    afterCommit?: (connection: C, onCommit: () => void) => boolean;
+    /**
      * PostgreSQL: hints by LISTEN/NOTIFY.
      */
     notify?: boolean;
@@ -552,6 +559,10 @@ export type Migration = {
  *     in a `READ COMMITTED` transaction on a connection of the queue's pool.
  * @property {<T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T>} inTransaction Used by sqlane:
  *     a pool → func in a transaction of its own; a connection or a client → func on it, in the caller's transaction.
+ * @property {(connection: C, onCommit: () => void) => boolean} [afterCommit] Used by sqlane, after an enqueue on the
+ *     connection: calls onCommit once its transaction commits (at once when it has committed: a pool), never when it
+ *     rolls back. Returns false when the adapter cannot tell (a connection in the caller's transaction): sqlane then
+ *     re-probes until it sees the job. A call of onCommit without a commit costs one probe.
  * @property {boolean} [notify] PostgreSQL: hints by LISTEN/NOTIFY.
  * @property {(channel: string, onMessage: (message: string) => void) => Promise<() => Promise<void>>} [listen] Used by
  *     sqlane, with `notify`: LISTEN on a connection of its own; resolves to the unlisten function.
