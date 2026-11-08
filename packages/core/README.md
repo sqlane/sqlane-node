@@ -52,18 +52,19 @@ In tests, run the due jobs without `start()`: `await sqlane.drain()`. More in [`
 
 ## Adapters
 
-| Import                        | `enqueue` takes                                                        | Supported                                        |
-| ----------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------ |
-| `@sqlane/core/adapter-mysql2` | a mysql2 `Connection` or `PoolConnection` (in a transaction), a `Pool` | mysql2 3.11+                                     |
-| `@sqlane/core/adapter-pg`     | a pg `Client` or `PoolClient` (in a transaction), a `Pool`             | pg 8.13+                                         |
-| `@sqlane/core/adapter-knex`   | a knex transaction (also nested), a knex instance                      | knex 3, with mysql2 or pg                        |
-| `@sqlane/core/adapter-kysely` | a Kysely transaction (also controlled), a Kysely instance              | kysely 0.28, 0.29: MySQL and PostgreSQL dialects |
+| Import                         | `enqueue` takes                                                        | Supported                                             |
+| ------------------------------ | ---------------------------------------------------------------------- | ----------------------------------------------------- |
+| `@sqlane/core/adapter-mysql2`  | a mysql2 `Connection` or `PoolConnection` (in a transaction), a `Pool` | mysql2 3.11+                                          |
+| `@sqlane/core/adapter-pg`      | a pg `Client` or `PoolClient` (in a transaction), a `Pool`             | pg 8.13+                                              |
+| `@sqlane/core/adapter-knex`    | a knex transaction (also nested), a knex instance                      | knex 3, with mysql2 or pg                             |
+| `@sqlane/core/adapter-kysely`  | a Kysely transaction (also controlled), a Kysely instance              | kysely 0.28, 0.29: MySQL and PostgreSQL dialects      |
+| `@sqlane/core/adapter-drizzle` | a Drizzle transaction (also nested), a Drizzle database                | drizzle-orm 0.45, 1.0 (beta): mysql2 or node-postgres |
 
 The paths before 0.4 (`@sqlane/core/mysql2`, `/pg`, `/knex`) still work, until 1.0.
 
-With a pool or an instance of knex or Kysely, the enqueue runs in a transaction of its own and the workers wake at once.
-With a knex transaction, they wake at once after the commit of the outermost one. With a connection of a driver or a
-Kysely transaction, sqlane cannot see the commit: the workers re-probe after the enqueue (about 20 ms).
+With a pool, or a knex, Kysely or Drizzle instance, the enqueue runs in a transaction of its own and the workers wake at
+once. With a knex transaction, they wake at once after the commit of the outermost one. With a connection of a driver, or
+a Kysely or Drizzle transaction, sqlane cannot see the commit: the workers re-probe after the enqueue (about 20 ms).
 
 ```js
 import { knexAdapter } from '@sqlane/core/adapter-knex';
@@ -88,8 +89,20 @@ await db.transaction().execute(async (trx) => {
 });
 ```
 
-The SQL of sqlane runs on the driver connection under knex, and through Kysely without its plugins: they do not log it
-or transform it. Drizzle, Prisma, TypeORM, Sequelize and MikroORM: later.
+```js
+import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
+
+// The queue's own Drizzle database, over a pool. With node-postgres, also { notify: true }.
+const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb), jobs: [buildReport] });
+
+await db.transaction(async (tx) => {
+    await tx.insert(reports).values({ id: reportId });
+    await sqlane.enqueue(tx, buildReport, { reportId }, { jobId: reportId });
+});
+```
+
+The SQL of sqlane runs on the driver connection under knex and Drizzle, and through Kysely without its plugins: they do
+not log it or transform it. Prisma, TypeORM, Sequelize and MikroORM: later.
 
 ## Performance
 
