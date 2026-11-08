@@ -1,7 +1,7 @@
 // One sqlane instance per process.
 import mysql from 'mysql2/promise';
 import { createSqlane } from '@sqlane/core';
-import { mysql2Adapter } from '@sqlane/core/mysql2';
+import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 import { allJobs } from './jobs.js';
 
 /** The app's pool: business transactions, handlers. */

@@ -19,7 +19,7 @@ npm install @sqlane/core mysql2   # or pg
 ```js
 import mysql from 'mysql2/promise';
 import { createSqlane, defineJob } from '@sqlane/core';
-import { mysql2Adapter } from '@sqlane/core/mysql2'; // or pgAdapter from '@sqlane/core/pg'
+import { mysql2Adapter } from '@sqlane/core/adapter-mysql2'; // or pgAdapter from '@sqlane/core/adapter-pg'
 
 // Shared by producers and workers
 export const buildReport = defineJob({
@@ -52,19 +52,21 @@ In tests, run the due jobs without `start()`: `await sqlane.drain()`. More in [`
 
 ## Adapters
 
-| Import                | `enqueue` takes                                                        | Supported                                        |
-| --------------------- | ---------------------------------------------------------------------- | ------------------------------------------------ |
-| `@sqlane/core/mysql2` | a mysql2 `Connection` or `PoolConnection` (in a transaction), a `Pool` | mysql2 3.11+                                     |
-| `@sqlane/core/pg`     | a pg `Client` or `PoolClient` (in a transaction), a `Pool`             | pg 8.13+                                         |
-| `@sqlane/core/knex`   | a knex transaction (also nested), a knex instance                      | knex 3, with mysql2 or pg                        |
-| `@sqlane/core/kysely` | a Kysely transaction (also controlled), a Kysely instance              | kysely 0.28, 0.29: MySQL and PostgreSQL dialects |
+| Import                        | `enqueue` takes                                                        | Supported                                        |
+| ----------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------ |
+| `@sqlane/core/adapter-mysql2` | a mysql2 `Connection` or `PoolConnection` (in a transaction), a `Pool` | mysql2 3.11+                                     |
+| `@sqlane/core/adapter-pg`     | a pg `Client` or `PoolClient` (in a transaction), a `Pool`             | pg 8.13+                                         |
+| `@sqlane/core/adapter-knex`   | a knex transaction (also nested), a knex instance                      | knex 3, with mysql2 or pg                        |
+| `@sqlane/core/adapter-kysely` | a Kysely transaction (also controlled), a Kysely instance              | kysely 0.28, 0.29: MySQL and PostgreSQL dialects |
+
+The paths before 0.4 (`@sqlane/core/mysql2`, `/pg`, `/knex`) still work, until 1.0.
 
 With a pool or an instance of knex or Kysely, the enqueue runs in a transaction of its own and the workers wake at once.
 With a knex transaction, they wake at once after the commit of the outermost one. With a connection of a driver or a
 Kysely transaction, sqlane cannot see the commit: the workers re-probe after the enqueue (about 20 ms).
 
 ```js
-import { knexAdapter } from '@sqlane/core/knex';
+import { knexAdapter } from '@sqlane/core/adapter-knex';
 
 const sqlane = createSqlane({ adapter: knexAdapter(queueKnex), jobs: [buildReport] }); // the queue's own knex
 
@@ -75,7 +77,7 @@ await knex.transaction(async (trx) => {
 ```
 
 ```js
-import { kyselyAdapter } from '@sqlane/core/kysely';
+import { kyselyAdapter } from '@sqlane/core/adapter-kysely';
 
 // The queue's own Kysely; Kysely does not tell its dialect
 const sqlane = createSqlane({ adapter: kyselyAdapter(queueDb, { dialect: 'postgres' }), jobs: [buildReport] });

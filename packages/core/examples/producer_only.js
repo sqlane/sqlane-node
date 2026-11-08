@@ -1,7 +1,7 @@
 // Scenarios: a producer-only process (a script, another service), enqueue by name.
 import mysql from 'mysql2/promise';
 import { createSqlane } from '@sqlane/core';
-import { mysql2Adapter } from '@sqlane/core/mysql2';
+import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
 const pool = mysql.createPool({ uri: 'mysql://app@localhost/app', connectionLimit: 2 });
 

@@ -34,6 +34,22 @@
             "types": "./types/index.d.ts",
             "default": "./src/index.js"
         },
+        "./adapter-mysql2": {
+            "types": "./types/adapters/mysql2.d.ts",
+            "default": "./src/adapters/mysql2.js"
+        },
+        "./adapter-pg": {
+            "types": "./types/adapters/pg.d.ts",
+            "default": "./src/adapters/pg.js"
+        },
+        "./adapter-knex": {
+            "types": "./types/adapters/knex.d.ts",
+            "default": "./src/adapters/knex.js"
+        },
+        "./adapter-kysely": {
+            "types": "./types/adapters/kysely.d.ts",
+            "default": "./src/adapters/kysely.js"
+        },
         "./mysql2": {
             "types": "./types/adapters/mysql2.d.ts",
             "default": "./src/adapters/mysql2.js"
@@ -45,10 +61,6 @@
         "./knex": {
             "types": "./types/adapters/knex.d.ts",
             "default": "./src/adapters/knex.js"
-        },
-        "./kysely": {
-            "types": "./types/adapters/kysely.d.ts",
-            "default": "./src/adapters/kysely.js"
         }
     },
     "publishConfig": {

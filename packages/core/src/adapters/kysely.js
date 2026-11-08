@@ -1,7 +1,7 @@
-// The adapter for Kysely 0.28+ (`@sqlane/core/kysely`): `enqueue` takes a Kysely instance or a Kysely transaction.
-// The SQL of sqlane runs through Kysely, without its plugins (a CamelCasePlugin would rename the columns that sqlane
-// reads), with the placeholders of the driver. No import of kysely: the adapter uses the instance that it gets, and
-// checks what it uses. Kysely has no after-commit hook: after an enqueue in a transaction, sqlane re-probes.
+// The adapter for Kysely 0.28+ (`@sqlane/core/adapter-kysely`): `enqueue` takes a Kysely instance or a Kysely
+// transaction. The SQL of sqlane runs through Kysely, without its plugins (a CamelCasePlugin would rename the columns
+// that sqlane reads), with the placeholders of the driver. No import of kysely: the adapter uses the instance that it
+// gets, and checks what it uses. Kysely has no after-commit hook: after an enqueue in a transaction, sqlane re-probes.
 import { ConfigError } from '../errors.js';
 
 /** @typedef {import('kysely').Kysely<any>} Kysely */
