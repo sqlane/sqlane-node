@@ -179,7 +179,9 @@ describe('start()', () => {
 
         const { id } = await sqlane.enqueue(testAdapter.pool, 'build_report', { reportId: 'r1' });
 
-        await waitFor(async () => (await readJobs(p))[0]?.status === 'completed');
+        // The event comes after the write commits: wait for the event, not for the row
+        await waitFor(() => events.some(event => event.type === 'completed'));
+        await expect(readJobs(p)).resolves.toMatchObject([{ status: 'completed' }]);
         expect(contexts).toMatchObject([{
             payload: { reportId: 'r1' },
             job: { id, name: 'build_report', attempt: 1, maxAttempts: 3, mutexKeys: [] },
