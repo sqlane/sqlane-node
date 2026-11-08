@@ -11,8 +11,26 @@ import { createBenchPool } from './bench_database.js';
  * @property {'mysql' | 'postgres'} dialect
  * @property {string} url
  * @property {() => string} nextPrefix A table prefix not used yet.
- * @property {boolean} quick Fewer samples and rows.
+ * @property {BenchSizes} sizes
  */
+
+/**
+ * @typedef {object} BenchSizes
+ * @property {number} historyPerName The completed jobs of each of the 1000 names of the probe.
+ * @property {number} probeSamples
+ * @property {number} latencySamples
+ * @property {number} enqueueJobs Of `enqueue`; `enqueueMany` enqueues 10 times more.
+ * @property {number} runJobs
+ */
+
+/**
+ * The default run takes about 2 minutes for the 3 databases; `--quick`, a few seconds of each scenario.
+ * @type {{ full: BenchSizes, quick: BenchSizes }}
+ */
+export const SIZES = {
+    full: { historyPerName: 100, probeSamples: 200, latencySamples: 100, enqueueJobs: 3000, runJobs: 5000 },
+    quick: { historyPerName: 10, probeSamples: 50, latencySamples: 30, enqueueJobs: 500, runJobs: 1000 },
+};
 
 /** @typedef {import('../src/types.js').Sqlane<any, any>} Sqlane */
 
@@ -102,20 +120,20 @@ async function analyze(pool, p) {
 /**
  * @param {() => Promise<unknown>} func
  * @param {number} samples
+ * @param {number} [warmUps] The first runs, not measured.
  * @returns {Promise<Percentiles>} Of the run time, in ms.
  */
-async function time(func, samples) {
+async function time(func, samples, warmUps = 10) {
     /** @type {number[]} */
     const times = [];
 
-    for (let index = 0; index < samples + 10; index++) {
+    for (let index = 0; index < samples + warmUps; index++) {
         const startedAt = performance.now();
 
         // oxlint-disable-next-line no-await-in-loop -- one run after the other
         await func();
 
-        // The first 10: warm-up
-        if (index >= 10) {
+        if (index >= warmUps) {
             times.push(performance.now() - startedAt);
         }
     }
@@ -127,24 +145,25 @@ async function time(func, samples) {
  * @typedef {object} ProbeResult
  * @property {number} pendingNames The names with pending jobs.
  * @property {Percentiles} probe The probe of sqlane.
- * @property {Percentiles} union One `MIN(run_at)` per name, in a `UNION ALL`: a probe that grows with all names.
  */
 
 /**
  * The probe of 1000 handled names, against a table with completed jobs in all of them, and pending jobs in some.
  * @param {BenchContext} context
- * @returns {Promise<{ historyRows: number, rows: ProbeResult[] }>}
+ * @returns {Promise<{ historyRows: number, rows: ProbeResult[], union: Percentiles }>} `union`: one `MIN(run_at)`
+ *     per name, in a `UNION ALL`, with 10 names with pending jobs: a probe that grows with all names.
  */
-export async function benchProbe({ dialect, url, nextPrefix, quick }) {
+export async function benchProbe({ dialect, url, nextPrefix, sizes }) {
     const p = nextPrefix();
     const pool = createBenchPool(dialect, url, 8);
     const sqlane = createSqlane({ adapter: pool.adapter(), tablePrefix: p });
     const store = createStore(pool.adapter(), p);
     const names = jobNames(1000);
-    const historyPerName = quick ? 10 : 100;
-    const samples = quick ? 50 : 300;
+    const { historyPerName, probeSamples: samples } = sizes;
     /** @type {ProbeResult[]} */
     const rows = [];
+    /** @type {Percentiles | null} */
+    let unionTime = null;
 
     try {
         await sqlane.migrate();
@@ -169,20 +188,21 @@ export async function benchProbe({ dialect, url, nextPrefix, quick }) {
             pendingNames = target;
             // oxlint-disable-next-line no-await-in-loop -- one step after the other
             await analyze(pool, p);
-            rows.push({
-                pendingNames,
+            // oxlint-disable-next-line no-await-in-loop -- one step after the other
+            rows.push({ pendingNames, probe: await time(() => store.probe(), samples) });
+
+            if (target === 10) {
+                // Slow, and about the same for any number of pending names: measured once
                 // oxlint-disable-next-line no-await-in-loop -- one step after the other
-                probe: await time(() => store.probe(), samples),
-                // oxlint-disable-next-line no-await-in-loop -- one step after the other
-                union: await time(() => pool.execute(union), Math.ceil(samples / 5)),
-            });
+                unionTime = await time(() => pool.execute(union), 5, 2);
+            }
         }
     } finally {
         await sqlane.close();
         await pool.end();
     }
 
-    return { historyRows: names.length * historyPerName, rows };
+    return { historyRows: names.length * historyPerName, rows, union: /** @type {Percentiles} */ (unionTime) };
 }
 
 /**
@@ -226,7 +246,7 @@ function memoryHint() {
  * @param {LatencyMode} mode
  * @returns {Promise<LatencyResult>}
  */
-export async function benchLatency({ dialect, url, nextPrefix, quick }, { label, wake, gapMs }) {
+export async function benchLatency({ dialect, url, nextPrefix, sizes }, { label, wake, gapMs }) {
     const p = nextPrefix();
     const notify = wake === 'notify';
     const hint = wake === 'hint' ? memoryHint() : null;
@@ -238,7 +258,7 @@ export async function benchLatency({ dialect, url, nextPrefix, quick }, { label,
         : createSqlane({ adapter: workerPool.adapter({ notify }), tablePrefix: p, hint });
     /** @type {Map<string, (startedAt: number) => void>} */
     const waiters = new Map();
-    const samples = quick ? 50 : 300;
+    const samples = sizes.latencySamples;
     /** @type {number[]} */
     const latencies = [];
 
@@ -250,7 +270,7 @@ export async function benchLatency({ dialect, url, nextPrefix, quick }, { label,
         await worker.start();
         await sleep(500);
 
-        for (let index = 0; index < samples + 10; index++) {
+        for (let index = 0; index < samples + 5; index++) {
             /** @type {Promise<number> | null} */
             let started = null;
             /** @type {string} */
@@ -270,8 +290,8 @@ export async function benchLatency({ dialect, url, nextPrefix, quick }, { label,
 
             waiters.delete(id);
 
-            // The first 10: warm-up
-            if (index >= 10) {
+            // The first 5: warm-up
+            if (index >= 5) {
                 latencies.push(startedAt - committedAt);
             }
 
@@ -298,11 +318,11 @@ export async function benchLatency({ dialect, url, nextPrefix, quick }, { label,
  * @param {{ label: string, batch: number }} mode `batch`: the jobs of one `enqueueMany`, or 1: `enqueue`.
  * @returns {Promise<EnqueueResult>}
  */
-export async function benchEnqueue({ dialect, url, nextPrefix, quick }, { label, batch }) {
+export async function benchEnqueue({ dialect, url, nextPrefix, sizes }, { label, batch }) {
     const p = nextPrefix();
     const pool = createBenchPool(dialect, url, 8);
     const sqlane = createSqlane({ adapter: pool.adapter(), tablePrefix: p });
-    const total = (quick ? 2000 : 10_000) * (batch > 1 ? 10 : 1);
+    const total = sizes.enqueueJobs * (batch > 1 ? 10 : 1);
     const calls = Array.from({ length: total / batch }, (_, index) => index);
 
     try {
@@ -335,9 +355,9 @@ export async function benchEnqueue({ dialect, url, nextPrefix, quick }, { label,
  * @param {{ label: string, instances: number, concurrency: number }} mode
  * @returns {Promise<ProcessResult>}
  */
-export async function benchProcess({ dialect, url, nextPrefix, quick }, { label, instances, concurrency }) {
+export async function benchProcess({ dialect, url, nextPrefix, sizes }, { label, instances, concurrency }) {
     const p = nextPrefix();
-    const total = quick ? 2000 : 20_000;
+    const total = sizes.runJobs;
     const producerPool = createBenchPool(dialect, url, 8);
     const producer = createSqlane({ adapter: producerPool.adapter(), tablePrefix: p });
     /** @type {import('./bench_database.js').BenchPool[]} */

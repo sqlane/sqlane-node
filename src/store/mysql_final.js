@@ -95,28 +95,42 @@ async function lingerHolds(executor, p, job, lingerMs) {
 }
 
 /**
- * The job is done: completed until its retention ends, without its payload; its keys are freed.
+ * The jobs are done: completed until their retention ends, without their payloads; their keys are freed. One
+ * transaction for many jobs: one commit.
  * @param {Executor} executor
  * @param {string} p
- * @param {OwnedJob} job
- * @returns {Promise<boolean>} False: no change (the lease was lost, or an earlier try committed).
+ * @param {import('./store.js').FinishedJob[]} jobs
+ * @returns {Promise<number>} The jobs that this call completed: the others lost their lease, or an earlier try
+ *     committed.
  */
-export async function completeJob(executor, p, job) {
+export async function completeJobs(executor, p, jobs) {
+    const ids = jobs.map(job => job.id);
+    // `id IN`: the range on the primary key; the pairs check the lock tokens
     const changed = await executor.run(`
         UPDATE ${p}jobs
            SET status = 'completed', finished_at = ${NOW},
                expires_at = ${NOW} + INTERVAL completed_retention_ms * 1000 MICROSECOND, ${CLEAR_LOCK},
                updated_at = ${NOW}
-         WHERE id = ? AND lock_token = ?
-    `, [job.id, job.lockToken]);
+         WHERE id IN (${placeholders(ids.length)}) AND (id, lock_token) IN (${jobs.map(() => '(?, ?)').join(', ')})
+    `, [...ids, ...jobs.flatMap(job => [job.id, job.lockToken])]);
 
     if (changed) {
-        await executor.run(`DELETE FROM ${p}payloads WHERE id = ?`, [job.id]);
+        await executor.run(`
+            DELETE pl FROM ${p}payloads pl JOIN ${p}jobs j ON j.id = pl.id
+             WHERE pl.id IN (${placeholders(ids.length)}) AND j.status = 'completed'
+        `, ids);
     }
 
-    await deleteHolds(executor, p, job);
+    const keyed = jobs.filter(job => job.mutexKeys.length);
 
-    return changed > 0;
+    if (keyed.length) {
+        await executor.run(`
+            DELETE FROM ${p}mutexes
+             WHERE job_id IN (${placeholders(keyed.length)}) AND (job_id, lock_token) IN (${keyed.map(() => '(?, ?)').join(', ')})
+        `, [...keyed.map(job => job.id), ...keyed.flatMap(job => [job.id, job.lockToken])]);
+    }
+
+    return changed;
 }
 
 /**

@@ -53,6 +53,9 @@ export type OwnedJob = {
     id: string;
     lockToken: string;
 };
+export type FinishedJob = OwnedJob & {
+    mutexKeys: readonly string[];
+};
 export type FailedJob = {
     id: string;
     name: string;
@@ -84,7 +87,10 @@ export type Store = {
     readPayloads: (ids: string[]) => Promise<Map<string, unknown>>;
     renewLeases: (jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>;
     markTimedOut: (job: OwnedJob) => Promise<boolean>;
-    completeJob: (job: OwnedJob) => Promise<boolean>;
+    /**
+     * In one transaction: the jobs that it completed.
+     */
+    completeJobs: (jobs: FinishedJob[]) => Promise<number>;
     retryJob: (job: OwnedJob, params: {
         delayMs: number;
         error: import('../error_json.js').ErrorJson;
@@ -164,6 +170,10 @@ export type Store = {
  * @property {string} lockToken
  */
 /**
+ * A job that this process ran, with its keys.
+ * @typedef {OwnedJob & { mutexKeys: readonly string[] }} FinishedJob
+ */
+/**
  * The job that fails for good, as the failure job gets it.
  * @typedef {object} FailedJob
  * @property {string} id
@@ -187,7 +197,7 @@ export type Store = {
  * @property {(ids: string[]) => Promise<Map<string, unknown>>} readPayloads
  * @property {(jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>} renewLeases
  * @property {(job: OwnedJob) => Promise<boolean>} markTimedOut
- * @property {(job: OwnedJob) => Promise<boolean>} completeJob
+ * @property {(jobs: FinishedJob[]) => Promise<number>} completeJobs In one transaction: the jobs that it completed.
  * @property {(job: OwnedJob, params: { delayMs: number, error: import('../error_json.js').ErrorJson })
  *     => Promise<boolean>} retryJob
  * @property {(
