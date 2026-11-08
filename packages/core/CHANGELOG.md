@@ -1,5 +1,13 @@
 # @sqlane/core
 
+## 0.3.0
+
+### Minor Changes
+
+- [#34](https://github.com/sqlane/sqlane-node/pull/34) [`733cda4`](https://github.com/sqlane/sqlane-node/commit/733cda476c2f44e875a6b0501d32d8abbdd100aa) - The knex adapter is now part of the core: `import { knexAdapter } from '@sqlane/core/knex'`. It replaces
+  `@sqlane/adapter-knex` (deprecated): same API, and no other package to install. No ORM is a peer dependency of the
+  core: the adapter checks the knex instance that it gets.
+
 ## 0.2.0
 
 ### Minor Changes
