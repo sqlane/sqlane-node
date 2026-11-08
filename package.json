@@ -14,15 +14,16 @@
         "typecheck": "tsc -p tsconfig.json",
         "build:types": "pnpm --recursive --filter './packages/*' build:types",
         "check:types": "pnpm --recursive --filter './packages/*' check:types",
-        "test": "vitest run",
+        "test": "pnpm prisma:generate && vitest run",
         "test:unit": "vitest run --project unit",
-        "test:integration": "vitest run --project 'integration:*'",
+        "test:integration": "pnpm prisma:generate && vitest run --project 'integration:*'",
         "test:watch": "vitest",
-        "test:coverage": "vitest run --coverage",
+        "test:coverage": "pnpm prisma:generate && vitest run --coverage",
         "check": "hk check --all",
         "bench": "node bench/run.js",
         "changeset": "changeset",
-        "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern packages/*/CHANGELOG.md"
+        "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern packages/*/CHANGELOG.md",
+        "prisma:generate": "pnpm --filter @sqlane/core prisma:generate"
     },
     "devDependencies": {
         "@arethetypeswrong/cli": "0.18.5",

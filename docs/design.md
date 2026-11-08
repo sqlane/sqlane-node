@@ -140,7 +140,8 @@ Choices:
   `PoolClient`, `Pool`) in v0.1; `@sqlane/core/adapter-knex` (a knex instance or transaction, with `mysql2` or `pg`) in
   v0.2; `@sqlane/core/adapter-kysely` (a Kysely instance or transaction; the dialect is an option: Kysely does not tell
   it) in v0.4; `@sqlane/core/adapter-drizzle` (a Drizzle database or transaction, with mysql2 or node-postgres) in
-  v0.5. Sequelize, Prisma, TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver
+  v0.5; `@sqlane/core/adapter-prisma` (a Prisma 7 client or the client of an interactive transaction; the dialect is an
+  option) in v0.6. Sequelize, TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver
   connection under the ORM, or through its raw-SQL API: one SQL per dialect, and the ORM does not log it.
 - **Adapters are subpaths of the core**, not packages: `@sqlane/core/adapter-<name>`. The paths before 0.4
   (`@sqlane/core/mysql2`, `/pg`, `/knex`) stay as aliases until 1.0. None needs a dependency of its own:
@@ -270,7 +271,9 @@ sqlane ships its schema as versioned SQL per dialect. Two ways to apply it:
   lock. It waits for the lock up to `lockTimeout` (default `'10m'`), on its own connection without the statement
   timeout of the queue: a long migration of a big table is not cancelled. PostgreSQL: one transaction under
   `pg_advisory_xact_lock` (transactional DDL). MySQL: `GET_LOCK`; each statement is idempotent (`IF NOT EXISTS`), as
-  MySQL commits each DDL statement and a cut migration runs again from its start.
+  MySQL commits each DDL statement and a cut migration runs again from its start. An ORM with no connection outside a
+  transaction (Prisma) runs it in one transaction (`transactionalConnection`): the PostgreSQL migration does not begin
+  and commit its own. The lock is taken in `FROM`: `pg_advisory_xact_lock` returns `void`, which Prisma cannot read.
 - `getMigrations({ dialect, tablePrefix })`: returns the SQL, for the app's own migration tool.
 
 ## Job states
@@ -461,8 +464,11 @@ One short transaction on the queue's pool:
 
 When a job fails for good (no attempts left, too many stalls, or a `FatalJobError`), and its row has a `failureJob`:
 
-- The fail and the insert of the failure job commit together. The insert runs under a savepoint: if the database
-  refuses it, the job still fails, without it (`error` log, `failure_job_not_added` event).
+- The fail and the insert of the failure job commit together. If the database refuses the insert, the job still fails,
+  without it (`error` log, `failure_job_not_added` event). PostgreSQL: the insert runs under a savepoint (an error
+  aborts the transaction). MySQL: an error rolls back only its statement; the job row of the insert, if it is there, is
+  deleted (by its enqueue token). No savepoint: some drivers prepare every statement (Prisma), and MySQL cannot prepare
+  `SAVEPOINT`. A deadlock rolls back the whole transaction: the write runs again.
 - Payload (`FailedJobPayload`): `{ job: { id, name, payload, attempt, maxAttempts }, error: { name, message, stack } }`.
   Exempt from `maxPayloadBytes`; `error.stack` is cut to 8 KiB.
 - A `FatalJobError` fails the job at once, with the same failure job.
@@ -553,7 +559,8 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 @sqlane/core/adapter-knex     knexAdapter
 @sqlane/core/adapter-kysely   kyselyAdapter
 @sqlane/core/adapter-drizzle  drizzleAdapter
-@sqlane/core/adapter-<orm>    later: sequelize, prisma, typeorm, mikro-orm
+@sqlane/core/adapter-prisma   prismaAdapter
+@sqlane/core/adapter-<orm>    later: sequelize, typeorm, mikro-orm
 ```
 
 One repository, a pnpm workspace: `packages/<name>` for each published package, `test/` for the test databases of all

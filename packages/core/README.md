@@ -59,12 +59,14 @@ In tests, run the due jobs without `start()`: `await sqlane.drain()`. More in [`
 | `@sqlane/core/adapter-knex`    | a knex transaction (also nested), a knex instance                      | knex 3, with mysql2 or pg                             |
 | `@sqlane/core/adapter-kysely`  | a Kysely transaction (also controlled), a Kysely instance              | kysely 0.28, 0.29: MySQL and PostgreSQL dialects      |
 | `@sqlane/core/adapter-drizzle` | a Drizzle transaction (also nested), a Drizzle database                | drizzle-orm 0.45, 1.0 (beta): mysql2 or node-postgres |
+| `@sqlane/core/adapter-prisma`  | the client of an interactive transaction, a Prisma client              | Prisma 7: MySQL or PostgreSQL                         |
 
 The paths before 0.4 (`@sqlane/core/mysql2`, `/pg`, `/knex`) still work, until 1.0.
 
-With a pool, or a knex, Kysely or Drizzle instance, the enqueue runs in a transaction of its own and the workers wake at
-once. With a knex transaction, they wake at once after the commit of the outermost one. With a connection of a driver, or
-a Kysely or Drizzle transaction, sqlane cannot see the commit: the workers re-probe after the enqueue (about 20 ms).
+With a pool, or a knex, Kysely, Drizzle or Prisma client, the enqueue runs in a transaction of its own and the workers
+wake at once. With a knex transaction, they wake at once after the commit of the outermost one. With a connection of a
+driver, or a Kysely, Drizzle or Prisma transaction, sqlane cannot see the commit: the workers re-probe after the enqueue
+(about 20 ms).
 
 ```js
 import { knexAdapter } from '@sqlane/core/adapter-knex';
@@ -101,8 +103,32 @@ await db.transaction(async (tx) => {
 });
 ```
 
-The SQL of sqlane runs on the driver connection under knex and Drizzle, and through Kysely without its plugins: they do
-not log it or transform it. Prisma, TypeORM, Sequelize and MikroORM: later.
+```js
+import { prismaAdapter } from '@sqlane/core/adapter-prisma';
+
+// The queue's own Prisma client; Prisma does not tell its provider
+const sqlane = createSqlane({ adapter: prismaAdapter(queuePrisma, { dialect: 'postgres' }), jobs: [buildReport] });
+
+await prisma.$transaction(async (tx) => {
+    await tx.report.create({ data: { id: reportId } });
+    await sqlane.enqueue(tx, buildReport, { reportId }, { jobId: reportId });
+});
+```
+
+With Prisma, list the tables of sqlane as
+[external tables](https://www.prisma.io/docs/orm/prisma-schema/data-model/externally-managed-tables): Prisma Migrate
+leaves them alone, and `sqlane.migrate()` creates them.
+
+```ts
+// prisma.config.ts
+export default defineConfig({
+    schema: 'prisma/schema.prisma',
+    tables: { external: ['public.sqlane_jobs', 'public.sqlane_payloads', 'public.sqlane_mutexes', 'public.sqlane_migrations'] },
+});
+```
+
+The SQL of sqlane runs on the driver connection under knex and Drizzle, through Kysely without its plugins, and through
+the raw queries of Prisma: they do not log it or transform it. TypeORM, Sequelize and MikroORM: later.
 
 ## Performance
 

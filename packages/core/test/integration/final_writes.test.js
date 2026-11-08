@@ -276,6 +276,23 @@ describe('failJob', () => {
         expect(Number(count)).toBe(1);
     });
 
+    test('a failure job whose payload the database refuses: no job row without its payload', async () => {
+        const tables = await freshTables();
+        const job = await claimedJob(tables);
+        const result = await tables.store.failJob(job, {
+            error: toErrorJson('gone'),
+            // MySQL refuses it in the JSON column, after the job row; on PostgreSQL, JSON.parse throws before the SQL
+            buildFailureJob: failed => ({ ...buildFailureJob(failed), payloadJson: '{not json' }),
+        });
+
+        expect(result.failureJob).toHaveProperty('notAdded');
+        await expect(readJob(tables.p, job.id)).resolves.toMatchObject({ status: 'failed' });
+
+        const [{ count }] = await database.query(`SELECT COUNT(*) AS count FROM ${tables.p}jobs`);
+
+        expect(Number(count)).toBe(1);
+    });
+
     test('a failure job that cannot be built: the job still fails, without it', async () => {
         const tables = await freshTables();
         const job = await claimedJob(tables);
