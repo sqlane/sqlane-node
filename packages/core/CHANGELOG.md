@@ -8,10 +8,6 @@
   commit, and still re-probe after it. With `mysql2Adapter` and `pgAdapter`, an enqueue on a pool wakes at once. The
   hint of an enqueue in a transaction of an ORM adapter is sent after the commit.
 
-- [#32](https://github.com/sqlane/sqlane-node/pull/32) - The knex adapter: `import { knexAdapter } from '@sqlane/core/knex'`. `enqueue` takes a knex
-  instance (a transaction of its own) or a knex transaction, also a nested one. The workers wake at once after the
-  commit of the outermost transaction. knex 3, with `mysql2` or `pg`.
-
 ## 0.1.3
 
 ### Patch Changes
