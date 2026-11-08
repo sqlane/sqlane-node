@@ -77,7 +77,14 @@ export type Runner = {
     drain: (options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>;
     close: (options?: import('./types.js').CloseOptions) => Promise<void>;
     wake: (name: string) => void;
+    /**
+     * An enqueue: its commit is to come.
+     */
     onEnqueued: (names: string[]) => void;
+    /**
+     * An enqueue committed: wakes at once, then re-probes.
+     */
+    onCommitted: (names: string[]) => void;
     isClosed: () => boolean;
     isStarted: () => boolean;
     /**

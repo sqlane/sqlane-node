@@ -92,5 +92,15 @@ export function mysql2Adapter(pool) {
         inTransaction: (connection, func) => (isPool(connection)
             ? inOwnTransaction(connection, func)
             : func(toExecutor(connection))),
+        // A pool: the enqueue ran in a transaction of its own, committed when it returned
+        afterCommit: (connection, onCommit) => {
+            if (!isPool(connection)) {
+                return false;
+            }
+
+            onCommit();
+
+            return true;
+        },
     };
 }

@@ -91,7 +91,8 @@ const MAX_COMPLETE_BATCH = 100;
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
  * @property {(name: string) => void} wake
- * @property {(names: string[]) => void} onEnqueued
+ * @property {(names: string[]) => void} onEnqueued An enqueue: its commit is to come.
+ * @property {(names: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.
  * @property {() => boolean} isClosed
  * @property {() => boolean} isStarted
  * @property {(name: string) => boolean} canStartNow This process handles the name and has a free slot for it.
@@ -825,6 +826,19 @@ export function createRunner({
     // ---- public ----
 
     /**
+     * The commit of an enqueue: the job is visible. The re-probes cover a commit event that comes before it is.
+     * @param {string[]} names
+     */
+    function onCommitted(names) {
+        if (state !== 'started' || !handlesAny(names)) {
+            return;
+        }
+
+        wakeUp();
+        onEnqueued(names);
+    }
+
+    /**
      * @param {string[]} names
      */
     function onEnqueued(names) {
@@ -1078,6 +1092,7 @@ export function createRunner({
         close,
         wake: wakeUp,
         onEnqueued,
+        onCommitted,
         isClosed: () => state === 'closing' || state === 'closed',
         isStarted: () => state === 'started',
         canStartNow: (name) => {
