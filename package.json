@@ -59,6 +59,7 @@
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
         "check": "hk check --all",
+        "bench": "node bench/run.js",
         "prepublishOnly": "publint --strict && attw --pack . --profile esm-only",
         "changeset": "changeset",
         "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern CHANGELOG.md"

@@ -532,4 +532,5 @@ store interface), `adapters/`.
   cannot change by accident.
 - Integration (most of the value): the same suite against MySQL 8.4 and PostgreSQL 15 and 18 in Docker, for the
   store and the runner: claims under contention, leases, stalls, mutex FIFO, failure jobs, close modes.
-- Benchmark: 1000 idle names (probe cost), enqueue-to-start latency, throughput.
+- Benchmark (`pnpm bench`, not in CI): 1000 idle names (probe cost), enqueue-to-start latency, throughput. Results:
+  [benchmarks](benchmarks.md).

@@ -235,6 +235,11 @@ export default defineConfig({
             files: ['*.config.js', '*.config.ts'],
             rules: { 'import/no-default-export': 'off' },
         },
+        {
+            // A script: it prints its results
+            files: ['bench/**'],
+            rules: { 'no-console': 'off', 'node/no-top-level-await': 'off' },
+        },
     ],
     ignorePatterns: ['coverage/**', 'types/**'],
 });

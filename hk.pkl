@@ -19,6 +19,8 @@ steps {
     ["publint"] {
         glob = List("package.json", "types/**")
         check = "pnpm lint:package && pnpm lint:types"
+        // It packs types/: not while the types step rebuilds it
+        depends = List("types")
     }
     // The declarations (types/): generated from the JSDoc of src/ and committed. A commit regenerates and stages them;
     // the check fails if they differ from a fresh build.

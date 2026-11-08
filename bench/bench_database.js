@@ -1,0 +1,86 @@
+// A pool of the benchmarked database, with the raw driver objects that an app has.
+import mysql from 'mysql2/promise';
+import { Pool } from 'pg';
+import { mysql2Adapter } from '../src/adapters/mysql2.js';
+import { pgAdapter } from '../src/adapters/pg.js';
+
+/**
+ * @typedef {object} BenchPool
+ * @property {'mysql' | 'postgres'} dialect
+ * @property {any} raw The mysql2 or pg pool.
+ * @property {(options?: { notify?: boolean }) => import('../src/types.js').Adapter<any>} adapter `notify`: pg only.
+ * @property {(func: (connection: any) => Promise<void>) => Promise<void>} transaction Runs func in a transaction on
+ *     a raw connection of the pool, as an app does.
+ * @property {(sql: string) => Promise<void>} execute
+ * @property {() => Promise<void>} end
+ */
+
+/**
+ * @param {'mysql' | 'postgres'} dialect
+ * @param {string} url
+ * @param {number} size The connections of the pool.
+ * @returns {BenchPool}
+ */
+export function createBenchPool(dialect, url, size) {
+    return dialect === 'mysql' ? createMysqlPool(url, size) : createPostgresPool(url, size);
+}
+
+/**
+ * @param {string} url
+ * @param {number} size
+ * @returns {BenchPool}
+ */
+function createMysqlPool(url, size) {
+    const pool = mysql.createPool({ uri: url, connectionLimit: size });
+
+    return {
+        dialect: 'mysql',
+        raw: pool,
+        adapter: () => mysql2Adapter(pool),
+        transaction: async (func) => {
+            const connection = await pool.getConnection();
+
+            try {
+                await connection.beginTransaction();
+                await func(connection);
+                await connection.commit();
+            } finally {
+                connection.release();
+            }
+        },
+        execute: async (sql) => {
+            await pool.query(sql);
+        },
+        end: () => pool.end(),
+    };
+}
+
+/**
+ * @param {string} url
+ * @param {number} size
+ * @returns {BenchPool}
+ */
+function createPostgresPool(url, size) {
+    const pool = new Pool({ connectionString: url, max: size });
+
+    return {
+        dialect: 'postgres',
+        raw: pool,
+        adapter: ({ notify = false } = {}) => pgAdapter(pool, { notify }),
+        transaction: async (func) => {
+            const client = await pool.connect();
+
+            try {
+                await client.query('BEGIN');
+                await func(client);
+                await client.query('COMMIT');
+            } finally {
+                client.release();
+            }
+        },
+        execute: async (sql) => {
+            await pool.query(sql);
+        },
+        end: () => pool.end(),
+    };
+}
