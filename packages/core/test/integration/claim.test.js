@@ -207,6 +207,121 @@ describe('claim', () => {
     });
 });
 
+/**
+ * A claim of due jobs, with defaults: token TOKEN1, 100 free slots in the process.
+ * @param {import('../../src/store/store.js').Store} store
+ * @param {Partial<import('../../src/store/store.js').ClaimDueParams>} params
+ * @returns {Promise<import('../../src/store/store.js').StartableJob[]>}
+ */
+function claimDue(store, params) {
+    return store.claimDue({
+        requests: [],
+        laneFree: [],
+        processMax: 100,
+        lockToken: 'TOKEN1',
+        lockedBy: 'test:TOKEN1',
+        leaseMs: LEASE_MS,
+        ...params,
+    });
+}
+
+describe('claimDue', () => {
+    test('claims the oldest due jobs of each name, with their payloads, in one go', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const job = defineJob({ name: 'a', maxAttempts: 4, failureJob: 'a_failed' });
+        const a1 = await sqlane.enqueue(testAdapter.pool, job, { n: 1 }, { runAt: ago(30) });
+        const b1 = await sqlane.enqueue(testAdapter.pool, 'b', { n: 2 }, { runAt: ago(20) });
+        const a2 = await sqlane.enqueue(testAdapter.pool, job, { n: 3 }, { runAt: ago(10) });
+
+        await sqlane.enqueue(testAdapter.pool, job, {}, { runAt: ago(5) });
+        await sqlane.enqueue(testAdapter.pool, job, {}, { delay: '1h' });
+        await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(40) });
+
+        const claimed = await claimDue(store, {
+            requests: [{ name: 'a', maxJobs: 2, lane: 0 }, { name: 'b', maxJobs: 5, lane: 1 }],
+            laneFree: [2, 5],
+        });
+
+        expect(claimed.map(row => [row.id, row.payload])).toStrictEqual([
+            [a1.id, { found: true, payload: { n: 1 } }],
+            [b1.id, { found: true, payload: { n: 2 } }],
+            [a2.id, { found: true, payload: { n: 3 } }],
+        ]);
+        expect(claimed[0]).toMatchObject({
+            name: 'a',
+            mutexKeys: [],
+            attempts: 0,
+            maxAttempts: 4,
+            failureJob: 'a_failed',
+            lockToken: 'TOKEN1',
+        });
+        expect(claimed[0].waitedMs).toBeGreaterThanOrEqual(29_000);
+
+        const rows = await database.query(`SELECT id, status, lock_token, locked_by FROM ${p}jobs WHERE status = 'running'`);
+
+        expect(rows.map(row => row.id).toSorted()).toStrictEqual([a1.id, b1.id, a2.id].toSorted());
+        expect(rows[0]).toMatchObject({ lock_token: 'TOKEN1', locked_by: 'test:TOKEN1' });
+    });
+
+    test('the free slots of each lane and of the process, oldest first', async () => {
+        const { sqlane, store } = await freshTables();
+        const a1 = await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(50) });
+        const b1 = await sqlane.enqueue(testAdapter.pool, 'b', {}, { runAt: ago(40) });
+        const c1 = await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(35) });
+
+        await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(30) });
+        await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(20) });
+
+        // a and b share lane 0 (1 free slot); c has lane 1; the process has 2 free slots
+        const claimed = await claimDue(store, {
+            requests: [
+                { name: 'a', maxJobs: 1, lane: 0 },
+                { name: 'b', maxJobs: 1, lane: 0 },
+                { name: 'c', maxJobs: 2, lane: 1 },
+            ],
+            laneFree: [1, 2],
+            processMax: 2,
+        });
+
+        expect(claimed.map(row => row.id)).toStrictEqual([a1.id, c1.id]);
+        // The jobs that did not fit stay pending, unlocked
+        await expect(claimDue(store, {
+            requests: [{ name: 'b', maxJobs: 1, lane: 0 }],
+            laneFree: [1],
+            lockToken: 'TOKEN2',
+        })).resolves.toMatchObject([{ id: b1.id }]);
+    });
+
+    test('concurrent claims never take the same job', async () => {
+        const { sqlane, store } = await freshTables();
+        const results = await sqlane.enqueueMany(
+            testAdapter.pool,
+            'busy',
+            Array.from({ length: 40 }, () => ({ payload: {}, options: { runAt: ago(5) } })),
+        );
+        const claims = await Promise.all(['T1', 'T2', 'T3', 'T4'].map(token => claimDue(store, {
+            requests: [{ name: 'busy', maxJobs: 15, lane: 0 }],
+            laneFree: [15],
+            lockToken: token,
+        })));
+        const claimedIds = claims.flatMap(jobs => jobs.map(job => job.id));
+
+        expect(new Set(claimedIds).size).toBe(claimedIds.length);
+        expect(claimedIds).toHaveLength(40);
+        expect(results.map(result => result.id)).toStrictEqual(expect.arrayContaining(claimedIds));
+    });
+
+    test('a job without its payload row: claimed, the payload not found', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const { id } = await sqlane.enqueue(testAdapter.pool, 'a', { n: 1 }, { runAt: ago(5) });
+
+        await database.query(`DELETE FROM ${p}payloads`);
+
+        await expect(claimDue(store, { requests: [{ name: 'a', maxJobs: 1, lane: 0 }], laneFree: [1] }))
+            .resolves.toMatchObject([{ id, payload: { found: false } }]);
+    });
+});
+
 describe('mutex keys', () => {
     const keyed = defineJob({ name: 'sync_order', mutexKeys: payload => [`order:${payload.orderId}`], timeout: '1m' });
     const other = defineJob({ name: 'ship_order', mutexKeys: payload => [`order:${payload.orderId}`], timeout: '1m' });

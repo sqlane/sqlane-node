@@ -18,7 +18,7 @@ Each scenario has tables of its own. An empty handler shows the cost of the queu
 
 ## Results
 
-Machine: Node.js v24.22.1, Apple M1 Pro (8 threads), 16 GiB
+Machine: Node.js v26.13.0, Apple M1 Pro (8 threads), 16 GiB
 
 ### mysql-8.4
 
@@ -26,33 +26,33 @@ Probe, with 1000 job names and 100,000 completed jobs (ms):
 
 | Names with pending jobs | p50  | p95  |
 | ----------------------- | ---- | ---- |
-| 0                       | 0.79 | 7.17 |
-| 1                       | 0.27 | 0.33 |
-| 10                      | 0.26 | 0.31 |
-| 100                     | 0.50 | 0.79 |
-| 1000                    | 2.27 | 3.07 |
+| 0                       | 0.81 | 6.88 |
+| 1                       | 0.33 | 0.55 |
+| 10                      | 0.38 | 0.81 |
+| 100                     | 0.51 | 0.75 |
+| 1000                    | 2.03 | 2.94 |
 
-One query per name instead (a `UNION ALL` of 1000), 10 names with pending jobs: p50 43 ms.
+One query per name instead (a `UNION ALL` of 1000), 10 names with pending jobs: p50 42 ms.
 
 From the COMMIT of the enqueue to the start of the handler, one job at a time (ms):
 
 | Worker              | p50 | p95 | max |
 | ------------------- | --- | --- | --- |
-| Same process        | 26  | 31  | 37  |
-| Other process, hint | 25  | 57  | 66  |
+| Same process        | 24  | 31  | 35  |
+| Other process, hint | 24  | 53  | 56  |
 
 Throughput (jobs/s):
 
 | Enqueue, 8 producers          | Jobs/s |
 | ----------------------------- | ------ |
-| `enqueue`, a transaction each | 1,870  |
-| `enqueueMany` of 100          | 58,330 |
+| `enqueue`, a transaction each | 1,723  |
+| `enqueueMany` of 100          | 54,854 |
 
 | Run, empty handler          | Jobs/s |
 | --------------------------- | ------ |
-| 1 process, concurrency 10   | 1,045  |
-| 1 process, concurrency 50   | 3,768  |
-| 4 processes, concurrency 10 | 2,112  |
+| 1 process, concurrency 10   | 1,027  |
+| 1 process, concurrency 50   | 4,132  |
+| 4 processes, concurrency 10 | 2,356  |
 
 ### postgres-15
 
@@ -60,34 +60,34 @@ Probe, with 1000 job names and 100,000 completed jobs (ms):
 
 | Names with pending jobs | p50  | p95  |
 | ----------------------- | ---- | ---- |
-| 0                       | 0.43 | 0.62 |
-| 1                       | 0.49 | 0.68 |
-| 10                      | 0.44 | 0.74 |
-| 100                     | 0.79 | 1.24 |
-| 1000                    | 4.28 | 5.59 |
+| 0                       | 0.47 | 1.08 |
+| 1                       | 0.45 | 0.61 |
+| 10                      | 0.53 | 1.85 |
+| 100                     | 0.94 | 1.50 |
+| 1000                    | 4.34 | 6.24 |
 
-One query per name instead (a `UNION ALL` of 1000), 10 names with pending jobs: p50 144 ms.
+One query per name instead (a `UNION ALL` of 1000), 10 names with pending jobs: p50 146 ms.
 
 From the COMMIT of the enqueue to the start of the handler, one job at a time (ms):
 
-| Worker                | p50  | p95  | max |
-| --------------------- | ---- | ---- | --- |
-| Same process          | 26   | 30   | 42  |
-| Other process, hint   | 24   | 57   | 68  |
-| Other process, NOTIFY | 4.99 | 8.73 | 16  |
+| Worker                | p50  | p95  | max  |
+| --------------------- | ---- | ---- | ---- |
+| Same process          | 22   | 25   | 30   |
+| Other process, hint   | 20   | 51   | 81   |
+| Other process, NOTIFY | 2.38 | 4.91 | 7.41 |
 
 Throughput (jobs/s):
 
 | Enqueue, 8 producers          | Jobs/s  |
 | ----------------------------- | ------- |
-| `enqueue`, a transaction each | 3,966   |
-| `enqueueMany` of 100          | 109,978 |
+| `enqueue`, a transaction each | 3,907   |
+| `enqueueMany` of 100          | 107,542 |
 
 | Run, empty handler          | Jobs/s |
 | --------------------------- | ------ |
-| 1 process, concurrency 10   | 1,453  |
-| 1 process, concurrency 50   | 4,894  |
-| 4 processes, concurrency 10 | 3,391  |
+| 1 process, concurrency 10   | 1,774  |
+| 1 process, concurrency 50   | 5,163  |
+| 4 processes, concurrency 10 | 4,963  |
 
 ### postgres-18
 
@@ -95,34 +95,34 @@ Probe, with 1000 job names and 100,000 completed jobs (ms):
 
 | Names with pending jobs | p50  | p95  |
 | ----------------------- | ---- | ---- |
-| 0                       | 0.38 | 0.50 |
-| 1                       | 0.40 | 0.65 |
-| 10                      | 0.50 | 0.85 |
-| 100                     | 0.90 | 1.42 |
-| 1000                    | 4.36 | 5.59 |
+| 0                       | 0.48 | 1.81 |
+| 1                       | 0.46 | 0.64 |
+| 10                      | 0.51 | 0.85 |
+| 100                     | 0.90 | 1.17 |
+| 1000                    | 4.41 | 5.90 |
 
-One query per name instead (a `UNION ALL` of 1000), 10 names with pending jobs: p50 125 ms.
+One query per name instead (a `UNION ALL` of 1000), 10 names with pending jobs: p50 127 ms.
 
 From the COMMIT of the enqueue to the start of the handler, one job at a time (ms):
 
 | Worker                | p50  | p95  | max |
 | --------------------- | ---- | ---- | --- |
-| Same process          | 25   | 30   | 38  |
-| Other process, hint   | 27   | 58   | 82  |
-| Other process, NOTIFY | 4.56 | 8.55 | 11  |
+| Same process          | 23   | 27   | 28  |
+| Other process, hint   | 26   | 52   | 68  |
+| Other process, NOTIFY | 2.31 | 5.28 | 11  |
 
 Throughput (jobs/s):
 
 | Enqueue, 8 producers          | Jobs/s  |
 | ----------------------------- | ------- |
-| `enqueue`, a transaction each | 4,042   |
-| `enqueueMany` of 100          | 105,181 |
+| `enqueue`, a transaction each | 3,884   |
+| `enqueueMany` of 100          | 110,614 |
 
 | Run, empty handler          | Jobs/s |
 | --------------------------- | ------ |
-| 1 process, concurrency 10   | 1,823  |
-| 1 process, concurrency 50   | 5,788  |
-| 4 processes, concurrency 10 | 3,743  |
+| 1 process, concurrency 10   | 2,579  |
+| 1 process, concurrency 50   | 9,348  |
+| 4 processes, concurrency 10 | 6,995  |
 
 ## Notes
 
@@ -131,5 +131,7 @@ Throughput (jobs/s):
 - **Latency:** about 25 ms with re-probes or a hint: the first re-probe is 20 ms after the enqueue, then the claim.
   NOTIFY comes after the commit: about 5 ms.
 - **Throughput:** a commit flushes the log to disk, so a process completes its finished jobs in batches: one
-  transaction for the jobs that finish during the previous write. More concurrency gives bigger batches. The 4 processes
+  transaction for the jobs that finish during the previous write. More concurrency gives bigger batches. A claim of
+  names without mutex keys finds, claims and reads the due jobs at once: one statement on PostgreSQL, one locking
+  read and one update on MySQL. The 4 processes
   are 4 instances in one Node.js process: they share its CPU.

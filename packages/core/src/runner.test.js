@@ -28,6 +28,7 @@ function runnerWith(makeDueErrors) {
             }
         },
         findCandidates: async () => [],
+        claimDue: async () => [],
     }));
 
     registry.handle('ping', () => {});

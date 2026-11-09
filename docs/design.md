@@ -412,16 +412,30 @@ A lost hint delays a job until the next poll. It never loses a job.
 
 ### Claim
 
-One short transaction on the queue's pool:
+**Names without mutex keys** (in the definition of the claiming process; the keys of their rows are not taken): the
+due jobs are found, claimed and read at once, without candidates.
+
+- PostgreSQL: one statement, a transaction of its own. A `LATERAL` per due name locks its oldest due jobs
+  (`FOR UPDATE SKIP LOCKED`, at most the free slots of its lane); window functions keep the free slots of each lane
+  and of the process; an `UPDATE … RETURNING` in a CTE claims them, joined with their payloads.
+- MySQL: one short transaction. One `UNION ALL` locks the oldest due jobs of each name with their payloads
+  (`FOR UPDATE OF j SKIP LOCKED`); the ones that fit the free slots are claimed by one `UPDATE`. The others are unlocked
+  at the commit.
+
+A process turn is then the probe and one claim: 2 round trips on PostgreSQL, 6 on MySQL (from 7 and 8).
+
+**Names with mutex keys:** the candidates (the FIFO per key over the window), then one short transaction on the
+queue's pool:
 
 1. `SELECT … WHERE id IN (candidates) AND status = 'pending' AND run_at <= now ORDER BY run_at, id FOR UPDATE SKIP
    LOCKED`.
-2. For keyed jobs: take the mutex keys (below). Drop the jobs whose keys are busy.
+2. Take the mutex keys (below). Drop the jobs whose keys are busy.
 3. `UPDATE` to `running` with a new `lock_token`, `locked_by`, `locked_until = now + lease` (default 4 min).
-4. Read the payloads, start the handlers. A job without its payload (a broken enqueue outside a transaction, a
-   manual change) goes back to `pending` with a 1 s delay and no attempt used, while it is younger than 60 s (its
-   payload can still be on the way). After that it fails for good with a `MissingPayloadError`, without retries;
-   its failure job runs.
+4. Read the payloads.
+
+Then the handlers start. A job without its payload (a broken enqueue outside a transaction, a manual change) goes back
+to `pending` with a 1 s delay and no attempt used, while it is younger than 60 s (its payload can still be on the way).
+After that it fails for good with a `MissingPayloadError`, without retries; its failure job runs.
 
 ### Leases and stalls
 

@@ -206,6 +206,82 @@ export async function claim(executor, p, { candidateIds, lockToken, lockedBy, le
 }
 
 /**
+ * Finds, claims and reads the due jobs of names without mutex keys, in one statement (a transaction of its own): the
+ * oldest due jobs of each name that no other claim holds (SKIP LOCKED), within the free slots of their lanes and of
+ * the process (as `fitSlots`), with their payloads.
+ * @param {Executor} executor Outside a transaction.
+ * @param {string} p
+ * @param {import('./store.js').ClaimDueParams} params
+ * @returns {Promise<import('./store.js').StartableJob[]>} In the order of run_at.
+ */
+export async function claimDue(executor, p, { requests, laneFree, processMax, lockToken, lockedBy, leaseMs }) {
+    if (!requests.length || processMax <= 0) {
+        return [];
+    }
+
+    const rows = await executor.query(`
+        WITH locked AS (
+            SELECT due.id, due.run_at, request.lane
+              FROM unnest($1::text[], $2::integer[], $3::integer[]) AS request(name, max_jobs, lane)
+             CROSS JOIN LATERAL (
+                 SELECT id, run_at FROM ${p}jobs
+                  WHERE status = 'pending' AND job_name = request.name AND run_at <= clock_timestamp()
+                  ORDER BY run_at, id LIMIT request.max_jobs
+                    FOR UPDATE SKIP LOCKED
+             ) AS due
+        ),
+        in_lanes AS (
+            SELECT id, run_at, lane,
+                   ROW_NUMBER() OVER (PARTITION BY lane ORDER BY run_at, id) AS lane_rank
+              FROM locked
+        ),
+        picked AS (
+            SELECT id FROM in_lanes WHERE lane_rank <= ($4::integer[])[lane + 1] ORDER BY run_at, id LIMIT $5
+        ),
+        claimed AS (
+            UPDATE ${p}jobs AS j
+               SET status = 'running', lock_token = $6, locked_by = $7,
+                   locked_until = clock_timestamp() + $8 * interval '1 millisecond', started_at = clock_timestamp(),
+                   timed_out_at = NULL, updated_at = clock_timestamp()
+              FROM picked
+             WHERE j.id = picked.id
+            RETURNING j.id, j.job_name, j.run_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.failure_job,
+                      ${epochMs('j.created_at')} AS created_at_ms,
+                      (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
+        )
+        SELECT c.*, pl.payload::text AS payload, pl.id IS NOT NULL AS payload_found
+          FROM claimed c LEFT JOIN ${p}payloads pl ON pl.id = c.id
+         ORDER BY c.run_at, c.id
+    `, [
+        requests.map(request => request.name),
+        requests.map(request => request.maxJobs),
+        requests.map(request => request.lane),
+        laneFree,
+        processMax,
+        lockToken,
+        lockedBy,
+        leaseMs,
+    ]);
+
+    return rows.map(row => ({
+        id: String(row.id),
+        name: String(row.job_name),
+        mutexKeys: [],
+        attempts: Number(row.attempts),
+        maxAttempts: Number(row.max_attempts),
+        stalls: Number(row.stalls),
+        maxStalls: Number(row.max_stalls),
+        failureJob: row.failure_job === null ? null : String(row.failure_job),
+        enqueuedAt: new Date(Number(row.created_at_ms)),
+        waitedMs: Number(row.waited_ms),
+        lockToken,
+        payload: row.payload_found
+            ? { found: true, payload: JSON.parse(String(row.payload)) }
+            : { found: false, payload: undefined },
+    }));
+}
+
+/**
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} ids
