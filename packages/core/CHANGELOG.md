@@ -1,5 +1,43 @@
 # @sqlane/core
 
+## 0.5.0
+
+### Minor Changes
+
+- [#39](https://github.com/sqlane/sqlane-node/pull/39) [`d69da6c`](https://github.com/sqlane/sqlane-node/commit/d69da6c7926087b3ef4681156d45566d9acfb8eb) - The Drizzle adapter: `import { drizzleAdapter } from '@sqlane/core/adapter-drizzle'`, then `drizzleAdapter(db)`.
+  `enqueue` takes a Drizzle database (a transaction of its own) or a Drizzle transaction, also nested. drizzle-orm 0.45
+  and 1.0 (beta), with mysql2 or node-postgres; with node-postgres, `{ notify: true }` sends the hints by NOTIFY.
+
+- [#47](https://github.com/sqlane/sqlane-node/pull/47) [`856f710`](https://github.com/sqlane/sqlane-node/commit/856f710932ba4c39f82ea35c03df5b7589097686) - The MikroORM adapter: `import { mikroOrmAdapter } from '@sqlane/core/adapter-mikro-orm'`, then
+  `mikroOrmAdapter(orm.em, { dialect })`. `enqueue` takes an EntityManager: of a transaction (also the global one inside
+  `em.transactional()`), or outside one (a transaction of its own). The workers wake at once after the commit of the
+  outermost transaction. MikroORM 6 and 7, with `@mikro-orm/mysql` or `@mikro-orm/postgresql`.
+
+- [#41](https://github.com/sqlane/sqlane-node/pull/41) [`d3ab433`](https://github.com/sqlane/sqlane-node/commit/d3ab433e99ae73560dbaebd340fe6b95f7074b83) - The Prisma adapter: `import { prismaAdapter } from '@sqlane/core/adapter-prisma'`, then
+  `prismaAdapter(prisma, { dialect })`. `enqueue` takes a Prisma client (a transaction of its own) or the client of an
+  interactive transaction. `sqlane.migrate()` works through Prisma too. Prisma 7, with MySQL or PostgreSQL.
+
+    On MySQL, the failure job of a failed job is inserted without a savepoint: some drivers (Prisma) cannot run
+    `SAVEPOINT`. A partial insert is undone; the job still fails without it, as before.
+
+- [#42](https://github.com/sqlane/sqlane-node/pull/42) [`1fef51e`](https://github.com/sqlane/sqlane-node/commit/1fef51e911723fa8e2b8d91cfc5249146bc2729f) - The Sequelize adapter: `import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize'`, then
+  `sequelizeAdapter(sequelize)`. `enqueue` takes a Sequelize instance (a transaction of its own) or a Sequelize
+  transaction, also nested: the workers wake at once after the commit of the outermost one. Sequelize 6, with MySQL or
+  PostgreSQL.
+
+- [#44](https://github.com/sqlane/sqlane-node/pull/44) [`4a08c26`](https://github.com/sqlane/sqlane-node/commit/4a08c26be1eaaac240d2a20129eeef4d7fb7f308) - Sequelize with CLS: `enqueue(sequelize, …)` inside a CLS transaction joins it, as the queries of Sequelize do. Before,
+  it ran in a transaction of its own: the job committed even when the app's transaction rolled back.
+
+- [#46](https://github.com/sqlane/sqlane-node/pull/46) [`5b5d2df`](https://github.com/sqlane/sqlane-node/commit/5b5d2df96b0b7d992d0e75b0ede5bcc31cef07d6) - The TypeORM adapter: `import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm'`, then
+  `typeOrmAdapter(dataSource)`. `enqueue` takes a DataSource (a transaction of its own), or the EntityManager or
+  QueryRunner of a transaction, also with savepoints: the workers wake at once after the commit of the outermost one.
+  TypeORM 0.3 and 1.x, with MySQL (mysql2) or PostgreSQL.
+
+### Patch Changes
+
+- [#43](https://github.com/sqlane/sqlane-node/pull/43) [`b5d8d84`](https://github.com/sqlane/sqlane-node/commit/b5d8d840ecd5504946e0153639798d77328259a5) - Retry the deadlocks and write conflicts that Prisma reports (`P2034`, or `P2010` with the database code in its driver
+  adapter error), as those of the drivers: `drain()` failed on one with the Prisma adapter.
+
 ## 0.4.0
 
 ### Minor Changes
