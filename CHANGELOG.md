@@ -1,5 +1,34 @@
 # @sqlane/core
 
+## 0.9.0
+
+### Minor Changes
+
+- [#74](https://github.com/sqlane/sqlane-node/pull/74) [`a11a898`](https://github.com/sqlane/sqlane-node/commit/a11a89828bf80772c03197c0d73d9376e3edd8d9) - Breaking: `wake()` takes no job name. It always checked all the names that the process handles, so a name had no effect.
+  JavaScript calls that still pass a name keep working; TypeScript reports them.
+
+    The `stalled` and `failed` events of stall recovery now have the attempt of the run that stalled, instead of `0`. The
+    `failed` event also has the time since that run started as `durationMs`.
+
+    `FailedJobPayload.error` now lists `code`: the string `code` of the thrown error, if it had one.
+
+    `close()` now logs a warning for every invalid option, including an unknown one, and uses its default. Before, an invalid
+    `deadline` or `mode` silently became the default. `close()` still never rejects because of its options.
+
+- [#72](https://github.com/sqlane/sqlane-node/pull/72) [`4ed7412`](https://github.com/sqlane/sqlane-node/commit/4ed741275ca99367aad2996471eb034062c4b7e1) - Breaking: the import paths from before 0.4 are gone. Use `@sqlane/core/adapter-mysql2` instead of `@sqlane/core/mysql2`,
+  `@sqlane/core/adapter-pg` instead of `@sqlane/core/pg`, and `@sqlane/core/adapter-knex` instead of `@sqlane/core/knex`.
+
+### Patch Changes
+
+- [#69](https://github.com/sqlane/sqlane-node/pull/69) [`f7a8423`](https://github.com/sqlane/sqlane-node/commit/f7a8423a429118a33bd0aba95536ce9819cf69a1) - A handler is now aborted with a `LeaseLostError` (and `lease_lost` is emitted) before its lease ends when the lease renewal fails or hangs, for example when the database is unreachable or the pool has no free connection. Before, a renewal that threw or never returned skipped this check, so the handler kept running after another process could take its job.
+
+- [#73](https://github.com/sqlane/sqlane-node/pull/73) [`4436868`](https://github.com/sqlane/sqlane-node/commit/443686844efab6c1b98597f632614e4774d0d246) - The leases of running jobs are now also renewed while `close()` waits for the handlers and during `drain()`. Before, a
+  handler that ran longer than a lease (4 minutes) during a long `close()` deadline or a `drain()` could lose its job to
+  another process without being aborted.
+
+- [#71](https://github.com/sqlane/sqlane-node/pull/71) [`27ea7c3`](https://github.com/sqlane/sqlane-node/commit/27ea7c3b398768c434607f24531981782a4e7b15) - A new README: what sqlane is and when to use it, a short example, getting started, and links to the new API reference,
+  adapter guide and comparison with other queues.
+
 ## 0.8.1
 
 ### Patch Changes
