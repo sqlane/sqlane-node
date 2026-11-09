@@ -199,8 +199,9 @@ export type SqlaneEvent = (JobEventBase & ({
     operation: string;
     error: unknown;
 };
+export type Dialect = 'mysql' | 'mariadb' | 'postgres';
 export type Adapter<C> = {
-    dialect: 'mysql' | 'postgres';
+    dialect: Dialect;
     /**
      * Used by sqlane: wraps a connection given to `enqueue`.
      */
@@ -595,10 +596,14 @@ export type Migration = {
  * )) | { type: 'error', operation: string, error: unknown }} SqlaneEvent
  */
 /**
+ * The SQL dialect: the database family.
+ * @typedef {'mysql' | 'mariadb' | 'postgres'} Dialect
+ */
+/**
  * The connections that `enqueue` accepts (C), and the queue's own pool. Made by `mysql2Adapter()` or `pgAdapter()`.
  * @template C
  * @typedef {object} Adapter
- * @property {'mysql' | 'postgres'} dialect
+ * @property {Dialect} dialect
  * @property {(connection: C) => Executor} wrap Used by sqlane: wraps a connection given to `enqueue`.
  * @property {Executor} queue Used by sqlane: the queue's own pool.
  * @property {<T>(func: (executor: Executor) => Promise<T>) => Promise<T>} withConnection Used by sqlane: runs func on

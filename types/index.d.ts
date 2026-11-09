@@ -8,6 +8,7 @@ export type SqlaneOptions<C, L extends string> = import('./types.js').SqlaneOpti
 export type Jsonable<T> = import('./types.js').Jsonable<T>;
 export type Backoff = import('./types.js').Backoff;
 export type CloseOptions = import('./types.js').CloseOptions;
+export type Dialect = import('./types.js').Dialect;
 export type DrainOptions = import('./types.js').DrainOptions;
 export type DrainResult = import('./types.js').DrainResult;
 export type Duration = import('./types.js').Duration;
@@ -49,6 +50,7 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  */
 /** @typedef {import('./types.js').Backoff} Backoff */
 /** @typedef {import('./types.js').CloseOptions} CloseOptions */
+/** @typedef {import('./types.js').Dialect} Dialect */
 /** @typedef {import('./types.js').DrainOptions} DrainOptions */
 /** @typedef {import('./types.js').DrainResult} DrainResult */
 /** @typedef {import('./types.js').Duration} Duration */

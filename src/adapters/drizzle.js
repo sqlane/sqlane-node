@@ -4,6 +4,7 @@
 // adapter reads the kind that Drizzle gives its classes (a global symbol), and checks what it uses. Drizzle has no
 // after-commit hook: after an enqueue in a transaction, sqlane re-probes.
 import { ConfigError } from '../errors.js';
+import { mysqlFamilyDialect } from './dialect.js';
 import { mysql2Adapter } from './mysql2.js';
 import { pgAdapter } from './pg.js';
 import { postgresJsAdapter } from './postgres_js.js';
@@ -27,6 +28,7 @@ const ENTITY_KIND = Symbol.for('drizzle:entityKind');
 /**
  * @typedef {object} DrizzleAdapterOptions
  * @property {boolean} [notify] PostgreSQL: hints by LISTEN/NOTIFY, as `pgAdapter(pool, { notify: true })`.
+ * @property {'mysql' | 'mariadb'} [dialect] mysql2: `'mariadb'` on MariaDB. Default: `'mysql'`.
  */
 
 /**
@@ -103,11 +105,15 @@ export function drizzleAdapter(db, options = {}) {
         throw new ConfigError('drizzleAdapter: "notify" is for PostgreSQL');
     }
 
+    if (!isMysql && options.dialect !== undefined) {
+        throw new ConfigError('drizzleAdapter: "dialect" is for mysql2 (MySQL or MariaDB)');
+    }
+
     // The queue's pool: claims, leases, results
     const notify = options.notify ?? false;
     /** @type {Record<string, () => import('../types.js').Adapter<any>>} */
     const baseByKind = {
-        MySql2Session: () => mysql2Adapter(pool),
+        MySql2Session: () => mysql2Adapter(pool, { dialect: mysqlFamilyDialect(options, 'drizzleAdapter') }),
         NodePgSession: () => pgAdapter(pool, { notify }),
         PostgresJsSession: () => postgresJsAdapter(pool, { notify }),
     };

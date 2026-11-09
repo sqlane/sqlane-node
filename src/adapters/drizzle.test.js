@@ -51,6 +51,14 @@ test.each([
     expect(() => drizzleAdapter(db)).toThrow(message);
 });
 
+test('MariaDB: a mysql2 Drizzle, with { dialect: \'mariadb\' }', () => {
+    expect(drizzleAdapter(fakeDb('MySql2Session', mysqlPool), { dialect: 'mariadb' }).dialect).toBe('mariadb');
+});
+
+test('"dialect" on PostgreSQL: a ConfigError', () => {
+    expect(() => drizzleAdapter(fakeDb('NodePgSession', pgPool), { dialect: 'mariadb' })).toThrow('"dialect" is for mysql2');
+});
+
 test('notify on MySQL: a ConfigError', () => {
     expect(() => drizzleAdapter(fakeDb('MySql2Session', mysqlPool), { notify: true })).toThrow('"notify" is for PostgreSQL');
 });

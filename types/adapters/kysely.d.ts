@@ -4,9 +4,9 @@ export type Executor = import('../types.js').Executor;
 export type KyselyConnection = Kysely | KyselyTransaction;
 export type KyselyAdapterOptions = {
     /**
-     * The dialect of the Kysely instance: Kysely does not tell it.
+     * The database of the Kysely instance: Kysely does not tell it.
      */
-    dialect: 'mysql' | 'postgres';
+    dialect: import('../types.js').Dialect;
 };
 /**
  * The adapter for Kysely (its MySQL or PostgreSQL dialect). `enqueue` then takes a Kysely instance (a transaction of

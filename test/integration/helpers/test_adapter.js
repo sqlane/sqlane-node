@@ -29,9 +29,10 @@ import { pgAdapter } from '../../../src/adapters/pg.js';
  */
 function createMysqlTestAdapter(url) {
     const pool = mysql.createPool({ uri: url, connectionLimit: 6 });
+    const dialect = inject('databaseDialect') === 'mariadb' ? 'mariadb' : 'mysql';
 
     return {
-        adapter: mysql2Adapter(pool),
+        adapter: mysql2Adapter(pool, { dialect }),
         pool,
         connect: async () => {
             const raw = await pool.getConnection();
@@ -88,5 +89,13 @@ function createPostgresTestAdapter(url) {
 export function createTestAdapter() {
     const url = inject('databaseUrl');
 
-    return inject('databaseDialect') === 'mysql' ? createMysqlTestAdapter(url) : createPostgresTestAdapter(url);
+    return inject('databaseDialect') === 'postgres' ? createPostgresTestAdapter(url) : createMysqlTestAdapter(url);
+}
+
+/**
+ * The options of an adapter over mysql2 (knex, Drizzle, Sequelize) on the database of the current project.
+ * @returns {{ dialect: 'mariadb' } | undefined} `{ dialect: 'mariadb' }` on MariaDB; the default elsewhere.
+ */
+export function mysqlFamilyOptions() {
+    return inject('databaseDialect') === 'mariadb' ? { dialect: 'mariadb' } : undefined;
 }

@@ -1,13 +1,14 @@
 {
     "name": "@sqlane/core",
     "version": "1.0.0",
-    "description": "Transactional SQL job queue for Node.js (MySQL, PostgreSQL)",
+    "description": "Transactional SQL job queue for Node.js (MySQL, MariaDB, PostgreSQL)",
     "keywords": [
         "background-jobs",
         "drizzle",
         "job",
         "knex",
         "kysely",
+        "mariadb",
         "mikro-orm",
         "mysql",
         "outbox",
@@ -115,12 +116,14 @@
         "@changesets/changelog-github": "1.0.1",
         "@changesets/cli": "3.0.3",
         "@mikro-orm/core": "7.2.8",
+        "@mikro-orm/mariadb": "7.2.8",
         "@mikro-orm/mysql": "7.2.8",
         "@mikro-orm/postgresql": "7.2.8",
         "@prisma/adapter-mariadb": "7.10.1",
         "@prisma/adapter-pg": "7.10.1",
         "@prisma/client": "7.10.1",
         "@stylistic/eslint-plugin": "5.10.0",
+        "@testcontainers/mariadb": "12.2.1",
         "@testcontainers/mysql": "12.2.1",
         "@testcontainers/postgresql": "12.2.1",
         "@types/cls-hooked": "4.3.9",
@@ -152,10 +155,14 @@
         "vitest": "5.1.0"
     },
     "peerDependencies": {
+        "mariadb": "^3.4.0",
         "mysql2": "^3.11.0",
         "pg": "^8.13.0"
     },
     "peerDependenciesMeta": {
+        "mariadb": {
+            "optional": true
+        },
         "mysql2": {
             "optional": true
         },

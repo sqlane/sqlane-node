@@ -1,3 +1,4 @@
+import { mysqlFamilyDialect } from './dialect.js';
 import { mysql2Executor as toExecutor } from './executors.js';
 
 /**
@@ -52,11 +53,14 @@ async function inOwnTransaction(pool, func, readCommitted = false) {
  * The adapter for mysql2 (its promise API). `enqueue` then takes a `Connection`, a `PoolConnection` (in a
  * transaction) or a `Pool`.
  * @param {import('mysql2/promise').Pool} pool The queue's own pool: claims, leases, results.
+ * @param {import('./dialect.js').MysqlFamilyOptions} [options] `{ dialect: 'mariadb' }` on MariaDB.
  * @returns {import('../types.js').Adapter<Mysql2Connection>}
  */
-export function mysql2Adapter(pool) {
+export function mysql2Adapter(pool, options) {
+    const dialect = mysqlFamilyDialect(options, 'mysql2Adapter');
+
     return {
-        dialect: 'mysql',
+        dialect,
         wrap: toExecutor,
         queue: toExecutor(pool),
         withConnection: async (func) => {

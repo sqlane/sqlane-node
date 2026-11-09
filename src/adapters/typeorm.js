@@ -1,5 +1,5 @@
-// The adapter for TypeORM 0.3 and 1.x (`@sqlane/core/adapter-typeorm`), MySQL or PostgreSQL: `enqueue` takes a
-// DataSource, an EntityManager or a QueryRunner. The SQL of sqlane runs through `queryRunner.query()`, with the
+// The adapter for TypeORM 0.3 and 1.x (`@sqlane/core/adapter-typeorm`), MySQL, MariaDB or PostgreSQL: `enqueue`
+// takes a DataSource, an EntityManager or a QueryRunner. The SQL of sqlane runs through `queryRunner.query()`, with the
 // placeholders of the driver. No import of TypeORM: the adapter uses the objects that it gets, and checks them. After
 // the commit of the outermost transaction (a subscriber of the DataSource: `afterTransactionCommit`), the workers wake
 // at once.
@@ -113,8 +113,9 @@ async function onRunner(source, func) {
 }
 
 /**
- * The adapter for TypeORM (MySQL with mysql2, or PostgreSQL). `enqueue` then takes a DataSource (a transaction of its
- * own), the EntityManager of a transaction (`dataSource.transaction(manager => …)`), or a QueryRunner in a transaction.
+ * The adapter for TypeORM (MySQL or MariaDB with mysql2, or PostgreSQL). The type of the DataSource tells the database:
+ * `"mariadb"` for MariaDB. `enqueue` then takes a DataSource (a transaction of its own), the EntityManager of a
+ * transaction (`dataSource.transaction(manager => …)`), or a QueryRunner in a transaction.
  * @param {any} dataSource The queue's own DataSource, initialized: claims, leases, results.
  * @returns {import('../types.js').Adapter<TypeOrmConnection>}
  */
@@ -125,8 +126,10 @@ export function typeOrmAdapter(dataSource) {
 
     const type = dataSource.options?.type;
 
-    if (type !== 'mysql' && type !== 'postgres') {
-        throw new ConfigError(`typeOrmAdapter: the type must be "mysql" or "postgres", not ${JSON.stringify(type ?? null)}`);
+    if (type !== 'mysql' && type !== 'mariadb' && type !== 'postgres') {
+        throw new ConfigError(
+            `typeOrmAdapter: the type must be "mysql", "mariadb" or "postgres", not ${JSON.stringify(type ?? null)}`,
+        );
     }
 
     /**

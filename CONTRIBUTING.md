@@ -3,9 +3,9 @@
 ## Layout
 
 ```text
-src/        the package @sqlane/core: the queue, the SQL of both dialects, migrations, adapters; unit tests next to the code
+src/        the package @sqlane/core: the queue, the SQL of each dialect, migrations, adapters; unit tests next to the code
 types/      its declarations: generated from the JSDoc of src/ (`pnpm build:types`), committed
-test/       integration tests (MySQL and PostgreSQL in Docker, testcontainers), type tests, test databases
+test/       integration tests (MySQL, MariaDB and PostgreSQL in Docker, testcontainers), type tests, test databases
 examples/   usage examples; examples/quickstart: runs with the published package (CI: with the packed one)
 bench/      the benchmarks
 docs/       api, adapters, comparison, design, benchmarks, releasing

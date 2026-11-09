@@ -134,7 +134,7 @@ describe('probe', () => {
         await expect(store.probe()).resolves.toMatchObject([{ name: 'busy' }]);
     });
 
-    test.runIf(inject('databaseDialect') === 'mysql')('mysql: a loose index scan', async () => {
+    test.runIf(inject('databaseDialect') !== 'postgres')('mysql: a loose index scan', async () => {
         const { p, sqlane } = await freshTables();
         const items = Array.from({ length: 2000 }, (_, index) => ({ payload: {}, options: { jobId: `j${index}` } }));
 
@@ -388,8 +388,8 @@ describe('mutex keys', () => {
     test('a linger blocks the key until held_until, then a claim takes it over', async () => {
         const { p, sqlane, store } = await freshTables();
 
-        await database.query(LINGER_SQL[database.dialect](p), ['order:1', 3600]);
-        await database.query(LINGER_SQL[database.dialect](p), ['order:2', -1]);
+        await database.query(LINGER_SQL[database.family](p), ['order:1', 3600]);
+        await database.query(LINGER_SQL[database.family](p), ['order:2', -1]);
 
         const lingering = await sqlane.enqueue(testAdapter.pool, keyed, { orderId: 1 }, { runAt: ago(20) });
         const ended = await sqlane.enqueue(testAdapter.pool, keyed, { orderId: 2 }, { runAt: ago(10) });

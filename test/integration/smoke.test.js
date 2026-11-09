@@ -33,14 +33,14 @@ afterAll(async () => {
 });
 
 test('the server has the version of the project', async () => {
-    const [{ version }] = await database.query(VERSION_SQL[database.dialect]);
+    const [{ version }] = await database.query(VERSION_SQL[database.family]);
     const expectedVersion = database.name.split('-')[1];
 
     expect(String(version).startsWith(`${expectedVersion}.`)).toBe(true);
 });
 
 test('a table of the prefix stores and returns a row', async () => {
-    const [createSql, insertSql, selectSql] = ROUND_TRIP_SQL[database.dialect](`${database.tablePrefix}smoke`);
+    const [createSql, insertSql, selectSql] = ROUND_TRIP_SQL[database.family](`${database.tablePrefix}smoke`);
 
     await database.query(createSql);
     await database.query(insertSql, [1, 'one']);

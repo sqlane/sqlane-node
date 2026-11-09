@@ -21,7 +21,8 @@ import { kyselyAdapter } from './kysely.js';
 
 /**
  * @typedef {object} MikroOrmAdapterOptions
- * @property {'mysql' | 'postgres'} dialect The driver of MikroORM: `@mikro-orm/mysql` or `@mikro-orm/postgresql`.
+ * @property {import('../types.js').Dialect} dialect The database: `'mysql'` or `'mariadb'` with `@mikro-orm/mysql`,
+ *     `'postgres'` with `@mikro-orm/postgresql`.
  */
 
 /** @type {WeakMap<object, (() => void)[]>} The wakes of MikroORM 7 transactions, by transaction, until their commit */
@@ -129,8 +130,8 @@ export function mikroOrmAdapter(em, options) {
     const major = found;
     const dialect = options?.dialect;
 
-    if (dialect !== 'mysql' && dialect !== 'postgres') {
-        throw new ConfigError('mikroOrmAdapter: "dialect" must be "mysql" or "postgres"');
+    if (dialect !== 'mysql' && dialect !== 'mariadb' && dialect !== 'postgres') {
+        throw new ConfigError('mikroOrmAdapter: "dialect" must be "mysql", "mariadb" or "postgres"');
     }
 
     /** @type {import('../types.js').Adapter<any> | undefined} The knex or Kysely adapter, over the queue's client */
@@ -142,7 +143,9 @@ export function mikroOrmAdapter(em, options) {
     const getInner = () => {
         innerReady ??= (async () => {
             const client = await clientOf(em, major);
-            const created = major === 6 ? knexAdapter(client) : kyselyAdapter(client, { dialect });
+            const created = major === 6
+                ? knexAdapter(client, dialect === 'postgres' ? undefined : { dialect })
+                : kyselyAdapter(client, { dialect });
 
             if (created.dialect !== dialect) {
                 throw new ConfigError(

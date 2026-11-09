@@ -20,7 +20,8 @@ export async function setup(project) {
     const startedContainer = await database.start();
 
     container = startedContainer;
-    project.provide('databaseUrl', startedContainer.getConnectionUri());
+    // mariadb:// would make Sequelize pick its mariadb dialect: the tests reach MariaDB through mysql2, as MySQL
+    project.provide('databaseUrl', startedContainer.getConnectionUri().replace(/^mariadb:/, 'mysql:'));
 }
 
 /**

@@ -33,7 +33,7 @@ test.each([
         message: 'with a SQL driver',
     },
     { label: 'no dialect', em: fakeEntityManager(), options: undefined, message: '"dialect" must be' },
-    { label: 'MariaDB', em: fakeEntityManager(), options: { dialect: 'mariadb' }, message: '"dialect" must be' },
+    { label: 'SQLite', em: fakeEntityManager(), options: { dialect: 'sqlite' }, message: '"dialect" must be' },
 ])('$label: a ConfigError', ({ em, options, message }) => {
     expect(() => mikroOrmAdapter(em, /** @type {any} */ (options))).toThrow(message);
 });

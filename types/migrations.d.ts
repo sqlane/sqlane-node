@@ -3,12 +3,12 @@ export type Executor = import('./types.js').Executor;
 /**
  * The schema of sqlane as versioned SQL, for the app's own migration tool.
  * @param {object} options
- * @param {'mysql' | 'postgres'} options.dialect
+ * @param {import('./types.js').Dialect} options.dialect
  * @param {string} [options.tablePrefix] Default: `'sqlane_'`.
  * @returns {import('./types.js').Migration[]}
  */
 export declare function getMigrations({ dialect, tablePrefix }: {
-    dialect: 'mysql' | 'postgres';
+    dialect: import('./types.js').Dialect;
     tablePrefix?: string;
 }): import('./types.js').Migration[];
 /**
