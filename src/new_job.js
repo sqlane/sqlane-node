@@ -1,4 +1,4 @@
-import { monotonicFactory } from 'ulid';
+import { createMonotonicUlid } from './ulid.js';
 import { parseDuration } from './duration.js';
 import { InvalidOptionsError } from './errors.js';
 import { normalizeMutexKeys } from './mutex_keys.js';
@@ -16,7 +16,7 @@ const ENQUEUE_OPTION_NAMES = [
 ];
 const MAX_JOB_ID_LENGTH = 120;
 /** Sorted by creation order in this process, also within one millisecond */
-const ulid = monotonicFactory();
+const ulid = createMonotonicUlid();
 
 /**
  * A job to insert, with every value frozen at enqueue.

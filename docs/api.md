@@ -48,9 +48,17 @@ explains how sqlane works and why.
 
 ## Durations
 
-Many options take a duration. A duration is either a number of milliseconds or a string such as `'500ms'`, `'5s'`,
-`'4m30s'`, `'1h'` or `'2 days'`. sqlane reads the strings with the
-[parse-duration](https://www.npmjs.com/package/parse-duration) package. A number must be a non-negative integer.
+Many options take a duration. A number must be non-negative safe integer milliseconds. A string contains one or
+more non-negative decimal quantities with lowercase short units, in descending order: `w`, `d`, `h`, `m`, `s`,
+`ms`. Each unit may appear only once; units may be skipped. A day is 24 hours and a week is 7 days.
+
+Examples: `'1s'`, `'1ms'`, `'1.5h'`, `'1h 1m 1s'`, `'1d1h1ms'`. ASCII spaces may surround the string or separate
+components; quantity and unit must be adjacent. Fractional quantities such as `'.5s'` are allowed. The sum is
+rounded once to the nearest millisecond and must be a safe integer. Positive-duration options reject values
+that round to zero.
+
+Invalid: `'1 days'`, `'1ms 1d'`, `'1s 2s'`, `'1 ms'`, `'1S'`, `'1h30'`, `'1:30'`, `'1e3ms'`, `'5'`, signed
+quantities, tabs, newlines or trailing text. Use numeric `5` or `'5ms'` for five milliseconds.
 
 ## `defineJob`
 

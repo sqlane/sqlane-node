@@ -107,10 +107,6 @@
         "prisma:generate": "prisma generate --schema test/prisma/mysql/schema.prisma && prisma generate --schema test/prisma/postgres/schema.prisma",
         "prepublishOnly": "publint --strict && attw --pack . --profile esm-only"
     },
-    "dependencies": {
-        "parse-duration": "^2.1.11",
-        "ulid": "^3.0.2"
-    },
     "devDependencies": {
         "@arethetypeswrong/cli": "0.18.5",
         "@changesets/changelog-github": "1.0.1",

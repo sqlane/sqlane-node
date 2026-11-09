@@ -1,7 +1,7 @@
 // The runner of an instance: the dispatcher loop, the handlers, the timers, close() and drain().
 import { hostname } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { monotonicFactory } from 'ulid';
+import { createMonotonicUlid } from './ulid.js';
 import { getBackoffMs } from './backoff.js';
 import { parseDuration } from './duration.js';
 import { toErrorJson } from './error_json.js';
@@ -162,8 +162,8 @@ export function createRunner({
     let renewing = false;
     /** The renewal timer runs: while handlers run, in every state but closed */
     let renewalTimerOn = false;
-    const lockedBy = `${hostname()}:${process.pid}:${monotonicFactory()()}`;
-    const lockToken = monotonicFactory();
+    const lockedBy = `${hostname()}:${process.pid}:${createMonotonicUlid()()}`;
+    const lockToken = createMonotonicUlid();
     /** @type {'idle' | 'started' | 'draining' | 'closing' | 'closed'} */
     let state = 'idle';
     /** @type {Map<string, RunningJob>} */

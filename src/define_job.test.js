@@ -50,6 +50,7 @@ test.each([
     ['an unknown retention option', { name: 'a', retention: { pending: '1h' } }],
     ['a zero timeout', { name: 'a', timeout: 0 }],
     ['a bad timeout', { name: 'a', timeout: 'later' }],
+    ['a timeout with trailing text', { name: 'a', timeout: '1s typo' }],
     ['mutexKeys as an array', { name: 'a', mutexKeys: ['a'] }],
     ['a bad failure job name', { name: 'a', failureJob: 'Fail' }],
     ['the job as its own failure job', { name: 'a', failureJob: 'a' }],

@@ -25,6 +25,9 @@ test.each([
     ['an unknown option', { attempts: 3 }],
     ['a bad maxAttempts', { maxAttempts: 0 }],
     ['a zero timeout', { timeout: '0s' }],
+    ['a rounded zero timeout', { timeout: '0.0004s' }],
+    ['full duration names', { retention: { failed: '2 days' } }],
+    ['unordered backoff units', { backoff: { type: 'fixed', delay: '1ms 1s' } }],
     ['a bad backoff', { backoff: { type: 'fixed', delay: 'soon' } }],
 ])('rejects %s', (_, defaults) => {
     expect(() => resolveDefaults(/** @type {any} */ (defaults))).toThrow(ConfigError);

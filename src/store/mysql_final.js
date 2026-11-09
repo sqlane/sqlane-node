@@ -1,7 +1,7 @@
 // The final writes on MySQL: lease renewal, complete, retry, fail, release, stall recovery, sweeps. Each write of a
 // job checks its lock token: a process that lost the lease changes nothing. Each runs in a queue transaction.
 import { isTransientDbError } from '../transient_error.js';
-import { monotonicFactory } from 'ulid';
+import { createMonotonicUlid } from '../ulid.js';
 import { insertJobsMysql } from './mysql_enqueue.js';
 
 /** @typedef {import('../types.js').Executor} Executor */
@@ -11,7 +11,7 @@ import { insertJobsMysql } from './mysql_enqueue.js';
 
 const NOW = 'UTC_TIMESTAMP(3)';
 const CLEAR_LOCK = 'lock_token = NULL, locked_by = NULL, locked_until = NULL, timed_out_at = NULL';
-const enqueueToken = monotonicFactory();
+const enqueueToken = createMonotonicUlid();
 
 /**
  * @param {number} count

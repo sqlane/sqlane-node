@@ -1,4 +1,4 @@
-import { monotonicFactory } from 'ulid';
+import { createMonotonicUlid } from './ulid.js';
 import { InvalidOptionsError, UnknownJobError } from './errors.js';
 import { buildNewJob } from './new_job.js';
 import { insertJobsMariadb } from './store/mariadb_enqueue.js';
@@ -6,7 +6,7 @@ import { insertJobsMysql } from './store/mysql_enqueue.js';
 import { insertJobsPostgres } from './store/postgres_enqueue.js';
 import { isPlainObject } from './validate.js';
 
-const enqueueToken = monotonicFactory();
+const enqueueToken = createMonotonicUlid();
 
 /**
  * @template C
