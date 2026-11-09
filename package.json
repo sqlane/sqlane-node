@@ -78,18 +78,6 @@
         "./adapter-mikro-orm": {
             "types": "./types/adapters/mikro_orm.d.ts",
             "default": "./src/adapters/mikro_orm.js"
-        },
-        "./mysql2": {
-            "types": "./types/adapters/mysql2.d.ts",
-            "default": "./src/adapters/mysql2.js"
-        },
-        "./pg": {
-            "types": "./types/adapters/pg.d.ts",
-            "default": "./src/adapters/pg.js"
-        },
-        "./knex": {
-            "types": "./types/adapters/knex.d.ts",
-            "default": "./src/adapters/knex.js"
         }
     },
     "publishConfig": {
