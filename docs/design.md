@@ -1,7 +1,7 @@
 # sqlane design
 
-> Status: implemented, as published on npm (0.x). It is not stable yet. The API and the schema can still change, and
-> it has no production use yet. The [changelog](../CHANGELOG.md) lists what each version added.
+> Status: implemented, as published on npm. The API and the schema follow semantic versioning since 1.0. sqlane has no
+> known production use yet. The [changelog](../CHANGELOG.md) lists what each version added.
 
 sqlane runs background jobs that are rows in the application's own SQL database (MySQL or PostgreSQL). The application
 adds a job in its business transaction, so the job exists only if the transaction commits.

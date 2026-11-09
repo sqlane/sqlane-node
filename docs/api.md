@@ -4,8 +4,8 @@ This page describes the public API of `@sqlane/core`. sqlane is a job queue that
 MySQL or PostgreSQL database. You add a job inside your business transaction, so the job exists only if that
 transaction commits.
 
-sqlane is in version 0.x. The API can still change in any minor version. The [design](design.md) explains how sqlane
-works and why.
+sqlane follows semantic versioning since 1.0, so only a major version breaks this API. The [design](design.md)
+explains how sqlane works and why.
 
 ## Contents
 
