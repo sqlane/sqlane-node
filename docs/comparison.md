@@ -23,8 +23,8 @@ sqlane differs from them in three ways.
   follow-up job. Groups with a concurrency limit per group are in BullMQ Pro, the commercial version. River limits
   concurrency per key only in River Pro. Sidequest documents no limit per key.
 
-sqlane also has clear gaps. It has no cron, no dashboard and no priorities. It is in version 0.x and has no production
-use yet, while pg-boss, Graphile Worker, BullMQ and River have been released for several years.
+sqlane also has clear gaps. It has no cron, no dashboard and no priorities. It is new (version 1.0 since 2026) and has
+no known production use yet, while pg-boss, Graphile Worker, BullMQ and River have been released for several years.
 
 ## Feature table
 
@@ -37,13 +37,14 @@ use yet, while pg-boss, Graphile Worker, BullMQ and River have been released for
 | Dashboard                       | No                                                              | Yes, `@pg-boss/dashboard` [1]                                                                                            | None in the official docs                                                                                                        | Taskforce.sh, official and commercial [22]                                                                                                                                                                                             | Built in [17]                                                                      | River UI [19]                                                        |
 | Cron and recurring jobs         | No                                                              | Cron and RRULE [1]                                                                                                       | Crontab, with backfill [8]                                                                                                       | Job schedulers [13]                                                                                                                                                                                                                    | Cron, registered in the process [18]                                               | Periodic jobs [19]                                                   |
 | Priorities                      | No                                                              | Yes, the `priority` option of `send()` [23]                                                                              | Yes, the `priority` argument of `add_job()` [6]                                                                                  | Yes, prioritized jobs [24]                                                                                                                                                                                                             | Per queue, not per job [25]                                                        | Yes, from 1 to 4 per job [26]                                        |
-| Maturity                        | Version 0.8, first released in 2026, no known production use    | Version 12, first released in 2016 [27]                                                                                  | Version 0.18, first released in 2019 [27]                                                                                        | Version 6, version 1 released in 2019 [27]                                                                                                                                                                                             | Version 1, 1.0.0 released in 2025 [27]                                             | Version 0.51 of the Go library, first released in 2023 [28]          |
+| Maturity                        | Version 1.0, first released in 2026, no known production use    | Version 12, first released in 2016 [27]                                                                                  | Version 0.18, first released in 2019 [27]                                                                                        | Version 6, version 1 released in 2019 [27]                                                                                                                                                                                             | Version 1, 1.0.0 released in 2025 [27]                                             | Version 0.51 of the Go library, first released in 2023 [28]          |
 
 ## When to choose which queue
 
 **Choose sqlane** if your app runs on MySQL or PostgreSQL, and you want each job to commit or roll back with your
 business transaction, through the driver or ORM that you already use. sqlane also fits when jobs for the same entity
-must not run at the same time. Remember that it is 0.x, so try it, but do not run production workloads on it yet.
+must not run at the same time. Remember that it is new and has no known production use yet, so test it under your
+own load first.
 
 **Choose pg-boss** if you use PostgreSQL and want an established queue with cron, a dashboard, queue policies and
 workflows. pg-boss also adds jobs inside your transaction. Its `singletonKey`, `key_strict_fifo` and `groupConcurrency`

@@ -13,8 +13,9 @@ A transactional job queue for Node.js that stores its jobs in your own MySQL or 
 [Comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) ·
 [Design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md)
 
-**Status:** sqlane is in early development (version 0.x), and it is not ready for production use yet. See
-[Versioning](https://github.com/sqlane/sqlane-node/blob/main/README.md#versioning).
+**Status:** the API and the schema are stable since version 1.0 and follow
+[semantic versioning](https://github.com/sqlane/sqlane-node/blob/main/README.md#versioning). sqlane is new (first
+released in 2026) and has no known production users yet.
 
 Many apps save their data and then send a job to a separate queue. If the process crashes between these two steps, the
 job is lost. If the job goes out first and the transaction then rolls back, a worker runs a job for data that does not
@@ -75,7 +76,7 @@ On PostgreSQL, pg-boss, Graphile Worker and River do. **Use something else** in 
 - Choose **pg-boss** if you use PostgreSQL and want an established queue with cron, a dashboard and queue policies.
 - Choose **Graphile Worker** if you use PostgreSQL and want to add jobs from SQL, for example from triggers.
 - Choose **BullMQ** if you already run Redis and need very high throughput, flows, or workers in several languages.
-- Choose an established queue if you need production stability today, because sqlane is still 0.x.
+- Choose an established queue if you need a long production track record, because sqlane is new.
 
 ## Features
 
@@ -257,17 +258,15 @@ The [benchmarks page](https://github.com/sqlane/sqlane-node/blob/main/docs/bench
 
 ## Versioning
 
-Until version 1.0, sqlane follows these rules:
+Since version 1.0, sqlane follows [semantic versioning](https://semver.org):
 
-- A **minor** version, such as 0.9, can change the API or the database schema. The
+- A **major** version, such as 2.0, can break the API or the database schema. The
   [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) says what changed and what you need to do.
-- A **patch** version, such as 0.8.1, only fixes bugs. It does not change the API or the schema.
-- A schema change always comes as a new migration, so run `sqlane.migrate()` or apply `getMigrations()` after an
+- A **minor** version, such as 1.1, adds features without breaking your code. It can add a migration.
+- A **patch** version, such as 1.0.1, only fixes bugs.
+- A schema change always comes as a new migration, so run `sqlane.migrate()` or apply `getMigrations()` after every
   upgrade. Migrations that you already applied never change.
 - Only the latest version gets fixes.
-
-Version 1.0 will come when the API has stayed stable for a while and apps run sqlane in production. From then on,
-sqlane will follow semantic versioning.
 
 ## Support and contributing
 
