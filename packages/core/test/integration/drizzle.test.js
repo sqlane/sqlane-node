@@ -81,7 +81,7 @@ async function waitFor(condition) {
 
 describe.each([
     { version: '0.45', factories: { mysql: drizzleMysql.drizzle, postgres: drizzlePg.drizzle } },
-    { version: '1.0 beta', factories: { mysql: drizzle1Mysql.drizzle, postgres: drizzle1Pg.drizzle } },
+    { version: '1.0 rc', factories: { mysql: drizzle1Mysql.drizzle, postgres: drizzle1Pg.drizzle } },
 ])('drizzle $version', ({ factories }) => {
     /** @type {DrizzleConnection} The app's Drizzle */
     let db;

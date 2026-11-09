@@ -1,0 +1,50 @@
+# The adapters against the newest releases of the ORMs and drivers that they support, every week. Some adapters read
+# internals of their ORM (Drizzle `session.client`, the transaction symbol of Prisma, `connectionManager` and `_cls` of
+# Sequelize): a minor release can break them. The lockfile pins the versions of the other runs.
+name: ORM latest
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests with the newest ORMs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          install_args: node pnpm
+      - run: pnpm install --frozen-lockfile
+      # The newest release of each supported line: what `npm install` gets in an app. Not `@latest`: a dist-tag can
+      # point to a pre-release (`prisma@latest` was an 8.0 RC). Outside the lockfile on purpose: a read-only token, no
+      # secrets, and no install scripts (allowBuilds of pnpm-workspace.yaml).
+      - name: The newest ORMs and drivers
+        run: >- # zizmor: ignore[adhoc-packages]
+          pnpm --filter @sqlane/core add --save-dev
+          'mysql2@^3' 'pg@^8' 'knex@^3' 'kysely@~0.29' 'kysely-0.28@npm:kysely@~0.28'
+          'drizzle-orm@~0.45' 'drizzle-orm-1@npm:drizzle-orm@rc'
+          'prisma@^7' '@prisma/client@^7' '@prisma/adapter-pg@^7' '@prisma/adapter-mariadb@^7'
+          'sequelize@^6'
+      - name: Versions
+        run: |
+          {
+            echo '### Versions'
+            echo '```text'
+            pnpm --filter @sqlane/core list --depth 0
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Unit and integration tests (MySQL and PostgreSQL in testcontainers)
+        run: pnpm test
