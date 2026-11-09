@@ -362,10 +362,15 @@ export type FailedJobPayload = {
         attempt: number;
         maxAttempts: number;
     };
+    /**
+     * `code`: the string `code` of the
+     * thrown error, if it had one.
+     */
     error: {
         name: string;
         message: string;
         stack?: string;
+        code?: string;
     };
 };
 export type Sqlane<C, L extends string> = {
@@ -395,9 +400,10 @@ export type Sqlane<C, L extends string> = {
     }>;
     getStats: () => Promise<JobStats[]>;
     /**
-     * Low level: probes this name now.
+     * Low level: probes the handled names now, instead of at the next poll. Does nothing
+     * before `start()`.
      */
-    wake: (jobName: string) => void;
+    wake: () => void;
 };
 export type Migration = {
     id: string;
@@ -673,7 +679,8 @@ export type Migration = {
  * The payload of a failure job.
  * @typedef {object} FailedJobPayload
  * @property {{ id: string, name: string, payload: any, attempt: number, maxAttempts: number }} job
- * @property {{ name: string, message: string, stack?: string }} error
+ * @property {{ name: string, message: string, stack?: string, code?: string }} error `code`: the string `code` of the
+ *     thrown error, if it had one.
  */
 /**
  * @template C The connections that `enqueue` accepts.
@@ -696,7 +703,8 @@ export type Migration = {
  * @property {(options?: MigrateOptions) => Promise<{ applied: string[] }>} migrate Applies the missing migrations:
  *     their ids.
  * @property {() => Promise<JobStats[]>} getStats
- * @property {(jobName: string) => void} wake Low level: probes this name now.
+ * @property {() => void} wake Low level: probes the handled names now, instead of at the next poll. Does nothing
+ *     before `start()`.
  */
 /**
  * @typedef {object} Migration

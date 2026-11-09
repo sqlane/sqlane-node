@@ -306,7 +306,8 @@
  * The payload of a failure job.
  * @typedef {object} FailedJobPayload
  * @property {{ id: string, name: string, payload: any, attempt: number, maxAttempts: number }} job
- * @property {{ name: string, message: string, stack?: string }} error
+ * @property {{ name: string, message: string, stack?: string, code?: string }} error `code`: the string `code` of the
+ *     thrown error, if it had one.
  */
 
 /**
@@ -330,7 +331,8 @@
  * @property {(options?: MigrateOptions) => Promise<{ applied: string[] }>} migrate Applies the missing migrations:
  *     their ids.
  * @property {() => Promise<JobStats[]>} getStats
- * @property {(jobName: string) => void} wake Low level: probes this name now.
+ * @property {() => void} wake Low level: probes the handled names now, instead of at the next poll. Does nothing
+ *     before `start()`.
  */
 
 /**

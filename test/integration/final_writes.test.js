@@ -342,8 +342,11 @@ describe('stall recovery', () => {
 
         await sleep(20);
         await expect(tables.store.findStaleJobs(10)).resolves.toStrictEqual([{ id: job.id, name: 'sync_order' }]);
-        await expect(tables.store.recoverStaleJob(job.id, { leaseMs: 60_000, buildFailureJob }))
-            .resolves.toStrictEqual({ result: 'released', failureJob: null });
+        const recovered = await tables.store.recoverStaleJob(job.id, { leaseMs: 60_000, buildFailureJob });
+
+        // The run that stalled: the first attempt, started more than 20 ms ago
+        expect(recovered).toStrictEqual({ result: 'released', failureJob: null, attempt: 1, runMs: expect.any(Number) });
+        expect(/** @type {{ runMs: number }} */ (recovered).runMs).toBeGreaterThanOrEqual(15);
 
         const row = await readJob(tables.p, job.id);
 
@@ -362,7 +365,7 @@ describe('stall recovery', () => {
 
         const recovered = await tables.store.recoverStaleJob(job.id, { leaseMs: 60_000, buildFailureJob });
 
-        expect(recovered).toMatchObject({ result: 'failed', failureJob: { added: { name: 'sync_failed' } } });
+        expect(recovered).toMatchObject({ result: 'failed', failureJob: { added: { name: 'sync_failed' } }, attempt: 1 });
         await expect(readJob(tables.p, job.id)).resolves.toMatchObject({ status: 'failed', stalls: 1 });
     });
 

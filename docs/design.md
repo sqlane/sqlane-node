@@ -245,7 +245,7 @@ does not need to call anything, because sqlane uses the following signals.
   the after-commit hook or promise of the ORM. An `enqueue` on a pool runs in a transaction of its own, which has
   committed when `enqueue` returns, so it works the same way. After the commit, the process wakes at once and sends the
   hint. Then it re-probes as above, counted from the commit.
-- **`sqlane.wake(name)`.** This method stays public as a low-level escape hatch. The docs never require it.
+- **`sqlane.wake()`.** This method stays public as a low-level escape hatch. The docs never require it.
 
 The commit event of an ORM is a signal, not a proof, so a probe of the table decides. The cases below were checked with
 knex 3.3 and Sequelize 6.37, against MySQL 8.4 and PostgreSQL 18.
@@ -415,8 +415,9 @@ unfinished jobs.
 process exits, and its default is the deadline plus one lease. After this time, the old run has surely ended. Set
 `exitsBy` lower if the app exits sooner.
 
-`close()` never rejects because of its options, so a shutdown always releases the jobs. If `exitsBy` is not a
-duration, or if it is earlier than the deadline, `close()` logs a warning and uses the default. A handler that throws
+`close()` never rejects because of its options, so a shutdown always releases the jobs. Each invalid option logs a
+warning, and `close()` uses its default. This includes an unknown option, and an `exitsBy` that is earlier than the
+deadline. A handler that throws
 after the abort counts as unfinished, so its attempt is not used. `close()` resolves when the handlers have settled or
 the deadline has passed, and the releases are written. It ends only what sqlane opened, such as the LISTEN connection
 and the hint subscription. It never ends the app's pool.
