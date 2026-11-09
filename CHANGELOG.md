@@ -1,5 +1,25 @@
 # @sqlane/core
 
+## 0.8.0
+
+### Minor Changes
+
+- [#64](https://github.com/sqlane/sqlane-node/pull/64) [`1a02e09`](https://github.com/sqlane/sqlane-node/commit/1a02e09772937659802f549fa9832020f80bc24a) - Typed payloads, optional: `defineJob<{ reportId: string }>(…)` (or the JSDoc type `JobDefinition<{ reportId: string }>`)
+  declares the payload of a job. `enqueue` and `enqueueMany` then check the payload against it, and the handler's
+  `payload` and the argument of `mutexKeys` have its type. A definition without one, and a job by name, work as before:
+  any JSON payload, `any` in the handler. `JobOptions`, `JobDefinition`, `Handler` and `HandlerContext` take the payload
+  as an optional type parameter.
+
+### Patch Changes
+
+- [#61](https://github.com/sqlane/sqlane-node/pull/61) [`0d4c222`](https://github.com/sqlane/sqlane-node/commit/0d4c222aa0e7a89ccad5af18728613939a422855) - README: sqlane is not ready for production yet (0.x, in active development). The latency and mutex key claims now say
+  when they hold.
+
+- [#63](https://github.com/sqlane/sqlane-node/pull/63) [`03f8bc9`](https://github.com/sqlane/sqlane-node/commit/03f8bc9cdbb4af35ae5009cce88a4752a778bf65) - README: a link to the runnable quickstart, and a usage example that defines all it uses.
+
+- [#65](https://github.com/sqlane/sqlane-node/pull/65) [`bb1dee8`](https://github.com/sqlane/sqlane-node/commit/bb1dee856e917c3f95cb69803c6d443dddd811e9) - The repository is a single package now, at its root: the npm page links to the repository root, and the README is the
+  one of the repository. No change of the code.
+
 ## 0.7.0
 
 ### Minor Changes
