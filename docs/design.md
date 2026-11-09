@@ -142,7 +142,8 @@ Choices:
   it) in v0.4; `@sqlane/core/adapter-drizzle` (a Drizzle database or transaction, with mysql2 or node-postgres) in
   v0.5; `@sqlane/core/adapter-prisma` (a Prisma 7 client or the client of an interactive transaction; the dialect is an
   option) in v0.6; `@sqlane/core/adapter-sequelize` (a Sequelize 6 instance or transaction; after-commit hook of the
-  outermost transaction) in v0.7. With CLS, the Sequelize adapter follows Sequelize's own queries: an instance means
+  outermost transaction) in v0.7; `@sqlane/core/adapter-typeorm` (a TypeORM 0.3 or 1.x DataSource, EntityManager or
+  QueryRunner; a subscriber of the DataSource for the commit of the outermost transaction) in v0.8. With CLS, the Sequelize adapter follows Sequelize's own queries: an instance means
   its CLS transaction, if one runs (else a transaction of its own would commit the job without the app's data). TypeORM, MikroORM later. An ORM adapter runs sqlane's SQL on the driver
   connection under the ORM, or through its raw-SQL API: one SQL per dialect, and the ORM does not log it.
 - **Adapters are subpaths of the core**, not packages: `@sqlane/core/adapter-<name>`. The paths before 0.4
@@ -563,7 +564,8 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 @sqlane/core/adapter-drizzle    drizzleAdapter
 @sqlane/core/adapter-prisma     prismaAdapter
 @sqlane/core/adapter-sequelize  sequelizeAdapter
-@sqlane/core/adapter-<orm>      later: typeorm, mikro-orm
+@sqlane/core/adapter-typeorm    typeOrmAdapter
+@sqlane/core/adapter-<orm>      later: mikro-orm
 ```
 
 One repository, a pnpm workspace: `packages/<name>` for each published package, `test/` for the test databases of all
