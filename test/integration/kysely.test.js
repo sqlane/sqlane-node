@@ -6,7 +6,7 @@ import { createPool } from 'mysql2';
 import { Pool } from 'pg';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
-import { connectTestDatabase } from '@sqlane/testing/database';
+import { connectTestDatabase } from '../support/test_database.js';
 import { kyselyAdapter } from '../../src/adapters/kysely.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 
@@ -15,7 +15,7 @@ import { createSqlane, defineJob } from '../../src/index.js';
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 /** @typedef {typeof kysely029} KyselyModule */
 
-/** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
+/** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
 let prefixCount = 0;
 /** @type {Sqlane[]} */

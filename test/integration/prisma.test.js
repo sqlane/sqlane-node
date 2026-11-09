@@ -1,37 +1,58 @@
+import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { Sequelize } from 'sequelize';
+import { PrismaMariaDb } from '@prisma/adapter-mariadb';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { afterAll, afterEach, beforeAll, expect, inject, test } from 'vitest';
-import { connectTestDatabase } from '@sqlane/testing/database';
-import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
+import { connectTestDatabase } from '../support/test_database.js';
+import { prismaAdapter } from '../../src/adapters/prisma.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 
-/** @typedef {import('../../src/adapters/sequelize.js').SequelizeConnection} SequelizeConnection */
-/** @typedef {import('../../src/types.js').Sqlane<SequelizeConnection, never>} Sqlane */
+/** @typedef {import('../../src/adapters/prisma.js').PrismaClientLike} PrismaClientLike */
+/** @typedef {import('../../src/types.js').Sqlane<PrismaClientLike, never>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
-/** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
+const dialect = inject('databaseDialect');
+
+/** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
-/** @type {Sequelize} The app's Sequelize */
-let sequelize;
-/** @type {Sequelize} The queue's own Sequelize */
-let queueSequelize;
+/** @type {any} The app's Prisma client */
+let prisma;
+/** @type {any} The queue's own Prisma client */
+let queuePrisma;
 let prefixCount = 0;
 /** @type {Sqlane[]} */
 let instances = [];
 
-/** @returns {Sequelize} */
-function createSequelize() {
-    return new Sequelize(inject('databaseUrl'), {
-        dialect: inject('databaseDialect'),
-        logging: false,
-        pool: { max: 4 },
-    });
+/** @returns {Promise<any>} A Prisma client of the generated client of the dialect. */
+async function createPrisma() {
+    const clientPath = new URL(`../prisma/${dialect}/generated/client.ts`, import.meta.url);
+
+    if (!existsSync(clientPath)) {
+        throw new Error('The Prisma client of the tests is missing: run `pnpm prisma:generate`');
+    }
+
+    const { PrismaClient } = await import(clientPath.href);
+    const url = new URL(inject('databaseUrl'));
+    const adapter = dialect === 'mysql'
+        ? new PrismaMariaDb({
+                host: url.hostname,
+                port: Number(url.port),
+                user: url.username,
+                password: url.password,
+                database: url.pathname.slice(1),
+                // MySQL 8 authentication without TLS
+                allowPublicKeyRetrieval: true,
+                connectionLimit: 4,
+            })
+        : new PrismaPg({ connectionString: url.href, max: 4 });
+
+    return new PrismaClient({ adapter });
 }
 
 beforeAll(async () => {
     database = await connectTestDatabase();
-    sequelize = createSequelize();
-    queueSequelize = createSequelize();
+    prisma = await createPrisma();
+    queuePrisma = await createPrisma();
 });
 
 afterEach(async () => {
@@ -40,13 +61,13 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-    await sequelize?.close();
-    await queueSequelize?.close();
+    await prisma?.$disconnect();
+    await queuePrisma?.$disconnect();
     await database?.close();
 });
 
 /**
- * A sqlane instance over Sequelize, on tables of its own, migrated.
+ * A sqlane instance over Prisma, on tables of its own, migrated through Prisma.
  * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
  * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
  */
@@ -57,7 +78,7 @@ async function freshSqlane(options = {}) {
     /** @type {SqlaneEvent[]} */
     const events = [];
     const sqlane = createSqlane({
-        adapter: sequelizeAdapter(/** @type {any} */ (queueSequelize)),
+        adapter: prismaAdapter(queuePrisma, { dialect }),
         tablePrefix: p,
         onEvent: event => events.push(event),
         ...options,
@@ -96,69 +117,43 @@ async function waitFor(condition) {
     }
 }
 
-test('enqueue in a transaction: the job commits with it, and rolls back with it', async () => {
-    const { sqlane, p } = await freshSqlane();
-    /** @type {any} */
-    const app = sequelize;
+test('migrate() through Prisma: the tables, once', async () => {
+    const { sqlane } = await freshSqlane();
 
-    await sequelize.transaction(async (t) => {
-        await expect(sqlane.enqueue(/** @type {any} */ (t), 'ping', { n: 1 }, { jobId: 'a' }))
+    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [] });
+});
+
+test('enqueue in an interactive transaction: the job commits with it, and rolls back with it', async () => {
+    const { sqlane, p } = await freshSqlane();
+
+    await prisma.$transaction(async (/** @type {any} */ tx) => {
+        await expect(sqlane.enqueue(tx, 'ping', { n: 1 }, { jobId: 'a' }))
             .resolves.toStrictEqual({ id: 'ping:a', created: true });
         await expect(statuses(p)).resolves.toStrictEqual([]);
     });
-    await expect(sequelize.transaction(async (t) => {
-        await sqlane.enqueue(/** @type {any} */ (t), 'ping', { n: 2 }, { jobId: 'b' });
+    await expect(prisma.$transaction(async (/** @type {any} */ tx) => {
+        await sqlane.enqueue(tx, 'ping', { n: 2 }, { jobId: 'b' });
         throw new Error('rollback');
     })).rejects.toThrow('rollback');
 
     await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-    await expect(sqlane.enqueue(app, 'ping', { n: 3 }, { jobId: 'a' })).resolves.toMatchObject({ created: false });
+    await expect(sqlane.enqueue(prisma, 'ping', { n: 3 }, { jobId: 'a' })).resolves.toMatchObject({ created: false });
 });
 
-test('an unmanaged transaction, and an instance (a transaction of its own)', async () => {
+test('a client: a transaction of its own', async () => {
     const { sqlane, p } = await freshSqlane();
-    const t = await sequelize.transaction();
 
-    await sqlane.enqueue(/** @type {any} */ (t), 'ping', {}, { jobId: 'unmanaged' });
-    await t.commit();
-    await sqlane.enqueueMany(/** @type {any} */ (sequelize), 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
-
-    await expect(statuses(p)).resolves.toHaveLength(3);
+    await sqlane.enqueueMany(prisma, 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
+    await expect(statuses(p)).resolves.toStrictEqual(['pending', 'pending']);
 });
 
-test('the commit wakes the worker at once: the job does not wait for a re-probe', async () => {
-    const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
-
-    sqlane.handle('ping', () => {});
-    await sqlane.start();
-    await sleep(100);
-    await sequelize.transaction(async (t) => {
-        await sqlane.enqueue(/** @type {any} */ (t), 'ping', {});
-        // The re-probes after the enqueue: 20, 50, 100, 200, then 500 ms
-        await sleep(300);
-    });
-
-    const committedAt = Date.now();
-
-    await waitFor(() => events.some(event => event.type === 'claimed'));
-    expect(Date.now() - committedAt).toBeLessThan(150);
-});
-
-test('a nested transaction: the job runs after the outer commit, and never after an outer rollback', async () => {
+test('a worker runs a job enqueued in a transaction', async () => {
     const { sqlane, p, events } = await freshSqlane({ pollInterval: '10s' });
 
     sqlane.handle('ping', () => {});
     await sqlane.start();
-    await expect(sequelize.transaction(async (outer) => {
-        await sequelize.transaction({ transaction: outer }, async (inner) => {
-            await sqlane.enqueue(/** @type {any} */ (inner), 'ping', {}, { jobId: 'rolled_back' });
-        });
-        throw new Error('outer rollback');
-    })).rejects.toThrow('outer rollback');
-    await sequelize.transaction(async (outer) => {
-        await sequelize.transaction({ transaction: outer }, async (inner) => {
-            await sqlane.enqueue(/** @type {any} */ (inner), 'ping', {}, { jobId: 'committed' });
-        });
+    await prisma.$transaction(async (/** @type {any} */ tx) => {
+        await sqlane.enqueue(tx, 'ping', {});
     });
 
     await waitFor(() => events.some(event => event.type === 'completed'));
@@ -175,8 +170,6 @@ test('drain: retries, mutex keys and a failure job', async () => {
         failureJob: reportFailed,
     });
     const { sqlane, p } = await freshSqlane({ jobs: [report, reportFailed, failing] });
-    /** @type {any} */
-    const app = sequelize;
     /** @type {unknown[]} */
     const failures = [];
 
@@ -187,8 +180,8 @@ test('drain: retries, mutex keys and a failure job', async () => {
     sqlane.handle(reportFailed, ({ payload }) => {
         failures.push(payload.job.name);
     });
-    await sqlane.enqueueMany(app, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
-    await sqlane.enqueue(app, failing, {});
+    await sqlane.enqueueMany(prisma, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
+    await sqlane.enqueue(prisma, failing, {});
 
     await expect(sqlane.drain({ includeDelayed: true }))
         .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });

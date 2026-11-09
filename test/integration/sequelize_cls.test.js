@@ -4,7 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { createNamespace } from 'cls-hooked';
 import { Sequelize } from 'sequelize';
 import { afterAll, afterEach, beforeAll, expect, inject, test } from 'vitest';
-import { connectTestDatabase } from '@sqlane/testing/database';
+import { connectTestDatabase } from '../support/test_database.js';
 import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane } from '../../src/index.js';
 
@@ -14,7 +14,7 @@ import { createSqlane } from '../../src/index.js';
 
 Sequelize.useCLS(createNamespace('sqlane-test'));
 
-/** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
+/** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
 /** @type {any} The app's Sequelize */
 let sequelize;

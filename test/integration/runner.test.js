@@ -10,7 +10,7 @@ import {
     ShutdownError,
 } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
-import { connectTestDatabase } from '@sqlane/testing/database';
+import { connectTestDatabase } from '../support/test_database.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any, any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -19,7 +19,7 @@ import { connectTestDatabase } from '@sqlane/testing/database';
 const TIMINGS = { leaseMs: 5000, renewIntervalMs: 500, recoveryIntervalMs: 500, missingPayloadGraceMs: 60_000 };
 const fixedBackoff = /** @type {const} */ ({ type: 'fixed', delay: 10, jitter: 0 });
 
-/** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
+/** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
 /** @type {import('./helpers/test_adapter.js').TestAdapter} */
 let testAdapter;

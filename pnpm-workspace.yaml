@@ -1,7 +1,7 @@
-# pnpm workspace: the published packages, and the test databases shared by their tests
+# One package, @sqlane/core, at the root. The workspace holds only MikroORM 6 for the tests: a package of its own, as the
+# drivers of MikroORM 7 pin @mikro-orm/core as a peer.
 packages:
-  - packages/*
-  - test
+  - .
   - test/mikro-orm-6
 
 # `pnpm add` writes exact versions, not ^ ranges

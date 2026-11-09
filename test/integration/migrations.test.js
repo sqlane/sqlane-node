@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { createSqlane, getMigrations, MigrationLockTimeoutError } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
-import { connectTestDatabase } from '@sqlane/testing/database';
+import { connectTestDatabase } from '../support/test_database.js';
 
 /** @type {Record<'mysql' | 'postgres', (table: string) => string>} */
 const INSERT_TWO_PAYLOADS_SQL = {
@@ -15,7 +15,7 @@ const LOCK_SQL = {
     postgres: { lock: 'SELECT pg_advisory_lock(hashtext($1))', unlock: 'SELECT pg_advisory_unlock(hashtext($1))' },
 };
 
-/** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
+/** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
 /** @type {import('./helpers/test_adapter.js').TestAdapter} */
 let testAdapter;

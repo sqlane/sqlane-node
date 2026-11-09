@@ -19,9 +19,9 @@
     ignorePaths: ['**/node_modules/**'],
     packageRules: [
         {
-            // Runtime dependencies of the published packages: the app chooses within the range; only the lockfile
+            // Runtime dependencies of the published package: the app chooses within the range; only the lockfile
             // moves (no changeset). A new major changes the range: a pull request of its own, with a changeset.
-            matchFileNames: ['packages/*/package.json'],
+            matchFileNames: ['package.json'],
             matchDepTypes: ['dependencies'],
             rangeStrategy: 'update-lockfile',
         },

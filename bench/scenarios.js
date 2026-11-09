@@ -2,8 +2,8 @@
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { createSqlane } from '../packages/core/src/index.js';
-import { createStore } from '../packages/core/src/store/store.js';
+import { createSqlane } from '../src/index.js';
+import { createStore } from '../src/store/store.js';
 import { createBenchPool } from './bench_database.js';
 
 /**
@@ -32,7 +32,7 @@ export const SIZES = {
     quick: { historyPerName: 10, probeSamples: 50, latencySamples: 30, enqueueJobs: 500, runJobs: 1000 },
 };
 
-/** @typedef {import('../packages/core/src/types.js').Sqlane<any, any>} Sqlane */
+/** @typedef {import('../src/types.js').Sqlane<any, any>} Sqlane */
 
 /**
  * @typedef {object} Percentiles
@@ -207,7 +207,7 @@ export async function benchProbe({ dialect, url, nextPrefix, sizes }) {
 
 /**
  * A pub/sub in memory, between the instances of this process: Redis without its network hop.
- * @returns {import('../packages/core/src/types.js').Hint}
+ * @returns {import('../src/types.js').Hint}
  */
 function memoryHint() {
     const bus = new EventEmitter();
@@ -366,7 +366,7 @@ export async function benchProcess({ dialect, url, nextPrefix, sizes }, { label,
     const workers = [];
     let completed = 0;
     const done = Promise.withResolvers();
-    /** @param {import('../packages/core/src/types.js').SqlaneEvent} event */
+    /** @param {import('../src/types.js').SqlaneEvent} event */
     const onEvent = (event) => {
         if (event.type === 'completed') {
             completed++;

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'vitest';
-import { connectTestDatabase } from '@sqlane/testing/database';
+import { connectTestDatabase } from '../support/test_database.js';
 
 /** @type {Record<'mysql' | 'postgres', string>} */
 const VERSION_SQL = {
@@ -21,7 +21,7 @@ const ROUND_TRIP_SQL = {
     ],
 };
 
-/** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
+/** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
 
 beforeAll(async () => {

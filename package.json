@@ -1,19 +1,110 @@
 {
-    "name": "sqlane-monorepo",
-    "private": true,
-    "description": "The sqlane packages: @sqlane/core and its adapters",
+    "name": "@sqlane/core",
+    "version": "0.7.0",
+    "description": "Transactional SQL job queue for Node.js (MySQL, PostgreSQL)",
+    "keywords": [
+        "background-jobs",
+        "drizzle",
+        "job",
+        "knex",
+        "kysely",
+        "mikro-orm",
+        "mysql",
+        "outbox",
+        "postgres",
+        "postgres.js",
+        "postgresql",
+        "prisma",
+        "queue",
+        "sequelize",
+        "transactional",
+        "typeorm"
+    ],
+    "homepage": "https://github.com/sqlane/sqlane-node#readme",
+    "bugs": "https://github.com/sqlane/sqlane-node/issues",
     "license": "MIT",
+    "author": "Klim Pal",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/sqlane/sqlane-node.git"
+    },
+    "files": [
+        "src",
+        "!src/**/*.test.js",
+        "types"
+    ],
     "type": "module",
+    "exports": {
+        ".": {
+            "types": "./types/index.d.ts",
+            "default": "./src/index.js"
+        },
+        "./adapter-mysql2": {
+            "types": "./types/adapters/mysql2.d.ts",
+            "default": "./src/adapters/mysql2.js"
+        },
+        "./adapter-pg": {
+            "types": "./types/adapters/pg.d.ts",
+            "default": "./src/adapters/pg.js"
+        },
+        "./adapter-postgres-js": {
+            "types": "./types/adapters/postgres_js.d.ts",
+            "default": "./src/adapters/postgres_js.js"
+        },
+        "./adapter-knex": {
+            "types": "./types/adapters/knex.d.ts",
+            "default": "./src/adapters/knex.js"
+        },
+        "./adapter-kysely": {
+            "types": "./types/adapters/kysely.d.ts",
+            "default": "./src/adapters/kysely.js"
+        },
+        "./adapter-drizzle": {
+            "types": "./types/adapters/drizzle.d.ts",
+            "default": "./src/adapters/drizzle.js"
+        },
+        "./adapter-prisma": {
+            "types": "./types/adapters/prisma.d.ts",
+            "default": "./src/adapters/prisma.js"
+        },
+        "./adapter-sequelize": {
+            "types": "./types/adapters/sequelize.d.ts",
+            "default": "./src/adapters/sequelize.js"
+        },
+        "./adapter-typeorm": {
+            "types": "./types/adapters/typeorm.d.ts",
+            "default": "./src/adapters/typeorm.js"
+        },
+        "./adapter-mikro-orm": {
+            "types": "./types/adapters/mikro_orm.d.ts",
+            "default": "./src/adapters/mikro_orm.js"
+        },
+        "./mysql2": {
+            "types": "./types/adapters/mysql2.d.ts",
+            "default": "./src/adapters/mysql2.js"
+        },
+        "./pg": {
+            "types": "./types/adapters/pg.d.ts",
+            "default": "./src/adapters/pg.js"
+        },
+        "./knex": {
+            "types": "./types/adapters/knex.d.ts",
+            "default": "./src/adapters/knex.js"
+        }
+    },
+    "publishConfig": {
+        "access": "public"
+    },
     "scripts": {
         "lint": "oxlint --deny-warnings",
         "lint:fix": "oxlint --fix",
-        "lint:package": "pnpm --recursive --filter './packages/*' lint:package",
-        "lint:types": "pnpm --recursive --filter './packages/*' lint:types",
+        "lint:package": "publint --strict",
+        "lint:types": "attw --pack . --profile esm-only",
         "format": "oxfmt",
         "format:check": "oxfmt --check",
         "typecheck": "tsc -p tsconfig.json",
-        "build:types": "pnpm --recursive --filter './packages/*' build:types",
-        "check:types": "pnpm --recursive --filter './packages/*' check:types",
+        "build:types": "node --eval \"require('node:fs').rmSync('types', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+        "check:types": "out=$(mktemp -d) && tsc -p tsconfig.build.json --declarationDir \"$out\" && diff -r types \"$out\"; status=$?; rm -rf \"$out\"; exit $status",
         "test": "pnpm prisma:generate && vitest run",
         "test:unit": "vitest run --project unit",
         "test:integration": "pnpm prisma:generate && vitest run --project 'integration:*'",
@@ -22,26 +113,67 @@
         "check": "hk check --all",
         "bench": "node bench/run.js",
         "changeset": "changeset",
-        "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern packages/*/CHANGELOG.md",
-        "prisma:generate": "pnpm --filter @sqlane/core prisma:generate"
+        "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern CHANGELOG.md",
+        "prisma:generate": "prisma generate --schema test/prisma/mysql/schema.prisma && prisma generate --schema test/prisma/postgres/schema.prisma",
+        "prepublishOnly": "publint --strict && attw --pack . --profile esm-only"
+    },
+    "dependencies": {
+        "parse-duration": "^2.1.11",
+        "ulid": "^3.0.2"
     },
     "devDependencies": {
         "@arethetypeswrong/cli": "0.18.5",
         "@changesets/changelog-github": "1.0.1",
         "@changesets/cli": "3.0.3",
-        "@sqlane/testing": "workspace:*",
+        "@mikro-orm/core": "7.2.8",
+        "@mikro-orm/mysql": "7.2.8",
+        "@mikro-orm/postgresql": "7.2.8",
+        "@prisma/adapter-mariadb": "7.10.1",
+        "@prisma/adapter-pg": "7.10.1",
+        "@prisma/client": "7.10.1",
+        "@sqlane/test-mikro-orm-6": "workspace:*",
         "@stylistic/eslint-plugin": "5.10.0",
+        "@testcontainers/mysql": "12.2.1",
+        "@testcontainers/postgresql": "12.2.1",
+        "@types/cls-hooked": "4.3.9",
         "@types/node": "22.20.5",
         "@types/pg": "8.23.1",
         "@vitest/coverage-v8": "5.1.0",
+        "cls-hooked": "4.2.2",
+        "drizzle-orm": "0.45.4",
+        "drizzle-orm-1": "npm:drizzle-orm@1.0.0-rc.5",
+        "knex": "3.3.0",
+        "kysely": "0.29.8",
+        "kysely-0.28": "npm:kysely@0.28.19",
+        "kysely-postgres-js": "5.1.0",
+        "mariadb": "3.5.5",
         "mysql2": "3.24.6",
         "oxfmt": "0.77.0",
         "oxlint": "1.92.0",
         "pg": "8.23.1",
         "pkg-pr-new": "0.0.93",
+        "postgres": "4.1.0",
+        "postgres-3": "npm:postgres@3.4.9",
+        "prisma": "7.10.1",
         "publint": "0.3.25",
+        "sequelize": "6.37.8",
+        "testcontainers": "12.2.1",
+        "typeorm": "1.1.2",
+        "typeorm-0.3": "npm:typeorm@0.3.31",
         "typescript": "7.0.2",
         "vitest": "5.1.0"
+    },
+    "peerDependencies": {
+        "mysql2": "^3.11.0",
+        "pg": "^8.13.0"
+    },
+    "peerDependenciesMeta": {
+        "mysql2": {
+            "optional": true
+        },
+        "pg": {
+            "optional": true
+        }
     },
     "engines": {
         "node": ">=22.12.0"

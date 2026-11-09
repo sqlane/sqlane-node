@@ -6,7 +6,7 @@ import { createSqlane, defineJob } from '../../src/index.js';
 import { buildNewJob } from '../../src/new_job.js';
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
-import { connectTestDatabase } from '@sqlane/testing/database';
+import { connectTestDatabase } from '../support/test_database.js';
 
 /** @typedef {import('../../src/store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('../../src/store/store.js').Store} Store */
@@ -65,7 +65,7 @@ const keyed = defineJob({
     failureJob: 'sync_failed',
 });
 
-/** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
+/** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
 /** @type {import('./helpers/test_adapter.js').TestAdapter} */
 let testAdapter;

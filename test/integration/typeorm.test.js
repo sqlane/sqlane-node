@@ -2,14 +2,14 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import * as typeorm1 from 'typeorm';
 import * as typeorm03 from 'typeorm-0.3';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
-import { connectTestDatabase } from '@sqlane/testing/database';
+import { connectTestDatabase } from '../support/test_database.js';
 import { typeOrmAdapter } from '../../src/adapters/typeorm.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any, never>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
-/** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
+/** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
 let prefixCount = 0;
 /** @type {Sqlane[]} */

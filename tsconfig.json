@@ -13,7 +13,7 @@
         "types": ["node"],
         "skipLibCheck": true
     },
-    "include": ["packages/*/src", "packages/*/test", "packages/*/examples", "test", "bench", "*.js", "*.ts"],
+    "include": ["src", "test", "examples/*.js", "bench", "scripts", "*.js", "*.ts"],
     // The Prisma clients of the tests: generated, not committed
-    "exclude": ["packages/*/test/prisma/*/generated"]
+    "exclude": ["test/prisma/*/generated"]
 }

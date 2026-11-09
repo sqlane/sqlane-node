@@ -3,14 +3,14 @@ import { MikroORM as MySqlMikroORM } from '@mikro-orm/mysql';
 import { MikroORM as PostgreSqlMikroORM } from '@mikro-orm/postgresql';
 import { MySqlMikroORM as MySqlMikroORM6, PostgreSqlMikroORM as PostgreSqlMikroORM6 } from '@sqlane/test-mikro-orm-6';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
-import { connectTestDatabase } from '@sqlane/testing/database';
+import { connectTestDatabase } from '../support/test_database.js';
 import { mikroOrmAdapter } from '../../src/adapters/mikro_orm.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any, never>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
-/** @type {import('@sqlane/testing/database').TestDatabaseConnection} */
+/** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
 let prefixCount = 0;
 /** @type {Sqlane[]} */
