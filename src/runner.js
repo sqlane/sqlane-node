@@ -154,6 +154,12 @@ export function createRunner({
     timings = {},
 }) {
     const t = { ...DEFAULT_TIMINGS, ...timings };
+    /** How long a renewal of the leases is waited for: a later one counts as failed */
+    const renewWaitMs = t.renewIntervalMs;
+    /** The most time between two checks of the leases: the jitter of every() (× 1.1), then the wait of a renewal */
+    const maxRenewGapMs = (1.1 * t.renewIntervalMs) + renewWaitMs;
+    /** A renewal of the leases waits for the store */
+    let renewing = false;
     const lockedBy = `${hostname()}:${process.pid}:${monotonicFactory()()}`;
     const lockToken = monotonicFactory();
     /** @type {'idle' | 'started' | 'draining' | 'closing' | 'closed'} */
@@ -813,6 +819,36 @@ export function createRunner({
 
     // ---- timers ----
 
+    /**
+     * A job whose lease is not renewed `renewIntervalMs` before it ends loses it: another process may take the job
+     * after. The next check can come too late for that (see `maxRenewGapMs`): a timer then checks at that time.
+     * @param {RunningJob} job
+     */
+    function checkLease(job) {
+        if (job.released || job.leaseLost || running.get(job.key) !== job) {
+            return;
+        }
+
+        const lostInMs = job.leaseEndsAt - t.renewIntervalMs - Date.now();
+
+        if (lostInMs > 0) {
+            if (lostInMs <= maxRenewGapMs) {
+                setTimer(() => checkLease(job), lostInMs);
+            }
+
+            return;
+        }
+
+        job.leaseLost = true;
+        job.controller.abort(new LeaseLostError(`The lease of job "${job.claimed.id}" was lost`));
+        emit({
+            type: 'lease_lost',
+            jobId: job.claimed.id,
+            jobName: job.claimed.name,
+            attempt: job.claimed.attempts + 1,
+        });
+    }
+
     async function renewLeases() {
         const jobs = [...running.values()].filter(job => !job.released && !job.leaseLost);
 
@@ -821,21 +857,46 @@ export function createRunner({
         }
 
         const renewedAt = Date.now();
-        const renewed = await store.renewLeases(jobs.map(job => job.claimed), t.leaseMs);
+        /** @type {Set<string> | null} */
+        let renewed = null;
+
+        // A renewal that still waits (a pool with no free connection) is not started again: its result is dropped
+        if (!renewing) {
+            const controller = new AbortController();
+
+            try {
+                renewing = true;
+
+                const renewal = (async () => {
+                    try {
+                        return await store.renewLeases(jobs.map(job => job.claimed), t.leaseMs);
+                    } finally {
+                        renewing = false;
+                    }
+                })();
+
+                // The race handles the rejections of the renewal and of the aborted timer
+                renewed = await Promise.race([
+                    renewal,
+                    sleep(renewWaitMs, null, { signal: controller.signal, ref: false }),
+                ]);
+
+                if (!renewed) {
+                    reportError('renew_leases', new Error(`The renewal of the leases took more than ${renewWaitMs} ms`));
+                }
+            } catch (error) {
+                reportError('renew_leases', error);
+            } finally {
+                controller.abort();
+            }
+        }
 
         for (const job of jobs) {
-            if (renewed.has(job.claimed.id)) {
+            if (renewed?.has(job.claimed.id) && !job.leaseLost) {
                 job.leaseEndsAt = renewedAt + t.leaseMs;
-            } else if (job.leaseEndsAt - Date.now() <= t.renewIntervalMs) {
-                // Not renewed in time: another process may take the job
-                job.leaseLost = true;
-                job.controller.abort(new LeaseLostError(`The lease of job "${job.claimed.id}" was lost`));
-                emit({
-                    type: 'lease_lost',
-                    jobId: job.claimed.id,
-                    jobName: job.claimed.name,
-                    attempt: job.claimed.attempts + 1,
-                });
+            } else {
+                // Not renewed: it throws, it hangs, or the job is not this process's any more
+                checkLease(job);
             }
         }
     }
