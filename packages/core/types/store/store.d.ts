@@ -49,6 +49,43 @@ export type ClaimParams = {
      */
     pick: (locked: ClaimedJob[], busyKeys: Set<string>) => ClaimedJob[];
 };
+export type DueRequest = {
+    name: string;
+    /**
+     * At most this many of its jobs: the free slots of its lane.
+     */
+    maxJobs: number;
+    /**
+     * The index of its lane in `laneFree`.
+     */
+    lane: number;
+};
+export type ClaimDueParams = {
+    requests: DueRequest[];
+    /**
+     * The free slots of each lane.
+     */
+    laneFree: number[];
+    /**
+     * The free slots of the process.
+     */
+    processMax: number;
+    /**
+     * Of this claim.
+     */
+    lockToken: string;
+    /**
+     * The process.
+     */
+    lockedBy: string;
+    leaseMs: number;
+};
+export type StartableJob = ClaimedJob & {
+    payload: {
+        found: boolean;
+        payload: unknown;
+    };
+};
 export type OwnedJob = {
     id: string;
     lockToken: string;
@@ -84,6 +121,12 @@ export type Store = {
      * In a queue transaction of its own.
      */
     claim: (params: ClaimParams) => Promise<ClaimedJob[]>;
+    /**
+     * Finds, claims and reads the due jobs of
+     * names without mutex keys, at once: one statement on PostgreSQL. The keys of their rows are not taken: the
+     * definition of this process decides.
+     */
+    claimDue: (params: ClaimDueParams) => Promise<StartableJob[]>;
     readPayloads: (ids: string[]) => Promise<Map<string, unknown>>;
     renewLeases: (jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>;
     markTimedOut: (job: OwnedJob) => Promise<boolean>;
@@ -164,6 +207,26 @@ export type Store = {
  *     ones (in the order of run_at): the free slots, the free keys. The keys of the picked jobs must be distinct.
  */
 /**
+ * One request of a claim of due jobs: a job name without mutex keys, and the lane of its handler.
+ * @typedef {object} DueRequest
+ * @property {string} name
+ * @property {number} maxJobs At most this many of its jobs: the free slots of its lane.
+ * @property {number} lane The index of its lane in `laneFree`.
+ */
+/**
+ * @typedef {object} ClaimDueParams
+ * @property {DueRequest[]} requests
+ * @property {number[]} laneFree The free slots of each lane.
+ * @property {number} processMax The free slots of the process.
+ * @property {string} lockToken Of this claim.
+ * @property {string} lockedBy The process.
+ * @property {number} leaseMs
+ */
+/**
+ * A claimed job with its payload.
+ * @typedef {ClaimedJob & { payload: { found: boolean, payload: unknown } }} StartableJob
+ */
+/**
  * A job that this process claimed: every write of it checks the lock token.
  * @typedef {object} OwnedJob
  * @property {string} id
@@ -194,6 +257,9 @@ export type Store = {
  * @property {() => Promise<ProbeRow[]>} probe
  * @property {(limitsByName: Map<string, number>, keyedNames: string[]) => Promise<Candidate[]>} findCandidates
  * @property {(params: ClaimParams) => Promise<ClaimedJob[]>} claim In a queue transaction of its own.
+ * @property {(params: ClaimDueParams) => Promise<StartableJob[]>} claimDue Finds, claims and reads the due jobs of
+ *     names without mutex keys, at once: one statement on PostgreSQL. The keys of their rows are not taken: the
+ *     definition of this process decides.
  * @property {(ids: string[]) => Promise<Map<string, unknown>>} readPayloads
  * @property {(jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>} renewLeases
  * @property {(job: OwnedJob) => Promise<boolean>} markTimedOut

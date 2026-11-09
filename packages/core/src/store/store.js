@@ -44,6 +44,29 @@ import * as postgresWorker from './postgres_worker.js';
  */
 
 /**
+ * One request of a claim of due jobs: a job name without mutex keys, and the lane of its handler.
+ * @typedef {object} DueRequest
+ * @property {string} name
+ * @property {number} maxJobs At most this many of its jobs: the free slots of its lane.
+ * @property {number} lane The index of its lane in `laneFree`.
+ */
+
+/**
+ * @typedef {object} ClaimDueParams
+ * @property {DueRequest[]} requests
+ * @property {number[]} laneFree The free slots of each lane.
+ * @property {number} processMax The free slots of the process.
+ * @property {string} lockToken Of this claim.
+ * @property {string} lockedBy The process.
+ * @property {number} leaseMs
+ */
+
+/**
+ * A claimed job with its payload.
+ * @typedef {ClaimedJob & { payload: { found: boolean, payload: unknown } }} StartableJob
+ */
+
+/**
  * A job that this process claimed: every write of it checks the lock token.
  * @typedef {object} OwnedJob
  * @property {string} id
@@ -79,6 +102,9 @@ import * as postgresWorker from './postgres_worker.js';
  * @property {() => Promise<ProbeRow[]>} probe
  * @property {(limitsByName: Map<string, number>, keyedNames: string[]) => Promise<Candidate[]>} findCandidates
  * @property {(params: ClaimParams) => Promise<ClaimedJob[]>} claim In a queue transaction of its own.
+ * @property {(params: ClaimDueParams) => Promise<StartableJob[]>} claimDue Finds, claims and reads the due jobs of
+ *     names without mutex keys, at once: one statement on PostgreSQL. The keys of their rows are not taken: the
+ *     definition of this process decides.
  * @property {(ids: string[]) => Promise<Map<string, unknown>>} readPayloads
  * @property {(jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>} renewLeases
  * @property {(job: OwnedJob) => Promise<boolean>} markTimedOut
@@ -124,6 +150,10 @@ export function createStore(adapter, tablePrefix) {
             keyedNames,
         ),
         claim: params => adapter.queueTransaction(executor => sql.claim(executor, tablePrefix, params)),
+        claimDue: params => (adapter.dialect === 'mysql'
+            ? inQueue(executor => mysqlWorker.claimDue(executor, p, params))
+            // One statement: a transaction of its own
+            : postgresWorker.claimDue(adapter.queue, p, params)),
         readPayloads: ids => sql.readPayloads(adapter.queue, tablePrefix, ids),
         renewLeases: (jobs, leaseMs) => inQueue(executor => final.renewLeases(executor, p, jobs, leaseMs)),
         markTimedOut: job => final.markTimedOut(adapter.queue, p, job),

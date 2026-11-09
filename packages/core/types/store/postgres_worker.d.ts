@@ -37,6 +37,16 @@ export declare function findCandidates(executor: Executor, p: string, limitsByNa
  */
 export declare function claim(executor: Executor, p: string, { candidateIds, lockToken, lockedBy, leaseMs, pick }: ClaimParams): Promise<ClaimedJob[]>;
 /**
+ * Finds, claims and reads the due jobs of names without mutex keys, in one statement (a transaction of its own): the
+ * oldest due jobs of each name that no other claim holds (SKIP LOCKED), within the free slots of their lanes and of
+ * the process (as `fitSlots`), with their payloads.
+ * @param {Executor} executor Outside a transaction.
+ * @param {string} p
+ * @param {import('./store.js').ClaimDueParams} params
+ * @returns {Promise<import('./store.js').StartableJob[]>} In the order of run_at.
+ */
+export declare function claimDue(executor: Executor, p: string, { requests, laneFree, processMax, lockToken, lockedBy, leaseMs }: import('./store.js').ClaimDueParams): Promise<import('./store.js').StartableJob[]>;
+/**
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} ids

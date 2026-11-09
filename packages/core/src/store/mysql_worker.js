@@ -1,4 +1,5 @@
 // The worker side of the store on MySQL: probe, candidates, claim. Times are computed in SQL, in UTC.
+import { fitSlots } from './fit_slots.js';
 
 /** @typedef {import('../types.js').Executor} Executor */
 /** @typedef {import('./store.js').ProbeRow} ProbeRow */
@@ -229,6 +230,68 @@ export async function claim(executor, p, { candidateIds, lockToken, lockedBy, le
     }
 
     return claimed;
+}
+
+/**
+ * Finds, claims and reads the due jobs of names without mutex keys. Call it in a queue transaction. One statement
+ * locks the oldest due jobs of each name that no other claim holds (SKIP LOCKED), with their payloads; the ones that
+ * fit the free slots (`fitSlots`) are claimed.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {import('./store.js').ClaimDueParams} params
+ * @returns {Promise<import('./store.js').StartableJob[]>} In the order of run_at.
+ */
+export async function claimDue(executor, p, { requests, laneFree, processMax, lockToken, lockedBy, leaseMs }) {
+    if (!requests.length || processMax <= 0) {
+        return [];
+    }
+
+    const locked = (await executor.query(requests.map(() => `(
+        SELECT j.id, j.job_name, ${epochMs('j.run_at')} AS run_at_ms, j.attempts, j.max_attempts, j.stalls,
+               j.max_stalls, j.failure_job, ${epochMs('j.created_at')} AS created_at_ms,
+               TIMESTAMPDIFF(MICROSECOND, j.run_at, ${NOW}) DIV 1000 AS waited_ms,
+               CAST(pl.payload AS CHAR) AS payload, pl.id IS NOT NULL AS payload_found
+          FROM ${p}jobs j FORCE INDEX (${p}jobs_status_name_run_at)
+          LEFT JOIN ${p}payloads pl ON pl.id = j.id
+         WHERE j.status = 'pending' AND j.job_name = ? AND j.run_at <= ${NOW}
+         ORDER BY j.run_at, j.id LIMIT ?
+           FOR UPDATE OF j SKIP LOCKED
+    )`).join(' UNION ALL '), requests.flatMap(request => [request.name, request.maxJobs])))
+        .map(row => ({
+            runAtMs: Number(row.run_at_ms),
+            /** @type {import('./store.js').StartableJob} */
+            job: {
+                id: String(row.id),
+                name: String(row.job_name),
+                mutexKeys: [],
+                attempts: Number(row.attempts),
+                maxAttempts: Number(row.max_attempts),
+                stalls: Number(row.stalls),
+                maxStalls: Number(row.max_stalls),
+                failureJob: row.failure_job === null ? null : String(row.failure_job),
+                enqueuedAt: new Date(Number(row.created_at_ms)),
+                waitedMs: Number(row.waited_ms),
+                lockToken,
+                payload: Number(row.payload_found)
+                    ? { found: true, payload: JSON.parse(String(row.payload)) }
+                    : { found: false, payload: undefined },
+            },
+        }))
+        .toSorted((a, b) => a.runAtMs - b.runAtMs || (a.job.id < b.job.id ? -1 : 1))
+        .map(({ job }) => job);
+    const picked = fitSlots(locked, requests, laneFree, processMax);
+
+    if (picked.length) {
+        await executor.query(`
+            UPDATE ${p}jobs
+               SET status = 'running', lock_token = ?, locked_by = ?,
+                   locked_until = ${NOW} + INTERVAL ? MICROSECOND, started_at = ${NOW}, timed_out_at = NULL,
+                   updated_at = ${NOW}
+             WHERE id IN (${placeholders(picked.length)})
+        `, [lockToken, lockedBy, leaseMs * 1000, ...picked.map(job => job.id)]);
+    }
+
+    return picked;
 }
 
 /**

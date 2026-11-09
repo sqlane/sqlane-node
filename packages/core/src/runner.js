@@ -637,6 +637,62 @@ export function createRunner({
      * @returns {Promise<{ candidates: number, claimed: number }>}
      */
     async function claimAndStart(dueNames) {
+        const keyed = new Set(registry.keyedNames());
+        const plain = await claimAndStartPlain(dueNames.filter(name => !keyed.has(name)));
+        const withKeys = await claimAndStartKeyed(dueNames.filter(name => keyed.has(name)));
+
+        return { candidates: plain.candidates + withKeys.candidates, claimed: plain.claimed + withKeys.claimed };
+    }
+
+    /**
+     * The due jobs of names without mutex keys: found, claimed and read at once.
+     * @param {string[]} dueNames
+     * @returns {Promise<{ candidates: number, claimed: number }>}
+     */
+    async function claimAndStartPlain(dueNames) {
+        /** @type {Lane[]} */
+        const lanes = [];
+        /** @type {import('./store/store.js').DueRequest[]} */
+        const requests = [];
+
+        for (const name of dueNames) {
+            const entry = registry.getEntry(name);
+            const free = entry ? freeSlots(entry.lane) : 0;
+
+            if (entry && free > 0) {
+                const lane = lanes.includes(entry.lane) ? lanes.indexOf(entry.lane) : lanes.push(entry.lane) - 1;
+
+                requests.push({ name, maxJobs: free, lane });
+            }
+        }
+
+        if (!requests.length) {
+            return { candidates: 0, claimed: 0 };
+        }
+
+        const claimed = await store.claimDue({
+            requests,
+            laneFree: lanes.map(lane => freeSlots(lane)),
+            processMax: freeProcessSlots(),
+            lockToken: lockToken(),
+            lockedBy,
+            leaseMs: t.leaseMs,
+        });
+
+        for (const job of claimed) {
+            startJob(job, job.payload);
+        }
+
+        // The probe saw due jobs: none claimed means other processes hold them
+        return { candidates: requests.length, claimed: claimed.length };
+    }
+
+    /**
+     * The due jobs of names with mutex keys: candidates, then a claim of those whose keys are free.
+     * @param {string[]} dueNames
+     * @returns {Promise<{ candidates: number, claimed: number }>}
+     */
+    async function claimAndStartKeyed(dueNames) {
         /** @type {Map<string, number>} */
         const limits = new Map();
 
