@@ -1,4 +1,4 @@
-# A preview of the packages on pkg.pr.new (the GitHub App), for each pull request and each commit of main: the comment
+# A preview of the package on pkg.pr.new (the GitHub App), for each pull request and each commit of main: the comment
 # in the pull request has the install command, e.g. `npm i https://pkg.pr.new/@sqlane/core@<pr>`. Not on npm.
 name: Preview
 
@@ -33,4 +33,4 @@ jobs:
       # through its GitHub App, no token.
       - name: Publish the previews
         run: >- # zizmor: ignore[use-trusted-publishing]
-          pnpm exec pkg-pr-new publish --pnpm --compact --previewVersion './packages/*'
+          pnpm exec pkg-pr-new publish --pnpm --compact --previewVersion

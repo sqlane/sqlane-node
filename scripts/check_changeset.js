@@ -1,9 +1,9 @@
-// The changeset check of CI: a pull request that changes what a package publishes adds a changeset for it. What it
-// publishes: `src/` without the tests, `README.md`, `LICENSE`, and `package.json` without `devDependencies`. So an
-// update of dev dependencies, of the lockfile or of tests needs none.
+// The changeset check of CI: a pull request that changes what the package publishes adds a changeset. What it
+// publishes: `src/` without the tests, `types/`, `README.md`, `LICENSE`, and `package.json` without `devDependencies`
+// and `scripts`. So an update of dev dependencies, of the lockfile, of tests or of tooling needs none.
 // Usage: node scripts/check_changeset.js <base ref>, e.g. origin/main.
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 
 /**
@@ -17,7 +17,8 @@ function git(...args) {
 /**
  * @param {string} path
  * @param {string} ref
- * @returns {Record<string, unknown> | null} The manifest at the ref, without `devDependencies`; null: none there.
+ * @returns {Record<string, unknown> | null} The manifest at the ref, without `devDependencies` and `scripts`; null:
+ *     none there.
  */
 function publishedManifest(path, ref) {
     let text;
@@ -28,17 +29,18 @@ function publishedManifest(path, ref) {
         return null;
     }
 
-    const { devDependencies: _devDependencies, ...manifest } = JSON.parse(text);
+    const { devDependencies: _devDependencies, scripts: _scripts, ...manifest } = JSON.parse(text);
 
     return manifest;
 }
 
 /**
- * @param {string} file A path in the package.
+ * @param {string} file A path in the repository.
  * @returns {boolean} The file is in the package on npm.
  */
 function isPublishedFile(file) {
-    return (file.startsWith('src/') && !file.endsWith('.test.js')) || file === 'README.md' || file === 'LICENSE';
+    return (file.startsWith('src/') && !file.endsWith('.test.js')) || file.startsWith('types/')
+        || file === 'README.md' || file === 'LICENSE';
 }
 
 /**
@@ -70,27 +72,16 @@ const released = new Set(
             }
         }),
 );
-const missing = [];
+const manifest = publishedManifest('package.json', '');
+const reasons = changed.filter(isPublishedFile);
 
-for (const dir of readdirSync('packages')) {
-    const manifestPath = `packages/${dir}/package.json`;
-    const manifest = publishedManifest(manifestPath, '');
-
-    if (!manifest || manifest.private) {
-        continue;
-    }
-
-    const files = changed.filter(file => file.startsWith(`packages/${dir}/`)).map(file => file.slice(dir.length + 10));
-    const reasons = files.filter(isPublishedFile);
-
-    if (files.includes('package.json') && !isDeepStrictEqual(manifest, publishedManifest(manifestPath, mergeBase))) {
-        reasons.push('package.json (not only devDependencies)');
-    }
-
-    if (reasons.length > 0 && !released.has(String(manifest.name))) {
-        missing.push(`${manifest.name}: ${reasons.join(', ')}`);
-    }
+if (changed.includes('package.json') && !isDeepStrictEqual(manifest, publishedManifest('package.json', mergeBase))) {
+    reasons.push('package.json (not only devDependencies or scripts)');
 }
+
+const missing = reasons.length > 0 && manifest && !released.has(String(manifest.name))
+    ? [`${manifest.name}: ${reasons.join(', ')}`]
+    : [];
 
 if (missing.length > 0) {
     process.stderr.write(`A change of published files without a changeset (pnpm changeset):\n${

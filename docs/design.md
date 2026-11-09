@@ -1,7 +1,7 @@
 # sqlane design
 
 > Status: implemented, as published on npm (0.x). Not stable yet: the API and the schema can still change, and it has
-> no production use yet. The [changelog](../packages/core/CHANGELOG.md) lists what each version added.
+> no production use yet. The [changelog](../CHANGELOG.md) lists what each version added.
 
 sqlane runs background jobs that are rows in the application's own SQL database (MySQL or PostgreSQL). The application
 adds a job in its business transaction: no commit, no job.
@@ -597,9 +597,9 @@ of 1000, with SKIP LOCKED, so processes share the work. Off with `cleanup: false
 @sqlane/core/adapter-mikro-orm  mikroOrmAdapter
 ```
 
-One repository, a pnpm workspace: `packages/<name>` for each published package, `test/` for the test databases of all
-of them (a private package, `@sqlane/testing`). The packages have one version (a fixed group of Changesets) and
-release together. Today it has one: `@sqlane/core`, with the adapters as subpaths.
+One repository, one package at its root: `@sqlane/core`, with the adapters as subpaths. Helper packages, if any, get a
+repository of their own. `test/` holds the integration tests and the test databases (see
+[CONTRIBUTING.md](../CONTRIBUTING.md)).
 
 Source (`src/`, snake_case files): `define_job.js`, `sqlane.js` (facade), `dispatcher.js`, `lanes.js`,
 `lease_keeper.js`, `stall_recovery.js`, `cleanup.js`, `errors.js`, `store/` (one SQL module per dialect behind one

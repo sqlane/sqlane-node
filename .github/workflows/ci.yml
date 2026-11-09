@@ -86,7 +86,7 @@ jobs:
         with:
           install_args: node pnpm
       - name: Pack @sqlane/core, as npm would publish it
-        run: pnpm --dir ../.. --filter @sqlane/core pack --pack-destination "$RUNNER_TEMP"
+        run: pnpm --dir ../.. pack --pack-destination "$RUNNER_TEMP"
       - name: Start the databases
         run: docker compose up --detach --wait
       - name: Install the quickstart, then put the packed @sqlane/core in place of the published one

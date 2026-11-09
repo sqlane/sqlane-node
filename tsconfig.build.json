@@ -1,7 +1,7 @@
 {
     // Generates the declarations of the package (types/), from the JSDoc of src/. The files are committed: CI fails if
     // they differ from a fresh build.
-    "extends": "../../tsconfig.json",
+    "extends": "./tsconfig.json",
     "compilerOptions": {
         "noEmit": false,
         "declaration": true,
