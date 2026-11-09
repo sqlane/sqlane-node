@@ -139,7 +139,23 @@ await sequelize.transaction(async (t) => {
 });
 ```
 
-With CLS (`Sequelize.useCLS()`), pass the transaction to `enqueue`: an instance means a transaction of its own.
+With CLS, `enqueue` follows the rule of Sequelize's own queries: the instance means the CLS transaction, if one runs.
+
+```js
+import { createNamespace } from 'cls-hooked';
+
+Sequelize.useCLS(createNamespace('app')); // on the class: all the instances share it
+
+await sequelize.transaction(async () => {
+    await Report.create({ id: reportId }); // in the CLS transaction
+    await sqlane.enqueue(sequelize, buildReport, { reportId }); // in it too: commits or rolls back with the report
+});
+
+await sqlane.enqueue(sequelize, buildReport, { reportId }); // no CLS transaction: a transaction of its own
+```
+
+The CLS transaction of another Sequelize instance does not count: with a queue instance of its own, enqueue with the
+app's instance (or its transaction).
 
 The SQL of sqlane runs on the driver connection under knex, Drizzle and Sequelize, through Kysely without its plugins,
 and through the raw queries of Prisma: they do not log it or transform it. TypeORM and MikroORM: later.

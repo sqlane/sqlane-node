@@ -2,7 +2,8 @@
 // a Sequelize instance or a Sequelize transaction. The SQL of sqlane runs on the driver connection under Sequelize (the
 // `connection` of a transaction, or one of its pool): Sequelize does not run it, nor log it. No import of Sequelize:
 // the adapter uses the instance that it gets, and checks it. After the commit of the outermost transaction (its
-// `afterCommit` hook), the workers wake at once.
+// `afterCommit` hook), the workers wake at once. With CLS (`Sequelize.useCLS()`), an instance means its CLS
+// transaction, if one runs: as for the queries of Sequelize.
 import { ConfigError } from '../errors.js';
 import { mysql2Executor, pgExecutor } from './executors.js';
 
@@ -33,6 +34,26 @@ import { mysql2Executor, pgExecutor } from './executors.js';
  */
 function isTransaction(connection) {
     return typeof (/** @type {{ getDialect?: unknown }} */ (connection).getDialect) !== 'function';
+}
+
+/**
+ * As Sequelize does for its queries (`options.transaction ?? Sequelize._cls.get('transaction')`): with CLS, an instance
+ * means the CLS transaction of this instance, if one runs.
+ * @param {SequelizeConnection} connection
+ * @returns {SequelizeConnection} The transaction to use, or the instance: a transaction of its own.
+ */
+function resolveConnection(connection) {
+    if (isTransaction(connection)) {
+        return connection;
+    }
+
+    // oxlint-disable-next-line no-underscore-dangle -- the namespace that Sequelize reads for its own queries
+    const cls = /** @type {{ _cls?: { get?: (key: string) => unknown } }} */ (connection.constructor)._cls;
+    const current = /** @type {(SequelizeTransactionLike & { sequelize?: unknown }) | undefined} */ (
+        typeof cls?.get === 'function' ? cls.get('transaction') : undefined
+    );
+
+    return current && current.sequelize === connection ? current : connection;
 }
 
 /**
@@ -111,17 +132,23 @@ export function sequelizeAdapter(sequelize) {
 
     return {
         dialect: sequelizeDialect,
-        wrap: executorOf,
+        wrap: connection => executorOf(resolveConnection(connection)),
         queue: executorOf(sequelize),
         withConnection: func => onConnection(sequelize, func),
         queueTransaction: func => sequelize.transaction(
             { isolationLevel: 'READ COMMITTED' },
             t => func(toExecutor(t.connection)),
         ),
-        inTransaction: (connection, func) => (isTransaction(connection)
-            ? func(toExecutor(connection.connection))
-            : connection.transaction({}, t => func(toExecutor(t.connection)))),
-        afterCommit: (connection, onCommit) => {
+        inTransaction: (given, func) => {
+            const connection = resolveConnection(given);
+
+            return isTransaction(connection)
+                ? func(toExecutor(connection.connection))
+                : connection.transaction({}, t => func(toExecutor(t.connection)));
+        },
+        afterCommit: (given, onCommit) => {
+            const connection = resolveConnection(given);
+
             if (!isTransaction(connection)) {
                 // A transaction of its own: committed when the enqueue returned
                 onCommit();
