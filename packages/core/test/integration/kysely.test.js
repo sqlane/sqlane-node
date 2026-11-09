@@ -1,8 +1,10 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import * as kysely029 from 'kysely';
 import * as kysely028 from 'kysely-0.28';
+import { PostgresJSDialect } from 'kysely-postgres-js';
 import { createPool } from 'mysql2';
 import { Pool } from 'pg';
+import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '@sqlane/testing/database';
 import { kyselyAdapter } from '../../src/adapters/kysely.js';
@@ -38,13 +40,21 @@ afterAll(async () => {
 /**
  * A Kysely instance on the test database, with the CamelCasePlugin: sqlane must not see its renamed columns.
  * @param {KyselyModule} k
+ * @param {boolean} [postgresJs] PostgreSQL through kysely-postgres-js, not pg.
  * @returns {import('kysely').Kysely<any>}
  */
-function createDb(k) {
+function createDb(k, postgresJs = false) {
     const url = inject('databaseUrl');
-    const dialect = inject('databaseDialect') === 'mysql'
-        ? new k.MysqlDialect({ pool: createPool({ uri: url, connectionLimit: 4 }) })
-        : new k.PostgresDialect({ pool: new Pool({ connectionString: url, max: 4 }) });
+    /** @type {import('kysely').Dialect} */
+    let dialect;
+
+    if (inject('databaseDialect') === 'mysql') {
+        dialect = new k.MysqlDialect({ pool: createPool({ uri: url, connectionLimit: 4 }) });
+    } else if (postgresJs) {
+        dialect = new PostgresJSDialect({ postgres: postgres(url, { max: 4, onnotice: () => {} }) });
+    } else {
+        dialect = new k.PostgresDialect({ pool: new Pool({ connectionString: url, max: 4 }) });
+    }
     const db = new k.Kysely({ dialect, plugins: [new k.CamelCasePlugin()] });
 
     dbs.push(/** @type {any} */ (db));
@@ -80,17 +90,19 @@ async function waitFor(condition) {
 }
 
 describe.each([
-    { version: '0.29', k: kysely029 },
-    { version: '0.28', k: /** @type {KyselyModule} */ (/** @type {unknown} */ (kysely028)) },
-])('kysely $version', ({ k }) => {
+    { version: '0.29', k: kysely029, postgresJs: false },
+    { version: '0.28', k: /** @type {KyselyModule} */ (/** @type {unknown} */ (kysely028)), postgresJs: false },
+    // kysely-postgres-js: PostgreSQL only, Kysely 0.29+
+    ...inject('databaseDialect') === 'postgres' ? [{ version: '0.29, postgres.js', k: kysely029, postgresJs: true }] : [],
+])('kysely $version', ({ k, postgresJs }) => {
     /** @type {import('kysely').Kysely<any>} The app's Kysely */
     let db;
     /** @type {import('kysely').Kysely<any>} The queue's own Kysely */
     let queueDb;
 
     beforeAll(() => {
-        db = createDb(k);
-        queueDb = createDb(k);
+        db = createDb(k, postgresJs);
+        queueDb = createDb(k, postgresJs);
     });
 
     /**

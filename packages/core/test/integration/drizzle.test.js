@@ -1,10 +1,13 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import * as drizzle1Mysql from 'drizzle-orm-1/mysql2';
 import * as drizzle1Pg from 'drizzle-orm-1/node-postgres';
+import * as drizzle1PgJs from 'drizzle-orm-1/postgres-js';
 import * as drizzleMysql from 'drizzle-orm/mysql2';
 import * as drizzlePg from 'drizzle-orm/node-postgres';
+import * as drizzlePgJs from 'drizzle-orm/postgres-js';
 import { createPool } from 'mysql2/promise';
 import { Pool } from 'pg';
+import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '@sqlane/testing/database';
 import { drizzleAdapter } from '../../src/adapters/drizzle.js';
@@ -40,16 +43,27 @@ afterAll(async () => {
 /**
  * A Drizzle database on a pool of its own.
  * @param {{ mysql: DrizzleFactory, postgres: DrizzleFactory }} factories
+ * @param {boolean} postgresJs PostgreSQL through postgres.js, not node-postgres.
  * @returns {DrizzleConnection}
  */
-function createDb(factories) {
+function createDb(factories, postgresJs) {
     const url = inject('databaseUrl');
     const isMysql = inject('databaseDialect') === 'mysql';
-    const pool = isMysql ? createPool({ uri: url, connectionLimit: 4 }) : new Pool({ connectionString: url, max: 4 });
+    if (isMysql) {
+        const pool = createPool({ uri: url, connectionLimit: 4 });
+
+        pools.push(pool);
+
+        return factories.mysql({ client: pool });
+    }
+
+    const pool = postgresJs
+        ? postgres(url, { max: 4, onnotice: () => {} })
+        : new Pool({ connectionString: url, max: 4 });
 
     pools.push(pool);
 
-    return isMysql ? factories.mysql({ client: pool }) : factories.postgres({ client: pool });
+    return factories.postgres({ client: pool });
 }
 
 /**
@@ -79,18 +93,25 @@ async function waitFor(condition) {
     }
 }
 
+const isPostgres = inject('databaseDialect') === 'postgres';
+
 describe.each([
-    { version: '0.45', factories: { mysql: drizzleMysql.drizzle, postgres: drizzlePg.drizzle } },
-    { version: '1.0 rc', factories: { mysql: drizzle1Mysql.drizzle, postgres: drizzle1Pg.drizzle } },
-])('drizzle $version', ({ factories }) => {
+    { version: '0.45', factories: { mysql: drizzleMysql.drizzle, postgres: drizzlePg.drizzle }, postgresJs: false },
+    { version: '1.0 rc', factories: { mysql: drizzle1Mysql.drizzle, postgres: drizzle1Pg.drizzle }, postgresJs: false },
+    // postgres.js: PostgreSQL only
+    ...[
+        { version: '0.45, postgres.js', factories: { postgres: drizzlePgJs.drizzle }, postgresJs: true },
+        { version: '1.0 rc, postgres.js', factories: { postgres: drizzle1PgJs.drizzle }, postgresJs: true },
+    ].filter(() => isPostgres),
+])('drizzle $version', ({ factories, postgresJs }) => {
     /** @type {DrizzleConnection} The app's Drizzle */
     let db;
     /** @type {DrizzleConnection} The queue's own Drizzle */
     let queueDb;
 
     beforeAll(() => {
-        db = createDb(/** @type {any} */ (factories));
-        queueDb = createDb(/** @type {any} */ (factories));
+        db = createDb(/** @type {any} */ (factories), postgresJs);
+        queueDb = createDb(/** @type {any} */ (factories), postgresJs);
     });
 
     /**

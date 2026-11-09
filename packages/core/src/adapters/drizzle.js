@@ -1,11 +1,12 @@
-// The adapter for Drizzle 0.45 and 1.0 (`@sqlane/core/adapter-drizzle`), with mysql2 or node-postgres: `enqueue` takes
-// a Drizzle database or a Drizzle transaction. The SQL of sqlane runs on the driver connection under Drizzle (its
-// `session.client`), through the mysql2 and pg adapters. No import of drizzle-orm: the adapter reads the kind that
-// Drizzle gives its classes (a global symbol), and checks what it uses. Drizzle has no after-commit hook: after an
-// enqueue in a transaction, sqlane re-probes.
+// The adapter for Drizzle 0.45 and 1.0 (`@sqlane/core/adapter-drizzle`), with mysql2, node-postgres or postgres.js:
+// `enqueue` takes a Drizzle database or a Drizzle transaction. The SQL of sqlane runs on the driver connection under
+// Drizzle (its `session.client`), through the mysql2, pg and postgres.js adapters. No import of drizzle-orm: the
+// adapter reads the kind that Drizzle gives its classes (a global symbol), and checks what it uses. Drizzle has no
+// after-commit hook: after an enqueue in a transaction, sqlane re-probes.
 import { ConfigError } from '../errors.js';
 import { mysql2Adapter } from './mysql2.js';
 import { pgAdapter } from './pg.js';
+import { postgresJsAdapter } from './postgres_js.js';
 
 /** The kind of a Drizzle class: `MySql2Session`, `NodePgTransaction`, … */
 const ENTITY_KIND = Symbol.for('drizzle:entityKind');
@@ -19,7 +20,7 @@ const ENTITY_KIND = Symbol.for('drizzle:entityKind');
 
 /**
  * The connections that `enqueue` takes: a Drizzle database (a transaction of its own) or a Drizzle transaction, of
- * mysql2 or node-postgres.
+ * mysql2, node-postgres or postgres.js.
  * @typedef {DrizzleDatabase} DrizzleConnection
  */
 
@@ -64,8 +65,8 @@ function clientOf(connection) {
 }
 
 /**
- * The adapter for Drizzle (mysql2 or node-postgres). `enqueue` then takes a Drizzle database (a transaction of its
- * own) or a Drizzle transaction, also nested (the caller's: the job commits with it).
+ * The adapter for Drizzle (mysql2, node-postgres or postgres.js). `enqueue` then takes a Drizzle database (a
+ * transaction of its own) or a Drizzle transaction, also nested (the caller's: the job commits with it).
  * @param {DrizzleDatabase} db The queue's own Drizzle database, over a pool: claims, leases, results. A small pool of
  *     its own is best.
  * @param {DrizzleAdapterOptions} [options]
@@ -79,14 +80,20 @@ export function drizzleAdapter(db, options = {}) {
         throw new ConfigError('drizzleAdapter: expects a Drizzle database, not a transaction');
     }
 
-    if (sessionKind !== 'MySql2Session' && sessionKind !== 'NodePgSession') {
-        throw new ConfigError(
-            `drizzleAdapter: Drizzle must use mysql2 or node-postgres, not ${JSON.stringify(sessionKind ?? null)}`,
-        );
+    if (sessionKind !== 'MySql2Session' && sessionKind !== 'NodePgSession' && sessionKind !== 'PostgresJsSession') {
+        throw new ConfigError(`drizzleAdapter: Drizzle must use mysql2, node-postgres or postgres.js, not ${
+            JSON.stringify(sessionKind ?? null)
+        }`);
     }
 
     const isMysql = sessionKind === 'MySql2Session';
-    const isPool = isMysql ? typeof pool.getConnection === 'function' : typeof pool.totalCount === 'number';
+    /** @type {Record<string, boolean>} The queue's client is a pool */
+    const isPoolByKind = {
+        MySql2Session: typeof pool.getConnection === 'function',
+        NodePgSession: typeof pool.totalCount === 'number',
+        PostgresJsSession: typeof pool.reserve === 'function' && typeof pool.release !== 'function',
+    };
+    const isPool = isPoolByKind[sessionKind];
 
     if (!isPool) {
         throw new ConfigError('drizzleAdapter: the queue\'s Drizzle database must be over a pool');
@@ -97,7 +104,14 @@ export function drizzleAdapter(db, options = {}) {
     }
 
     // The queue's pool: claims, leases, results
-    const base = isMysql ? mysql2Adapter(pool) : pgAdapter(pool, { notify: options.notify ?? false });
+    const notify = options.notify ?? false;
+    /** @type {Record<string, () => import('../types.js').Adapter<any>>} */
+    const baseByKind = {
+        MySql2Session: () => mysql2Adapter(pool),
+        NodePgSession: () => pgAdapter(pool, { notify }),
+        PostgresJsSession: () => postgresJsAdapter(pool, { notify }),
+    };
+    const base = baseByKind[sessionKind]();
 
     return {
         ...base,
