@@ -17,7 +17,7 @@ concurrency:
 jobs:
   select-mode:
     name: Select mode
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -40,7 +40,7 @@ jobs:
     name: Version Packages pull request
     if: github.event_name == 'push' && needs.select-mode.outputs.mode == 'version'
     needs: select-mode
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write # commit the versions and the changelog
@@ -64,7 +64,7 @@ jobs:
     name: Nothing to publish
     if: github.event_name == 'workflow_dispatch' && needs.select-mode.outputs.mode != 'publish'
     needs: select-mode
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -79,7 +79,7 @@ jobs:
     name: Test and pack
     if: github.event_name == 'workflow_dispatch' && needs.select-mode.outputs.mode == 'publish'
     needs: select-mode
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -106,7 +106,7 @@ jobs:
   publish:
     name: Publish to npm
     needs: pack
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     environment: npm # required reviewers: the job waits for an approval
     permissions:
