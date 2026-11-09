@@ -1,5 +1,9 @@
 # sqlane
 
+[![npm](https://img.shields.io/npm/v/@sqlane/core)](https://www.npmjs.com/package/@sqlane/core)
+[![CI](https://github.com/sqlane/sqlane-node/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sqlane/sqlane-node/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/npm/l/@sqlane/core)](https://github.com/sqlane/sqlane-node/blob/main/LICENSE)
+
 Transactional SQL job queue for Node.js, backed by MySQL or PostgreSQL.
 
 > **Warning: not ready for production.** sqlane is in active development (0.x) and not stable yet: the API and the database
@@ -292,6 +296,25 @@ On a laptop (M1 Pro, Docker, default config), details in [benchmarks](https://gi
 - From commit to handler start: about 25 ms (re-probe or hint), about 5 ms with PostgreSQL NOTIFY.
 - `enqueueMany`: 58,000–110,000 jobs/s. Empty jobs, one process: 1,000–1,800 jobs/s at concurrency 10,
   3,800–5,800 at concurrency 50.
+
+## Versioning
+
+Until 1.0 (0.x):
+
+- A **minor** version (0.8 → 0.9) can change the API or the database schema. The
+  [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) says what changed and what to do.
+- A **patch** version (0.8.0 → 0.8.1) fixes bugs, without breaking changes.
+- A change of the schema is a migration: run `sqlane.migrate()` after the upgrade, or apply `getMigrations()` with your
+  migration tool. Old migrations never change.
+- Only the latest version gets fixes.
+
+1.0 comes when the API has held for a while and apps run sqlane in production. From then on: semantic versioning.
+
+## Support
+
+- A bug or a question: [GitHub issues](https://github.com/sqlane/sqlane-node/issues). A use case that sqlane does not
+  cover is a good issue too.
+- A vulnerability: privately, see [SECURITY.md](https://github.com/sqlane/sqlane-node/blob/main/SECURITY.md).
 
 ## Contributing
 

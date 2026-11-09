@@ -1,0 +1,50 @@
+name: Bug report
+description: Something does not work as the README or the design says
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest code that shows it. The quickstart (examples/quickstart) is a good start.
+      render: js
+    validations:
+      required: true
+  - type: input
+    id: sqlane
+    attributes:
+      label: '@sqlane/core version'
+      placeholder: 0.8.0
+    validations:
+      required: true
+  - type: input
+    id: database
+    attributes:
+      label: Database and version
+      placeholder: MySQL 8.4.6, PostgreSQL 18.1
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: Driver or ORM, and its version
+      placeholder: mysql2 3.24.6, Prisma 7.10.1
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      placeholder: 24.11.0
+  - type: textarea
+    id: logs
+    attributes:
+      label: Errors, logs or events
+      description: The error with its stack, and the `onEvent` events or logger output around it.
+      render: text

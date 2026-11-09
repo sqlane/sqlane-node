@@ -1,0 +1,20 @@
+name: Feature request
+description: A use case that sqlane does not cover
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What your app needs to do, and why sqlane today does not fit. A use case helps more than an API.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today
+      description: A workaround, another queue, nothing.
+  - type: textarea
+    id: proposal
+    attributes:
+      label: A proposal (optional)
