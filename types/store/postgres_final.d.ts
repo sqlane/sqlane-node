@@ -88,16 +88,12 @@ export declare function findStaleJobs(executor: Executor, p: string, limit: numb
  * @param {string} p
  * @param {string} id
  * @param {{ leaseMs: number, buildFailureJob: FailureJobBuilder }} params
- * @returns {Promise<{ result: 'released' | 'failed' | null, failureJob: FailureJobResult | null }>} null: not stale
- *     (any more).
+ * @returns {Promise<import('./store.js').StaleJobResult>} `result` null: not stale (any more).
  */
 export declare function recoverStaleJob(executor: Executor, p: string, id: string, { leaseMs, buildFailureJob }: {
     leaseMs: number;
     buildFailureJob: FailureJobBuilder;
-}): Promise<{
-    result: 'released' | 'failed' | null;
-    failureJob: FailureJobResult | null;
-}>;
+}): Promise<import('./store.js').StaleJobResult>;
 /**
  * Deletes the ended lingers, and the holds without their running job (from a manual change, or old code).
  * @param {Executor} executor

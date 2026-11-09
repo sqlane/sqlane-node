@@ -400,3 +400,99 @@ test('lease: renewed during drain() for a handler longer than a lease', async ()
     expect(events.filter(event => event.type === 'lease_lost')).toStrictEqual([]);
     await runner.close({ deadline: 0 });
 });
+
+test.each([
+    { result: 'released', event: { type: 'stalled', jobId: 'job-9', jobName: 'ping', attempt: 2 } },
+    { result: 'failed', event: { type: 'failed', jobId: 'job-9', jobName: 'ping', attempt: 2, durationMs: 250_000 } },
+])('stall recovery: the $result event has the attempt and the duration of the run that stalled', async ({
+    result,
+    event,
+}) => {
+    const registry = createRegistry({
+        jobsByName: new Map(),
+        lanes: undefined,
+        concurrency: 10,
+        defaultTimeoutMs: null,
+    });
+    /** @type {import('./types.js').SqlaneEvent[]} */
+    const events = [];
+    let stale = [{ id: 'job-9', name: 'ping' }];
+    const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
+        probe: async () => [],
+        findStaleJobs: async () => {
+            const found = stale;
+
+            stale = [];
+
+            return found;
+        },
+        recoverStaleJob: async () => ({ result, failureJob: null, attempt: 2, runMs: 250_000 }),
+        sweepMutexes: async () => ({ lingers: 0, orphans: 0 }),
+    }));
+
+    registry.handle('ping', () => {});
+
+    const runner = createRunner({
+        store,
+        registry,
+        concurrency: 10,
+        defaults: resolveDefaults(),
+        cleanup: false,
+        logger: undefined,
+        onEvent: e => events.push(e),
+        hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+        hintsAfterCommit: false,
+        timings: { recoveryIntervalMs: 20 },
+    });
+
+    await runner.start();
+    await waitFor(() => events.some(e => e.type === event.type), 1000);
+    await runner.close({ deadline: 0 });
+    expect(events.filter(e => e.type === event.type)).toMatchObject([event]);
+});
+
+/** A log function that drops its message. */
+function ignore() {}
+
+test.each([
+    { label: 'a deadline that is not a duration', options: { deadline: 'soon' } },
+    { label: 'an unknown mode', options: { mode: 'kill' } },
+    { label: 'an exitsBy before the deadline', options: { deadline: 0, exitsBy: -1 } },
+    { label: 'an exitsBy that is not a duration', options: { exitsBy: 'later' } },
+    { label: 'an unknown option', options: { timeout: '1s' } },
+])('close(): $label logs a warning, and close() still closes', async ({ options }) => {
+    /** @type {string[]} */
+    const warnings = [];
+    const registry = createRegistry({
+        jobsByName: new Map(),
+        lanes: undefined,
+        concurrency: 10,
+        defaultTimeoutMs: null,
+    });
+    const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({ probe: async () => [] }));
+    registry.handle('ping', () => {});
+
+    const runner = createRunner({
+        store,
+        registry,
+        concurrency: 10,
+        defaults: resolveDefaults(),
+        cleanup: false,
+        logger: {
+            debug: ignore,
+            info: ignore,
+            error: ignore,
+            warn: (_object, message) => warnings.push(String(message)),
+        },
+        onEvent: () => {},
+        hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+        hintsAfterCommit: false,
+    });
+
+    await runner.start();
+    // A shutdown always releases its jobs: no rejection because of the options
+    await expect(runner.close(/** @type {any} */ ({ deadline: 0, ...options }))).resolves.toBeUndefined();
+    expect(runner.isClosed()).toBe(true);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/^sqlane: close\(\) got .+: the default is used$/u);
+});

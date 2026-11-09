@@ -240,6 +240,6 @@ export function createSqlane(options) {
             applied: await runMigrations(adapter, tablePrefix, migrateOptions),
         }),
         getStats: () => store.getStats(),
-        wake: name => runner.wake(name),
+        wake: () => runner.wake(),
     };
 }

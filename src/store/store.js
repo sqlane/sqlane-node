@@ -98,6 +98,14 @@ import * as postgresWorker from './postgres_worker.js';
 /** @typedef {{ added: import('../new_job.js').NewJob } | { notAdded: unknown }} FailureJobResult */
 
 /**
+ * The result of the recovery of a stale job. `attempt` and `runMs` describe the run that stalled: its attempt (1 for
+ * the first run), and the time since it started.
+ * @typedef {{ result: null, failureJob: null }
+ *     | { result: 'released' | 'failed', failureJob: FailureJobResult | null, attempt: number, runMs: number }}
+ *     StaleJobResult
+ */
+
+/**
  * @typedef {object} Store
  * @property {() => Promise<ProbeRow[]>} probe
  * @property {(limitsByName: Map<string, number>, keyedNames: string[]) => Promise<Candidate[]>} findCandidates
@@ -118,7 +126,7 @@ import * as postgresWorker from './postgres_worker.js';
  * @property {(job: OwnedJob, params: { delayMs: number, lingerMs: number }) => Promise<boolean>} releaseJob
  * @property {(limit: number) => Promise<{ id: string, name: string }[]>} findStaleJobs
  * @property {(id: string, params: { leaseMs: number, buildFailureJob: FailureJobBuilder })
- *     => Promise<{ result: 'released' | 'failed' | null, failureJob: FailureJobResult | null }>} recoverStaleJob
+ *     => Promise<StaleJobResult>} recoverStaleJob
  * @property {(limit: number) => Promise<{ lingers: number, orphans: number }>} sweepMutexes
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
  * @property {(names: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).

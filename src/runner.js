@@ -90,7 +90,7 @@ const MAX_COMPLETE_BATCH = 100;
  * @property {() => Promise<void>} start
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
- * @property {(name: string) => void} wake
+ * @property {() => void} wake
  * @property {(names: string[]) => void} onEnqueued An enqueue: its commit is to come.
  * @property {(names: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.
  * @property {() => boolean} isClosed
@@ -955,16 +955,18 @@ export function createRunner({
             }
 
             // oxlint-disable-next-line no-await-in-loop -- small batches, one job per transaction
-            const { result, failureJob } = await store.recoverStaleJob(id, { leaseMs: t.leaseMs, buildFailureJob });
+            const recovered = await store.recoverStaleJob(id, { leaseMs: t.leaseMs, buildFailureJob });
 
-            if (result === 'released') {
+            if (recovered.result === 'released') {
                 freedKeys = true;
-                emit({ type: 'stalled', jobId: id, jobName: name, attempt: 0 });
-            } else if (result === 'failed') {
+                emit({ type: 'stalled', jobId: id, jobName: name, attempt: recovered.attempt });
+            } else if (recovered.result === 'failed') {
+                const { attempt, runMs } = recovered;
+
                 freedKeys = true;
                 counts.failed++;
-                emit({ type: 'failed', jobId: id, jobName: name, attempt: 0, durationMs: 0, error: STALLED });
-                reportFailureJob({ id, name, attempt: 0, failureJob: null }, failureJob);
+                emit({ type: 'failed', jobId: id, jobName: name, attempt, durationMs: runMs, error: STALLED });
+                reportFailureJob({ id, name, attempt, failureJob: null }, recovered.failureJob);
             }
         }
 
@@ -1176,27 +1178,67 @@ export function createRunner({
      * @returns {Promise<void>}
      */
     function close(options = {}) {
-        closeDone ??= closeOnce(options);
+        closeDone ??= closeOnce(parseCloseOptions(options));
 
         return closeDone;
     }
 
     /**
-     * @param {import('./types.js').CloseOptions} options
-     * @returns {Promise<void>}
+     * @typedef {object} CloseSettings
+     * @property {number} startedAt
+     * @property {number} deadlineMs
+     * @property {number} exitsByMs
+     * @property {'release' | 'abandon'} mode
      */
-    async function closeOnce(options) {
-        const startedAt = Date.now();
-        const deadlineMs = parseDuration(options.deadline ?? '30s') ?? 30_000;
-        let exitsByMs = parseDuration(options.exitsBy ?? deadlineMs + t.leaseMs);
+
+    /**
+     * The options of close(). close() never rejects because of its options, so a shutdown always releases its jobs:
+     * an invalid option logs a warning, and its default is used.
+     * @param {import('./types.js').CloseOptions} options
+     * @returns {CloseSettings}
+     */
+    function parseCloseOptions(options) {
+        /**
+         * @param {string} message
+         * @returns {void}
+         */
+        const warn = message => logger?.warn({ options }, `sqlane: close() got ${message}: the default is used`);
+        const given = /** @type {Record<string, unknown>} */ (options ?? {});
+        const unknownKeys = Object.keys(given).filter(key => !['deadline', 'mode', 'exitsBy'].includes(key));
+
+        if (unknownKeys.length) {
+            warn(`unknown options (${unknownKeys.join(', ')})`);
+        }
+
+        let deadlineMs = parseDuration(given.deadline ?? '30s');
+
+        if (deadlineMs === null) {
+            warn('an invalid "deadline"');
+            deadlineMs = 30_000;
+        }
+
+        let exitsByMs = parseDuration(given.exitsBy ?? deadlineMs + t.leaseMs);
 
         if (exitsByMs === null || exitsByMs < deadlineMs) {
-            logger?.warn({ exitsBy: options.exitsBy }, 'sqlane: close() got an invalid "exitsBy": the default is used');
+            warn('an invalid "exitsBy", or one before the deadline');
             exitsByMs = deadlineMs + t.leaseMs;
         }
 
-        const mode = options.mode === 'abandon' ? 'abandon' : 'release';
+        let mode = /** @type {'release' | 'abandon'} */ (given.mode ?? 'release');
 
+        if (mode !== 'release' && mode !== 'abandon') {
+            warn('an invalid "mode"');
+            mode = 'release';
+        }
+
+        return { startedAt: Date.now(), deadlineMs, exitsByMs, mode };
+    }
+
+    /**
+     * @param {CloseSettings} settings
+     * @returns {Promise<void>}
+     */
+    async function closeOnce({ startedAt, deadlineMs, exitsByMs, mode }) {
         state = 'closing';
         wakeUp();
         await hintChannel.stop();

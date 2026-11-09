@@ -196,6 +196,7 @@ async function addFailureJob(executor, p, row, { error, buildFailureJob }) {
 async function lockJob(executor, p, where, params) {
     const [row] = await executor.query(`
         SELECT j.id, j.job_name, j.lock_token, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.failure_job,
+               COALESCE(extract(epoch FROM ${NOW} - j.started_at) * 1000, 0)::float8 AS run_ms,
                pl.payload::text AS payload
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id
          WHERE ${where}
@@ -273,14 +274,22 @@ export async function findStaleJobs(executor, p, limit) {
 }
 
 /**
+ * The run that stalled, for the events.
+ * @param {Record<string, unknown>} row Of lockJob().
+ * @returns {{ attempt: number, runMs: number }} Its attempt (1 for the first run), and the time since it started.
+ */
+function stalledRun(row) {
+    return { attempt: Number(row.attempts) + 1, runMs: Math.max(Math.round(Number(row.run_ms)), 0) };
+}
+
+/**
  * A running job whose lease ended: one more stall, pending again after 30 s × 2^stalls (at most 1 h); after maxStalls,
  * it fails for good. Its keys linger for one lease: its old handler may still run.
  * @param {Executor} executor
  * @param {string} p
  * @param {string} id
  * @param {{ leaseMs: number, buildFailureJob: FailureJobBuilder }} params
- * @returns {Promise<{ result: 'released' | 'failed' | null, failureJob: FailureJobResult | null }>} null: not stale
- *     (any more).
+ * @returns {Promise<import('./store.js').StaleJobResult>} `result` null: not stale (any more).
  */
 export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJob }) {
     const row = await lockJob(executor, p, `j.id = $1 AND j.status = 'running' AND j.locked_until < ${NOW}`, [id]);
@@ -301,7 +310,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
              WHERE id = $1
         `, [id, JSON.stringify(error)]);
 
-        return { result: 'released', failureJob: null };
+        return { result: 'released', failureJob: null, ...stalledRun(row) };
     }
 
     await executor.run(`
@@ -315,6 +324,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
     return {
         result: 'failed',
         failureJob: row.failure_job === null ? null : await addFailureJob(executor, p, row, { error, buildFailureJob }),
+        ...stalledRun(row),
     };
 }
 

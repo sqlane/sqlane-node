@@ -162,6 +162,17 @@ export async function publicApiTypes() {
         },
     });
 
+    // A failure job: the error of the failed job, with its string `code` if it had one
+    /** @type {import('@sqlane/core').FailedJobPayload} */
+    const failure = { job: { id: 'a', name: 'a', payload: null, attempt: 3, maxAttempts: 3 }, error: { name: 'E', message: 'm' } };
+
+    expectTypeOf(failure.error.code).toEqualTypeOf(/** @type {string | undefined} */ (undefined));
+
+    // wake: no name, it probes all the handled names
+    sqlane.wake();
+    // @ts-expect-error wake() takes no name
+    sqlane.wake('build_report');
+
     // close, drain
     await sqlane.close({ deadline: '30s', mode: 'release', exitsBy: '1m' });
     // @ts-expect-error an unknown close mode

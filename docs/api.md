@@ -408,8 +408,8 @@ the `signal` of each unfinished handler with a `ShutdownError`.
 | `exitsBy`  | `Duration`                 | The deadline plus one lease (`'4m30s'` with the default deadline) | The latest time at which the process exits, counted from the call. A released job whose handler still runs waits until this time plus 2 seconds before it runs again, and its mutex keys stay held until then. |
 
 Set `exitsBy` lower if your process exits sooner, so released jobs can run again sooner. `close` never rejects
-because of its options, so a shutdown always releases its jobs. An invalid `exitsBy`, or one before the deadline, logs
-a warning, and sqlane uses the default. An invalid `deadline` or `mode` also falls back to the default.
+because of its options, so a shutdown always releases its jobs. Instead, each invalid option logs a warning, and sqlane
+uses its default. This includes an unknown option, and an `exitsBy` that is earlier than the deadline.
 
 `close` resolves when the handlers have settled or the deadline has passed, and the releases are written. A second
 call returns the same promise. `close` ends only what sqlane opened, such as the LISTEN connection and the hint
@@ -493,12 +493,12 @@ A growing `oldestDueAgeMs` usually means that no process handles the name, or th
 `wake` makes this process check for due jobs now, instead of at the next poll.
 
 ```ts
-sqlane.wake(jobName: string): void
+sqlane.wake(): void
 ```
 
 This is a low-level method, and most apps do not need it. sqlane already wakes the process after an enqueue in the same
-process, and after a hint. The process checks all the names it handles, not only `jobName`. Before `start()`, `wake`
-does nothing.
+process, and after a hint. The process checks all the names it handles, in one query. Before `start()`, `wake` does
+nothing.
 
 ## Errors
 
@@ -579,24 +579,24 @@ feed your metrics. The `type` field tells the kind of event.
 
 Every event except `error` has these fields:
 
-| Field     | Type     | Description                                                                                         |
-| --------- | -------- | --------------------------------------------------------------------------------------------------- |
-| `jobId`   | `string` | The job id.                                                                                         |
-| `jobName` | `string` | The job name.                                                                                       |
-| `attempt` | `number` | The attempt, starting at 1. It is `0` when stall recovery emits the event, because no attempt runs. |
+| Field     | Type     | Description                                                                                                 |
+| --------- | -------- | ----------------------------------------------------------------------------------------------------------- |
+| `jobId`   | `string` | The job id.                                                                                                 |
+| `jobName` | `string` | The job name.                                                                                               |
+| `attempt` | `number` | The attempt, starting at 1. When stall recovery emits the event, it is the attempt of the run that stalled. |
 
-| `type`                  | Extra fields                     | When                                                                                                                       |
-| ----------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `claimed`               | None                             | This process claimed the job and starts its handler.                                                                       |
-| `completed`             | `durationMs`                     | The job completed.                                                                                                         |
-| `retried`               | `durationMs`, `delayMs`, `error` | The attempt failed, and the job will run again after `delayMs`.                                                            |
-| `failed`                | `durationMs`, `error`            | The job failed for good. Stall recovery also emits it, with `attempt: 0` and `durationMs: 0`, when a job stalls too often. |
-| `timed_out`             | `durationMs`                     | The handler ran longer than its timeout, and its `signal` aborted.                                                         |
-| `stalled`               | None                             | Stall recovery found a job whose lease had ended, and put it back in the queue.                                            |
-| `released`              | None                             | `close()` released an unfinished job in `'release'` mode.                                                                  |
-| `lease_lost`            | None                             | This process could not renew the lease of the job until 30 s before it ends, and aborted its `signal`.                     |
-| `failure_job_not_added` | `failureJob`, `error`            | The job failed for good, but the database refused to add its failure job.                                                  |
-| `error`                 | `operation`, `error`             | An internal operation failed, for example a poll or a hint. `operation` names it. sqlane also logs it.                     |
+| `type`                  | Extra fields                     | When                                                                                                                                                                        |
+| ----------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claimed`               | None                             | This process claimed the job and starts its handler.                                                                                                                        |
+| `completed`             | `durationMs`                     | The job completed.                                                                                                                                                          |
+| `retried`               | `durationMs`, `delayMs`, `error` | The attempt failed, and the job will run again after `delayMs`.                                                                                                             |
+| `failed`                | `durationMs`, `error`            | The job failed for good. Stall recovery also emits it when a job stalls too often. `durationMs` is then the time from the start of the run that stalled until its recovery. |
+| `timed_out`             | `durationMs`                     | The handler ran longer than its timeout, and its `signal` aborted.                                                                                                          |
+| `stalled`               | None                             | Stall recovery found a job whose lease had ended, and put it back in the queue.                                                                                             |
+| `released`              | None                             | `close()` released an unfinished job in `'release'` mode.                                                                                                                   |
+| `lease_lost`            | None                             | This process could not renew the lease of the job until 30 s before it ends, and aborted its `signal`.                                                                      |
+| `failure_job_not_added` | `failureJob`, `error`            | The job failed for good, but the database refused to add its failure job.                                                                                                   |
+| `error`                 | `operation`, `error`             | An internal operation failed, for example a poll or a hint. `operation` names it. sqlane also logs it.                                                                      |
 
 `durationMs` is the run time of the handler in milliseconds. `error` is the thrown value, of type `unknown`.
 
@@ -618,13 +618,12 @@ const sqlane = createSqlane({
 ```ts
 interface FailedJobPayload {
     job: { id: string, name: string, payload: any, attempt: number, maxAttempts: number };
-    error: { name: string, message: string, stack?: string };
+    error: { name: string, message: string, stack?: string, code?: string };
 }
 ```
 
 The `job` field describes the job that failed, with its original payload. The `error` field describes the last error.
-sqlane cuts `error.stack` to 8 KiB. When the error has a string `code` property, `error` also has a `code` field,
-although the type does not list it. The payload of a failure job is exempt from `maxPayloadBytes`.
+sqlane cuts `error.stack` to 8 KiB. When the error has a string `code` property, `error` also has a `code` field. The payload of a failure job is exempt from `maxPayloadBytes`.
 
 The failure job is an ordinary job, so it gets its options from its own definition. It never has a failure job of its
 own, and `unknownJobs: 'reject'` does not apply to it.
