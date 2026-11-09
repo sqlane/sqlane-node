@@ -702,7 +702,7 @@ each adapter in detail.
 | `@sqlane/core/adapter-mysql2`      | `mysql2Adapter(pool, { dialect? })`         | [mysql2](adapters.md#mysql2)                                              |
 | `@sqlane/core/adapter-pg`          | `pgAdapter(pool, { notify? })`              | [pg](adapters.md#pg) (node-postgres)                                      |
 | `@sqlane/core/adapter-postgres-js` | `postgresJsAdapter(sql, { notify? })`       | [postgres.js](adapters.md#postgresjs)                                     |
-| `@sqlane/core/adapter-knex`        | `knexAdapter(knex, { dialect? })`           | [Knex](adapters.md#knex), with mysql2 or pg                               |
+| `@sqlane/core/adapter-knex`        | `knexAdapter(knex, { dialect? })`           | [Knex](adapters.md#knex), with mysql2, mariadb or pg                      |
 | `@sqlane/core/adapter-kysely`      | `kyselyAdapter(db, { dialect })`            | [Kysely](adapters.md#kysely)                                              |
 | `@sqlane/core/adapter-drizzle`     | `drizzleAdapter(db, { notify?, dialect? })` | [Drizzle](adapters.md#drizzle), with mysql2, node-postgres or postgres.js |
 | `@sqlane/core/adapter-prisma`      | `prismaAdapter(prisma, { dialect })`        | [Prisma](adapters.md#prisma)                                              |
@@ -712,7 +712,7 @@ each adapter in detail.
 
 The `dialect` option is `'mysql'`, `'mariadb'` or `'postgres'`. Kysely, Prisma and MikroORM need it because they do not
 expose the database. The adapters over mysql2 (mysql2, Knex, Drizzle and Sequelize) take an optional `dialect`:
-`'mysql'` (the default) or `'mariadb'`. TypeORM reads it from the `type` of the DataSource. See
-[MariaDB](adapters.md#mariadb). The `notify` option is for PostgreSQL only. When it is `true`, sqlane sends hints with LISTEN/NOTIFY, and you
+`'mysql'` (the default) or `'mariadb'`. Over the mariadb driver (Knex and Sequelize), the database is MariaDB. TypeORM
+reads it from the `type` of the DataSource. See [MariaDB](adapters.md#mariadb). The `notify` option is for PostgreSQL only. When it is `true`, sqlane sends hints with LISTEN/NOTIFY, and you
 must not set the `hint` option. An adapter throws a `ConfigError` if it gets an object or a version that it does not
 support.

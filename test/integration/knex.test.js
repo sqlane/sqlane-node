@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import knexLib from 'knex';
-import { afterAll, afterEach, beforeAll, expect, inject, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { createSqlane, defineJob } from '../../src/index.js';
 import { connectTestDatabase } from '../support/test_database.js';
 import { mysqlFamilyOptions } from './helpers/test_adapter.js';
@@ -8,74 +8,6 @@ import { knexAdapter } from '../../src/adapters/knex.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<import('../../src/adapters/knex.js').KnexConnection, never>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
-
-/** @type {import('../support/test_database.js').TestDatabaseConnection} */
-let database;
-/** @type {import('knex').Knex} The app's knex */
-let knex;
-/** @type {import('knex').Knex} The queue's own knex */
-let queueKnex;
-let prefixCount = 0;
-/** @type {Sqlane[]} */
-let instances = [];
-
-/** @returns {import('knex').Knex} */
-function createKnex() {
-    return knexLib({
-        client: inject('databaseDialect') === 'postgres' ? 'pg' : 'mysql2',
-        connection: inject('databaseUrl'),
-        pool: { min: 0, max: 4 },
-    });
-}
-
-beforeAll(async () => {
-    database = await connectTestDatabase();
-    knex = createKnex();
-    queueKnex = createKnex();
-});
-
-afterEach(async () => {
-    await Promise.all(instances.map(sqlane => sqlane.close({ deadline: 0, mode: 'abandon' })));
-    instances = [];
-});
-
-afterAll(async () => {
-    await knex?.destroy();
-    await queueKnex?.destroy();
-    await database?.close();
-});
-
-/**
- * A sqlane instance over knex, on tables of its own, migrated.
- * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
- * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
- */
-async function freshSqlane(options = {}) {
-    prefixCount++;
-
-    const p = `${database.tablePrefix}${prefixCount}_`;
-    /** @type {SqlaneEvent[]} */
-    const events = [];
-    const sqlane = createSqlane({
-        adapter: knexAdapter(queueKnex, mysqlFamilyOptions()),
-        tablePrefix: p,
-        onEvent: event => events.push(event),
-        ...options,
-    });
-
-    instances.push(sqlane);
-    await sqlane.migrate();
-
-    return { sqlane, p, events };
-}
-
-/**
- * @param {string} p
- * @returns {Promise<string[]>} The statuses, in the order of the ids.
- */
-async function statuses(p) {
-    return (await database.query(`SELECT status FROM ${p}jobs ORDER BY id`)).map(row => String(row.status));
-}
 
 /**
  * Waits until the condition holds.
@@ -96,101 +28,175 @@ async function waitFor(condition) {
     }
 }
 
-test('enqueue in a knex transaction: the job commits with it, and rolls back with it', async () => {
-    const { sqlane, p } = await freshSqlane();
+/** The knex clients of the database: MariaDB through mysql2 and through the mariadb driver */
+const CLIENTS = { mysql: ['mysql2'], mariadb: ['mysql2', 'mariadb'], postgres: ['pg'] }[inject('databaseDialect')];
 
-    await knex.transaction(async (trx) => {
-        await expect(sqlane.enqueue(trx, 'ping', { n: 1 }, { jobId: 'a' })).resolves.toStrictEqual({
-            id: 'ping:a',
-            created: true,
+describe.each(CLIENTS)('knex, client %s', (client) => {
+    /** @type {import('../support/test_database.js').TestDatabaseConnection} */
+    let database;
+    /** @type {import('knex').Knex} The app's knex */
+    let knex;
+    /** @type {import('knex').Knex} The queue's own knex */
+    let queueKnex;
+    let prefixCount = 0;
+    /** @type {Sqlane[]} */
+    let instances = [];
+
+    /** @returns {import('knex').Knex} */
+    function createKnex() {
+        return knexLib({
+            client,
+            connection: inject('databaseUrl'),
+            pool: { min: 0, max: 4 },
         });
-        // Not visible outside the transaction
-        await expect(statuses(p)).resolves.toStrictEqual([]);
+    }
+
+    beforeAll(async () => {
+        database = await connectTestDatabase();
+        knex = createKnex();
+        queueKnex = createKnex();
     });
-    await expect(knex.transaction(async (trx) => {
-        await sqlane.enqueue(trx, 'ping', { n: 2 }, { jobId: 'b' });
-        throw new Error('rollback');
-    })).rejects.toThrow('rollback');
 
-    await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-    // The dedupe sees the committed job
-    await expect(sqlane.enqueue(knex, 'ping', { n: 3 }, { jobId: 'a' })).resolves.toMatchObject({ created: false });
-});
-
-test('enqueue on a knex instance: a transaction of its own', async () => {
-    const { sqlane, p } = await freshSqlane();
-
-    await sqlane.enqueueMany(knex, 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
-    await expect(statuses(p)).resolves.toStrictEqual(['pending', 'pending']);
-});
-
-test('the commit wakes the worker at once: the job does not wait for a re-probe', async () => {
-    const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
-
-    sqlane.handle('ping', () => {});
-    await sqlane.start();
-    await sleep(100);
-
-    let committedAt = 0;
-
-    await knex.transaction(async (trx) => {
-        await sqlane.enqueue(trx, 'ping', {});
-        // The re-probes after the enqueue: 20, 50, 100, 200, then 500 ms
-        await sleep(300);
+    afterEach(async () => {
+        await Promise.all(instances.map(sqlane => sqlane.close({ deadline: 0, mode: 'abandon' })));
+        instances = [];
     });
-    committedAt = Date.now();
-    await waitFor(() => events.some(event => event.type === 'claimed'));
-    expect(Date.now() - committedAt).toBeLessThan(150);
-});
 
-test('a nested transaction: the job runs after the outer commit, and never after an outer rollback', async () => {
-    const { sqlane, p, events } = await freshSqlane({ pollInterval: '10s' });
+    afterAll(async () => {
+        await knex?.destroy();
+        await queueKnex?.destroy();
+        await database?.close();
+    });
 
-    sqlane.handle('ping', () => {});
-    await sqlane.start();
-    await expect(knex.transaction(async (outer) => {
-        await outer.transaction(async (inner) => {
-            await sqlane.enqueue(inner, 'ping', {}, { jobId: 'rolled_back' });
+    /**
+     * A sqlane instance over knex, on tables of its own, migrated.
+     * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
+     * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
+     */
+    async function freshSqlane(options = {}) {
+        prefixCount++;
+
+        const p = `${database.tablePrefix}${prefixCount}_`;
+        /** @type {SqlaneEvent[]} */
+        const events = [];
+        const sqlane = createSqlane({
+            // The mariadb client tells MariaDB; mysql2 needs the option
+            adapter: knexAdapter(queueKnex, client === 'mariadb' ? undefined : mysqlFamilyOptions()),
+            tablePrefix: p,
+            onEvent: event => events.push(event),
+            ...options,
         });
-        throw new Error('outer rollback');
-    })).rejects.toThrow('outer rollback');
-    await knex.transaction(async (outer) => {
-        await outer.transaction(async (inner) => {
-            await sqlane.enqueue(inner, 'ping', {}, { jobId: 'committed' });
+
+        instances.push(sqlane);
+        await sqlane.migrate();
+
+        return { sqlane, p, events };
+    }
+
+    /**
+     * @param {string} p
+     * @returns {Promise<string[]>} The statuses, in the order of the ids.
+     */
+    async function statuses(p) {
+        return (await database.query(`SELECT status FROM ${p}jobs ORDER BY id`)).map(row => String(row.status));
+    }
+
+    test('enqueue in a knex transaction: the job commits with it, and rolls back with it', async () => {
+        const { sqlane, p } = await freshSqlane();
+
+        await knex.transaction(async (trx) => {
+            await expect(sqlane.enqueue(trx, 'ping', { n: 1 }, { jobId: 'a' })).resolves.toStrictEqual({
+                id: 'ping:a',
+                created: true,
+            });
+            // Not visible outside the transaction
+            await expect(statuses(p)).resolves.toStrictEqual([]);
         });
+        await expect(knex.transaction(async (trx) => {
+            await sqlane.enqueue(trx, 'ping', { n: 2 }, { jobId: 'b' });
+            throw new Error('rollback');
+        })).rejects.toThrow('rollback');
+
+        await expect(statuses(p)).resolves.toStrictEqual(['pending']);
+        // The dedupe sees the committed job
+        await expect(sqlane.enqueue(knex, 'ping', { n: 3 }, { jobId: 'a' })).resolves.toMatchObject({ created: false });
     });
 
-    await waitFor(() => events.some(event => event.type === 'completed'));
-    await expect(statuses(p)).resolves.toStrictEqual(['completed']);
-});
+    test('enqueue on a knex instance: a transaction of its own', async () => {
+        const { sqlane, p } = await freshSqlane();
 
-test('drain: retries, mutex keys and a failure job, over knex', async () => {
-    const report = defineJob({ name: 'report', mutexKeys: payload => [`r:${payload.id}`], timeout: '5s' });
-    const reportFailed = defineJob({ name: 'report_failed' });
-    const failing = defineJob({
-        name: 'failing',
-        maxAttempts: 2,
-        backoff: { type: 'fixed', delay: 10, jitter: 0 },
-        failureJob: reportFailed,
+        await sqlane.enqueueMany(knex, 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
+        await expect(statuses(p)).resolves.toStrictEqual(['pending', 'pending']);
     });
-    const { sqlane, p } = await freshSqlane({ jobs: [report, reportFailed, failing] });
-    /** @type {unknown[]} */
-    const failures = [];
 
-    sqlane.handle(report, () => {});
-    sqlane.handle(failing, () => {
-        throw new Error('always');
-    });
-    sqlane.handle(reportFailed, ({ payload }) => {
-        failures.push(payload.job.name);
-    });
-    await sqlane.enqueueMany(knex, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
-    await sqlane.enqueue(knex, failing, {});
+    test('the commit wakes the worker at once: the job does not wait for a re-probe', async () => {
+        const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
 
-    await expect(sqlane.drain({ includeDelayed: true }))
-        .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
-    expect(failures).toStrictEqual(['failing']);
-    // The names with pending, running or failed jobs
-    await expect(sqlane.getStats()).resolves.toMatchObject([{ name: 'failing', pending: 0, failed: 1 }]);
-    expect((await statuses(p)).toSorted()).toStrictEqual(['completed', 'completed', 'completed', 'failed']);
+        sqlane.handle('ping', () => {});
+        await sqlane.start();
+        await sleep(100);
+
+        let committedAt = 0;
+
+        await knex.transaction(async (trx) => {
+            await sqlane.enqueue(trx, 'ping', {});
+            // The re-probes after the enqueue: 20, 50, 100, 200, then 500 ms
+            await sleep(300);
+        });
+        committedAt = Date.now();
+        await waitFor(() => events.some(event => event.type === 'claimed'));
+        expect(Date.now() - committedAt).toBeLessThan(150);
+    });
+
+    test('a nested transaction: the job runs after the outer commit, and never after an outer rollback', async () => {
+        const { sqlane, p, events } = await freshSqlane({ pollInterval: '10s' });
+
+        sqlane.handle('ping', () => {});
+        await sqlane.start();
+        await expect(knex.transaction(async (outer) => {
+            await outer.transaction(async (inner) => {
+                await sqlane.enqueue(inner, 'ping', {}, { jobId: 'rolled_back' });
+            });
+            throw new Error('outer rollback');
+        })).rejects.toThrow('outer rollback');
+        await knex.transaction(async (outer) => {
+            await outer.transaction(async (inner) => {
+                await sqlane.enqueue(inner, 'ping', {}, { jobId: 'committed' });
+            });
+        });
+
+        await waitFor(() => events.some(event => event.type === 'completed'));
+        await expect(statuses(p)).resolves.toStrictEqual(['completed']);
+    });
+
+    test('drain: retries, mutex keys and a failure job, over knex', async () => {
+        const report = defineJob({ name: 'report', mutexKeys: payload => [`r:${payload.id}`], timeout: '5s' });
+        const reportFailed = defineJob({ name: 'report_failed' });
+        const failing = defineJob({
+            name: 'failing',
+            maxAttempts: 2,
+            backoff: { type: 'fixed', delay: 10, jitter: 0 },
+            failureJob: reportFailed,
+        });
+        const { sqlane, p } = await freshSqlane({ jobs: [report, reportFailed, failing] });
+        /** @type {unknown[]} */
+        const failures = [];
+
+        sqlane.handle(report, () => {});
+        sqlane.handle(failing, () => {
+            throw new Error('always');
+        });
+        sqlane.handle(reportFailed, ({ payload }) => {
+            failures.push(payload.job.name);
+        });
+        await sqlane.enqueueMany(knex, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
+        await sqlane.enqueue(knex, failing, {});
+
+        await expect(sqlane.drain({ includeDelayed: true }))
+            .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
+        expect(failures).toStrictEqual(['failing']);
+        // The names with pending, running or failed jobs
+        await expect(sqlane.getStats()).resolves.toMatchObject([{ name: 'failing', pending: 0, failed: 1 }]);
+        expect((await statuses(p)).toSorted()).toStrictEqual(['completed', 'completed', 'completed', 'failed']);
+    });
 });

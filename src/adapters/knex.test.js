@@ -14,6 +14,7 @@ function fakeKnex(dialect, driverName) {
 test.each([
     { dialect: 'mysql', driverName: 'mysql2', expected: 'mysql' },
     { dialect: 'postgresql', driverName: 'pg', expected: 'postgres' },
+    { dialect: 'mysql', driverName: 'mariadb', expected: 'mariadb' },
 ])('the dialect of a $driverName knex: $expected', ({ dialect, driverName, expected }) => {
     expect(knexAdapter(fakeKnex(dialect, driverName)).dialect).toBe(expected);
 });
@@ -28,6 +29,12 @@ test.each([
         knex: fakeKnex('postgresql', 'pg'),
         dialect: 'mariadb',
         message: '"dialect" is for mysql2',
+    },
+    {
+        label: '"dialect": "mysql" on a mariadb knex',
+        knex: fakeKnex('mysql', 'mariadb'),
+        dialect: 'mysql',
+        message: '"dialect" must be "mariadb"',
     },
     {
         label: 'another "dialect"',

@@ -18,7 +18,7 @@ function fakeSequelize(dialect, version) {
     });
 }
 
-test.each([{ dialect: 'mysql' }, { dialect: 'postgres' }])('dialect $dialect', ({ dialect }) => {
+test.each([{ dialect: 'mysql' }, { dialect: 'mariadb' }, { dialect: 'postgres' }])('dialect $dialect', ({ dialect }) => {
     expect(sequelizeAdapter(fakeSequelize(dialect, '6.37.8')).dialect).toBe(dialect);
 });
 
@@ -27,8 +27,12 @@ test('MariaDB: the "mysql" dialect of Sequelize, with { dialect: \'mariadb\' }',
 });
 
 test.each([
-    { label: 'the "mariadb" dialect of Sequelize', sequelize: fakeSequelize('mariadb', '6.37.8'), options: undefined,
-        message: 'use its "mysql" dialect (mysql2)' },
+    {
+        label: '"dialect" on the "mariadb" dialect',
+        sequelize: fakeSequelize('mariadb', '6.37.8'),
+        options: { dialect: 'mariadb' },
+        message: '"dialect" is for the "mysql" dialect',
+    },
     { label: '"dialect" on PostgreSQL', sequelize: fakeSequelize('postgres', '6.37.8'), options: { dialect: 'mariadb' },
         message: '"dialect" is for the "mysql" dialect' },
     { label: 'another "dialect"', sequelize: fakeSequelize('mysql', '6.37.8'), options: { dialect: 'sqlite' },

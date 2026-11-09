@@ -3,7 +3,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createNamespace } from 'cls-hooked';
 import { Sequelize } from 'sequelize';
-import { afterAll, afterEach, beforeAll, expect, inject, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
 import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
@@ -14,69 +14,6 @@ import { createSqlane } from '../../src/index.js';
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
 Sequelize.useCLS(createNamespace('sqlane-test'));
-
-/** @type {import('../support/test_database.js').TestDatabaseConnection} */
-let database;
-/** @type {any} The app's Sequelize */
-let sequelize;
-/** @type {any} The queue's own Sequelize */
-let queueSequelize;
-let prefixCount = 0;
-/** @type {Sqlane[]} */
-let instances = [];
-
-/** @returns {Sequelize} */
-function createSequelize() {
-    return new Sequelize(inject('databaseUrl'), { dialect: inject('databaseDialect') === 'postgres' ? 'postgres' : 'mysql', logging: false, pool: { max: 4 } });
-}
-
-beforeAll(async () => {
-    database = await connectTestDatabase();
-    sequelize = createSequelize();
-    queueSequelize = createSequelize();
-});
-
-afterEach(async () => {
-    await Promise.all(instances.map(sqlane => sqlane.close({ deadline: 0, mode: 'abandon' })));
-    instances = [];
-});
-
-afterAll(async () => {
-    await sequelize?.close();
-    await queueSequelize?.close();
-    await database?.close();
-});
-
-/**
- * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
- * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
- */
-async function freshSqlane(options = {}) {
-    prefixCount++;
-
-    const p = `${database.tablePrefix}${prefixCount}_`;
-    /** @type {SqlaneEvent[]} */
-    const events = [];
-    const sqlane = createSqlane({
-        adapter: sequelizeAdapter(queueSequelize, mysqlFamilyOptions()),
-        tablePrefix: p,
-        onEvent: event => events.push(event),
-        ...options,
-    });
-
-    instances.push(sqlane);
-    await sqlane.migrate();
-
-    return { sqlane, p, events };
-}
-
-/**
- * @param {string} p
- * @returns {Promise<string[]>} The statuses, in the order of the ids.
- */
-async function statuses(p) {
-    return (await database.query(`SELECT status FROM ${p}jobs ORDER BY id`)).map(row => String(row.status));
-}
 
 /**
  * Waits until the condition holds.
@@ -97,43 +34,121 @@ async function waitFor(condition) {
     }
 }
 
-test('enqueue on the instance joins the CLS transaction: it rolls back with it', async () => {
-    const { sqlane, p } = await freshSqlane();
+/** The Sequelize dialects of the database: MariaDB through mysql2 (mysql) and through the mariadb driver (mariadb) */
+const SEQUELIZE_DIALECTS = /** @type {const} */ ({
+    mysql: ['mysql'],
+    mariadb: ['mysql', 'mariadb'],
+    postgres: ['postgres'],
+})[inject('databaseDialect')];
 
-    await expect(sequelize.transaction(async () => {
-        await sqlane.enqueue(sequelize, 'ping', {}, { jobId: 'rolled_back' });
-        throw new Error('rollback');
-    })).rejects.toThrow('rollback');
-    await sequelize.transaction(async () => {
-        await sqlane.enqueue(sequelize, 'ping', {}, { jobId: 'committed' });
-        // Not visible before the commit of the CLS transaction
-        await expect(statuses(p)).resolves.toStrictEqual([]);
+describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) => {
+    /** @type {import('../support/test_database.js').TestDatabaseConnection} */
+    let database;
+    /** @type {any} The app's Sequelize */
+    let sequelize;
+    /** @type {any} The queue's own Sequelize */
+    let queueSequelize;
+    let prefixCount = 0;
+    /** @type {Sqlane[]} */
+    let instances = [];
+
+    /** @returns {Sequelize} */
+    function createSequelize() {
+        // The protocol of the URL picks the dialect of Sequelize
+        return new Sequelize(inject('databaseUrl').replace(/^mysql:/, `${sequelizeDialect}:`), {
+            dialect: sequelizeDialect,
+            logging: false,
+            pool: { max: 4 },
+        });
+    }
+
+    beforeAll(async () => {
+        database = await connectTestDatabase();
+        sequelize = createSequelize();
+        queueSequelize = createSequelize();
     });
 
-    await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-});
+    afterEach(async () => {
+        await Promise.all(instances.map(sqlane => sqlane.close({ deadline: 0, mode: 'abandon' })));
+        instances = [];
+    });
 
-test('the commit of the CLS transaction wakes the worker at once', async () => {
-    const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
+    afterAll(async () => {
+        await sequelize?.close();
+        await queueSequelize?.close();
+        await database?.close();
+    });
 
-    sqlane.handle('ping', () => {});
-    await sqlane.start();
-    await sleep(100);
-    await sequelize.transaction(async () => {
+    /**
+     * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
+     * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
+     */
+    async function freshSqlane(options = {}) {
+        prefixCount++;
+
+        const p = `${database.tablePrefix}${prefixCount}_`;
+        /** @type {SqlaneEvent[]} */
+        const events = [];
+        const sqlane = createSqlane({
+            // The mariadb dialect of Sequelize tells MariaDB; its mysql dialect needs the option
+            adapter: sequelizeAdapter(queueSequelize, sequelizeDialect === 'mariadb' ? undefined : mysqlFamilyOptions()),
+            tablePrefix: p,
+            onEvent: event => events.push(event),
+            ...options,
+        });
+
+        instances.push(sqlane);
+        await sqlane.migrate();
+
+        return { sqlane, p, events };
+    }
+
+    /**
+     * @param {string} p
+     * @returns {Promise<string[]>} The statuses, in the order of the ids.
+     */
+    async function statuses(p) {
+        return (await database.query(`SELECT status FROM ${p}jobs ORDER BY id`)).map(row => String(row.status));
+    }
+
+    test('enqueue on the instance joins the CLS transaction: it rolls back with it', async () => {
+        const { sqlane, p } = await freshSqlane();
+
+        await expect(sequelize.transaction(async () => {
+            await sqlane.enqueue(sequelize, 'ping', {}, { jobId: 'rolled_back' });
+            throw new Error('rollback');
+        })).rejects.toThrow('rollback');
+        await sequelize.transaction(async () => {
+            await sqlane.enqueue(sequelize, 'ping', {}, { jobId: 'committed' });
+            // Not visible before the commit of the CLS transaction
+            await expect(statuses(p)).resolves.toStrictEqual([]);
+        });
+
+        await expect(statuses(p)).resolves.toStrictEqual(['pending']);
+    });
+
+    test('the commit of the CLS transaction wakes the worker at once', async () => {
+        const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
+
+        sqlane.handle('ping', () => {});
+        await sqlane.start();
+        await sleep(100);
+        await sequelize.transaction(async () => {
+            await sqlane.enqueue(sequelize, 'ping', {});
+            // The re-probes after the enqueue: 20, 50, 100, 200, then 500 ms
+            await sleep(300);
+        });
+
+        const committedAt = Date.now();
+
+        await waitFor(() => events.some(event => event.type === 'claimed'));
+        expect(Date.now() - committedAt).toBeLessThan(150);
+    });
+
+    test('outside a CLS transaction: a transaction of its own', async () => {
+        const { sqlane, p } = await freshSqlane();
+
         await sqlane.enqueue(sequelize, 'ping', {});
-        // The re-probes after the enqueue: 20, 50, 100, 200, then 500 ms
-        await sleep(300);
+        await expect(statuses(p)).resolves.toStrictEqual(['pending']);
     });
-
-    const committedAt = Date.now();
-
-    await waitFor(() => events.some(event => event.type === 'claimed'));
-    expect(Date.now() - committedAt).toBeLessThan(150);
-});
-
-test('outside a CLS transaction: a transaction of its own', async () => {
-    const { sqlane, p } = await freshSqlane();
-
-    await sqlane.enqueue(sequelize, 'ping', {});
-    await expect(statuses(p)).resolves.toStrictEqual(['pending']);
 });

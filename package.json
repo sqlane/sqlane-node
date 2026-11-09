@@ -116,6 +116,7 @@
         "@changesets/changelog-github": "1.0.1",
         "@changesets/cli": "3.0.3",
         "@mikro-orm/core": "7.2.8",
+        "@mikro-orm/mariadb": "7.2.8",
         "@mikro-orm/mysql": "7.2.8",
         "@mikro-orm/postgresql": "7.2.8",
         "@prisma/adapter-mariadb": "7.10.1",
@@ -154,10 +155,14 @@
         "vitest": "5.1.0"
     },
     "peerDependencies": {
+        "mariadb": "^3.4.0",
         "mysql2": "^3.11.0",
         "pg": "^8.13.0"
     },
     "peerDependenciesMeta": {
+        "mariadb": {
+            "optional": true
+        },
         "mysql2": {
             "optional": true
         },

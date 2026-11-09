@@ -1,12 +1,12 @@
-// The adapter for Sequelize 6 (`@sqlane/core/adapter-sequelize`), MySQL (mysql2) or PostgreSQL (pg): `enqueue` takes
-// a Sequelize instance or a Sequelize transaction. The SQL of sqlane runs on the driver connection under Sequelize (the
-// `connection` of a transaction, or one of its pool): Sequelize does not run it, nor log it. No import of Sequelize:
-// the adapter uses the instance that it gets, and checks it. After the commit of the outermost transaction (its
-// `afterCommit` hook), the workers wake at once. With CLS (`Sequelize.useCLS()`), an instance means its CLS
-// transaction, if one runs: as for the queries of Sequelize.
+// The adapter for Sequelize 6 (`@sqlane/core/adapter-sequelize`), MySQL (mysql2), MariaDB (mysql2 or mariadb) or
+// PostgreSQL (pg): `enqueue` takes a Sequelize instance or a Sequelize transaction. The SQL of sqlane runs on the
+// driver connection under Sequelize (the `connection` of a transaction, or one of its pool): Sequelize does not run it,
+// nor log it. No import of Sequelize: the adapter uses the instance that it gets, and checks it. After the commit of
+// the outermost transaction (its `afterCommit` hook), the workers wake at once. With CLS (`Sequelize.useCLS()`), an
+// instance means its CLS transaction, if one runs: as for the queries of Sequelize.
 import { ConfigError } from '../errors.js';
 import { mysqlFamilyDialect } from './dialect.js';
-import { mysql2Executor, pgExecutor } from './executors.js';
+import { mariadbExecutor, mysql2Executor, pgExecutor } from './executors.js';
 
 /**
  * A Sequelize instance, as far as the adapter reads it.
@@ -75,12 +75,13 @@ function checkSequelize(sequelize) {
 }
 
 /**
- * The adapter for Sequelize 6 (MySQL or PostgreSQL). `enqueue` then takes a Sequelize instance (a transaction of its
- * own) or a Sequelize transaction, also nested (the caller's: the job commits with it).
+ * The adapter for Sequelize 6 (MySQL, MariaDB or PostgreSQL). `enqueue` then takes a Sequelize instance (a transaction
+ * of its own) or a Sequelize transaction, also nested (the caller's: the job commits with it).
  * @param {SequelizeLike} sequelize The queue's own Sequelize instance: claims, leases, results. A small pool of its
  *     own is best.
- * @param {import('./dialect.js').MysqlFamilyOptions} [options] The "mysql" dialect of Sequelize:
- *     `{ dialect: 'mariadb' }` on MariaDB.
+ * @param {import('./dialect.js').MysqlFamilyOptions} [options] The "mysql" dialect of Sequelize (mysql2):
+ *     `{ dialect: 'mariadb' }` on MariaDB. The "mariadb" dialect of Sequelize (the mariadb driver) is MariaDB without
+ *     it.
  * @returns {import('../types.js').Adapter<SequelizeConnection>}
  */
 export function sequelizeAdapter(sequelize, options) {
@@ -92,27 +93,28 @@ export function sequelizeAdapter(sequelize, options) {
 
     const sequelizeDialect = sequelize.getDialect();
 
-    if (sequelizeDialect === 'mariadb') {
+    if (sequelizeDialect !== 'mysql' && sequelizeDialect !== 'mariadb' && sequelizeDialect !== 'postgres') {
         throw new ConfigError(
-            'sequelizeAdapter: the "mariadb" dialect of Sequelize is not supported: use its "mysql" dialect (mysql2), and '
-            + 'sequelizeAdapter(sequelize, { dialect: \'mariadb\' })',
+            `sequelizeAdapter: the dialect must be "mysql", "mariadb" or "postgres", not "${sequelizeDialect}"`,
         );
     }
 
-    if (sequelizeDialect !== 'mysql' && sequelizeDialect !== 'postgres') {
-        throw new ConfigError(`sequelizeAdapter: the dialect must be "mysql" or "postgres", not "${sequelizeDialect}"`);
-    }
-
-    if (sequelizeDialect === 'postgres' && options?.dialect !== undefined) {
+    if (sequelizeDialect !== 'mysql' && options?.dialect !== undefined) {
         throw new ConfigError('sequelizeAdapter: "dialect" is for the "mysql" dialect of Sequelize (MySQL or MariaDB)');
     }
 
-    const dialect = sequelizeDialect === 'postgres' ? 'postgres' : mysqlFamilyDialect(options, 'sequelizeAdapter');
+    /** @type {import('../types.js').Dialect} */
+    const dialect = sequelizeDialect === 'mysql' ? mysqlFamilyDialect(options, 'sequelizeAdapter') : sequelizeDialect;
 
-    /** @type {(connection: any) => import('../types.js').Executor} The mysql2 connection of Sequelize: callback API */
-    const toExecutor = sequelizeDialect === 'mysql'
-        ? connection => mysql2Executor(connection.promise())
-        : connection => pgExecutor(connection);
+    /** @type {Record<string, (connection: any) => import('../types.js').Executor>} By the dialect of Sequelize */
+    const executorByDialect = {
+        // mysql2, of its callback API
+        mysql: connection => mysql2Executor(connection.promise()),
+        // The mariadb driver, of its promise API
+        mariadb: connection => mariadbExecutor(connection, 'promise'),
+        postgres: connection => pgExecutor(connection),
+    };
+    const toExecutor = executorByDialect[sequelizeDialect];
 
     /**
      * Runs func on a connection of the pool of the instance, outside a transaction.

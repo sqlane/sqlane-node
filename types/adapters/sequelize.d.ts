@@ -19,12 +19,13 @@ export type SequelizeTransactionLike = {
 };
 export type SequelizeConnection = SequelizeLike | SequelizeTransactionLike;
 /**
- * The adapter for Sequelize 6 (MySQL or PostgreSQL). `enqueue` then takes a Sequelize instance (a transaction of its
- * own) or a Sequelize transaction, also nested (the caller's: the job commits with it).
+ * The adapter for Sequelize 6 (MySQL, MariaDB or PostgreSQL). `enqueue` then takes a Sequelize instance (a transaction
+ * of its own) or a Sequelize transaction, also nested (the caller's: the job commits with it).
  * @param {SequelizeLike} sequelize The queue's own Sequelize instance: claims, leases, results. A small pool of its
  *     own is best.
- * @param {import('./dialect.js').MysqlFamilyOptions} [options] The "mysql" dialect of Sequelize:
- *     `{ dialect: 'mariadb' }` on MariaDB.
+ * @param {import('./dialect.js').MysqlFamilyOptions} [options] The "mysql" dialect of Sequelize (mysql2):
+ *     `{ dialect: 'mariadb' }` on MariaDB. The "mariadb" dialect of Sequelize (the mariadb driver) is MariaDB without
+ *     it.
  * @returns {import('../types.js').Adapter<SequelizeConnection>}
  */
 export declare function sequelizeAdapter(sequelize: SequelizeLike, options?: import('./dialect.js').MysqlFamilyOptions): import('../types.js').Adapter<SequelizeConnection>;

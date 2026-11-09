@@ -185,6 +185,9 @@ importers:
       '@mikro-orm/core':
         specifier: 7.2.8
         version: 7.2.8(dataloader@2.2.3)
+      '@mikro-orm/mariadb':
+        specifier: 7.2.8
+        version: 7.2.8(@mikro-orm/core@7.2.8(dataloader@2.2.3))(@types/node@22.20.5)
       '@mikro-orm/mysql':
         specifier: 7.2.8
         version: 7.2.8(@mikro-orm/core@7.2.8(dataloader@2.2.3))(@types/node@22.20.5)
@@ -552,6 +555,12 @@ packages:
     peerDependenciesMeta:
       dataloader:
         optional: true
+
+  '@mikro-orm/mariadb@7.2.8':
+    resolution: {integrity: sha512-M+CRMZWyqOtHAvcEXeXCHcnYAbpBOx5aiYy+X7s5u49zAk7eUkzCOz2IaV7kQpgU7CitwemOhL3sZUJLLGwM3A==}
+    engines: {node: '>= 22.17.0'}
+    peerDependencies:
+      '@mikro-orm/core': 7.2.8
 
   '@mikro-orm/mysql@7.2.8':
     resolution: {integrity: sha512-d0ZuRPhpS+hf2f7Fx8Dv5Dxn0MJONpCiLYE+gzHeswLBQtyXcBY5A5rda/TScRYWtuPATGdYuFQOzviq2UM63g==}
@@ -4031,6 +4040,14 @@ snapshots:
   '@mikro-orm/core@7.2.8(dataloader@2.2.3)':
     optionalDependencies:
       dataloader: 2.2.3
+
+  '@mikro-orm/mariadb@7.2.8(@mikro-orm/core@7.2.8(dataloader@2.2.3))(@types/node@22.20.5)':
+    dependencies:
+      '@mikro-orm/core': 7.2.8(dataloader@2.2.3)
+      '@mikro-orm/mysql': 7.2.8(@mikro-orm/core@7.2.8(dataloader@2.2.3))(@types/node@22.20.5)
+      kysely: 0.29.8
+    transitivePeerDependencies:
+      - '@types/node'
 
   '@mikro-orm/mysql@7.2.8(@mikro-orm/core@7.2.8(dataloader@2.2.3))(@types/node@22.20.5)':
     dependencies:

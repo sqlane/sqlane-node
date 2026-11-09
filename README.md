@@ -199,21 +199,21 @@ const { completed, failed } = await sqlane.drain();
 
 ## Supported drivers and ORMs
 
-| Library     | Import                             | Supported versions            | Details                                                                                    |
-| ----------- | ---------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------ |
-| mysql2      | `@sqlane/core/adapter-mysql2`      | mysql2 3.11+                  | [mysql2](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mysql2)          |
-| pg          | `@sqlane/core/adapter-pg`          | pg 8.13+                      | [pg](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#pg)                  |
-| postgres.js | `@sqlane/core/adapter-postgres-js` | postgres 3.4+ and 4           | [postgres.js](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#postgresjs) |
-| Knex        | `@sqlane/core/adapter-knex`        | knex 3, with mysql2 or pg     | [Knex](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#knex)              |
-| Kysely      | `@sqlane/core/adapter-kysely`      | kysely 0.28 and 0.29          | [Kysely](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#kysely)          |
-| Drizzle     | `@sqlane/core/adapter-drizzle`     | drizzle-orm 0.45 and 1.0 (rc) | [Drizzle](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#drizzle)        |
-| Prisma      | `@sqlane/core/adapter-prisma`      | Prisma 7                      | [Prisma](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#prisma)          |
-| Sequelize   | `@sqlane/core/adapter-sequelize`   | Sequelize 6                   | [Sequelize](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#sequelize)    |
-| TypeORM     | `@sqlane/core/adapter-typeorm`     | TypeORM 0.3 and 1.x           | [TypeORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#typeorm)        |
-| MikroORM    | `@sqlane/core/adapter-mikro-orm`   | MikroORM 6 and 7              | [MikroORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mikroorm)      |
+| Library     | Import                             | Supported versions                 | Details                                                                                    |
+| ----------- | ---------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| mysql2      | `@sqlane/core/adapter-mysql2`      | mysql2 3.11+                       | [mysql2](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mysql2)          |
+| pg          | `@sqlane/core/adapter-pg`          | pg 8.13+                           | [pg](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#pg)                  |
+| postgres.js | `@sqlane/core/adapter-postgres-js` | postgres 3.4+ and 4                | [postgres.js](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#postgresjs) |
+| Knex        | `@sqlane/core/adapter-knex`        | knex 3, with mysql2, mariadb or pg | [Knex](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#knex)              |
+| Kysely      | `@sqlane/core/adapter-kysely`      | kysely 0.28 and 0.29               | [Kysely](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#kysely)          |
+| Drizzle     | `@sqlane/core/adapter-drizzle`     | drizzle-orm 0.45 and 1.0 (rc)      | [Drizzle](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#drizzle)        |
+| Prisma      | `@sqlane/core/adapter-prisma`      | Prisma 7                           | [Prisma](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#prisma)          |
+| Sequelize   | `@sqlane/core/adapter-sequelize`   | Sequelize 6                        | [Sequelize](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#sequelize)    |
+| TypeORM     | `@sqlane/core/adapter-typeorm`     | TypeORM 0.3 and 1.x                | [TypeORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#typeorm)        |
+| MikroORM    | `@sqlane/core/adapter-mikro-orm`   | MikroORM 6 and 7                   | [MikroORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mikroorm)      |
 
-The query builders and ORMs work with MySQL, MariaDB and PostgreSQL. mysql2 is a driver for MySQL and MariaDB, and pg and
-postgres.js are PostgreSQL drivers.
+The query builders and ORMs work with MySQL, MariaDB and PostgreSQL. mysql2 is a driver for MySQL and MariaDB, the
+mariadb driver (through Knex and Sequelize) is for MariaDB, and pg and postgres.js are PostgreSQL drivers.
 
 ## Guarantees and limits
 

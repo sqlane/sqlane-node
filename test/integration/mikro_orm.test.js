@@ -1,7 +1,12 @@
 import { setTimeout as sleep } from 'node:timers/promises';
+import { MikroORM as MariaDbMikroORM } from '@mikro-orm/mariadb';
 import { MikroORM as MySqlMikroORM } from '@mikro-orm/mysql';
 import { MikroORM as PostgreSqlMikroORM } from '@mikro-orm/postgresql';
-import { MySqlMikroORM as MySqlMikroORM6, PostgreSqlMikroORM as PostgreSqlMikroORM6 } from '../mikro-orm-6/index.js';
+import {
+    MariaDbMikroORM as MariaDbMikroORM6,
+    MySqlMikroORM as MySqlMikroORM6,
+    PostgreSqlMikroORM as PostgreSqlMikroORM6,
+} from '../mikro-orm-6/index.js';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
 import { mikroOrmAdapter } from '../../src/adapters/mikro_orm.js';
@@ -59,10 +64,26 @@ async function waitFor(condition) {
     }
 }
 
+/**
+ * The drivers of MikroORM for the database: MariaDB through @mikro-orm/mysql and through @mikro-orm/mariadb.
+ * @param {string} version
+ * @param {{ mysql: any, mariadb: any, postgres: any }} orms The MikroORM class of each driver.
+ * @returns {{ version: string, driver: string, MikroORM: any }[]}
+ */
+function casesOf(version, { mysql, mariadb, postgres }) {
+    const byDialect = {
+        mysql: [{ driver: 'mysql', MikroORM: mysql }],
+        mariadb: [{ driver: 'mysql', MikroORM: mysql }, { driver: 'mariadb', MikroORM: mariadb }],
+        postgres: [{ driver: 'postgresql', MikroORM: postgres }],
+    };
+
+    return byDialect[inject('databaseDialect')].map(({ driver, MikroORM }) => ({ version, driver, MikroORM }));
+}
+
 describe.each([
-    { version: '7', mysql: MySqlMikroORM, postgres: PostgreSqlMikroORM },
-    { version: '6', mysql: MySqlMikroORM6, postgres: PostgreSqlMikroORM6 },
-])('mikro-orm $version', ({ mysql, postgres }) => {
+    ...casesOf('7', { mysql: MySqlMikroORM, mariadb: MariaDbMikroORM, postgres: PostgreSqlMikroORM }),
+    ...casesOf('6', { mysql: MySqlMikroORM6, mariadb: MariaDbMikroORM6, postgres: PostgreSqlMikroORM6 }),
+])('mikro-orm $version, @mikro-orm/$driver', ({ MikroORM }) => {
     const dialect = inject('databaseDialect');
     /** @type {any} The app's MikroORM */
     let orm;
@@ -71,7 +92,7 @@ describe.each([
 
     /** @returns {Promise<any>} An initialized MikroORM on the test database. */
     async function createOrm() {
-        const created = await /** @type {any} */ (dialect === 'postgres' ? postgres : mysql).init({
+        const created = await MikroORM.init({
             clientUrl: inject('databaseUrl'),
             entities: [],
             discovery: { warnWhenNoEntities: false },

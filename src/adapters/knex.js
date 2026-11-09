@@ -1,8 +1,9 @@
 // The adapter for knex 3 (`@sqlane/core/adapter-knex`): `enqueue` takes a knex instance or a knex transaction. The SQL
-// of sqlane runs on the raw driver connection under knex (mysql2 or pg): knex does not run it, nor log it. No import of
-// knex: the adapter uses the instance it gets, and checks what it uses.
+// of sqlane runs on the raw driver connection under knex (mysql2, mariadb or pg): knex does not run it, nor log it. No
+// import of knex: the adapter uses the instance it gets, and checks what it uses.
 import { ConfigError } from '../errors.js';
 import { mysqlFamilyDialect } from './dialect.js';
+import { mariadbExecutor } from './executors.js';
 
 /** @typedef {import('knex').Knex} Knex */
 /** @typedef {import('knex').Knex.Transaction} KnexTransaction */
@@ -109,6 +110,15 @@ function resolveDriver(knex, options) {
         return { dialect: mysqlFamilyDialect(options, 'knexAdapter'), toExecutor: mysql2Executor };
     }
 
+    // The mariadb client of knex (and of MikroORM 6): MariaDB, on the callback API of the mariadb driver
+    if (client?.dialect === 'mysql' && client.driverName === 'mariadb') {
+        if (options?.dialect !== undefined && options.dialect !== 'mariadb') {
+            throw new ConfigError('knexAdapter: the mariadb client is for MariaDB: "dialect" must be "mariadb"');
+        }
+
+        return { dialect: 'mariadb', toExecutor: connection => mariadbExecutor(connection, 'callback') };
+    }
+
     if (client?.dialect === 'postgresql' && client.driverName === 'pg') {
         if (options?.dialect !== undefined) {
             throw new ConfigError('knexAdapter: "dialect" is for mysql2 (MySQL or MariaDB)');
@@ -118,16 +128,17 @@ function resolveDriver(knex, options) {
     }
 
     throw new ConfigError(
-        `knexAdapter: the client of knex must be "mysql2" or "pg", not ${JSON.stringify(client?.driverName ?? null)}`,
+        `knexAdapter: the client of knex must be "mysql2", "mariadb" or "pg", not ${JSON.stringify(client?.driverName ?? null)}`,
     );
 }
 
 /**
- * The adapter for knex (mysql2 or pg). `enqueue` then takes a knex instance (a transaction of its own) or a knex
- * transaction (the caller's: the job commits with it). After the commit of the outermost transaction, the processes
- * wake at once.
+ * The adapter for knex (mysql2, mariadb or pg). `enqueue` then takes a knex instance (a transaction of its own) or a
+ * knex transaction (the caller's: the job commits with it). After the commit of the outermost transaction, the
+ * processes wake at once.
  * @param {Knex} knex The queue's own knex: claims, leases, results. A small pool of its own is best.
- * @param {import('./dialect.js').MysqlFamilyOptions} [options] mysql2: `{ dialect: 'mariadb' }` on MariaDB.
+ * @param {import('./dialect.js').MysqlFamilyOptions} [options] mysql2: `{ dialect: 'mariadb' }` on MariaDB. The mariadb
+ *     client is MariaDB without it.
  * @returns {import('../types.js').Adapter<KnexConnection>}
  */
 export function knexAdapter(knex, options) {
