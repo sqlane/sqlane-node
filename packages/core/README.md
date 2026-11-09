@@ -18,8 +18,11 @@ Transactional SQL job queue for Node.js, backed by MySQL or PostgreSQL.
 
 ## Usage
 
+To see it run first: the [quickstart](https://github.com/sqlane/sqlane-node/tree/main/examples/quickstart) runs a job,
+rolls back an enqueue and serializes jobs by mutex key, on MySQL or PostgreSQL in Docker, in a minute.
+
 ```sh
-npm install @sqlane/core mysql2   # or pg
+npm install @sqlane/core mysql2   # or pg, postgres (postgres.js); or the adapter of your ORM, below
 ```
 
 ```js
@@ -34,20 +37,32 @@ export const buildReport = defineJob({
     backoff: { type: 'exponential', delay: '5s', maxDelay: '1h' },
 });
 
-const queuePool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 3 });
+const appPool = mysql.createPool({ uri: process.env.DATABASE_URL }); // your app's pool
+const queuePool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 3 }); // the queue's own
 const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool), jobs: [buildReport] });
 
 await sqlane.migrate(); // or getMigrations({ dialect: 'mysql' }) for your own migration tool
 
-// Producer: with the connection of your transaction
-await connection.beginTransaction();
-await connection.query('INSERT INTO reports (id) VALUES (?)', [reportId]);
-await sqlane.enqueue(connection, buildReport, { reportId }, { jobId: reportId });
-await connection.commit();
+// Producer: the report row and its job commit together, or neither does
+export async function orderReport(reportId) {
+    const connection = await appPool.getConnection();
 
-// Worker
+    try {
+        await connection.beginTransaction();
+        await connection.query('INSERT INTO reports (id) VALUES (?)', [reportId]);
+        await sqlane.enqueue(connection, buildReport, { reportId }, { jobId: reportId });
+        await connection.commit();
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+}
+
+// Worker: in the same process or another one
 sqlane.handle(buildReport, async ({ payload, signal }) => {
-    await build(payload.reportId, { signal });
+    await generateReport(payload.reportId, { signal }); // your code: stops when signal aborts
 }, { concurrency: 2, timeout: '5m' });
 await sqlane.start();
 

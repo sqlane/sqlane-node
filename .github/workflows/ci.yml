@@ -69,3 +69,37 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Unit and integration tests (MySQL and PostgreSQL in testcontainers)
         run: pnpm test
+
+  quickstart:
+    name: Quickstart
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash # -o pipefail: a failing demo fails the step, also through tee
+        working-directory: examples/quickstart
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          install_args: node pnpm
+      - name: Pack @sqlane/core, as npm would publish it
+        run: pnpm --dir ../.. --filter @sqlane/core pack --pack-destination "$RUNNER_TEMP"
+      - name: Start the databases
+        run: docker compose up --detach --wait
+      - name: Install the quickstart, then put the packed @sqlane/core in place of the published one
+        run: |
+          npm ci --no-audit --no-fund
+          rm -rf node_modules/@sqlane/core
+          mkdir node_modules/@sqlane/core
+          tar --extract --gzip --strip-components=1 --directory=node_modules/@sqlane/core \
+            --file="$(echo "$RUNNER_TEMP"/sqlane-core-*.tgz)"
+      - name: Run it on MySQL and PostgreSQL
+        run: |
+          for db in mysql postgres; do
+            node "$db.js" | tee "$RUNNER_TEMP/$db.txt"
+            grep --quiet --fixed-strings 'order 2: 0 rows in orders, 0 jobs' "$RUNNER_TEMP/$db.txt"
+            grep --quiet --fixed-strings 'order 1: at most 1 sync at a time; order 3 ran alongside: yes' "$RUNNER_TEMP/$db.txt"
+          done

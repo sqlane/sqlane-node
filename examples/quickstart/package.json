@@ -1,0 +1,15 @@
+{
+    "name": "sqlane-quickstart",
+    "private": true,
+    "description": "Run a job, roll back an enqueue, and serialize jobs by mutex key: MySQL or PostgreSQL",
+    "type": "module",
+    "scripts": {
+        "mysql": "node mysql.js",
+        "postgres": "node postgres.js"
+    },
+    "dependencies": {
+        "@sqlane/core": "^0.7.0",
+        "mysql2": "^3.24.6",
+        "pg": "^8.23.1"
+    }
+}
