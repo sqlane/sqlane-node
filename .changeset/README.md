@@ -9,6 +9,8 @@ The text of the changesets is the changelog and the GitHub release: write it for
 - For a breaking change: what breaks and how to migrate.
 - Until 1.0, a breaking change is a `minor` bump.
 
-Pull requests that do not change the package (tests, CI, docs) need no changeset.
+Pull requests that do not change what the package publishes need no changeset: tests, CI, docs, dev dependencies, the
+lockfile. CI checks it (`scripts/check_changeset.js`): `src/` without the tests, `README.md`, `LICENSE`, and
+`package.json` without `devDependencies`.
 
 See [the release process](../docs/releasing.md).

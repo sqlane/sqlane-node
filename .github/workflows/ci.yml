@@ -42,12 +42,12 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
-          install_args: node pnpm
-      - run: pnpm install --frozen-lockfile
+          install_args: node
+      # Not `changeset status`: an update of devDependencies (Renovate) changes package.json, but nothing published
       - name: A change of the published files has a changeset
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: pnpm changeset status --since="origin/$BASE_REF"
+        run: node scripts/check_changeset.js "origin/$BASE_REF"
 
   test:
     name: Tests (Node.js ${{ matrix.node }})
