@@ -33,25 +33,25 @@ jobs:
       # secrets, and no install scripts (allowBuilds of pnpm-workspace.yaml).
       - name: The newest ORMs and drivers
         run: >- # zizmor: ignore[adhoc-packages]
-          pnpm --filter @sqlane/core add --save-dev
+          pnpm add --save-dev
           'mysql2@^3' 'pg@^8' 'postgres@^4' 'postgres-3@npm:postgres@~3.4'
           'knex@^3' 'kysely@~0.29' 'kysely-0.28@npm:kysely@~0.28' 'kysely-postgres-js@^5'
           'drizzle-orm@~0.45' 'drizzle-orm-1@npm:drizzle-orm@rc'
           'prisma@^7' '@prisma/client@^7' '@prisma/adapter-pg@^7' '@prisma/adapter-mariadb@^7'
           'sequelize@^6' 'typeorm@^1' 'typeorm-0.3@npm:typeorm@~0.3'
           '@mikro-orm/core@^7' '@mikro-orm/mysql@^7' '@mikro-orm/postgresql@^7'
-      # MikroORM 6: a package of its own, as the drivers of MikroORM 7 pin @mikro-orm/core as a peer
+      # MikroORM 6: installed apart, as the drivers of MikroORM 7 pin @mikro-orm/core as a peer
       - name: The newest MikroORM 6
         run: >- # zizmor: ignore[adhoc-packages]
-          pnpm --filter @sqlane/test-mikro-orm-6 add
+          pnpm --dir test/mikro-orm-6 --ignore-workspace add
           '@mikro-orm/core@^6' '@mikro-orm/mysql@^6' '@mikro-orm/postgresql@^6'
       - name: Versions
         run: |
           {
             echo '### Versions'
             echo '```text'
-            pnpm --filter @sqlane/core list --depth 0
-            pnpm --filter @sqlane/test-mikro-orm-6 list --depth 0
+            pnpm list --depth 0
+            pnpm --dir test/mikro-orm-6 --ignore-workspace list --depth 0
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Unit and integration tests (MySQL and PostgreSQL in testcontainers)
