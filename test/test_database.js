@@ -22,7 +22,7 @@ import { inject } from 'vitest';
  * @typedef {object} DialectConnection
  * @property {Query} query
  * @property {(prefix: string) => Promise<string[]>} listTables The tables whose name starts with the prefix.
- * @property {(table: string) => Promise<void>} dropTable
+ * @property {(tables: string[]) => Promise<void>} dropTables In one statement.
  * @property {() => Promise<void>} end
  */
 
@@ -65,8 +65,8 @@ async function connectMysql(url) {
             SELECT table_name AS name FROM information_schema.tables
              WHERE table_schema = DATABASE() AND LEFT(table_name, CHAR_LENGTH(?)) = ?
         `, [prefix, prefix])).map(({ name }) => String(name)),
-        dropTable: async (table) => {
-            await query(`DROP TABLE IF EXISTS \`${table}\``);
+        dropTables: async (tables) => {
+            await query(`DROP TABLE IF EXISTS ${tables.map(table => `\`${table}\``).join(', ')}`);
         },
         end: () => connection.end(),
     };
@@ -92,8 +92,8 @@ async function connectPostgres(url) {
             SELECT table_name AS name FROM information_schema.tables
              WHERE table_schema = current_schema() AND starts_with(table_name, $1)
         `, [prefix])).map(({ name }) => String(name)),
-        dropTable: async (table) => {
-            await query(`DROP TABLE IF EXISTS "${table}" CASCADE`);
+        dropTables: async (tables) => {
+            await query(`DROP TABLE IF EXISTS ${tables.map(table => `"${table}"`).join(', ')} CASCADE`);
         },
         end: () => client.end(),
     };
@@ -108,7 +108,10 @@ async function dropTablesAndClose(connection, tablePrefix) {
     try {
         const tables = await connection.listTables(tablePrefix);
 
-        await Promise.all(tables.map(table => connection.dropTable(table)));
+        // One statement: a pg client runs one query at a time (pg 9 drops the queue of concurrent queries)
+        if (tables.length) {
+            await connection.dropTables(tables);
+        }
     } finally {
         await connection.end();
     }
