@@ -1,5 +1,23 @@
 # @sqlane/core
 
+## 2.0.0
+
+### Major Changes
+
+- [#80](https://github.com/sqlane/sqlane-node/pull/80) [`39e4011`](https://github.com/sqlane/sqlane-node/commit/39e4011fdd437343474b6044600ee4ce8d1c726c) - Remove all runtime npm dependencies by internalizing monotonic ULID generation and duration parsing.
+
+    Duration strings now require explicit lowercase short units in descending order (`w`, `d`, `h`, `m`, `s`, `ms`), each at most once. Spaces may separate components: `1h 1m 1s` and `1d1h1ms` are valid. Full names (`2 days`), reversed or repeated units (`1ms 1d`, `1s 2s`), inferred units, clock notation, signs, exponents and extraneous text are rejected. Replace full names with short units and reorder components before upgrading. Numeric safe integer milliseconds and fractional string quantities remain supported.
+
+    Generated job IDs and internal tokens retain the 26-character ULID format; no database migration is required.
+
+### Minor Changes
+
+- [#77](https://github.com/sqlane/sqlane-node/pull/77) [`0dab45a`](https://github.com/sqlane/sqlane-node/commit/0dab45ac362192d3715de81db11153805b1c4889) - Support MariaDB 10.11 and later. Over mysql2, tell the adapter: `mysql2Adapter(pool, { dialect: 'mariadb' })`, the same `dialect` option on the Knex, Drizzle and Sequelize adapters, `dialect: 'mariadb'` on the Kysely, Prisma and MikroORM adapters, and `type: 'mariadb'` in a TypeORM DataSource. The mariadb driver works too: the `mariadb` client of Knex, the `mariadb` dialect of Sequelize and `@mikro-orm/mariadb` (MikroORM 6 and 7). `getMigrations({ dialect: 'mariadb' })` gives its schema. MySQL is unchanged.
+
+### Patch Changes
+
+- [#79](https://github.com/sqlane/sqlane-node/pull/79) [`894fac9`](https://github.com/sqlane/sqlane-node/commit/894fac9a1c53dcea5774b51d350d66bf6755b96f) - README: the performance numbers of a new benchmark run, with MariaDB.
+
 ## 1.0.0
 
 ### Major Changes
