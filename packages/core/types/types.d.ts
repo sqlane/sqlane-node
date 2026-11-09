@@ -33,7 +33,7 @@ export type Retention = {
      */
     failed?: Duration;
 };
-export type JobOptions = {
+export type JobOptions<P = any> = {
     /**
      * Matches `^[a-z][a-z0-9_.-]{0,127}$`.
      */
@@ -55,13 +55,18 @@ export type JobOptions = {
     /**
      * Sync, from the payload only.
      */
-    mutexKeys?: (payload: any) => readonly string[];
+    mutexKeys?: (payload: P) => readonly string[];
     /**
      * Added when a job fails for good.
      */
     failureJob?: string | JobDefinition;
 };
-export type JobDefinition = Readonly<JobOptions>;
+export type JobDefinition<P = any> = Readonly<JobOptions<P>>;
+export type IsAny<T> = 0 extends (1 & T) ? true : false;
+export type DeclaredPayload<J> = J extends JobDefinition<infer P> ? (IsAny<P> extends true ? never : P) : never;
+export type EnqueuePayload<J, P> = [DeclaredPayload<J>] extends [never] ? P & NoInfer<Jsonable<P>> : NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>>;
+export type EnqueueManyItem<J, P> = [DeclaredPayload<J>] extends [never] ? EnqueueItem<P> & NoInfer<EnqueueItem<Jsonable<P>>> : EnqueueItem<NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>>>;
+export type HandlerPayload<J> = [DeclaredPayload<J>] extends [never] ? any : DeclaredPayload<J>;
 export type EnqueueBaseOptions = {
     /**
      * 1–120 printable ASCII characters. Dedupe: a job with this id is added once while its row
@@ -109,18 +114,18 @@ export type JobInfo = {
     enqueuedAt: Date;
     mutexKeys: readonly string[];
 };
-export type HandlerContext = {
+export type HandlerContext<P = any> = {
     /**
      * As JSON gives it back.
      */
-    payload: any;
+    payload: P;
     job: JobInfo;
     /**
      * Aborted with a `JobTimeoutError`, a `LeaseLostError` or a `ShutdownError`.
      */
     signal: AbortSignal;
 };
-export type Handler = (context: HandlerContext) => unknown;
+export type Handler<P = any> = (context: HandlerContext<P>) => unknown;
 export type HandleOptions<L extends string> = {
     timeout?: Duration;
 } & ({
@@ -368,12 +373,12 @@ export type Sqlane<C, L extends string> = {
      * Adds a job with the caller's connection: it must be in a transaction (or a
      * pool: then sqlane opens its own transaction).
      */
-    enqueue: <P>(connection: C, job: JobDefinition | string, payload: P & NoInfer<Jsonable<P>>, options?: EnqueueOptions) => Promise<EnqueueResult>;
+    enqueue: <J extends JobDefinition | string, P>(connection: C, job: J, payload: EnqueuePayload<J, P>, options?: EnqueueOptions) => Promise<EnqueueResult>;
     /**
      * The results are in the order of the items.
      */
-    enqueueMany: <P>(connection: C, job: JobDefinition | string, items: readonly (EnqueueItem<P> & NoInfer<EnqueueItem<Jsonable<P>>>)[]) => Promise<EnqueueResult[]>;
-    handle: (job: JobDefinition | string, handler: Handler, options?: HandleOptions<L>) => void;
+    enqueueMany: <J extends JobDefinition | string, P>(connection: C, job: J, items: readonly EnqueueManyItem<J, P>[]) => Promise<EnqueueResult[]>;
+    handle: <J extends JobDefinition | string>(job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions<L>) => void;
     start: () => Promise<void>;
     /**
      * For tests: runs the due jobs of the handled
@@ -434,6 +439,7 @@ export type Migration = {
  */
 /**
  * The options of a job name, shared by its producers and workers. A definition overrides the instance `defaults`.
+ * @template [P=any] The payload: `defineJob<{ reportId: string }>(…)` types `enqueue`, `handle` and `mutexKeys`.
  * @typedef {object} JobOptions
  * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
  * @property {number} [maxAttempts] Default: 3.
@@ -441,12 +447,41 @@ export type Migration = {
  * @property {Backoff} [backoff]
  * @property {Retention} [retention]
  * @property {Duration} [timeout] No default. A job with mutex keys needs one.
- * @property {(payload: any) => readonly string[]} [mutexKeys] Sync, from the payload only.
+ * @property {(payload: P) => readonly string[]} [mutexKeys] Sync, from the payload only.
  * @property {string | JobDefinition} [failureJob] Added when a job fails for good.
  */
 /**
  * The result of `defineJob()`. Frozen.
- * @typedef {Readonly<JobOptions>} JobDefinition
+ * @template [P=any] The payload. `any`: not declared; `enqueue` then checks only that the payload is JSON.
+ * @typedef {Readonly<JobOptions<P>>} JobDefinition
+ */
+/**
+ * @template T
+ * @typedef {0 extends (1 & T) ? true : false} IsAny
+ */
+/**
+ * The payload that a job definition declares; `never` for a name or a definition without one.
+ * @template J
+ * @typedef {J extends JobDefinition<infer P> ? (IsAny<P> extends true ? never : P) : never} DeclaredPayload
+ */
+/**
+ * The payload of an enqueue: the declared one (JSON), else any JSON (inferred as P).
+ * @template J
+ * @template P
+ * @typedef {[DeclaredPayload<J>] extends [never] ? P & NoInfer<Jsonable<P>>
+ *     : NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>>} EnqueuePayload
+ */
+/**
+ * An item of `enqueueMany`: its payload as in `enqueue`.
+ * @template J
+ * @template P
+ * @typedef {[DeclaredPayload<J>] extends [never] ? EnqueueItem<P> & NoInfer<EnqueueItem<Jsonable<P>>>
+ *     : EnqueueItem<NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>>>} EnqueueManyItem
+ */
+/**
+ * The payload that a handler gets: the declared one, else `any`.
+ * @template J
+ * @typedef {[DeclaredPayload<J>] extends [never] ? any : DeclaredPayload<J>} HandlerPayload
  */
 /**
  * @typedef {object} EnqueueBaseOptions
@@ -484,14 +519,16 @@ export type Migration = {
  * @property {readonly string[]} mutexKeys
  */
 /**
+ * @template [P=any]
  * @typedef {object} HandlerContext
- * @property {any} payload As JSON gives it back.
+ * @property {P} payload As JSON gives it back.
  * @property {JobInfo} job
  * @property {AbortSignal} signal Aborted with a `JobTimeoutError`, a `LeaseLostError` or a `ShutdownError`.
  */
 /**
  * Runs a job. Its return value is ignored.
- * @typedef {(context: HandlerContext) => unknown} Handler
+ * @template [P=any]
+ * @typedef {(context: HandlerContext<P>) => unknown} Handler
  */
 /**
  * A private lane (`concurrency`) or a shared lane of `lanes` (`lane`), not both.
@@ -642,16 +679,16 @@ export type Migration = {
  * @template C The connections that `enqueue` accepts.
  * @template {string} L The lane names.
  * @typedef {object} Sqlane
- * @property {<P>(
- *     connection: C, job: JobDefinition | string, payload: P & NoInfer<Jsonable<P>>, options?: EnqueueOptions,
+ * @property {<J extends JobDefinition | string, P>(
+ *     connection: C, job: J, payload: EnqueuePayload<J, P>, options?: EnqueueOptions,
  * ) => Promise<EnqueueResult>} enqueue Adds a job with the caller's connection: it must be in a transaction (or a
  *     pool: then sqlane opens its own transaction).
- * @property {<P>(
- *     connection: C,
- *     job: JobDefinition | string,
- *     items: readonly (EnqueueItem<P> & NoInfer<EnqueueItem<Jsonable<P>>>)[],
+ * @property {<J extends JobDefinition | string, P>(
+ *     connection: C, job: J, items: readonly EnqueueManyItem<J, P>[],
  * ) => Promise<EnqueueResult[]>} enqueueMany The results are in the order of the items.
- * @property {(job: JobDefinition | string, handler: Handler, options?: HandleOptions<L>) => void} handle
+ * @property {<J extends JobDefinition | string>(
+ *     job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions<L>,
+ * ) => void} handle
  * @property {() => Promise<void>} start
  * @property {(options?: DrainOptions) => Promise<DrainResult>} drain For tests: runs the due jobs of the handled
  *     names until none is left, without `start()`.

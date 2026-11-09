@@ -6,9 +6,11 @@ const JOB_OPTION_NAMES = [
 ];
 
 /**
- * Defines a job name and its options. Producers and workers import the definition.
- * @param {import('./types.js').JobOptions} options
- * @returns {import('./types.js').JobDefinition} Frozen.
+ * Defines a job name and its options. Producers and workers import the definition. `defineJob<{ reportId: string }>(…)`
+ * declares the payload: `enqueue`, `handle` and `mutexKeys` then check it.
+ * @template [P=any]
+ * @param {import('./types.js').JobOptions<P>} options
+ * @returns {import('./types.js').JobDefinition<P>} Frozen.
  */
 export function defineJob(options) {
     const name = typeof options?.name === 'string' ? options.name : '';

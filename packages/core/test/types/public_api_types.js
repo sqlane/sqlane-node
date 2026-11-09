@@ -82,6 +82,53 @@ export async function publicApiTypes() {
         expectTypeOf(signal).toEqualTypeOf(new AbortController().signal);
     });
 
+    // A declared payload: defineJob<P>(…) in TypeScript; in JSDoc, the type of the definition
+    /** @type {import('@sqlane/core').JobDefinition<{ orderId: number, note?: string }>} */
+    const syncOrder = defineJob({
+        name: 'sync_order',
+        mutexKeys: (order) => {
+            expectTypeOf(order).toEqualTypeOf(/** @type {{ orderId: number, note?: string }} */ ({ orderId: 1 }));
+
+            return [`order:${order.orderId}`];
+        },
+        timeout: '1m',
+    });
+
+    await sqlane.enqueue(connection, syncOrder, { orderId: 1 });
+    await sqlane.enqueue(connection, syncOrder, { orderId: 1, note: 'n' }, { jobId: 'o1' });
+    // @ts-expect-error orderId is a number
+    await sqlane.enqueue(connection, syncOrder, { orderId: '1' });
+    // @ts-expect-error orderId is required
+    await sqlane.enqueue(connection, syncOrder, {});
+    // @ts-expect-error not a field of the payload
+    await sqlane.enqueue(connection, syncOrder, { orderId: 1, other: 1 });
+    await sqlane.enqueueMany(connection, syncOrder, [{ payload: { orderId: 1 } }, { payload: { orderId: 2 } }]);
+    // @ts-expect-error orderId is a number, in enqueueMany too
+    await sqlane.enqueueMany(connection, syncOrder, [{ payload: { orderId: '1' } }]);
+    sqlane.handle(syncOrder, ({ payload: order }) => {
+        expectTypeOf(order.orderId).toBeNumber();
+        expectTypeOf(order.note).toEqualTypeOf(/** @type {string | undefined} */ (undefined));
+    });
+    // By name: the payload is not known
+    await sqlane.enqueue(connection, 'sync_order', { anything: true });
+    sqlane.handle('sync_order', ({ payload: anything }) => {
+        expectTypeOf(anything).toBeAny();
+    });
+
+    // A declared payload must be JSON
+    /** @type {import('@sqlane/core').JobDefinition<{ at: Date }>} */
+    const dated = defineJob({ name: 'dated' });
+
+    // @ts-expect-error a Date is not JSON: the handler would get a string
+    await sqlane.enqueue(connection, dated, { at: new Date() });
+
+    // A declared payload with defineJob<P>: a type argument, also in JSDoc
+    const typed = defineJob(/** @type {import('@sqlane/core').JobOptions<{ id: string }>} */ ({ name: 'typed' }));
+
+    await sqlane.enqueue(connection, typed, { id: 'a' });
+    // @ts-expect-error id is a string
+    await sqlane.enqueue(connection, typed, { id: 1 });
+
     // defineJob
     // @ts-expect-error the name is required
     defineJob({ maxAttempts: 3 });

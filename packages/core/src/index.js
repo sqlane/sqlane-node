@@ -48,13 +48,25 @@ export { getMigrations } from './migrations.js';
 /** @typedef {import('./types.js').EnqueueResult} EnqueueResult */
 /** @typedef {import('./types.js').Executor} Executor */
 /** @typedef {import('./types.js').FailedJobPayload} FailedJobPayload */
-/** @typedef {import('./types.js').Handler} Handler */
-/** @typedef {import('./types.js').HandlerContext} HandlerContext */
+/**
+ * @typedef {import('./types.js').Handler<P>} Handler
+ * @template [P=any]
+ */
+/**
+ * @typedef {import('./types.js').HandlerContext<P>} HandlerContext
+ * @template [P=any]
+ */
 /** @typedef {import('./types.js').Hint} Hint */
 /** @typedef {import('./types.js').JobDefaults} JobDefaults */
-/** @typedef {import('./types.js').JobDefinition} JobDefinition */
+/**
+ * @typedef {import('./types.js').JobDefinition<P>} JobDefinition
+ * @template [P=any]
+ */
 /** @typedef {import('./types.js').JobInfo} JobInfo */
-/** @typedef {import('./types.js').JobOptions} JobOptions */
+/**
+ * @typedef {import('./types.js').JobOptions<P>} JobOptions
+ * @template [P=any]
+ */
 /** @typedef {import('./types.js').JobStats} JobStats */
 /** @typedef {import('./types.js').LaneOptions} LaneOptions */
 /** @typedef {import('./types.js').Logger} Logger */

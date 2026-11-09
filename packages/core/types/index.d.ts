@@ -15,13 +15,13 @@ export type EnqueueOptions = import('./types.js').EnqueueOptions;
 export type EnqueueResult = import('./types.js').EnqueueResult;
 export type Executor = import('./types.js').Executor;
 export type FailedJobPayload = import('./types.js').FailedJobPayload;
-export type Handler = import('./types.js').Handler;
-export type HandlerContext = import('./types.js').HandlerContext;
+export type Handler<P = any> = import('./types.js').Handler<P>;
+export type HandlerContext<P = any> = import('./types.js').HandlerContext<P>;
 export type Hint = import('./types.js').Hint;
 export type JobDefaults = import('./types.js').JobDefaults;
-export type JobDefinition = import('./types.js').JobDefinition;
+export type JobDefinition<P = any> = import('./types.js').JobDefinition<P>;
 export type JobInfo = import('./types.js').JobInfo;
-export type JobOptions = import('./types.js').JobOptions;
+export type JobOptions<P = any> = import('./types.js').JobOptions<P>;
 export type JobStats = import('./types.js').JobStats;
 export type LaneOptions = import('./types.js').LaneOptions;
 export type Logger = import('./types.js').Logger;
@@ -56,13 +56,25 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /** @typedef {import('./types.js').EnqueueResult} EnqueueResult */
 /** @typedef {import('./types.js').Executor} Executor */
 /** @typedef {import('./types.js').FailedJobPayload} FailedJobPayload */
-/** @typedef {import('./types.js').Handler} Handler */
-/** @typedef {import('./types.js').HandlerContext} HandlerContext */
+/**
+ * @typedef {import('./types.js').Handler<P>} Handler
+ * @template [P=any]
+ */
+/**
+ * @typedef {import('./types.js').HandlerContext<P>} HandlerContext
+ * @template [P=any]
+ */
 /** @typedef {import('./types.js').Hint} Hint */
 /** @typedef {import('./types.js').JobDefaults} JobDefaults */
-/** @typedef {import('./types.js').JobDefinition} JobDefinition */
+/**
+ * @typedef {import('./types.js').JobDefinition<P>} JobDefinition
+ * @template [P=any]
+ */
 /** @typedef {import('./types.js').JobInfo} JobInfo */
-/** @typedef {import('./types.js').JobOptions} JobOptions */
+/**
+ * @typedef {import('./types.js').JobOptions<P>} JobOptions
+ * @template [P=any]
+ */
 /** @typedef {import('./types.js').JobStats} JobStats */
 /** @typedef {import('./types.js').LaneOptions} LaneOptions */
 /** @typedef {import('./types.js').Logger} Logger */
