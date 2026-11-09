@@ -17,13 +17,68 @@ Transactional SQL job queue for Node.js, backed by MySQL or PostgreSQL.
 - MySQL 8.4+ and PostgreSQL 15+, with mysql2, pg, postgres.js, Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM or
   MikroORM. Node.js 22+. MIT license.
 
-## Packages
+## Quickstart
 
-| Package                         | Contains                                                                                                                                                  |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`@sqlane/core`](packages/core) | The queue, the SQL of both dialects, migrations; adapters for `mysql2`, `pg`, postgres.js, knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM and MikroORM |
+Needs Docker and Node.js 22+. On MySQL:
 
-Docs: [design](docs/design.md), [benchmarks](docs/benchmarks.md), [releasing](docs/releasing.md).
+```sh
+git clone https://github.com/sqlane/sqlane-node.git
+cd sqlane-node/examples/quickstart
+npm install
+docker compose up --detach --wait mysql
+npm run mysql
+```
+
+On PostgreSQL: `docker compose up --detach --wait postgres`, then `npm run postgres`. The output (MySQL):
+
+```text
+1. Commit: order 1 and its job
+   send_receipt of order 1 ran 26 ms after the commit
+2. Rollback: order 2 and its job
+   rolled back: payment declined
+   order 2: 0 rows in orders, 0 jobs
+3. Mutex keys: 3 syncs of order 1, 1 sync of order 3
+     0 ms  sync of order 1 starts
+     0 ms  sync of order 3 starts
+   201 ms  sync of order 1 ends
+   201 ms  sync of order 3 ends
+   227 ms  sync of order 1 starts
+   427 ms  sync of order 1 ends
+   451 ms  sync of order 1 starts
+   653 ms  sync of order 1 ends
+   order 1: at most 1 sync at a time; order 3 ran alongside: yes
+```
+
+What happened, in [`mysql.js`](examples/quickstart/mysql.js):
+
+1. The order and its `send_receipt` job were inserted in one transaction. The worker, in the same process here, ran
+   the job right after the commit.
+2. The second transaction threw after its enqueue: the rollback removed the order and the job. No job runs for data
+   that does not exist.
+3. `sync_order` has the mutex key `order:<id>`: the three syncs of order 1 ran one after another, the sync of order 3
+   alongside the first.
+
+Down: `docker compose down --volumes`.
+
+## Install
+
+```sh
+npm install @sqlane/core mysql2   # or pg, postgres (postgres.js); or the adapter of your ORM
+```
+
+The [package README](packages/core/README.md) has the usage in an app, the adapters (mysql2, pg, postgres.js, Knex,
+Kysely, Drizzle, Prisma, Sequelize, TypeORM, MikroORM) and the performance.
+
+## Guarantees and limits
+
+- **At least once.** A committed job runs at least once, also after a crash; it can run twice. Handlers must be
+  idempotent.
+- **Mutex keys** hold while handlers stop on their `signal` (timeout, lease lost, shutdown).
+- **Not included:** cron, priorities, a dashboard, workflows, a cluster-wide concurrency limit per job name. MariaDB
+  and SQLite.
+- **Supported:** Node.js 22.12+, MySQL 8.4+, PostgreSQL 15+.
+
+The details: [design](docs/design.md) (guarantees, leases, wake-up, schema), [benchmarks](docs/benchmarks.md).
 
 ## Development
 
@@ -32,6 +87,7 @@ packages/   the published packages (pnpm workspace)
 test/       the test databases of all packages: Docker containers (testcontainers), connections
 bench/      the benchmarks
 docs/       design, benchmarks, releasing
+examples/   the quickstart: runs with the published package (CI: with the packed one)
 ```
 
 Requires [mise](https://mise.jdx.dev). It installs Node.js, pnpm, hk, betterleaks and typos (`mise.toml`).

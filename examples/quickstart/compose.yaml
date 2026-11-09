@@ -1,0 +1,24 @@
+# The databases of the quickstart: `docker compose up -d --wait mysql` (or `postgres`). Without passwords: reachable
+# from this machine only. Ports 13306 and 15432, not to clash with a local MySQL or PostgreSQL.
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+      MYSQL_DATABASE: app
+    ports: ['127.0.0.1:13306:3306']
+    healthcheck:
+      # Over TCP: the server of the init step has no network
+      test: ['CMD', 'mysqladmin', 'ping', '--host=127.0.0.1']
+      interval: 2s
+      retries: 60
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: app
+    ports: ['127.0.0.1:15432:5432']
+    healthcheck:
+      test: ['CMD', 'pg_isready', '--host=127.0.0.1', '--username=postgres']
+      interval: 2s
+      retries: 60

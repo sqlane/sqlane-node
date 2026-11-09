@@ -240,6 +240,11 @@ export default defineConfig({
             files: ['bench/**'],
             rules: { 'no-console': 'off', 'node/no-top-level-await': 'off' },
         },
+        {
+            // An app: it prints, reads its env and awaits at the top level
+            files: ['examples/**'],
+            rules: { 'no-console': 'off', 'node/no-top-level-await': 'off', 'node/no-process-env': 'off' },
+        },
     ],
     ignorePatterns: ['coverage/**', 'packages/*/types/**'],
 });
