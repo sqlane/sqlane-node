@@ -1,8 +1,8 @@
 # Releasing
 
-1. Each pull request that changes a package (its `src/`, `package.json`, `README.md`, `LICENSE`) adds a changeset:
-   `pnpm changeset`. Its text is the release note. The packages are in one fixed group: they release together, with
-   one version.
+1. Each pull request that changes what a package publishes (its `src/` without the tests, `package.json` without
+   `devDependencies`, `README.md`, `LICENSE`) adds a changeset: `pnpm changeset`. Its text is the release note. The
+   packages are in one fixed group: they release together, with one version.
 2. A merge to `main` creates or updates the pull request `chore(release): version packages`.
 3. To release: review and merge that pull request.
 4. Run the `Release` workflow: `gh workflow run release.yml --ref main` (or Actions → Release → Run workflow).

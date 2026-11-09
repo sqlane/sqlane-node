@@ -1,0 +1,37 @@
+// Renovate (the GitHub App): updates of npm packages, GitHub Actions (pinned to SHAs) and the tools of mise.toml.
+// The weekly "ORM latest" workflow tests the newest ORMs without the lockfile; Renovate moves the lockfile.
+{
+    $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+    extends: [
+        'config:recommended',
+        ':semanticCommits', // PR titles of Conventional Commits: a squash merge uses them
+        'helpers:pinGitHubActionDigestsToSemver', // `uses: …@<sha> # vX.Y.Z`
+        'group:allNonMajor', // one pull request for the minor and patch updates
+        ':maintainLockFilesWeekly',
+    ],
+    timezone: 'UTC',
+    schedule: ['* 0-5 * * 1'], // Mondays, before the weekly ORM run
+    // A release of a package can be compromised and pulled within days: wait before proposing it
+    minimumReleaseAge: '3 days',
+    internalChecksFilter: 'strict',
+    labels: ['dependencies'],
+    packageRules: [
+        {
+            // Runtime dependencies of the published packages: the app chooses within the range; only the lockfile
+            // moves (no changeset). A new major changes the range: a pull request of its own, with a changeset.
+            matchFileNames: ['packages/*/package.json'],
+            matchDepTypes: ['dependencies'],
+            rangeStrategy: 'update-lockfile',
+        },
+        {
+            // The supported ranges of the drivers: changed by hand, with the README
+            matchDepTypes: ['peerDependencies'],
+            enabled: false,
+        },
+        // The older supported lines of the ORMs, under npm aliases: they stay on their line
+        { matchDepNames: ['kysely-0.28'], allowedVersions: '<0.29' },
+        { matchDepNames: ['typeorm-0.3'], allowedVersions: '<0.4' },
+        { matchDepNames: ['drizzle-orm-1'], allowedVersions: '<2' },
+        { matchFileNames: ['test/mikro-orm-6/package.json'], allowedVersions: '<7' },
+    ],
+}

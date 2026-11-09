@@ -1,0 +1,36 @@
+# A preview of the packages on pkg.pr.new (the GitHub App), for each pull request and each commit of main: the comment
+# in the pull request has the install command, e.g. `npm i https://pkg.pr.new/@sqlane/core@<pr>`. Not on npm.
+name: Preview
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Preview on pkg.pr.new
+    # Branches of this repository only: no package of the code of a fork under the name of the project
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          install_args: node pnpm
+      - run: pnpm install --frozen-lockfile
+      # The version becomes 0.0.0-preview-<sha>: never mistaken for a release. pkg.pr.new, not npm: it checks the run
+      # through its GitHub App, no token.
+      - name: Publish the previews
+        run: >- # zizmor: ignore[use-trusted-publishing]
+          pnpm exec pkg-pr-new publish --pnpm --compact --previewVersion './packages/*'
