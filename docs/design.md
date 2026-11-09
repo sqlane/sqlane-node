@@ -328,7 +328,8 @@ After that it fails for good with a `MissingPayloadError`, without retries; its 
 
 A lease is the time for which a process owns a running job. A lease lasts 4 minutes, and you cannot configure it.
 
-- The process renews the leases of its running jobs about every 30 s, in one statement.
+- The process renews the leases of its running jobs about every 30 s, in one statement. It also renews them while
+  `close()` waits for the handlers and during `drain()`.
 - Every final write (complete, retry, fail or release) has the condition `WHERE lock_token = :own`. So a process that
   lost its lease changes nothing.
 - Completions go in batches. A process runs one write at a time, and the jobs that finish during a write go together
