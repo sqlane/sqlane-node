@@ -11,7 +11,6 @@ wake up after a commit, and the details of each library.
 - Drivers: [mysql2](#mysql2), [pg](#pg), [postgres.js](#postgresjs)
 - Query builders and ORMs: [Knex](#knex), [Kysely](#kysely), [Drizzle](#drizzle), [Prisma](#prisma),
   [Sequelize](#sequelize), [TypeORM](#typeorm), [MikroORM](#mikroorm)
-- [Old import paths](#old-import-paths)
 
 ## Two pools
 
@@ -524,9 +523,3 @@ nested transaction (a savepoint) cannot see the outer commit, so the workers che
 **Caveats.** Inside `em.transactional()`, the global `EntityManager` refers to the current transaction, as it does
 for MikroORM's own queries. So `sqlane.enqueue(orm.em, …)` there commits or rolls back with that transaction. `em.begin()` and
 `em.commit()` on a fork work too. The `dialect` option is required and must match the driver of MikroORM.
-
-## Old import paths
-
-Before version 0.4, the mysql2, pg and Knex adapters had the shorter import paths `@sqlane/core/mysql2`,
-`@sqlane/core/pg` and `@sqlane/core/knex`. These paths will keep working until version 1.0. New code should use the `adapter-` paths, such as
-`@sqlane/core/adapter-mysql2`.
