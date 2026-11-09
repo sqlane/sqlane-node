@@ -8,6 +8,7 @@
         "job",
         "knex",
         "kysely",
+        "mikro-orm",
         "mysql",
         "outbox",
         "postgres",
@@ -70,6 +71,10 @@
             "types": "./types/adapters/typeorm.d.ts",
             "default": "./src/adapters/typeorm.js"
         },
+        "./adapter-mikro-orm": {
+            "types": "./types/adapters/mikro_orm.d.ts",
+            "default": "./src/adapters/mikro_orm.js"
+        },
         "./mysql2": {
             "types": "./types/adapters/mysql2.d.ts",
             "default": "./src/adapters/mysql2.js"
@@ -99,9 +104,13 @@
         "ulid": "^3.0.2"
     },
     "devDependencies": {
+        "@mikro-orm/core": "7.2.8",
+        "@mikro-orm/mysql": "7.2.8",
+        "@mikro-orm/postgresql": "7.2.8",
         "@prisma/adapter-mariadb": "7.10.1",
         "@prisma/adapter-pg": "7.10.1",
         "@prisma/client": "7.10.1",
+        "@sqlane/test-mikro-orm-6": "workspace:*",
         "@sqlane/testing": "workspace:*",
         "@types/cls-hooked": "4.3.9",
         "@types/pg": "8.23.1",

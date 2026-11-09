@@ -1,0 +1,15 @@
+{
+    "name": "@sqlane/test-mikro-orm-6",
+    "version": "0.0.0",
+    "private": true,
+    "description": "MikroORM 6 for the tests of @sqlane/core: a package of its own, as the drivers of MikroORM 7 pin @mikro-orm/core as a peer",
+    "type": "module",
+    "exports": {
+        ".": "./index.js"
+    },
+    "dependencies": {
+        "@mikro-orm/core": "6.6.17",
+        "@mikro-orm/mysql": "6.6.17",
+        "@mikro-orm/postgresql": "6.6.17"
+    }
+}
