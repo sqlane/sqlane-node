@@ -6,6 +6,7 @@ import * as mysql2 from '@sqlane/core/adapter-mysql2';
 import * as pg from '@sqlane/core/adapter-pg';
 import * as prisma from '@sqlane/core/adapter-prisma';
 import * as sequelize from '@sqlane/core/adapter-sequelize';
+import * as typeorm from '@sqlane/core/adapter-typeorm';
 import * as legacyKnex from '@sqlane/core/knex';
 import * as legacyMysql2 from '@sqlane/core/mysql2';
 import * as legacyPg from '@sqlane/core/pg';
@@ -19,6 +20,7 @@ test('each adapter has its subpath', () => {
         drizzle.drizzleAdapter,
         prisma.prismaAdapter,
         sequelize.sequelizeAdapter,
+        typeorm.typeOrmAdapter,
     ];
 
     expect(adapters).toStrictEqual(adapters.map(() => expect.any(Function)));

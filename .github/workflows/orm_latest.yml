@@ -37,7 +37,7 @@ jobs:
           'mysql2@^3' 'pg@^8' 'knex@^3' 'kysely@~0.29' 'kysely-0.28@npm:kysely@~0.28'
           'drizzle-orm@~0.45' 'drizzle-orm-1@npm:drizzle-orm@rc'
           'prisma@^7' '@prisma/client@^7' '@prisma/adapter-pg@^7' '@prisma/adapter-mariadb@^7'
-          'sequelize@^6'
+          'sequelize@^6' 'typeorm@^1' 'typeorm-0.3@npm:typeorm@~0.3'
       - name: Versions
         run: |
           {

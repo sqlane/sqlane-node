@@ -15,7 +15,8 @@
         "prisma",
         "queue",
         "sequelize",
-        "transactional"
+        "transactional",
+        "typeorm"
     ],
     "homepage": "https://github.com/sqlane/sqlane-node/tree/main/packages/core#readme",
     "bugs": "https://github.com/sqlane/sqlane-node/issues",
@@ -65,6 +66,10 @@
             "types": "./types/adapters/sequelize.d.ts",
             "default": "./src/adapters/sequelize.js"
         },
+        "./adapter-typeorm": {
+            "types": "./types/adapters/typeorm.d.ts",
+            "default": "./src/adapters/typeorm.js"
+        },
         "./mysql2": {
             "types": "./types/adapters/mysql2.d.ts",
             "default": "./src/adapters/mysql2.js"
@@ -110,7 +115,9 @@
         "mysql2": "3.24.6",
         "pg": "8.23.1",
         "prisma": "7.10.1",
-        "sequelize": "6.37.8"
+        "sequelize": "6.37.8",
+        "typeorm": "1.1.2",
+        "typeorm-0.3": "npm:typeorm@0.3.31"
     },
     "peerDependencies": {
         "mysql2": "^3.11.0",

@@ -61,11 +61,13 @@ In tests, run the due jobs without `start()`: `await sqlane.drain()`. More in [`
 | `@sqlane/core/adapter-drizzle`   | a Drizzle transaction (also nested), a Drizzle database                | drizzle-orm 0.45, 1.0 (rc): mysql2 or node-postgres |
 | `@sqlane/core/adapter-prisma`    | the client of an interactive transaction, a Prisma client              | Prisma 7: MySQL or PostgreSQL                       |
 | `@sqlane/core/adapter-sequelize` | a Sequelize transaction (also nested), a Sequelize instance            | Sequelize 6: MySQL or PostgreSQL                    |
+| `@sqlane/core/adapter-typeorm`   | the EntityManager or QueryRunner of a transaction, a DataSource        | TypeORM 0.3, 1.x: MySQL (mysql2) or PostgreSQL      |
 
 The paths before 0.4 (`@sqlane/core/mysql2`, `/pg`, `/knex`) still work, until 1.0.
 
-With a pool, or a knex, Kysely, Drizzle, Prisma or Sequelize instance, the enqueue runs in a transaction of its own and
-the workers wake at once. With a knex or Sequelize transaction, they wake at once after the commit of the outermost one. With a connection of a
+With a pool, or a knex, Kysely, Drizzle, Prisma, Sequelize or TypeORM instance, the enqueue runs in a transaction of its
+own and the workers wake at once. With a knex, Sequelize or TypeORM transaction, they wake at once after the commit of
+the outermost one. With a connection of a
 driver, or a Kysely, Drizzle or Prisma transaction, sqlane cannot see the commit: the workers re-probe after the enqueue
 (about 20 ms).
 
@@ -157,8 +159,21 @@ await sqlane.enqueue(sequelize, buildReport, { reportId }); // no CLS transactio
 The CLS transaction of another Sequelize instance does not count: with a queue instance of its own, enqueue with the
 app's instance (or its transaction).
 
+```js
+import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm';
+
+const sqlane = createSqlane({ adapter: typeOrmAdapter(queueDataSource), jobs: [buildReport] }); // initialized
+
+await dataSource.transaction(async (manager) => {
+    await manager.save(Report, { id: reportId });
+    await sqlane.enqueue(manager, buildReport, { reportId }, { jobId: reportId });
+});
+```
+
+The adapter adds a subscriber to the DataSource of a transaction, for its `afterTransactionCommit`.
+
 The SQL of sqlane runs on the driver connection under knex, Drizzle and Sequelize, through Kysely without its plugins,
-and through the raw queries of Prisma: they do not log it or transform it. TypeORM and MikroORM: later.
+and through the raw queries of Prisma and TypeORM: they do not log it or transform it. MikroORM: later.
 
 ## Performance
 
