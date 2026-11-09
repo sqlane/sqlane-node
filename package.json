@@ -33,18 +33,18 @@
         "@stylistic/eslint-plugin": "5.10.0",
         "@types/node": "22.20.5",
         "@types/pg": "8.23.1",
-        "@vitest/coverage-v8": "5.0.5",
+        "@vitest/coverage-v8": "5.1.0",
         "mysql2": "3.24.6",
-        "oxfmt": "0.75.0",
-        "oxlint": "1.90.0",
+        "oxfmt": "0.77.0",
+        "oxlint": "1.92.0",
         "pg": "8.23.1",
         "pkg-pr-new": "0.0.93",
         "publint": "0.3.25",
         "typescript": "7.0.2",
-        "vitest": "5.0.5"
+        "vitest": "5.1.0"
     },
     "engines": {
         "node": ">=22.12.0"
     },
-    "packageManager": "pnpm@12.16.1"
+    "packageManager": "pnpm@12.18.0"
 }
