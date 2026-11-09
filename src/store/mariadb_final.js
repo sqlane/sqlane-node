@@ -2,7 +2,7 @@
 // job checks its lock token: a process that lost the lease changes nothing. Each runs in a queue transaction. A copy of
 // the MySQL version, changed where MariaDB differs: keep the two in step.
 import { isTransientDbError } from '../transient_error.js';
-import { monotonicFactory } from 'ulid';
+import { createMonotonicUlid } from '../ulid.js';
 import { insertJobsMariadb } from './mariadb_enqueue.js';
 
 /** @typedef {import('../types.js').Executor} Executor */
@@ -14,7 +14,7 @@ const NOW = 'UTC_TIMESTAMP(3)';
 // The writes by a list of keys force the index: on a small table, MariaDB scans the whole table instead, and waits for
 // the rows that other processes hold. The DELETE of several rows uses the multi-table form, which takes hints.
 const CLEAR_LOCK = 'lock_token = NULL, locked_by = NULL, locked_until = NULL, timed_out_at = NULL';
-const enqueueToken = monotonicFactory();
+const enqueueToken = createMonotonicUlid();
 
 /**
  * @param {number} count

@@ -456,6 +456,7 @@ function ignore() {}
 
 test.each([
     { label: 'a deadline that is not a duration', options: { deadline: 'soon' } },
+    { label: 'unordered deadline units', options: { deadline: '1ms 1s' } },
     { label: 'an unknown mode', options: { mode: 'kill' } },
     { label: 'an exitsBy before the deadline', options: { deadline: 0, exitsBy: -1 } },
     { label: 'an exitsBy that is not a duration', options: { exitsBy: 'later' } },

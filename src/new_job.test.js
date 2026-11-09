@@ -106,6 +106,8 @@ test.each([
     ['an invalid runAt', { options: { runAt: new Date('nope') } }, InvalidOptionsError],
     ['a runAt that is not a Date', { options: { runAt: '2030-01-01' } }, InvalidOptionsError],
     ['a bad delay', { options: { delay: -1 } }, InvalidOptionsError],
+    ['unordered delay units', { options: { delay: '1ms 1d' } }, InvalidOptionsError],
+    ['full retention units', { options: { retention: { completed: '1 days' } } }, InvalidOptionsError],
     ['a numeric jobId', { options: { jobId: 42 } }, InvalidOptionsError],
     ['an empty jobId', { options: { jobId: '' } }, InvalidOptionsError],
     ['a jobId with a space at the end', { options: { jobId: 'r1 ' } }, InvalidOptionsError],

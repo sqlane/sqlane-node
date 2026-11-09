@@ -411,7 +411,9 @@ export type Migration = {
     statements: readonly string[];
 };
 /**
- * A duration: milliseconds, or a string of parse-duration (`'500ms'`, `'5s'`, `'4m30s'`, `'1h'`, `'2 days'`).
+ * A duration: non-negative safe integer milliseconds, or decimal quantities with lowercase units in descending
+ * order (`w`, `d`, `h`, `m`, `s`, `ms`), each at most once: `'500ms'`, `'4m30s'`, `'1d 1h 1ms'`.
+ * Spaces may separate components; quantity and unit must be adjacent. Strings are rounded to milliseconds.
  * @typedef {string | number} Duration
  */
 /**

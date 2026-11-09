@@ -1,6 +1,6 @@
 // The final writes on PostgreSQL: lease renewal, complete, retry, fail, release, stall recovery, sweeps. Each write of
 // a job checks its lock token: a process that lost the lease changes nothing. Each runs in a queue transaction.
-import { monotonicFactory } from 'ulid';
+import { createMonotonicUlid } from '../ulid.js';
 import { insertJobsPostgres } from './postgres_enqueue.js';
 
 /** @typedef {import('../types.js').Executor} Executor */
@@ -17,7 +17,7 @@ const NOW = 'clock_timestamp()';
 const runAt = offset => `date_trunc('milliseconds', ${NOW} + ${offset})`;
 const MS = 'interval \'1 millisecond\'';
 const CLEAR_LOCK = 'lock_token = NULL, locked_by = NULL, locked_until = NULL, timed_out_at = NULL';
-const enqueueToken = monotonicFactory();
+const enqueueToken = createMonotonicUlid();
 
 /**
  * Renews the leases of the jobs that the process runs. A row locked by another transaction is skipped: it does not
