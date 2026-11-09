@@ -1,12 +1,12 @@
 [tools]
 # Node.js for development; CI covers 22, 24 and 26
 node = "24"
-pnpm = "12.16.1"
-hk = "2.10.0"
-betterleaks = "1.9"
-typos = "1.51"
+pnpm = "12.18.0"
+hk = "2.11.1"
+betterleaks = "v1.10.0"
+typos = "1.52.0"
 actionlint = "1.7.12"
-zizmor = "1.31.1"
+zizmor = "1.32.0"
 
 [env]
 _.path = ["node_modules/.bin"]
