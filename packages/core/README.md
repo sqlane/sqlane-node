@@ -52,15 +52,15 @@ In tests, run the due jobs without `start()`: `await sqlane.drain()`. More in [`
 
 ## Adapters
 
-| Import                           | `enqueue` takes                                                        | Supported                                             |
-| -------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------- |
-| `@sqlane/core/adapter-mysql2`    | a mysql2 `Connection` or `PoolConnection` (in a transaction), a `Pool` | mysql2 3.11+                                          |
-| `@sqlane/core/adapter-pg`        | a pg `Client` or `PoolClient` (in a transaction), a `Pool`             | pg 8.13+                                              |
-| `@sqlane/core/adapter-knex`      | a knex transaction (also nested), a knex instance                      | knex 3, with mysql2 or pg                             |
-| `@sqlane/core/adapter-kysely`    | a Kysely transaction (also controlled), a Kysely instance              | kysely 0.28, 0.29: MySQL and PostgreSQL dialects      |
-| `@sqlane/core/adapter-drizzle`   | a Drizzle transaction (also nested), a Drizzle database                | drizzle-orm 0.45, 1.0 (beta): mysql2 or node-postgres |
-| `@sqlane/core/adapter-prisma`    | the client of an interactive transaction, a Prisma client              | Prisma 7: MySQL or PostgreSQL                         |
-| `@sqlane/core/adapter-sequelize` | a Sequelize transaction (also nested), a Sequelize instance            | Sequelize 6: MySQL or PostgreSQL                      |
+| Import                           | `enqueue` takes                                                        | Supported                                           |
+| -------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------- |
+| `@sqlane/core/adapter-mysql2`    | a mysql2 `Connection` or `PoolConnection` (in a transaction), a `Pool` | mysql2 3.11+                                        |
+| `@sqlane/core/adapter-pg`        | a pg `Client` or `PoolClient` (in a transaction), a `Pool`             | pg 8.13+                                            |
+| `@sqlane/core/adapter-knex`      | a knex transaction (also nested), a knex instance                      | knex 3, with mysql2 or pg                           |
+| `@sqlane/core/adapter-kysely`    | a Kysely transaction (also controlled), a Kysely instance              | kysely 0.28, 0.29: MySQL and PostgreSQL dialects    |
+| `@sqlane/core/adapter-drizzle`   | a Drizzle transaction (also nested), a Drizzle database                | drizzle-orm 0.45, 1.0 (rc): mysql2 or node-postgres |
+| `@sqlane/core/adapter-prisma`    | the client of an interactive transaction, a Prisma client              | Prisma 7: MySQL or PostgreSQL                       |
+| `@sqlane/core/adapter-sequelize` | a Sequelize transaction (also nested), a Sequelize instance            | Sequelize 6: MySQL or PostgreSQL                    |
 
 The paths before 0.4 (`@sqlane/core/mysql2`, `/pg`, `/knex`) still work, until 1.0.
 
