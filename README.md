@@ -2,13 +2,20 @@
 
 Transactional SQL job queue for Node.js, backed by MySQL or PostgreSQL.
 
-> Early version (0.x): the API can still change. See the [design](docs/design.md).
+> [!WARNING]
+> **Not ready for production.** sqlane is in active development (0.x) and not stable yet: the API and the database
+> schema can still change in any minor version, and no production deployment has proven it yet. Try it, give feedback,
+> but do not run production workloads on it yet. See the [design](docs/design.md).
 
 - Enqueue a job in your business transaction: no commit, no job.
 - Many job names at low cost: idle names add no load to the database.
-- Low latency: a job starts in milliseconds after the commit.
-- Mutex keys: jobs with a common key never run at the same time, in the whole cluster.
-- MySQL 8.4+ and PostgreSQL 15+, with `mysql2` or `pg`. Node.js 22+. MIT license.
+- Low latency: a job starts milliseconds after the commit in the same process, and in other processes with PostgreSQL
+  NOTIFY or a `hint` transport. Without them, other processes see it at their next poll (default 5 s). See
+  [wake after commit](docs/design.md#wake-after-commit).
+- Mutex keys: jobs with a common key do not run at the same time, in the whole cluster, as long as handlers stop on
+  their `signal` (lease lost, shutdown). See [guarantees](docs/design.md#guarantees).
+- MySQL 8.4+ and PostgreSQL 15+, with mysql2, pg, postgres.js, Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM or
+  MikroORM. Node.js 22+. MIT license.
 
 ## Packages
 

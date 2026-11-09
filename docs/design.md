@@ -1,6 +1,7 @@
-# sqlane design (v0.1)
+# sqlane design
 
-> Status: agreed design. Nothing here is implemented yet.
+> Status: implemented, as published on npm (0.x). Not stable yet: the API and the schema can still change, and it has
+> no production use yet. The [changelog](../packages/core/CHANGELOG.md) lists what each version added.
 
 sqlane runs background jobs that are rows in the application's own SQL database (MySQL or PostgreSQL). The application
 adds a job in its business transaction: no commit, no job.
@@ -20,7 +21,7 @@ adds a job in its business transaction: no commit, no job.
 8. **Library hygiene.** No global state, no `process.env`, no console output, no exit. The app injects the
    connections, the logger and the metrics.
 
-## Non-goals (v0.1)
+## Non-goals
 
 - Exactly-once execution. Handlers must be idempotent.
 - Cron and recurring jobs. Use a scheduler that enqueues jobs.
@@ -136,20 +137,26 @@ Choices:
 - **One adapter, raw connections.** The adapter gives the dialect and the queue's pool. `enqueue` takes the driver's
   own connection, transaction client or pool. A connection or client must be in a transaction (MySQL cannot detect
   one safely). With a pool, sqlane runs the enqueue in its own transaction, outside the caller's. Adapters:
-  `@sqlane/core/adapter-mysql2` (`Connection`, `PoolConnection`, `Pool`) and `@sqlane/core/adapter-pg` (`Client`,
-  `PoolClient`, `Pool`) in v0.1; `@sqlane/core/adapter-knex` (a knex instance or transaction, with `mysql2` or `pg`) in
-  v0.2; `@sqlane/core/adapter-kysely` (a Kysely instance or transaction; the dialect is an option: Kysely does not tell
-  it) in v0.4; `@sqlane/core/adapter-drizzle` (a Drizzle database or transaction, with mysql2 or node-postgres) in
-  v0.5; `@sqlane/core/adapter-prisma` (a Prisma 7 client or the client of an interactive transaction; the dialect is an
-  option) in v0.6; `@sqlane/core/adapter-sequelize` (a Sequelize 6 instance or transaction; after-commit hook of the
-  outermost transaction) in v0.7; `@sqlane/core/adapter-typeorm` (a TypeORM 0.3 or 1.x DataSource, EntityManager or
-  QueryRunner; a subscriber of the DataSource for the commit of the outermost transaction) in v0.8;
-  `@sqlane/core/adapter-postgres-js` (the `sql` of postgres.js 3.4 or 4, or of its transaction; the NOTIFY hint;
-  also under Drizzle); `@sqlane/core/adapter-mikro-orm` (a MikroORM 6 or 7 EntityManager; the knex adapter under MikroORM 6, the Kysely
-  adapter and a subscriber of `afterTransactionCommit` under MikroORM 7) in v0.8. With CLS, the Sequelize adapter follows Sequelize's own queries: an instance means
-  its CLS transaction, if one runs (else a transaction of its own would commit the job without the app's data); so does the MikroORM adapter, with the
-  global EntityManager inside `em.transactional()`. An ORM adapter runs sqlane's SQL on the driver
-  connection under the ORM, or through its raw-SQL API: one SQL per dialect, and the ORM does not log it.
+    - `@sqlane/core/adapter-mysql2`: `Connection`, `PoolConnection`, `Pool`.
+    - `@sqlane/core/adapter-pg`: `Client`, `PoolClient`, `Pool`.
+    - `@sqlane/core/adapter-postgres-js`: the `sql` of postgres.js 3.4 or 4, or of its transaction; the NOTIFY hint.
+    - `@sqlane/core/adapter-knex`: a knex instance or transaction, with `mysql2` or `pg`.
+    - `@sqlane/core/adapter-kysely`: a Kysely instance or transaction; the dialect is an option (Kysely does not tell it).
+    - `@sqlane/core/adapter-drizzle`: a Drizzle database or transaction, with mysql2, node-postgres or postgres.js.
+    - `@sqlane/core/adapter-prisma`: a Prisma 7 client or the client of an interactive transaction; the dialect is an
+      option.
+    - `@sqlane/core/adapter-sequelize`: a Sequelize 6 instance or transaction; the after-commit hook of the outermost
+      transaction.
+    - `@sqlane/core/adapter-typeorm`: a TypeORM 0.3 or 1.x DataSource, EntityManager or QueryRunner; a subscriber of the
+      DataSource for the commit of the outermost transaction.
+    - `@sqlane/core/adapter-mikro-orm`: a MikroORM 6 or 7 EntityManager; the knex adapter under MikroORM 6, the Kysely
+      adapter and a subscriber of `afterTransactionCommit` under MikroORM 7.
+
+    With CLS, the Sequelize adapter follows Sequelize's own queries: an instance means its CLS transaction, if one runs
+    (else a transaction of its own would commit the job without the app's data); so does the MikroORM adapter, with the
+    global EntityManager inside `em.transactional()`. An ORM adapter runs sqlane's SQL on the driver connection under
+    the ORM, or through its raw-SQL API: one SQL per dialect, and the ORM does not log it.
+
 - **Adapters are subpaths of the core**, not packages: `@sqlane/core/adapter-<name>`. The paths before 0.4
   (`@sqlane/core/mysql2`, `/pg`, `/knex`) stay as aliases until 1.0. None needs a dependency of its own:
   each one uses the ORM instance that it gets. The core does not list the ORMs as peer dependencies: npm checks the
