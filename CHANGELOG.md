@@ -1,5 +1,11 @@
 # @sqlane/core
 
+## 1.0.0
+
+### Major Changes
+
+- [#75](https://github.com/sqlane/sqlane-node/pull/75) [`72e2c61`](https://github.com/sqlane/sqlane-node/commit/72e2c616b0160e01589e307f657743b758f0fd00) - sqlane 1.0: the API and the database schema are stable, and sqlane now follows semantic versioning. Only a major version breaks the API or the schema. Nothing changed in the code since 0.9.0, so no migration or code change is needed.
+
 ## 0.9.0
 
 ### Minor Changes
