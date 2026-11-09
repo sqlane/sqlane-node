@@ -6,6 +6,11 @@ import { PostgreSqlContainer } from '@testcontainers/postgresql';
 const MYSQL_8_4_IMAGE = 'mysql:8.4.13@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902';
 const MARIADB_10_11_IMAGE = 'mariadb:10.11.19@sha256:d769e37960821dfdcf096954f6e7ac89f747e116c1bba98e48edd265dfc7deae';
 const MARIADB_11_8_IMAGE = 'mariadb:11.8.9@sha256:c4124d1afa875e47f2892edf26b482fa54f796e2f342d3717a04ca091a22a9bd';
+/**
+ * The binary log of MySQL 8.4 by default, on MariaDB too (it has none by default): each commit syncs it, in row format.
+ * The benchmarks then compare the databases, not their defaults.
+ */
+const MARIADB_BINLOG_AS_MYSQL = ['--log-bin=binlog', '--sync-binlog=1', '--binlog-format=ROW'];
 const POSTGRES_15_IMAGE = 'postgres:15.19@sha256:40e8c839f86c404f9bd1c456bb83f11b205f2cd95d753b34c2d074e89ecee786';
 const POSTGRES_18_IMAGE = 'postgres:18.6@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81';
 
@@ -35,6 +40,7 @@ export const TEST_DATABASES = [
         name: 'mariadb-10.11',
         dialect: 'mariadb',
         start: ({ inMemory = true } = {}) => new MariaDbContainer(MARIADB_10_11_IMAGE)
+            .withCommand(MARIADB_BINLOG_AS_MYSQL)
             .withTmpFs(inMemory ? { '/var/lib/mysql': 'rw' } : {})
             .start(),
     },
@@ -42,6 +48,7 @@ export const TEST_DATABASES = [
         name: 'mariadb-11.8',
         dialect: 'mariadb',
         start: ({ inMemory = true } = {}) => new MariaDbContainer(MARIADB_11_8_IMAGE)
+            .withCommand(MARIADB_BINLOG_AS_MYSQL)
             .withTmpFs(inMemory ? { '/var/lib/mysql': 'rw' } : {})
             .start(),
     },
