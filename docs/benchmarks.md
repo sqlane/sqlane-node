@@ -1,20 +1,22 @@
 # Benchmarks
 
-`pnpm bench` starts the databases in Docker and prints these tables, in about 2 minutes. `--db postgres-18` runs one
-database; `--quick` runs fewer samples, for a fast check. The time of each scenario goes to stderr. Not in CI: the
-numbers depend on the machine.
+`pnpm bench` starts the databases in Docker and prints these tables in about 2 minutes. The option
+`--db postgres-18` runs only one database, and `--quick` runs fewer samples for a fast check. The time of each scenario
+goes to stderr. The benchmarks do not run in CI, because the numbers depend on the machine.
 
-Setup: the official Docker images with their default config, data on disk (not tmpfs), the client on the same machine.
-Each scenario has tables of its own. An empty handler shows the cost of the queue itself.
+The databases run from the official Docker images with their default configuration. Their data is on disk, not on
+tmpfs, and the client runs on the same machine. Each scenario has tables of its own. The handlers are empty, so the
+numbers show the cost of the queue itself.
 
-- **Probe:** the statement that finds the job names with due jobs. 1000 job names with 100 completed jobs each, and
-  10 pending jobs in a growing number of names. Compared with one `MIN(run_at)` per name (a `UNION ALL` of 1000
-  queries): a probe that grows with all names.
-- **Latency:** from the return of `COMMIT` to the start of the handler, 100 jobs one at a time, with a random pause of
-  0–50 ms between jobs. The worker polls every 5 s; it wakes by re-probes (same process), a hint in memory (another
-  instance: Redis without its network hop) or PostgreSQL NOTIFY.
-- **Throughput:** 8 producers, each `enqueue` in a transaction of its own; 5,000 due jobs run by workers with a pool
-  of 5 connections each.
+- **Probe.** The probe is the statement that finds the job names with pending jobs. The scenario has 1000 job names with
+  100 completed jobs each, and 10 pending jobs in each of 0, 1, 10, 100 or 1000 names. It compares the probe with one
+  `MIN(run_at)` query per name (a `UNION ALL` of 1000 queries), whose cost grows with the number of all names.
+- **Latency.** The scenario measures the time from the return of `COMMIT` to the start of the handler. It enqueues
+  100 jobs one at a time, with a random pause of 0–50 ms between them. The worker polls every 5 s. It wakes by
+  re-probes in the same process, by a hint in memory from another instance (like Redis without its network hop), or
+  by PostgreSQL NOTIFY.
+- **Throughput.** 8 producers each run `enqueue` in a transaction of its own. Then workers with a pool of 5
+  connections each run 5,000 due jobs.
 
 ## Results
 
@@ -126,12 +128,14 @@ Throughput (jobs/s):
 
 ## Notes
 
-- **Idle names cost nothing:** the probe reads only the names with pending jobs. 1000 handled names with 10 pending
-  ones: under 1 ms. The `UNION` grows with all names: 43 ms on MySQL, 125–145 ms on PostgreSQL.
-- **Latency:** about 25 ms with re-probes or a hint: the first re-probe is 20 ms after the enqueue, then the claim.
-  NOTIFY comes after the commit: about 5 ms.
-- **Throughput:** a commit flushes the log to disk, so a process completes its finished jobs in batches: one
-  transaction for the jobs that finish during the previous write. More concurrency gives bigger batches. A claim of
-  names without mutex keys finds, claims and reads the due jobs at once: one statement on PostgreSQL, one locking
-  read and one update on MySQL. The 4 processes
-  are 4 instances in one Node.js process: they share its CPU.
+- **Idle names cost almost nothing.** The probe reads only the names that have pending jobs. With 1000 handled names
+  and pending jobs in 10 of them, the probe takes under 1 ms at the median. The `UNION ALL` of one query per name
+  grows with the number of all names. It takes 42 ms on MySQL and 127–146 ms on PostgreSQL at the median.
+- **Latency.** With re-probes or a hint, a job starts about 25 ms after the commit at the median. The first re-probe
+  comes 20 ms after the enqueue, and the claim follows it. NOTIFY arrives after the commit, so with NOTIFY a job
+  starts about 2.4 ms after the commit at the median, and in under 5.5 ms at p95.
+- **Throughput.** A commit flushes the log to disk, so a process completes its finished jobs in batches. One
+  transaction completes the jobs that finished during the previous write, so more concurrency gives bigger batches. A
+  claim of names without mutex keys finds, claims and reads the due jobs at once. This claim is one statement on
+  PostgreSQL, and one locking read and one update on MySQL. The 4 processes are 4 instances in one Node.js process,
+  so they share its CPU.
