@@ -1,5 +1,12 @@
 # @sqlane/core
 
+## 0.8.1
+
+### Patch Changes
+
+- [#66](https://github.com/sqlane/sqlane-node/pull/66) [`29da43c`](https://github.com/sqlane/sqlane-node/commit/29da43ce792e761b8c4037be1164c60e53a86148) - README: badges, the versioning policy until 1.0 (a minor can break, a patch cannot, schema changes are migrations), and
+  where to get support or report a vulnerability.
+
 ## 0.8.0
 
 ### Minor Changes
