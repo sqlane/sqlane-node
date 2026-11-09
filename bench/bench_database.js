@@ -8,7 +8,7 @@ import { pgAdapter } from '../src/adapters/pg.js';
 
 /**
  * @typedef {object} BenchPool
- * @property {'mysql' | 'postgres'} dialect
+ * @property {import('../src/types.js').Dialect} dialect
  * @property {any} raw The mysql2 or pg pool.
  * @property {(options?: { notify?: boolean }) => Adapter} adapter `notify`: pg only.
  * @property {(func: (connection: any) => Promise<void>) => Promise<void>} transaction Runs func in a transaction on
@@ -18,27 +18,29 @@ import { pgAdapter } from '../src/adapters/pg.js';
  */
 
 /**
- * @param {'mysql' | 'postgres'} dialect
+ * @param {import('../src/types.js').Dialect} dialect
  * @param {string} url
  * @param {number} size The connections of the pool.
  * @returns {BenchPool}
  */
 export function createBenchPool(dialect, url, size) {
-    return dialect === 'mysql' ? createMysqlPool(url, size) : createPostgresPool(url, size);
+    return dialect === 'postgres' ? createPostgresPool(url, size) : createMysqlPool(dialect, url, size);
 }
 
 /**
+ * MySQL or MariaDB, through mysql2.
+ * @param {'mysql' | 'mariadb'} dialect
  * @param {string} url
  * @param {number} size
  * @returns {BenchPool}
  */
-function createMysqlPool(url, size) {
+function createMysqlPool(dialect, url, size) {
     const pool = mysql.createPool({ uri: url, connectionLimit: size });
 
     return {
-        dialect: 'mysql',
+        dialect,
         raw: pool,
-        adapter: () => mysql2Adapter(pool),
+        adapter: () => mysql2Adapter(pool, { dialect }),
         transaction: async (func) => {
             const connection = await pool.getConnection();
 

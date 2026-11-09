@@ -5,7 +5,7 @@ import 'vitest';
 declare module 'vitest' {
     export interface ProvidedContext {
         databaseName: string;
-        databaseDialect: 'mysql' | 'postgres';
+        databaseDialect: 'mysql' | 'mariadb' | 'postgres';
         databaseUrl: string;
     }
 }

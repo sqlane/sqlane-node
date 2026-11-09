@@ -3,6 +3,7 @@ import knexLib from 'knex';
 import { afterAll, afterEach, beforeAll, expect, inject, test } from 'vitest';
 import { createSqlane, defineJob } from '../../src/index.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { knexAdapter } from '../../src/adapters/knex.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<import('../../src/adapters/knex.js').KnexConnection, never>} Sqlane */
@@ -21,7 +22,7 @@ let instances = [];
 /** @returns {import('knex').Knex} */
 function createKnex() {
     return knexLib({
-        client: inject('databaseDialect') === 'mysql' ? 'mysql2' : 'pg',
+        client: inject('databaseDialect') === 'postgres' ? 'pg' : 'mysql2',
         connection: inject('databaseUrl'),
         pool: { min: 0, max: 4 },
     });
@@ -56,7 +57,7 @@ async function freshSqlane(options = {}) {
     /** @type {SqlaneEvent[]} */
     const events = [];
     const sqlane = createSqlane({
-        adapter: knexAdapter(queueKnex),
+        adapter: knexAdapter(queueKnex, mysqlFamilyOptions()),
         tablePrefix: p,
         onEvent: event => events.push(event),
         ...options,

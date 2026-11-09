@@ -19,13 +19,12 @@ function fakeRunner(dataSource) {
     return { dataSource, isTransactionActive: true, startTransaction: method, query: method, release: method };
 }
 
-test.each([{ type: 'mysql' }, { type: 'postgres' }])('type $type', ({ type }) => {
+test.each([{ type: 'mysql' }, { type: 'mariadb' }, { type: 'postgres' }])('type $type', ({ type }) => {
     expect(typeOrmAdapter(fakeDataSource(type)).dialect).toBe(type);
 });
 
 test.each([
     { label: 'no DataSource', dataSource: undefined, message: 'expects a TypeORM DataSource' },
-    { label: 'MariaDB', dataSource: fakeDataSource('mariadb'), message: 'not "mariadb"' },
     { label: 'CockroachDB', dataSource: fakeDataSource('cockroachdb'), message: 'not "cockroachdb"' },
 ])('$label: a ConfigError', ({ dataSource, message }) => {
     expect(() => typeOrmAdapter(dataSource)).toThrow(message);

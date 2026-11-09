@@ -10,6 +10,7 @@ import { Pool } from 'pg';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
+import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { drizzleAdapter } from '../../src/adapters/drizzle.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 
@@ -48,7 +49,7 @@ afterAll(async () => {
  */
 function createDb(factories, postgresJs) {
     const url = inject('databaseUrl');
-    const isMysql = inject('databaseDialect') === 'mysql';
+    const isMysql = inject('databaseDialect') !== 'postgres';
     if (isMysql) {
         const pool = createPool({ uri: url, connectionLimit: 4 });
 
@@ -127,7 +128,7 @@ describe.each([
         /** @type {SqlaneEvent[]} */
         const events = [];
         const sqlane = createSqlane({
-            adapter: drizzleAdapter(queueDb),
+            adapter: drizzleAdapter(queueDb, mysqlFamilyOptions()),
             tablePrefix: p,
             onEvent: event => events.push(event),
             ...options,

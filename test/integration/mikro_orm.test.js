@@ -71,7 +71,7 @@ describe.each([
 
     /** @returns {Promise<any>} An initialized MikroORM on the test database. */
     async function createOrm() {
-        const created = await /** @type {any} */ (dialect === 'mysql' ? mysql : postgres).init({
+        const created = await /** @type {any} */ (dialect === 'postgres' ? postgres : mysql).init({
             clientUrl: inject('databaseUrl'),
             entities: [],
             discovery: { warnWhenNoEntities: false },

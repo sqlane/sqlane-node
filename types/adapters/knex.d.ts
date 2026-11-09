@@ -8,6 +8,7 @@ export type ToExecutor = (connection: any) => Executor;
  * transaction (the caller's: the job commits with it). After the commit of the outermost transaction, the processes
  * wake at once.
  * @param {Knex} knex The queue's own knex: claims, leases, results. A small pool of its own is best.
+ * @param {import('./dialect.js').MysqlFamilyOptions} [options] mysql2: `{ dialect: 'mariadb' }` on MariaDB.
  * @returns {import('../types.js').Adapter<KnexConnection>}
  */
-export declare function knexAdapter(knex: Knex): import('../types.js').Adapter<KnexConnection>;
+export declare function knexAdapter(knex: Knex, options?: import('./dialect.js').MysqlFamilyOptions): import('../types.js').Adapter<KnexConnection>;

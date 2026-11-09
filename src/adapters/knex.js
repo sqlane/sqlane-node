@@ -2,6 +2,7 @@
 // of sqlane runs on the raw driver connection under knex (mysql2 or pg): knex does not run it, nor log it. No import of
 // knex: the adapter uses the instance it gets, and checks what it uses.
 import { ConfigError } from '../errors.js';
+import { mysqlFamilyDialect } from './dialect.js';
 
 /** @typedef {import('knex').Knex} Knex */
 /** @typedef {import('knex').Knex.Transaction} KnexTransaction */
@@ -92,9 +93,10 @@ function executorOf(knex, toExecutor) {
 
 /**
  * @param {Knex} knex
- * @returns {{ dialect: 'mysql' | 'postgres', toExecutor: ToExecutor }}
+ * @param {import('./dialect.js').MysqlFamilyOptions | undefined} options
+ * @returns {{ dialect: import('../types.js').Dialect, toExecutor: ToExecutor }}
  */
-function resolveDriver(knex) {
+function resolveDriver(knex, options) {
     const client = /** @type {{ dialect?: unknown, driverName?: unknown, acquireConnection?: unknown } | undefined} */ (
         knex?.client
     );
@@ -104,10 +106,14 @@ function resolveDriver(knex) {
     }
 
     if (client?.dialect === 'mysql' && client.driverName === 'mysql2') {
-        return { dialect: 'mysql', toExecutor: mysql2Executor };
+        return { dialect: mysqlFamilyDialect(options, 'knexAdapter'), toExecutor: mysql2Executor };
     }
 
     if (client?.dialect === 'postgresql' && client.driverName === 'pg') {
+        if (options?.dialect !== undefined) {
+            throw new ConfigError('knexAdapter: "dialect" is for mysql2 (MySQL or MariaDB)');
+        }
+
         return { dialect: 'postgres', toExecutor: pgExecutor };
     }
 
@@ -121,10 +127,11 @@ function resolveDriver(knex) {
  * transaction (the caller's: the job commits with it). After the commit of the outermost transaction, the processes
  * wake at once.
  * @param {Knex} knex The queue's own knex: claims, leases, results. A small pool of its own is best.
+ * @param {import('./dialect.js').MysqlFamilyOptions} [options] mysql2: `{ dialect: 'mariadb' }` on MariaDB.
  * @returns {import('../types.js').Adapter<KnexConnection>}
  */
-export function knexAdapter(knex) {
-    const { dialect, toExecutor } = resolveDriver(knex);
+export function knexAdapter(knex, options) {
+    const { dialect, toExecutor } = resolveDriver(knex, options);
 
     return {
         dialect,

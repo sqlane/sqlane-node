@@ -1,4 +1,6 @@
 // The store: the SQL of one dialect, bound to an adapter and a table prefix.
+import * as mariadbFinal from './mariadb_final.js';
+import * as mariadbWorker from './mariadb_worker.js';
 import * as mysqlFinal from './mysql_final.js';
 import * as mysqlWorker from './mysql_worker.js';
 import * as postgresFinal from './postgres_final.js';
@@ -139,8 +141,11 @@ import * as postgresWorker from './postgres_worker.js';
  * @returns {Store}
  */
 export function createStore(adapter, tablePrefix) {
-    const sql = adapter.dialect === 'mysql' ? mysqlWorker : postgresWorker;
-    const final = adapter.dialect === 'mysql' ? mysqlFinal : postgresFinal;
+    const { sql, final } = {
+        mysql: { sql: mysqlWorker, final: mysqlFinal },
+        mariadb: { sql: mariadbWorker, final: mariadbFinal },
+        postgres: { sql: postgresWorker, final: postgresFinal },
+    }[adapter.dialect];
     /**
      * @template T
      * @param {(executor: import('../types.js').Executor) => Promise<T>} func
@@ -158,10 +163,10 @@ export function createStore(adapter, tablePrefix) {
             keyedNames,
         ),
         claim: params => adapter.queueTransaction(executor => sql.claim(executor, tablePrefix, params)),
-        claimDue: params => (adapter.dialect === 'mysql'
-            ? inQueue(executor => mysqlWorker.claimDue(executor, p, params))
+        claimDue: params => (adapter.dialect === 'postgres'
             // One statement: a transaction of its own
-            : postgresWorker.claimDue(adapter.queue, p, params)),
+            ? postgresWorker.claimDue(adapter.queue, p, params)
+            : inQueue(executor => sql.claimDue(executor, p, params))),
         readPayloads: ids => sql.readPayloads(adapter.queue, tablePrefix, ids),
         renewLeases: (jobs, leaseMs) => inQueue(executor => final.renewLeases(executor, p, jobs, leaseMs)),
         markTimedOut: job => final.markTimedOut(adapter.queue, p, job),

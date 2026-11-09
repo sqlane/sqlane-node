@@ -54,7 +54,7 @@ function sqlaneOf(tablePrefix) {
  * @returns {Promise<string[]>}
  */
 async function listTables(tablePrefix) {
-    const rows = database.dialect === 'mysql'
+    const rows = database.family === 'mysql'
         ? await database.query(`
             SELECT table_name AS name FROM information_schema.tables
              WHERE table_schema = DATABASE() AND LEFT(table_name, CHAR_LENGTH(?)) = ? ORDER BY table_name
@@ -88,7 +88,7 @@ test('concurrent migrations apply each version once', async () => {
 test('ids are case-sensitive', async () => {
     const tablePrefix = nextPrefix();
     await sqlaneOf(tablePrefix).migrate();
-    await database.query(INSERT_TWO_PAYLOADS_SQL[database.dialect](`${tablePrefix}payloads`), ['job:ABC', 'job:abc']);
+    await database.query(INSERT_TWO_PAYLOADS_SQL[database.family](`${tablePrefix}payloads`), ['job:ABC', 'job:abc']);
 
     await expect(database.query(`SELECT id FROM ${tablePrefix}payloads ORDER BY id`))
         .resolves.toStrictEqual([{ id: 'job:ABC' }, { id: 'job:abc' }]);
@@ -97,7 +97,7 @@ test('ids are case-sensitive', async () => {
 test('waits for the migration lock up to lockTimeout', async () => {
     const tablePrefix = nextPrefix();
     const lockName = `${tablePrefix}migrations`;
-    const { lock, unlock } = LOCK_SQL[database.dialect];
+    const { lock, unlock } = LOCK_SQL[database.family];
 
     await database.query(lock, [lockName]);
 

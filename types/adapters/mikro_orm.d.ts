@@ -16,9 +16,10 @@ export type EntityManagerLike = {
 };
 export type MikroOrmAdapterOptions = {
     /**
-     * The driver of MikroORM: `@mikro-orm/mysql` or `@mikro-orm/postgresql`.
+     * The database: `'mysql'` or `'mariadb'` with `@mikro-orm/mysql`,
+     * `'postgres'` with `@mikro-orm/postgresql`.
      */
-    dialect: 'mysql' | 'postgres';
+    dialect: import('../types.js').Dialect;
 };
 /**
  * The adapter for MikroORM 6 or 7 (MySQL or PostgreSQL). `enqueue` then takes an EntityManager: of a transaction (the

@@ -5,6 +5,7 @@ import { createNamespace } from 'cls-hooked';
 import { Sequelize } from 'sequelize';
 import { afterAll, afterEach, beforeAll, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
+import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane } from '../../src/index.js';
 
@@ -26,7 +27,7 @@ let instances = [];
 
 /** @returns {Sequelize} */
 function createSequelize() {
-    return new Sequelize(inject('databaseUrl'), { dialect: inject('databaseDialect'), logging: false, pool: { max: 4 } });
+    return new Sequelize(inject('databaseUrl'), { dialect: inject('databaseDialect') === 'postgres' ? 'postgres' : 'mysql', logging: false, pool: { max: 4 } });
 }
 
 beforeAll(async () => {
@@ -57,7 +58,7 @@ async function freshSqlane(options = {}) {
     /** @type {SqlaneEvent[]} */
     const events = [];
     const sqlane = createSqlane({
-        adapter: sequelizeAdapter(queueSequelize),
+        adapter: sequelizeAdapter(queueSequelize, mysqlFamilyOptions()),
         tablePrefix: p,
         onEvent: event => events.push(event),
         ...options,

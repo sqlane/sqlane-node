@@ -25,7 +25,9 @@ let instances = [];
 
 /** @returns {Promise<any>} A Prisma client of the generated client of the dialect. */
 async function createPrisma() {
-    const clientPath = new URL(`../prisma/${dialect}/generated/client.ts`, import.meta.url);
+    // MariaDB: the client of the mysql provider
+    const provider = dialect === 'postgres' ? 'postgres' : 'mysql';
+    const clientPath = new URL(`../prisma/${provider}/generated/client.ts`, import.meta.url);
 
     if (!existsSync(clientPath)) {
         throw new Error('The Prisma client of the tests is missing: run `pnpm prisma:generate`');
@@ -33,7 +35,7 @@ async function createPrisma() {
 
     const { PrismaClient } = await import(clientPath.href);
     const url = new URL(inject('databaseUrl'));
-    const adapter = dialect === 'mysql'
+    const adapter = dialect !== 'postgres'
         ? new PrismaMariaDb({
                 host: url.hostname,
                 port: Number(url.port),

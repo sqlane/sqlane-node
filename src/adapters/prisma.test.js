@@ -12,7 +12,7 @@ function fakePrisma(extra = {}) {
     return { $queryRawUnsafe: method, $executeRawUnsafe: method, $transaction: method, ...extra };
 }
 
-test.each([{ dialect: 'mysql' }, { dialect: 'postgres' }])('dialect $dialect', ({ dialect }) => {
+test.each([{ dialect: 'mysql' }, { dialect: 'mariadb' }, { dialect: 'postgres' }])('dialect $dialect', ({ dialect }) => {
     expect(prismaAdapter(fakePrisma(), /** @type {any} */ ({ dialect }))).toMatchObject({
         dialect,
         transactionalConnection: true,
@@ -24,7 +24,7 @@ test.each([
     { label: 'the provider name of Prisma', options: { dialect: 'postgresql' } },
 ])('$label: a ConfigError', ({ options }) => {
     expect(() => prismaAdapter(fakePrisma(), /** @type {any} */ (options)))
-        .toThrow('"dialect" must be "mysql" or "postgres"');
+        .toThrow('"dialect" must be "mysql", "mariadb" or "postgres"');
 });
 
 test.each([

@@ -5,6 +5,7 @@
 // `afterCommit` hook), the workers wake at once. With CLS (`Sequelize.useCLS()`), an instance means its CLS
 // transaction, if one runs: as for the queries of Sequelize.
 import { ConfigError } from '../errors.js';
+import { mysqlFamilyDialect } from './dialect.js';
 import { mysql2Executor, pgExecutor } from './executors.js';
 
 /**
@@ -78,9 +79,11 @@ function checkSequelize(sequelize) {
  * own) or a Sequelize transaction, also nested (the caller's: the job commits with it).
  * @param {SequelizeLike} sequelize The queue's own Sequelize instance: claims, leases, results. A small pool of its
  *     own is best.
+ * @param {import('./dialect.js').MysqlFamilyOptions} [options] The "mysql" dialect of Sequelize:
+ *     `{ dialect: 'mariadb' }` on MariaDB.
  * @returns {import('../types.js').Adapter<SequelizeConnection>}
  */
-export function sequelizeAdapter(sequelize) {
+export function sequelizeAdapter(sequelize, options) {
     const problem = checkSequelize(sequelize);
 
     if (problem) {
@@ -89,9 +92,22 @@ export function sequelizeAdapter(sequelize) {
 
     const sequelizeDialect = sequelize.getDialect();
 
+    if (sequelizeDialect === 'mariadb') {
+        throw new ConfigError(
+            'sequelizeAdapter: the "mariadb" dialect of Sequelize is not supported: use its "mysql" dialect (mysql2), and '
+            + 'sequelizeAdapter(sequelize, { dialect: \'mariadb\' })',
+        );
+    }
+
     if (sequelizeDialect !== 'mysql' && sequelizeDialect !== 'postgres') {
         throw new ConfigError(`sequelizeAdapter: the dialect must be "mysql" or "postgres", not "${sequelizeDialect}"`);
     }
+
+    if (sequelizeDialect === 'postgres' && options?.dialect !== undefined) {
+        throw new ConfigError('sequelizeAdapter: "dialect" is for the "mysql" dialect of Sequelize (MySQL or MariaDB)');
+    }
+
+    const dialect = sequelizeDialect === 'postgres' ? 'postgres' : mysqlFamilyDialect(options, 'sequelizeAdapter');
 
     /** @type {(connection: any) => import('../types.js').Executor} The mysql2 connection of Sequelize: callback API */
     const toExecutor = sequelizeDialect === 'mysql'
@@ -131,7 +147,7 @@ export function sequelizeAdapter(sequelize) {
     }
 
     return {
-        dialect: sequelizeDialect,
+        dialect,
         wrap: connection => executorOf(resolveConnection(connection)),
         queue: executorOf(sequelize),
         withConnection: func => onConnection(sequelize, func),

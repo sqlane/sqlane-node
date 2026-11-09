@@ -1,6 +1,7 @@
 import { monotonicFactory } from 'ulid';
 import { InvalidOptionsError, UnknownJobError } from './errors.js';
 import { buildNewJob } from './new_job.js';
+import { insertJobsMariadb } from './store/mariadb_enqueue.js';
 import { insertJobsMysql } from './store/mysql_enqueue.js';
 import { insertJobsPostgres } from './store/postgres_enqueue.js';
 import { isPlainObject } from './validate.js';
@@ -43,7 +44,11 @@ export function createEnqueuer({
     maxPayloadBytes,
     notifyChannel,
 }) {
-    const insertJobs = adapter.dialect === 'mysql' ? insertJobsMysql : insertJobsPostgres;
+    const insertJobs = {
+        mysql: insertJobsMysql,
+        mariadb: insertJobsMariadb,
+        postgres: insertJobsPostgres,
+    }[adapter.dialect];
 
     /**
      * @param {import('./types.js').JobDefinition | string} job

@@ -1,5 +1,6 @@
 import { parseDuration } from './duration.js';
 import { ConfigError, InvalidOptionsError, MigrationLockTimeoutError } from './errors.js';
+import { mariadbMigrations, mariadbMigrationsTable } from './schema/mariadb.js';
 import { mysqlMigrations, mysqlMigrationsTable } from './schema/mysql.js';
 import { postgresMigrations, postgresMigrationsTable } from './schema/postgres.js';
 import { checkTablePrefix } from './validate.js';
@@ -9,7 +10,7 @@ import { checkTablePrefix } from './validate.js';
 /**
  * The schema of sqlane as versioned SQL, for the app's own migration tool.
  * @param {object} options
- * @param {'mysql' | 'postgres'} options.dialect
+ * @param {import('./types.js').Dialect} options.dialect
  * @param {string} [options.tablePrefix] Default: `'sqlane_'`.
  * @returns {import('./types.js').Migration[]}
  */
@@ -22,11 +23,15 @@ export function getMigrations({ dialect, tablePrefix = 'sqlane_' }) {
         return mysqlMigrations(tablePrefix);
     }
 
+    if (dialect === 'mariadb') {
+        return mariadbMigrations(tablePrefix);
+    }
+
     if (dialect === 'postgres') {
         return postgresMigrations(tablePrefix);
     }
 
-    throw new ConfigError(`getMigrations: "dialect" must be 'mysql' or 'postgres'`);
+    throw new ConfigError(`getMigrations: "dialect" must be 'mysql', 'mariadb' or 'postgres'`);
 }
 
 /**
@@ -67,12 +72,16 @@ async function readApplied(executor, table) {
 }
 
 /**
+ * MySQL and MariaDB: each has a schema of its own.
  * @param {Executor} executor
  * @param {string} p
  * @param {number} lockTimeoutMs
+ * @param {object} schema
+ * @param {(p: string) => import('./types.js').Migration[]} schema.migrations
+ * @param {(p: string) => string} schema.migrationsTable
  * @returns {Promise<string[]>}
  */
-async function migrateMysql(executor, p, lockTimeoutMs) {
+async function migrateMysql(executor, p, lockTimeoutMs, { migrations, migrationsTable }) {
     const lockName = `${p}migrations`;
     // GET_LOCK waits whole seconds; -1 is forever, so at least 1
     const [{ locked }] = await executor.query('SELECT GET_LOCK(?, ?) AS locked', [
@@ -85,10 +94,10 @@ async function migrateMysql(executor, p, lockTimeoutMs) {
     }
 
     try {
-        await executor.query(mysqlMigrationsTable(p), []);
+        await executor.query(migrationsTable(p), []);
 
         const applied = await readApplied(executor, `${p}migrations`);
-        const missing = mysqlMigrations(p).filter(({ id }) => !applied.has(id));
+        const missing = migrations(p).filter(({ id }) => !applied.has(id));
 
         await runInOrder(executor, toSteps(missing, `INSERT INTO ${p}migrations (id, applied_at) VALUES (?, UTC_TIMESTAMP(3))`));
 
@@ -167,7 +176,21 @@ export function runMigrations(adapter, tablePrefix, options = {}) {
         return Promise.reject(new InvalidOptionsError('migrate: "lockTimeout" must be a duration'));
     }
 
-    return adapter.withConnection(executor => (adapter.dialect === 'mysql'
-        ? migrateMysql(executor, tablePrefix, lockTimeoutMs)
-        : migratePostgres(executor, tablePrefix, lockTimeoutMs, adapter.transactionalConnection === true)));
+    return adapter.withConnection((executor) => {
+        if (adapter.dialect === 'mysql') {
+            return migrateMysql(executor, tablePrefix, lockTimeoutMs, {
+                migrations: mysqlMigrations,
+                migrationsTable: mysqlMigrationsTable,
+            });
+        }
+
+        if (adapter.dialect === 'mariadb') {
+            return migrateMysql(executor, tablePrefix, lockTimeoutMs, {
+                migrations: mariadbMigrations,
+                migrationsTable: mariadbMigrationsTable,
+            });
+        }
+
+        return migratePostgres(executor, tablePrefix, lockTimeoutMs, adapter.transactionalConnection === true);
+    });
 }

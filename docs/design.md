@@ -3,8 +3,9 @@
 > Status: implemented, as published on npm. The API and the schema follow semantic versioning since 1.0. sqlane has no
 > known production use yet. The [changelog](../CHANGELOG.md) lists what each version added.
 
-sqlane runs background jobs that are rows in the application's own SQL database (MySQL or PostgreSQL). The application
-adds a job in its business transaction, so the job exists only if the transaction commits.
+sqlane runs background jobs that are rows in the application's own SQL database (MySQL, MariaDB or PostgreSQL). The
+application adds a job in its business transaction, so the job exists only if the transaction commits. In this document,
+MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the differences.
 
 ## Goals
 
@@ -17,7 +18,7 @@ adds a job in its business transaction, so the job exists only if the transactio
    and about 25 ms after the commit with a hint. Without either, it starts within the poll interval, which is 5 s by
    default. See [Wake-up after the commit](#wake-up-after-the-commit).
 4. **At-least-once execution.** A committed job runs at least once, also after a crash, a stall or a deploy.
-5. **MySQL and PostgreSQL.** Both databases get the same features and the same API.
+5. **MySQL, MariaDB and PostgreSQL.** All three databases get the same features and the same API.
 6. **Mutex keys.** Two jobs with a common key do not run at the same time in the cluster. [Guarantees](#guarantees)
    gives the exact condition.
 7. **Failure jobs.** When a job fails for good, sqlane adds a job of another name, in the same transaction that marks the job as failed.
@@ -32,7 +33,7 @@ adds a job in its business transaction, so the job exists only if the transactio
 - Priorities, or a strict order across processes.
 - A cluster-wide concurrency limit per job name (mutex keys cover the per-entity case).
 - Workflows, batches, job dependencies.
-- MariaDB, SQLite, other databases.
+- SQLite, other databases.
 - An ORM. Adapters wrap the transaction objects of the drivers and ORMs.
 
 ## Terms
@@ -447,6 +448,20 @@ retention has ended. It deletes them in batches of 1000 with SKIP LOCKED, so the
 - Handlers use whatever connections they open. `concurrency` limits the running handlers of a process, so they cannot
   exhaust the app's pool.
 
+### MariaDB
+
+MariaDB speaks the MySQL protocol, so the app tells the adapter (`{ dialect: 'mariadb' }`, see
+[Adapters](adapters.md#mariadb)). MariaDB has SQL files of its own: `store/mariadb_*.js` and `schema/mariadb.js` are
+copies of the MySQL files, changed where MariaDB differs. A change of the MySQL SQL must be made in the copies too.
+
+- **Upserts.** MariaDB has no row alias (`INSERT … AS new`), so the upserts read the new values with `VALUES(column)`.
+- **Locks of a claim.** MariaDB has no `FOR UPDATE OF`. A claim and the final writes read the payload with a subquery,
+  not a join, so `FOR UPDATE` locks the job row only, as on MySQL.
+- **Writes by a list of ids.** On a small table, MariaDB scans the whole table for `WHERE id IN (…)` and waits for
+  the rows that other claims hold: concurrent claims then deadlock. These writes force the primary key (or the index
+  of the column) with `FORCE INDEX`. A `DELETE` takes index hints only in its multi-table form, so it uses that form.
+- **Collation.** MariaDB 10.11 has no `utf8mb4_0900_bin`, so the tables use `utf8mb4_bin`.
+
 ## Guarantees
 
 The table lists each guarantee and the mechanism that keeps it.
@@ -480,13 +495,14 @@ The table lists each guarantee and the mechanism that keeps it.
 | ---------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Node.js          | 22.12                       | Node 22, 24 and 26 in CI.                                                                                             |
 | MySQL            | 8.4 LTS                     | 8.0 reached end of life (April 2026). SKIP LOCKED, window functions, CTEs.                                            |
+| MariaDB          | 10.11 LTS                   | 10.6 reached end of life (July 2026). SKIP LOCKED, `JSON_TABLE`. 10.11 and 11.8 in CI.                                |
 | PostgreSQL       | 15                          | 14 reaches end of life in November 2026.                                                                              |
 | Drivers and ORMs | See [Adapters](adapters.md) | `mysql2` and `pg` are optional peer dependencies. They are drivers, not ORMs, and their major versions change rarely. |
 
 ## Package layout
 
 ```text
-@sqlane/core                      core: definitions, runner, dispatcher, SQL of both dialects, migrations
+@sqlane/core                      core: definitions, runner, dispatcher, SQL of each dialect, migrations
 @sqlane/core/adapter-mysql2       mysql2Adapter
 @sqlane/core/adapter-pg           pgAdapter (with the NOTIFY hint)
 @sqlane/core/adapter-postgres-js  postgresJsAdapter (with the NOTIFY hint)
@@ -527,8 +543,8 @@ Small helper modules, such as `backoff.js`, `duration.js`, `mutex_keys.js` and `
   adapters and the runner with small stub objects instead of a database.
 - **Type tests** in `test/types/` and the examples in `examples/` are type-checked in CI, so the public API cannot
   change by accident. The quickstart in `examples/quickstart` runs in CI against the packed package.
-- **Integration tests** in `test/integration/` give most of the value. The same suite runs against MySQL 8.4 and
-  PostgreSQL 15 and 18 in Docker. It covers enqueue, claims, final writes, the runner, migrations, hints, stats and
+- **Integration tests** in `test/integration/` give most of the value. The same suite runs against MySQL 8.4,
+  MariaDB 10.11 and 11.8, and PostgreSQL 15 and 18 in Docker. It covers enqueue, claims, final writes, the runner, migrations, hints, stats and
   each adapter.
 - **Benchmarks** (`pnpm bench`) do not run in CI. They measure the cost of the probe with 1000 idle names, the latency
   from enqueue to start, and the throughput. The [benchmarks](benchmarks.md) page has the results.

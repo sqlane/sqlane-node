@@ -14,7 +14,7 @@ function fakeKysely() {
     });
 }
 
-test.each([{ dialect: 'mysql' }, { dialect: 'postgres' }])('dialect $dialect', ({ dialect }) => {
+test.each([{ dialect: 'mysql' }, { dialect: 'mariadb' }, { dialect: 'postgres' }])('dialect $dialect', ({ dialect }) => {
     expect(kyselyAdapter(fakeKysely(), /** @type {any} */ ({ dialect })).dialect).toBe(dialect);
 });
 
@@ -23,7 +23,7 @@ test.each([
     { label: 'another dialect', options: { dialect: 'sqlite' } },
 ])('$label: a ConfigError', ({ options }) => {
     expect(() => kyselyAdapter(fakeKysely(), /** @type {any} */ (options)))
-        .toThrow('"dialect" must be "mysql" or "postgres"');
+        .toThrow('"dialect" must be "mysql", "mariadb" or "postgres"');
 });
 
 test.each([

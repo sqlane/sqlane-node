@@ -2,6 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { Sequelize } from 'sequelize';
 import { afterAll, afterEach, beforeAll, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
+import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 
@@ -22,7 +23,7 @@ let instances = [];
 /** @returns {Sequelize} */
 function createSequelize() {
     return new Sequelize(inject('databaseUrl'), {
-        dialect: inject('databaseDialect'),
+        dialect: inject('databaseDialect') === 'postgres' ? 'postgres' : 'mysql',
         logging: false,
         pool: { max: 4 },
     });
@@ -57,7 +58,7 @@ async function freshSqlane(options = {}) {
     /** @type {SqlaneEvent[]} */
     const events = [];
     const sqlane = createSqlane({
-        adapter: sequelizeAdapter(/** @type {any} */ (queueSequelize)),
+        adapter: sequelizeAdapter(/** @type {any} */ (queueSequelize), mysqlFamilyOptions()),
         tablePrefix: p,
         onEvent: event => events.push(event),
         ...options,

@@ -2,7 +2,7 @@
 import mysql from 'mysql2/promise';
 import { Pool } from 'pg';
 import { expectTypeOf } from 'vitest';
-import { createSqlane, defineJob, RetryJobError } from '@sqlane/core';
+import { createSqlane, defineJob, getMigrations, RetryJobError } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 import { pgAdapter } from '@sqlane/core/adapter-pg';
 
@@ -27,6 +27,13 @@ export async function publicApiTypes() {
     await sqlane.enqueue(await pgPool.connect(), job, {});
 
     const pgSqlane = createSqlane({ adapter: pgAdapter(pgPool, { notify: true }) });
+
+    // MariaDB: the mysql2 adapter with its dialect
+    expectTypeOf(mysql2Adapter(mysqlPool, { dialect: 'mariadb' }).dialect)
+        .toEqualTypeOf(/** @type {import('@sqlane/core').Dialect} */ ('mariadb'));
+    getMigrations({ dialect: 'mariadb' });
+    // @ts-expect-error mysql2 is not a PostgreSQL driver
+    mysql2Adapter(mysqlPool, { dialect: 'postgres' });
 
     await pgSqlane.enqueue(await pgPool.connect(), job, {});
     // @ts-expect-error a mysql2 connection is not a connection of the pg adapter

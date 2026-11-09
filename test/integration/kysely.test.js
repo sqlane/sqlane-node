@@ -48,7 +48,7 @@ function createDb(k, postgresJs = false) {
     /** @type {import('kysely').Dialect} */
     let dialect;
 
-    if (inject('databaseDialect') === 'mysql') {
+    if (inject('databaseDialect') !== 'postgres') {
         dialect = new k.MysqlDialect({ pool: createPool({ uri: url, connectionLimit: 4 }) });
     } else if (postgresJs) {
         dialect = new PostgresJSDialect({ postgres: postgres(url, { max: 4, onnotice: () => {} }) });

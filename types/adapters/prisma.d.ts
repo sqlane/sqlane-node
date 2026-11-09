@@ -5,9 +5,9 @@ export type PrismaClientLike = {
 };
 export type PrismaAdapterOptions = {
     /**
-     * The provider of the client: Prisma tells it in no public API.
+     * The database of the client: Prisma tells it in no public API.
      */
-    dialect: 'mysql' | 'postgres';
+    dialect: import('../types.js').Dialect;
 };
 /**
  * The adapter for Prisma 7 (MySQL or PostgreSQL). `enqueue` then takes a Prisma client (a transaction of its own) or

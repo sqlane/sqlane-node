@@ -18,6 +18,27 @@ test.each([
     expect(knexAdapter(fakeKnex(dialect, driverName)).dialect).toBe(expected);
 });
 
+test('MariaDB: a mysql2 knex, with { dialect: \'mariadb\' }', () => {
+    expect(knexAdapter(fakeKnex('mysql', 'mysql2'), { dialect: 'mariadb' }).dialect).toBe('mariadb');
+});
+
+test.each([
+    {
+        label: '"dialect" on a pg knex',
+        knex: fakeKnex('postgresql', 'pg'),
+        dialect: 'mariadb',
+        message: '"dialect" is for mysql2',
+    },
+    {
+        label: 'another "dialect"',
+        knex: fakeKnex('mysql', 'mysql2'),
+        dialect: 'sqlite',
+        message: '"dialect" must be "mysql" or "mariadb"',
+    },
+])('$label: a ConfigError', ({ knex, dialect, message }) => {
+    expect(() => knexAdapter(knex, /** @type {any} */ ({ dialect }))).toThrow(message);
+});
+
 test.each([
     { dialect: 'mysql', driverName: 'mysql' },
     { dialect: 'sqlite3', driverName: 'sqlite3' },

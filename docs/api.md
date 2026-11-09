@@ -1,7 +1,7 @@
 # API reference
 
 This page describes the public API of `@sqlane/core`. sqlane is a job queue that stores its jobs as rows in your own
-MySQL or PostgreSQL database. You add a job inside your business transaction, so the job exists only if that
+MySQL, MariaDB or PostgreSQL database. You add a job inside your business transaction, so the job exists only if that
 transaction commits.
 
 sqlane follows semantic versioning since 1.0, so only a major version breaks this API. The [design](design.md)
@@ -446,15 +446,15 @@ const { applied } = await sqlane.migrate();
 `getMigrations` returns the schema of sqlane as SQL, for your own migration tool.
 
 ```ts
-getMigrations(options: { dialect: 'mysql' | 'postgres', tablePrefix?: string }): Migration[]
+getMigrations(options: { dialect: 'mysql' | 'mariadb' | 'postgres', tablePrefix?: string }): Migration[]
 ```
 
 Each migration has an `id` and a list of SQL `statements`. Apply them in order, and record the ids that you applied.
 
-| Option        | Type                      | Default     | Description                                                           |
-| ------------- | ------------------------- | ----------- | --------------------------------------------------------------------- |
-| `dialect`     | `'mysql'` or `'postgres'` | Required    | The database.                                                         |
-| `tablePrefix` | `string`                  | `'sqlane_'` | The prefix of the table names. Use the same one as in `createSqlane`. |
+| Option        | Type                                   | Default     | Description                                                           |
+| ------------- | -------------------------------------- | ----------- | --------------------------------------------------------------------- |
+| `dialect`     | `'mysql'`, `'mariadb'` or `'postgres'` | Required    | The database.                                                         |
+| `tablePrefix` | `string`                               | `'sqlane_'` | The prefix of the table names. Use the same one as in `createSqlane`. |
 
 `getMigrations` throws a `ConfigError` for a bad `dialect` or `tablePrefix`.
 
@@ -697,20 +697,22 @@ An adapter connects sqlane to your driver or ORM. You create it over the queue's
 library. Each adapter is a subpath of `@sqlane/core`, so you install no extra package. [Adapters](adapters.md) explains
 each adapter in detail.
 
-| Import                             | Function                              | Library                                                                   |
-| ---------------------------------- | ------------------------------------- | ------------------------------------------------------------------------- |
-| `@sqlane/core/adapter-mysql2`      | `mysql2Adapter(pool)`                 | [mysql2](adapters.md#mysql2)                                              |
-| `@sqlane/core/adapter-pg`          | `pgAdapter(pool, { notify? })`        | [pg](adapters.md#pg) (node-postgres)                                      |
-| `@sqlane/core/adapter-postgres-js` | `postgresJsAdapter(sql, { notify? })` | [postgres.js](adapters.md#postgresjs)                                     |
-| `@sqlane/core/adapter-knex`        | `knexAdapter(knex)`                   | [Knex](adapters.md#knex), with mysql2 or pg                               |
-| `@sqlane/core/adapter-kysely`      | `kyselyAdapter(db, { dialect })`      | [Kysely](adapters.md#kysely)                                              |
-| `@sqlane/core/adapter-drizzle`     | `drizzleAdapter(db, { notify? })`     | [Drizzle](adapters.md#drizzle), with mysql2, node-postgres or postgres.js |
-| `@sqlane/core/adapter-prisma`      | `prismaAdapter(prisma, { dialect })`  | [Prisma](adapters.md#prisma)                                              |
-| `@sqlane/core/adapter-sequelize`   | `sequelizeAdapter(sequelize)`         | [Sequelize](adapters.md#sequelize)                                        |
-| `@sqlane/core/adapter-typeorm`     | `typeOrmAdapter(dataSource)`          | [TypeORM](adapters.md#typeorm)                                            |
-| `@sqlane/core/adapter-mikro-orm`   | `mikroOrmAdapter(em, { dialect })`    | [MikroORM](adapters.md#mikroorm)                                          |
+| Import                             | Function                                    | Library                                                                   |
+| ---------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------- |
+| `@sqlane/core/adapter-mysql2`      | `mysql2Adapter(pool, { dialect? })`         | [mysql2](adapters.md#mysql2)                                              |
+| `@sqlane/core/adapter-pg`          | `pgAdapter(pool, { notify? })`              | [pg](adapters.md#pg) (node-postgres)                                      |
+| `@sqlane/core/adapter-postgres-js` | `postgresJsAdapter(sql, { notify? })`       | [postgres.js](adapters.md#postgresjs)                                     |
+| `@sqlane/core/adapter-knex`        | `knexAdapter(knex, { dialect? })`           | [Knex](adapters.md#knex), with mysql2 or pg                               |
+| `@sqlane/core/adapter-kysely`      | `kyselyAdapter(db, { dialect })`            | [Kysely](adapters.md#kysely)                                              |
+| `@sqlane/core/adapter-drizzle`     | `drizzleAdapter(db, { notify?, dialect? })` | [Drizzle](adapters.md#drizzle), with mysql2, node-postgres or postgres.js |
+| `@sqlane/core/adapter-prisma`      | `prismaAdapter(prisma, { dialect })`        | [Prisma](adapters.md#prisma)                                              |
+| `@sqlane/core/adapter-sequelize`   | `sequelizeAdapter(sequelize, { dialect? })` | [Sequelize](adapters.md#sequelize)                                        |
+| `@sqlane/core/adapter-typeorm`     | `typeOrmAdapter(dataSource)`                | [TypeORM](adapters.md#typeorm)                                            |
+| `@sqlane/core/adapter-mikro-orm`   | `mikroOrmAdapter(em, { dialect })`          | [MikroORM](adapters.md#mikroorm)                                          |
 
-The `dialect` option is `'mysql'` or `'postgres'`. Kysely, Prisma and MikroORM need it because they do not expose the
-dialect. The `notify` option is for PostgreSQL only. When it is `true`, sqlane sends hints with LISTEN/NOTIFY, and you
+The `dialect` option is `'mysql'`, `'mariadb'` or `'postgres'`. Kysely, Prisma and MikroORM need it because they do not
+expose the database. The adapters over mysql2 (mysql2, Knex, Drizzle and Sequelize) take an optional `dialect`:
+`'mysql'` (the default) or `'mariadb'`. TypeORM reads it from the `type` of the DataSource. See
+[MariaDB](adapters.md#mariadb). The `notify` option is for PostgreSQL only. When it is `true`, sqlane sends hints with LISTEN/NOTIFY, and you
 must not set the `hint` option. An adapter throws a `ConfigError` if it gets an object or a version that it does not
 support.

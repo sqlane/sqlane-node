@@ -37,9 +37,10 @@ afterAll(async () => {
  * @returns {Promise<any>}
  */
 async function createDataSource(module) {
-    const isMysql = inject('databaseDialect') === 'mysql';
+    const dialect = inject('databaseDialect');
+    const isMysql = dialect !== 'postgres';
     const dataSource = new module.DataSource({
-        type: isMysql ? 'mysql' : 'postgres',
+        type: dialect,
         url: inject('databaseUrl'),
         ...isMysql ? { connectorPackage: 'mysql2', extra: { connectionLimit: 4 } } : { extra: { max: 4 } },
         logging: false,

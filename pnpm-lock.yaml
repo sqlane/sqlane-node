@@ -203,6 +203,9 @@ importers:
       '@stylistic/eslint-plugin':
         specifier: 5.10.0
         version: 5.10.0(eslint@10.14.0(jiti@2.7.0)(supports-color@7.2.0))
+      '@testcontainers/mariadb':
+        specifier: 12.2.1
+        version: 12.2.1(bare-buffer@3.7.1)(supports-color@7.2.0)
       '@testcontainers/mysql':
         specifier: 12.2.1
         version: 12.2.1(bare-buffer@3.7.1)(supports-color@7.2.0)
@@ -1108,6 +1111,9 @@ packages:
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
     peerDependencies:
       eslint: ^9.0.0 || ^10.0.0
+
+  '@testcontainers/mariadb@12.2.1':
+    resolution: {integrity: sha512-Ch22Ha4N+TbNsDC6gW7Qxsd0NAXtcteMLRY6h0iQqW+Sr5aqOOuJSmgqi5yi0tbqaO6N4OW8HXC9gUl3bAGyKA==}
 
   '@testcontainers/mysql@12.2.1':
     resolution: {integrity: sha512-iNPquIpCf6MufZ1gVxIgKH1bXSkFkyagk7GGPq66oOzfq7Kt/b3gvPVfXWMZQfpxVPpzlEosAjDlUdZjxPwm4A==}
@@ -4426,6 +4432,15 @@ snapshots:
       espree: 10.4.0
       estraverse: 5.3.0
       picomatch: 4.0.7
+
+  '@testcontainers/mariadb@12.2.1(bare-buffer@3.7.1)(supports-color@7.2.0)':
+    dependencies:
+      testcontainers: 12.2.1(bare-buffer@3.7.1)(supports-color@7.2.0)
+    transitivePeerDependencies:
+      - bare-abort-controller
+      - bare-buffer
+      - react-native-b4a
+      - supports-color
 
   '@testcontainers/mysql@12.2.1(bare-buffer@3.7.1)(supports-color@7.2.0)':
     dependencies:

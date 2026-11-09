@@ -11,7 +11,8 @@ import { inject } from 'vitest';
 /**
  * @typedef {object} TestDatabaseConnection
  * @property {string} name The test database, e.g. `mysql-8.4`.
- * @property {'mysql' | 'postgres'} dialect
+ * @property {import('../../src/types.js').Dialect} dialect
+ * @property {'mysql' | 'postgres'} family The SQL of the tests: MariaDB runs the MySQL SQL of the tests.
  * @property {string} tablePrefix A prefix unique to this connection: the tables of a test file do not collide with the
  *   tables of the files that run in parallel.
  * @property {Query} query
@@ -34,11 +35,12 @@ export async function connectTestDatabase() {
     const dialect = inject('databaseDialect');
     const url = inject('databaseUrl');
     const tablePrefix = `t_${randomBytes(4).toString('hex')}_`;
-    const connection = dialect === 'mysql' ? await connectMysql(url) : await connectPostgres(url);
+    const connection = dialect === 'postgres' ? await connectPostgres(url) : await connectMysql(url);
 
     return {
         name: inject('databaseName'),
         dialect,
+        family: dialect === 'postgres' ? 'postgres' : 'mysql',
         tablePrefix,
         query: connection.query,
         close: () => dropTablesAndClose(connection, tablePrefix),

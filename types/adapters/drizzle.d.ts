@@ -10,6 +10,10 @@ export type DrizzleAdapterOptions = {
      * PostgreSQL: hints by LISTEN/NOTIFY, as `pgAdapter(pool, { notify: true })`.
      */
     notify?: boolean;
+    /**
+     * mysql2: `'mariadb'` on MariaDB. Default: `'mysql'`.
+     */
+    dialect?: 'mysql' | 'mariadb';
 };
 /**
  * The adapter for Drizzle (mysql2, node-postgres or postgres.js). `enqueue` then takes a Drizzle database (a

@@ -1,7 +1,7 @@
 # sqlane
 
-A transactional job queue for Node.js that stores its jobs in your own MySQL or PostgreSQL database. Its npm package is
-`@sqlane/core`.
+A transactional job queue for Node.js that stores its jobs in your own MySQL, MariaDB or PostgreSQL database. Its npm
+package is `@sqlane/core`.
 
 [![npm](https://img.shields.io/npm/v/@sqlane/core)](https://www.npmjs.com/package/@sqlane/core)
 [![CI](https://github.com/sqlane/sqlane-node/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sqlane/sqlane-node/actions/workflows/ci.yml)
@@ -21,8 +21,8 @@ Many apps save their data and then send a job to a separate queue. If the proces
 job is lost. If the job goes out first and the transaction then rolls back, a worker runs a job for data that does not
 exist.
 
-sqlane avoids both problems. Each job is a row in your MySQL 8.4+ or PostgreSQL 15+ database, and you add it with the
-connection of your business transaction. So the job and your data commit together. This is the transactional outbox
+sqlane avoids both problems. Each job is a row in your MySQL 8.4+, MariaDB 10.11+ or PostgreSQL 15+ database, and you
+add it with the connection of your business transaction. So the job and your data commit together. This is the transactional outbox
 pattern, without a separate relay process. You do not need Redis or a message broker.
 
 When you enqueue a job inside a transaction, sqlane gives you this contract:
@@ -57,11 +57,11 @@ await db.transaction(async (trx) => {
 
 sqlane uses its own small pool to find and claim jobs, so the queue and your app do not wait for each other's
 connections. This example uses Knex on PostgreSQL. It works the same way with mysql2, pg, postgres.js, Kysely, Drizzle,
-Prisma, Sequelize, TypeORM and MikroORM, on MySQL or PostgreSQL.
+Prisma, Sequelize, TypeORM and MikroORM, on MySQL, MariaDB or PostgreSQL.
 
 ## Why sqlane
 
-**Use sqlane** if your app runs on MySQL or PostgreSQL and these needs apply to you:
+**Use sqlane** if your app runs on MySQL, MariaDB or PostgreSQL and these needs apply to you:
 
 - You want each job to commit or roll back with your data, through the driver or ORM that you already use.
 - Jobs for the same entity, such as two syncs of one order, must not run at the same time, even when they have
@@ -101,8 +101,10 @@ On PostgreSQL, pg-boss, Graphile Worker and River do. **Use something else** in 
 npm install @sqlane/core
 ```
 
-sqlane needs Node.js 22.12+ and MySQL 8.4+ or PostgreSQL 15+. It uses the driver or ORM that your app already has, so
-you install nothing else. MariaDB and SQLite are not supported. sqlane is an ES module. CommonJS apps can load it with
+sqlane needs Node.js 22.12+ and MySQL 8.4+, MariaDB 10.11+ or PostgreSQL 15+. It uses the driver or ORM that your app
+already has, so you install nothing else. On MariaDB, tell the adapter: see
+[MariaDB](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mariadb). SQLite is not supported. sqlane is
+an ES module. CommonJS apps can load it with
 `require()`, which Node.js supports from version 22.12.
 
 ## Try it in one minute
@@ -210,8 +212,8 @@ const { completed, failed } = await sqlane.drain();
 | TypeORM     | `@sqlane/core/adapter-typeorm`     | TypeORM 0.3 and 1.x           | [TypeORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#typeorm)        |
 | MikroORM    | `@sqlane/core/adapter-mikro-orm`   | MikroORM 6 and 7              | [MikroORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mikroorm)      |
 
-The query builders and ORMs work with both MySQL and PostgreSQL. mysql2 is a MySQL driver, and pg and postgres.js are
-PostgreSQL drivers.
+The query builders and ORMs work with MySQL, MariaDB and PostgreSQL. mysql2 is a driver for MySQL and MariaDB, and pg and
+postgres.js are PostgreSQL drivers.
 
 ## Guarantees and limits
 

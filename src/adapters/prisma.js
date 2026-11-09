@@ -24,7 +24,7 @@ const MAX_WAIT_MS = 10_000;
 
 /**
  * @typedef {object} PrismaAdapterOptions
- * @property {'mysql' | 'postgres'} dialect The provider of the client: Prisma tells it in no public API.
+ * @property {import('../types.js').Dialect} dialect The database of the client: Prisma tells it in no public API.
  */
 
 /**
@@ -67,8 +67,8 @@ export function prismaAdapter(prisma, options) {
 
     const dialect = options?.dialect;
 
-    if (dialect !== 'mysql' && dialect !== 'postgres') {
-        throw new ConfigError('prismaAdapter: "dialect" must be "mysql" or "postgres"');
+    if (dialect !== 'mysql' && dialect !== 'mariadb' && dialect !== 'postgres') {
+        throw new ConfigError('prismaAdapter: "dialect" must be "mysql", "mariadb" or "postgres"');
     }
 
     return {

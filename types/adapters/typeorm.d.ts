@@ -21,8 +21,9 @@ export type QueryRunnerLike = {
 };
 export type TypeOrmConnection = any;
 /**
- * The adapter for TypeORM (MySQL with mysql2, or PostgreSQL). `enqueue` then takes a DataSource (a transaction of its
- * own), the EntityManager of a transaction (`dataSource.transaction(manager => …)`), or a QueryRunner in a transaction.
+ * The adapter for TypeORM (MySQL or MariaDB with mysql2, or PostgreSQL). The type of the DataSource tells the database:
+ * `"mariadb"` for MariaDB. `enqueue` then takes a DataSource (a transaction of its own), the EntityManager of a
+ * transaction (`dataSource.transaction(manager => …)`), or a QueryRunner in a transaction.
  * @param {any} dataSource The queue's own DataSource, initialized: claims, leases, results.
  * @returns {import('../types.js').Adapter<TypeOrmConnection>}
  */

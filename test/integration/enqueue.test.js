@@ -57,7 +57,7 @@ afterAll(async () => {
  * @returns {Promise<Record<string, unknown> | undefined>} The job and its payload, as the other connections see them.
  */
 async function readJob(id) {
-    const [row] = await database.query(READ_JOB_SQL[database.dialect](database.tablePrefix), [id]);
+    const [row] = await database.query(READ_JOB_SQL[database.family](database.tablePrefix), [id]);
 
     return row && {
         ...row,
@@ -79,7 +79,7 @@ async function inTransaction(func, commit = true) {
     const connection = await testAdapter.connect();
 
     try {
-        await connection.execute(SET_TIME_ZONE_SQL[database.dialect]);
+        await connection.execute(SET_TIME_ZONE_SQL[database.family]);
         await connection.begin();
 
         const result = await func(connection.raw);

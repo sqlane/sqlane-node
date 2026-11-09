@@ -124,7 +124,7 @@ async function claimedJob({ sqlane, store }, options = {}, leaseMs = LEASE_MS) {
  * @returns {Promise<Record<string, any> | undefined>}
  */
 async function readJob(p, id) {
-    const [row] = await database.query(READ_JOB_SQL[database.dialect](p), [id]);
+    const [row] = await database.query(READ_JOB_SQL[database.family](p), [id]);
 
     return row && {
         ...row,
@@ -142,7 +142,7 @@ async function readJob(p, id) {
  * @returns {Promise<{ mutex_key: string, job_id: string, held_in_ms: number | null }[]>}
  */
 async function readHolds(p) {
-    return (await database.query(READ_HOLDS_SQL[database.dialect](p))).map(row => ({
+    return (await database.query(READ_HOLDS_SQL[database.family](p))).map(row => ({
         mutex_key: String(row.mutex_key),
         job_id: String(row.job_id),
         held_in_ms: row.held_in_ms === null ? null : Number(row.held_in_ms),
@@ -380,11 +380,11 @@ describe('stall recovery', () => {
 test('sweepMutexes: deletes the ended lingers and the holds without their running job', async () => {
     const tables = await freshTables();
     const job = await claimedJob(tables);
-    const insertHold = INSERT_HOLD_SQL[database.dialect](tables.p);
+    const insertHold = INSERT_HOLD_SQL[database.family](tables.p);
 
     await database.query(insertHold, ['ended', 'gone', 'old', -1]);
     await database.query(insertHold, ['future', 'gone', 'old', 3600]);
-    await database.query(INSERT_ORPHAN_SQL[database.dialect](tables.p), ['orphan', 'gone', 'old']);
+    await database.query(INSERT_ORPHAN_SQL[database.family](tables.p), ['orphan', 'gone', 'old']);
 
     await expect(tables.store.sweepMutexes(100)).resolves.toStrictEqual({ lingers: 1, orphans: 1 });
     await expect(readHolds(tables.p)).resolves.toMatchObject([

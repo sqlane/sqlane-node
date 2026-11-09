@@ -15,7 +15,7 @@ import { ConfigError } from '../errors.js';
 
 /**
  * @typedef {object} KyselyAdapterOptions
- * @property {'mysql' | 'postgres'} dialect The dialect of the Kysely instance: Kysely does not tell it.
+ * @property {import('../types.js').Dialect} dialect The database of the Kysely instance: Kysely does not tell it.
  */
 
 /**
@@ -71,8 +71,8 @@ export function kyselyAdapter(db, options) {
 
     const dialect = options?.dialect;
 
-    if (dialect !== 'mysql' && dialect !== 'postgres') {
-        throw new ConfigError('kyselyAdapter: "dialect" must be "mysql" or "postgres"');
+    if (dialect !== 'mysql' && dialect !== 'mariadb' && dialect !== 'postgres') {
+        throw new ConfigError('kyselyAdapter: "dialect" must be "mysql", "mariadb" or "postgres"');
     }
 
     return {

@@ -8,7 +8,7 @@ import { createBenchPool } from './bench_database.js';
 
 /**
  * @typedef {object} BenchContext
- * @property {'mysql' | 'postgres'} dialect
+ * @property {import('../src/types.js').Dialect} dialect
  * @property {string} url
  * @property {() => string} nextPrefix A table prefix not used yet.
  * @property {BenchSizes} sizes
@@ -114,7 +114,7 @@ async function enqueueJobs(sqlane, pool, name, { count, delay }) {
  * @returns {Promise<void>}
  */
 async function analyze(pool, p) {
-    await pool.execute(pool.dialect === 'mysql' ? `ANALYZE TABLE ${p}jobs` : `ANALYZE ${p}jobs`);
+    await pool.execute(pool.dialect === 'postgres' ? `ANALYZE ${p}jobs` : `ANALYZE TABLE ${p}jobs`);
 }
 
 /**
@@ -172,7 +172,7 @@ export async function benchProbe({ dialect, url, nextPrefix, sizes }) {
         }));
         await pool.execute(`UPDATE ${p}jobs SET status = 'completed', finished_at = run_at`);
 
-        const quote = dialect === 'mysql' ? '`' : '"';
+        const quote = dialect === 'postgres' ? '"' : '`';
         const union = names
             .map(name => `(SELECT MIN(run_at) AS ${quote}min${quote} FROM ${p}jobs
                 WHERE status = 'pending' AND job_name = '${name}')`)

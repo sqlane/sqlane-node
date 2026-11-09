@@ -41,6 +41,7 @@ export { getMigrations } from './migrations.js';
  */
 /** @typedef {import('./types.js').Backoff} Backoff */
 /** @typedef {import('./types.js').CloseOptions} CloseOptions */
+/** @typedef {import('./types.js').Dialect} Dialect */
 /** @typedef {import('./types.js').DrainOptions} DrainOptions */
 /** @typedef {import('./types.js').DrainResult} DrainResult */
 /** @typedef {import('./types.js').Duration} Duration */

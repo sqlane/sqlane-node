@@ -1,13 +1,14 @@
 {
     "name": "@sqlane/core",
     "version": "1.0.0",
-    "description": "Transactional SQL job queue for Node.js (MySQL, PostgreSQL)",
+    "description": "Transactional SQL job queue for Node.js (MySQL, MariaDB, PostgreSQL)",
     "keywords": [
         "background-jobs",
         "drizzle",
         "job",
         "knex",
         "kysely",
+        "mariadb",
         "mikro-orm",
         "mysql",
         "outbox",
@@ -121,6 +122,7 @@
         "@prisma/adapter-pg": "7.10.1",
         "@prisma/client": "7.10.1",
         "@stylistic/eslint-plugin": "5.10.0",
+        "@testcontainers/mariadb": "12.2.1",
         "@testcontainers/mysql": "12.2.1",
         "@testcontainers/postgresql": "12.2.1",
         "@types/cls-hooked": "4.3.9",

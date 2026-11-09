@@ -8,6 +8,7 @@ wake up after a commit, and the details of each library.
 - [What `enqueue` accepts](#what-enqueue-accepts)
 - [Wake-up after the commit](#wake-up-after-the-commit)
 - [Logs and plugins of your ORM](#logs-and-plugins-of-your-orm)
+- [MariaDB](#mariadb)
 - Drivers: [mysql2](#mysql2), [pg](#pg), [postgres.js](#postgresjs)
 - Query builders and ORMs: [Knex](#knex), [Kysely](#kysely), [Drizzle](#drizzle), [Prisma](#prisma),
   [Sequelize](#sequelize), [TypeORM](#typeorm), [MikroORM](#mikroorm)
@@ -112,6 +113,27 @@ SQL of sqlane.
 
 With Prisma and TypeORM, sqlane uses their raw query APIs. They log the SQL of sqlane like any other raw query, and
 Prisma client extensions can see it.
+
+## MariaDB
+
+sqlane supports MariaDB 10.11 and later. MariaDB speaks the MySQL protocol, so the adapters cannot tell it from MySQL,
+and you tell them. sqlane then runs SQL of its own for MariaDB. Without this setting, sqlane runs the SQL of MySQL, and
+MariaDB rejects it with a syntax error.
+
+| Library   | On MariaDB                                                                                   |
+| --------- | -------------------------------------------------------------------------------------------- |
+| mysql2    | `mysql2Adapter(pool, { dialect: 'mariadb' })`                                                |
+| Knex      | `knexAdapter(knex, { dialect: 'mariadb' })`, with the `mysql2` client                        |
+| Kysely    | `kyselyAdapter(db, { dialect: 'mariadb' })`, with `MysqlDialect`                             |
+| Drizzle   | `drizzleAdapter(db, { dialect: 'mariadb' })`, with mysql2                                    |
+| Prisma    | `prismaAdapter(prisma, { dialect: 'mariadb' })`, with the `mysql` provider                   |
+| Sequelize | `sequelizeAdapter(sequelize, { dialect: 'mariadb' })`, with the `mysql` dialect of Sequelize |
+| TypeORM   | `typeOrmAdapter(dataSource)`, with `type: 'mariadb'` in the DataSource                       |
+| MikroORM  | `mikroOrmAdapter(em, { dialect: 'mariadb' })`, with `@mikro-orm/mysql`                       |
+
+The `mariadb` dialect of Sequelize uses the `mariadb` driver, which sqlane does not support. Use the `mysql` dialect of
+Sequelize, which uses mysql2, as the table shows. If you apply the schema with your own migration tool, use
+`getMigrations({ dialect: 'mariadb' })`.
 
 ## mysql2
 
@@ -293,7 +315,7 @@ In that case, the workers check the database once and find nothing. This costs o
 import { kyselyAdapter } from '@sqlane/core/adapter-kysely';
 ```
 
-The adapter supports kysely 0.28 and 0.29, with a MySQL or PostgreSQL dialect. It also works over postgres.js with
+The adapter supports kysely 0.28 and 0.29, with a MySQL (also for MariaDB) or PostgreSQL dialect. It also works over postgres.js with
 `kysely-postgres-js`. `kyselyAdapter(db, { dialect })` takes the queue's own Kysely instance.
 
 `enqueue` accepts a Kysely instance or a Kysely transaction. The transaction can also be a controlled one, from
@@ -364,8 +386,8 @@ database.
 import { prismaAdapter } from '@sqlane/core/adapter-prisma';
 ```
 
-The adapter supports Prisma 7 on MySQL or PostgreSQL. On MySQL, Prisma 7 connects through its
-`@prisma/adapter-mariadb` driver adapter, which also works with MySQL servers. sqlane is tested with it, and with
+The adapter supports Prisma 7 on MySQL, MariaDB or PostgreSQL. On MySQL and MariaDB, Prisma 7 connects through its
+`@prisma/adapter-mariadb` driver adapter. sqlane is tested with it, and with
 `@prisma/adapter-pg` on PostgreSQL. `prismaAdapter(prisma, { dialect })` takes the queue's own Prisma client.
 
 `enqueue` accepts a Prisma client, or the client of an interactive transaction from
