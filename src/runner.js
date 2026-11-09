@@ -156,10 +156,12 @@ export function createRunner({
     const t = { ...DEFAULT_TIMINGS, ...timings };
     /** How long a renewal of the leases is waited for: a later one counts as failed */
     const renewWaitMs = t.renewIntervalMs;
-    /** The most time between two checks of the leases: the jitter of every() (× 1.1), then the wait of a renewal */
+    /** The most time between two checks of the leases: the jitter of the timer (× 1.1), then the wait of a renewal */
     const maxRenewGapMs = (1.1 * t.renewIntervalMs) + renewWaitMs;
     /** A renewal of the leases waits for the store */
     let renewing = false;
+    /** The renewal timer runs: while handlers run, in every state but closed */
+    let renewalTimerOn = false;
     const lockedBy = `${hostname()}:${process.pid}:${monotonicFactory()()}`;
     const lockToken = monotonicFactory();
     /** @type {'idle' | 'started' | 'draining' | 'closing' | 'closed'} */
@@ -615,6 +617,7 @@ export function createRunner({
 
         entry.lane.running++;
         running.set(job.key, job);
+        keepRenewingLeases();
         emit({ type: 'claimed', jobId: claimed.id, jobName: claimed.name, attempt: claimed.attempts + 1 });
         job.done = (async () => {
             try {
@@ -849,6 +852,47 @@ export function createRunner({
         });
     }
 
+    /** @returns {boolean} No lease to renew. A function: the state changes while a renewal waits. */
+    function renewalStops() {
+        return state === 'closed' || running.size === 0;
+    }
+
+    /**
+     * Renews the leases while handlers run: also while close() waits for them and during drain(), not only when
+     * started. The timer stops when no handler runs; the next claimed job starts it again.
+     */
+    function keepRenewingLeases() {
+        if (renewalTimerOn) {
+            return;
+        }
+
+        renewalTimerOn = true;
+
+        const run = async () => {
+            if (renewalStops()) {
+                renewalTimerOn = false;
+
+                return;
+            }
+
+            try {
+                await renewLeases();
+            } catch (error) {
+                reportError('renew_leases', error);
+            }
+
+            if (renewalStops()) {
+                renewalTimerOn = false;
+
+                return;
+            }
+
+            setTimer(run, t.renewIntervalMs * (0.9 + (Math.random() * 0.2)));
+        };
+
+        setTimer(run, t.renewIntervalMs * (0.9 + (Math.random() * 0.2)));
+    }
+
     async function renewLeases() {
         const jobs = [...running.values()].filter(job => !job.released && !job.leaseLost);
 
@@ -1025,7 +1069,6 @@ export function createRunner({
 
         registry.validate();
         state = 'started';
-        every('renew_leases', renewLeases, t.renewIntervalMs);
         every('recover_stale_jobs', recoverStaleJobs, t.recoveryIntervalMs);
 
         if (cleanup) {
