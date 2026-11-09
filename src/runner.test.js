@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expect, test } from 'vitest';
 import { resolveDefaults } from './defaults.js';
-import { LeaseLostError } from './errors.js';
+import { LeaseLostError, ShutdownError } from './errors.js';
 import { createHintChannel } from './hint_channel.js';
 import { createRegistry } from './registry.js';
 import { createRunner } from './runner.js';
@@ -170,11 +170,12 @@ const LEASE_TIMINGS = { leaseMs: 800, renewIntervalMs: 200, recoveryIntervalMs: 
  */
 
 /**
- * A started runner that claims one job of `ping`, whose handler runs until its signal aborts.
+ * A runner that claims one job of `ping`, whose handler runs until its signal aborts, or for `handlerMs`.
  * @param {(jobs: import('./store/store.js').OwnedJob[]) => Promise<Set<string>>} renewLeases
+ * @param {{ start?: boolean, handlerMs?: number }} [options] `start: false`: not started, for drain().
  * @returns {Promise<LeasedRunner>}
  */
-async function runnerWithLease(renewLeases) {
+async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
     const registry = createRegistry({
         jobsByName: new Map(),
         lanes: undefined,
@@ -217,6 +218,7 @@ async function runnerWithLease(renewLeases) {
             return renewLeases(jobs);
         },
         releaseJob: async () => true,
+        completeJobs: async (/** @type {unknown[]} */ jobs) => jobs.length,
         findStaleJobs: async () => [],
     }));
 
@@ -225,6 +227,10 @@ async function runnerWithLease(renewLeases) {
             aborts.push({ reason: signal.reason, at: Date.now() });
             resolve(undefined);
         }, { once: true });
+
+        if (handlerMs !== undefined) {
+            setTimeout(resolve, handlerMs);
+        }
     }));
 
     const runner = createRunner({
@@ -246,7 +252,9 @@ async function runnerWithLease(renewLeases) {
         timings: LEASE_TIMINGS,
     });
 
-    await runner.start();
+    if (start) {
+        await runner.start();
+    }
 
     return {
         runner,
@@ -336,6 +344,60 @@ test('lease: a renewal that fails once, then succeeds in time, keeps the job', a
     expect(aborts).toStrictEqual([]);
     expect(events.filter(event => event.type === 'lease_lost')).toStrictEqual([]);
     expect(renewErrors()).toBe(1);
+    await runner.close({ deadline: 0 });
+});
+
+/** @returns {(jobs: import('./store/store.js').OwnedJob[]) => Promise<Set<string>>} A renewal that renews all. */
+function renewingAll() {
+    return failingFirst(0);
+}
+
+test('lease: renewed while close() waits for a handler longer than a lease', async () => {
+    const { runner, events, claimedAt, aborts, renewCalls } = await runnerWithLease(renewingAll());
+
+    await waitFor(() => claimedAt() > 0, 1000);
+
+    const closed = runner.close({ deadline: 3 * LEASE_TIMINGS.leaseMs });
+    const callsAtClose = renewCalls();
+
+    await sleep(2 * LEASE_TIMINGS.leaseMs);
+
+    // Past the end of the first lease: still renewed, not lost
+    expect(renewCalls()).toBeGreaterThan(callsAtClose);
+    expect(aborts).toStrictEqual([]);
+    await closed;
+    expect(aborts.map(abort => abort.reason)).toStrictEqual([expect.any(ShutdownError)]);
+    expect(events.filter(event => event.type === 'lease_lost')).toStrictEqual([]);
+});
+
+test('lease: lost while close() waits, if the renewals fail', async () => {
+    const { runner, events, claimedAt, aborts } = await runnerWithLease(async () => {
+        throw new Error('pool exhausted');
+    });
+
+    await waitFor(() => claimedAt() > 0, 1000);
+
+    const closed = runner.close({ deadline: 3 * LEASE_TIMINGS.leaseMs });
+
+    await waitFor(() => aborts.length > 0, 2 * LEASE_TIMINGS.leaseMs);
+    await closed;
+
+    expect(aborts).toHaveLength(1);
+    expect(aborts[0].reason).toBeInstanceOf(LeaseLostError);
+    expect(aborts[0].at).toBeLessThan(claimedAt() + LEASE_TIMINGS.leaseMs);
+    expect(events.filter(event => event.type === 'lease_lost')).toHaveLength(1);
+});
+
+test('lease: renewed during drain() for a handler longer than a lease', async () => {
+    const { runner, events, aborts, renewCalls } = await runnerWithLease(renewingAll(), {
+        start: false,
+        handlerMs: 2 * LEASE_TIMINGS.leaseMs,
+    });
+
+    await expect(runner.drain()).resolves.toMatchObject({ completed: 1 });
+    expect(renewCalls()).toBeGreaterThan(0);
+    expect(aborts).toStrictEqual([]);
+    expect(events.filter(event => event.type === 'lease_lost')).toStrictEqual([]);
     await runner.close({ deadline: 0 });
 });
 
