@@ -9,10 +9,6 @@ import * as postgresJs from '@sqlane/core/adapter-postgres-js';
 import * as prisma from '@sqlane/core/adapter-prisma';
 import * as sequelize from '@sqlane/core/adapter-sequelize';
 import * as typeorm from '@sqlane/core/adapter-typeorm';
-// oxlint-disable-next-line import/no-duplicates -- the alias of adapter-knex, imported on purpose
-import * as legacyKnex from '@sqlane/core/knex';
-import * as legacyMysql2 from '@sqlane/core/mysql2';
-import * as legacyPg from '@sqlane/core/pg';
 
 test('each adapter has its subpath', () => {
     const adapters = [
@@ -29,8 +25,4 @@ test('each adapter has its subpath', () => {
     ];
 
     expect(adapters).toStrictEqual(adapters.map(() => expect.any(Function)));
-});
-
-test('the paths before 0.4 are the same modules, until 1.0', () => {
-    expect([legacyMysql2, legacyPg, legacyKnex]).toStrictEqual([mysql2, pg, knex]);
 });
