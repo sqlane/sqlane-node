@@ -8,7 +8,7 @@
         "postgres": "node postgres.js"
     },
     "dependencies": {
-        "@sqlane/core": "^0.7.0",
+        "@sqlane/core": "^0.8.0",
         "mysql2": "^3.24.6",
         "pg": "^8.23.1"
     }
