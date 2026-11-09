@@ -258,15 +258,8 @@ The [benchmarks page](https://github.com/sqlane/sqlane-node/blob/main/docs/bench
 
 ## Versioning
 
-Since version 1.0, sqlane follows [semantic versioning](https://semver.org):
-
-- A **major** version, such as 2.0, can break the API or the database schema. The
-  [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) says what changed and what you need to do.
-- A **minor** version, such as 1.1, adds features without breaking your code. It can add a migration.
-- A **patch** version, such as 1.0.1, only fixes bugs.
-- A schema change always comes as a new migration, so run `sqlane.migrate()` or apply `getMigrations()` after every
-  upgrade. Migrations that you already applied never change.
-- Only the latest version gets fixes.
+sqlane follows [semantic versioning](https://semver.org). The
+[changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists the changes of each version.
 
 ## Support and contributing
 
