@@ -24,7 +24,7 @@ export async function insertJobsPostgres(executor, p, jobs, enqueueToken) {
     }));
     const rows = await executor.query(`
         WITH input AS (
-            SELECT * FROM jsonb_to_recordset($1::jsonb) AS r(
+            SELECT * FROM jsonb_to_recordset($1::text::jsonb) AS r(
                   id text, job_name text, payload jsonb, mutex_keys text[], max_attempts integer,
                   max_stalls integer, completed_retention_ms bigint, failed_retention_ms bigint, failure_job text,
                   delay_ms bigint, run_at timestamptz

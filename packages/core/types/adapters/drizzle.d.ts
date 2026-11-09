@@ -12,8 +12,8 @@ export type DrizzleAdapterOptions = {
     notify?: boolean;
 };
 /**
- * The adapter for Drizzle (mysql2 or node-postgres). `enqueue` then takes a Drizzle database (a transaction of its
- * own) or a Drizzle transaction, also nested (the caller's: the job commits with it).
+ * The adapter for Drizzle (mysql2, node-postgres or postgres.js). `enqueue` then takes a Drizzle database (a
+ * transaction of its own) or a Drizzle transaction, also nested (the caller's: the job commits with it).
  * @param {DrizzleDatabase} db The queue's own Drizzle database, over a pool: claims, leases, results. A small pool of
  *     its own is best.
  * @param {DrizzleAdapterOptions} [options]

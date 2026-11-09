@@ -52,25 +52,40 @@ In tests, run the due jobs without `start()`: `await sqlane.drain()`. More in [`
 
 ## Adapters
 
-| Import                           | `enqueue` takes                                                        | Supported                                           |
-| -------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------- |
-| `@sqlane/core/adapter-mysql2`    | a mysql2 `Connection` or `PoolConnection` (in a transaction), a `Pool` | mysql2 3.11+                                        |
-| `@sqlane/core/adapter-pg`        | a pg `Client` or `PoolClient` (in a transaction), a `Pool`             | pg 8.13+                                            |
-| `@sqlane/core/adapter-knex`      | a knex transaction (also nested), a knex instance                      | knex 3, with mysql2 or pg                           |
-| `@sqlane/core/adapter-kysely`    | a Kysely transaction (also controlled), a Kysely instance              | kysely 0.28, 0.29: MySQL and PostgreSQL dialects    |
-| `@sqlane/core/adapter-drizzle`   | a Drizzle transaction (also nested), a Drizzle database                | drizzle-orm 0.45, 1.0 (rc): mysql2 or node-postgres |
-| `@sqlane/core/adapter-prisma`    | the client of an interactive transaction, a Prisma client              | Prisma 7: MySQL or PostgreSQL                       |
-| `@sqlane/core/adapter-sequelize` | a Sequelize transaction (also nested), a Sequelize instance            | Sequelize 6: MySQL or PostgreSQL                    |
-| `@sqlane/core/adapter-typeorm`   | the EntityManager or QueryRunner of a transaction, a DataSource        | TypeORM 0.3, 1.x: MySQL (mysql2) or PostgreSQL      |
-| `@sqlane/core/adapter-mikro-orm` | an EntityManager: of a transaction, or outside one                     | MikroORM 6, 7: `@mikro-orm/mysql` or `/postgresql`  |
+| Import                             | `enqueue` takes                                                          | Supported                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `@sqlane/core/adapter-mysql2`      | a mysql2 `Connection` or `PoolConnection` (in a transaction), a `Pool`   | mysql2 3.11+                                                                 |
+| `@sqlane/core/adapter-pg`          | a pg `Client` or `PoolClient` (in a transaction), a `Pool`               | pg 8.13+                                                                     |
+| `@sqlane/core/adapter-postgres-js` | the `sql` of a transaction (also a savepoint), the `sql` of `postgres()` | postgres.js 3.4, 4                                                           |
+| `@sqlane/core/adapter-knex`        | a knex transaction (also nested), a knex instance                        | knex 3, with mysql2 or pg                                                    |
+| `@sqlane/core/adapter-kysely`      | a Kysely transaction (also controlled), a Kysely instance                | kysely 0.28, 0.29: MySQL and PostgreSQL dialects (also `kysely-postgres-js`) |
+| `@sqlane/core/adapter-drizzle`     | a Drizzle transaction (also nested), a Drizzle database                  | drizzle-orm 0.45, 1.0 (rc): mysql2, node-postgres or postgres.js             |
+| `@sqlane/core/adapter-prisma`      | the client of an interactive transaction, a Prisma client                | Prisma 7: MySQL or PostgreSQL                                                |
+| `@sqlane/core/adapter-sequelize`   | a Sequelize transaction (also nested), a Sequelize instance              | Sequelize 6: MySQL or PostgreSQL                                             |
+| `@sqlane/core/adapter-typeorm`     | the EntityManager or QueryRunner of a transaction, a DataSource          | TypeORM 0.3, 1.x: MySQL (mysql2) or PostgreSQL                               |
+| `@sqlane/core/adapter-mikro-orm`   | an EntityManager: of a transaction, or outside one                       | MikroORM 6, 7: `@mikro-orm/mysql` or `/postgresql`                           |
 
 The paths before 0.4 (`@sqlane/core/mysql2`, `/pg`, `/knex`) still work, until 1.0.
 
-With a pool, or a knex, Kysely, Drizzle, Prisma, Sequelize or TypeORM instance, or a MikroORM EntityManager outside a
-transaction, the enqueue runs in a transaction of its own and the workers wake at once. With a knex, Sequelize, TypeORM
-or MikroORM transaction, they wake at once after the commit of the outermost one (MikroORM 7: unless the enqueue ran in
-a nested one). With a connection of a driver, or a Kysely, Drizzle or Prisma transaction, sqlane cannot see the commit:
-the workers re-probe after the enqueue (about 20 ms).
+With a pool (also the `sql` of `postgres()`), or a knex, Kysely, Drizzle, Prisma, Sequelize or TypeORM instance, or a
+MikroORM EntityManager outside a transaction, the enqueue runs in a transaction of its own and the workers wake at once.
+With a knex, Sequelize, TypeORM or MikroORM transaction, they wake at once after the commit of the outermost one
+(MikroORM 7: unless the enqueue ran in a nested one). With a connection of a driver (also a postgres.js transaction),
+or a Kysely, Drizzle or Prisma transaction, sqlane cannot see the commit: the workers re-probe after the enqueue (about
+20 ms). On PostgreSQL, `{ notify: true }` of the pg, postgres.js and Drizzle adapters wakes them at the commit.
+
+```js
+import { postgresJsAdapter } from '@sqlane/core/adapter-postgres-js';
+
+// The queue's own postgres(…), without a `transform` of results. { notify: true }: NOTIFY wakes the workers at the
+// commit, also after an enqueue in a transaction.
+const sqlane = createSqlane({ adapter: postgresJsAdapter(queueSql, { notify: true }), jobs: [buildReport] });
+
+await sql.begin(async (sql) => {
+    await sql`INSERT INTO reports ${sql({ id: reportId })}`;
+    await sqlane.enqueue(sql, buildReport, { reportId }, { jobId: reportId });
+});
+```
 
 ```js
 import { knexAdapter } from '@sqlane/core/adapter-knex';

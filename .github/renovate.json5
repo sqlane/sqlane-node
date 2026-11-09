@@ -37,6 +37,7 @@
         },
         // The older supported lines of the ORMs, under npm aliases: they stay on their line
         { matchDepNames: ['kysely-0.28'], allowedVersions: '<0.29' },
+        { matchDepNames: ['postgres-3'], allowedVersions: '<4' },
         { matchDepNames: ['typeorm-0.3'], allowedVersions: '<0.4' },
         { matchDepNames: ['drizzle-orm-1'], allowedVersions: '<2' },
         { matchFileNames: ['test/mikro-orm-6/package.json'], allowedVersions: '<7' },

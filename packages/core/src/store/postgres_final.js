@@ -137,7 +137,7 @@ export async function retryJob(executor, p, job, { delayMs, error }) {
     const changed = await executor.run(`
         UPDATE ${p}jobs
            SET status = 'pending', run_at = ${runAt(`$3 * ${MS}`)}, attempts = attempts + 1, ${CLEAR_LOCK},
-               last_error = $4::jsonb, updated_at = ${NOW}
+               last_error = $4::text::jsonb, updated_at = ${NOW}
          WHERE id = $1 AND lock_token = $2
     `, [job.id, job.lockToken, delayMs, JSON.stringify(error)]);
 
@@ -224,7 +224,7 @@ export async function failJob(executor, p, job, { error, buildFailureJob }) {
     await executor.run(`
         UPDATE ${p}jobs
            SET status = 'failed', attempts = attempts + 1, finished_at = ${NOW},
-               expires_at = ${NOW} + failed_retention_ms * ${MS}, ${CLEAR_LOCK}, last_error = $2::jsonb,
+               expires_at = ${NOW} + failed_retention_ms * ${MS}, ${CLEAR_LOCK}, last_error = $2::text::jsonb,
                updated_at = ${NOW}
          WHERE id = $1
     `, [job.id, JSON.stringify(error)]);
@@ -297,7 +297,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
         await executor.run(`
             UPDATE ${p}jobs
                SET status = 'pending', run_at = ${runAt(`LEAST(30000 * power(2, stalls), 3600000) * ${MS}`)},
-                   stalls = stalls + 1, ${CLEAR_LOCK}, last_error = $2::jsonb, updated_at = ${NOW}
+                   stalls = stalls + 1, ${CLEAR_LOCK}, last_error = $2::text::jsonb, updated_at = ${NOW}
              WHERE id = $1
         `, [id, JSON.stringify(error)]);
 
@@ -307,7 +307,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
     await executor.run(`
         UPDATE ${p}jobs
            SET status = 'failed', stalls = stalls + 1, finished_at = ${NOW},
-               expires_at = ${NOW} + failed_retention_ms * ${MS}, ${CLEAR_LOCK}, last_error = $2::jsonb,
+               expires_at = ${NOW} + failed_retention_ms * ${MS}, ${CLEAR_LOCK}, last_error = $2::text::jsonb,
                updated_at = ${NOW}
          WHERE id = $1
     `, [id, JSON.stringify(error)]);

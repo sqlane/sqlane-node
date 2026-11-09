@@ -12,6 +12,7 @@
         "mysql",
         "outbox",
         "postgres",
+        "postgres.js",
         "postgresql",
         "prisma",
         "queue",
@@ -46,6 +47,10 @@
         "./adapter-pg": {
             "types": "./types/adapters/pg.d.ts",
             "default": "./src/adapters/pg.js"
+        },
+        "./adapter-postgres-js": {
+            "types": "./types/adapters/postgres_js.d.ts",
+            "default": "./src/adapters/postgres_js.js"
         },
         "./adapter-knex": {
             "types": "./types/adapters/knex.d.ts",
@@ -120,9 +125,12 @@
         "knex": "3.3.0",
         "kysely": "0.29.8",
         "kysely-0.28": "npm:kysely@0.28.19",
+        "kysely-postgres-js": "5.1.0",
         "mariadb": "3.5.5",
         "mysql2": "3.24.6",
         "pg": "8.23.1",
+        "postgres": "4.1.0",
+        "postgres-3": "npm:postgres@3.4.9",
         "prisma": "7.10.1",
         "sequelize": "6.37.8",
         "typeorm": "1.1.2",

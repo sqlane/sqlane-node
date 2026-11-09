@@ -259,10 +259,10 @@ importers:
         version: 4.2.2
       drizzle-orm:
         specifier: 0.45.4
-        version: 0.45.4(@electric-sql/pglite@0.4.3)(@prisma/client@7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@7.0.2))(typescript@7.0.2))(@types/pg@8.23.1)(knex@3.3.0(mariadb@3.5.5)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(supports-color@7.2.0))(kysely@0.29.8)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.7)(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@7.0.2))
+        version: 0.45.4(@electric-sql/pglite@0.4.3)(@prisma/client@7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@7.0.2))(typescript@7.0.2))(@types/pg@8.23.1)(knex@3.3.0(mariadb@3.5.5)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(supports-color@7.2.0))(kysely@0.29.8)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@4.1.0)(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@7.0.2))
       drizzle-orm-1:
         specifier: npm:drizzle-orm@1.0.0-rc.5
-        version: drizzle-orm@1.0.0-rc.5(@electric-sql/pglite@0.4.3)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.7)(valibot@1.4.2(typescript@7.0.2))
+        version: drizzle-orm@1.0.0-rc.5(@electric-sql/pglite@0.4.3)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@4.1.0)(valibot@1.4.2(typescript@7.0.2))
       knex:
         specifier: 3.3.0
         version: 3.3.0(mariadb@3.5.5)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(supports-color@7.2.0)
@@ -272,6 +272,9 @@ importers:
       kysely-0.28:
         specifier: npm:kysely@0.28.19
         version: kysely@0.28.19
+      kysely-postgres-js:
+        specifier: 5.1.0
+        version: 5.1.0(kysely@0.29.8)(postgres@4.1.0)
       mariadb:
         specifier: 3.5.5
         version: 3.5.5
@@ -281,6 +284,12 @@ importers:
       pg:
         specifier: 8.23.1
         version: 8.23.1
+      postgres:
+        specifier: 4.1.0
+        version: 4.1.0
+      postgres-3:
+        specifier: npm:postgres@3.4.9
+        version: postgres@3.4.9
       prisma:
         specifier: 7.10.1
         version: 7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@7.0.2)
@@ -2705,6 +2714,16 @@ packages:
       tedious:
         optional: true
 
+  kysely-postgres-js@5.1.0:
+    resolution: {integrity: sha512-n5OLGrxyb89l+gpmC97tGN7vCt+KRcck1JG0hEunnWuk2oKCeBrmK+0ADu6lJwLfCCZAdSC1kEhqbUUyXWqbgw==}
+    engines: {bun: '>=1.2', node: '>=22'}
+    peerDependencies:
+      kysely: '>= 0.29.0 < 1'
+      postgres: '>= 3.4.0 < 5'
+    peerDependenciesMeta:
+      postgres:
+        optional: true
+
   kysely@0.28.19:
     resolution: {integrity: sha512-sXoKWuQjtorwxDLiws0ZSPGGne/hs+fGHIII7vXquSBFgHwLXgFIHN9tTv3kNdVkJ5d3xtXC84GjjWMYLqdFWg==}
     engines: {node: '>=20.0.0'}
@@ -3157,6 +3176,14 @@ packages:
   postgres@3.4.7:
     resolution: {integrity: sha512-Jtc2612XINuBjIl/QTWsV5UvE8UHuNblcO3vVADSrKsrc6RqGX6lOW1cEo3CM2v0XG4Nat8nI+YM7/f26VxXLw==}
     engines: {node: '>=12'}
+
+  postgres@3.4.9:
+    resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
+    engines: {node: '>=12'}
+
+  postgres@4.1.0:
+    resolution: {integrity: sha512-s+0WH67YAyLdBQUb6XczbziBhY+C9uiQsg9S8R5RHdZhk6sdyK6202E+T2tXpiInSEEjDLRSJ3OpYBe3PN6MsQ==}
+    engines: {node: '>=18'}
 
   prelude-ls@1.2.1:
     resolution: {integrity: sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g==}
@@ -5457,7 +5484,7 @@ snapshots:
 
   dottie@2.0.7: {}
 
-  drizzle-orm@0.45.4(@electric-sql/pglite@0.4.3)(@prisma/client@7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@7.0.2))(typescript@7.0.2))(@types/pg@8.23.1)(knex@3.3.0(mariadb@3.5.5)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(supports-color@7.2.0))(kysely@0.29.8)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.7)(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@7.0.2)):
+  drizzle-orm@0.45.4(@electric-sql/pglite@0.4.3)(@prisma/client@7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@7.0.2))(typescript@7.0.2))(@types/pg@8.23.1)(knex@3.3.0(mariadb@3.5.5)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(supports-color@7.2.0))(kysely@0.29.8)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@4.1.0)(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@7.0.2)):
     optionalDependencies:
       '@electric-sql/pglite': 0.4.3
       '@prisma/client': 7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@7.0.2))(typescript@7.0.2)
@@ -5466,16 +5493,16 @@ snapshots:
       kysely: 0.29.8
       mysql2: 3.24.6(@types/node@22.20.5)
       pg: 8.23.1
-      postgres: 3.4.7
+      postgres: 4.1.0
       prisma: 7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@7.0.2)
 
-  drizzle-orm@1.0.0-rc.5(@electric-sql/pglite@0.4.3)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.7)(valibot@1.4.2(typescript@7.0.2)):
+  drizzle-orm@1.0.0-rc.5(@electric-sql/pglite@0.4.3)(@types/pg@8.23.1)(mysql2@3.24.6(@types/node@22.20.5))(pg@8.23.1)(postgres@4.1.0)(valibot@1.4.2(typescript@7.0.2)):
     optionalDependencies:
       '@electric-sql/pglite': 0.4.3
       '@types/pg': 8.23.1
       mysql2: 3.24.6(@types/node@22.20.5)
       pg: 8.23.1
-      postgres: 3.4.7
+      postgres: 4.1.0
       valibot: 1.4.2(typescript@7.0.2)
 
   dunder-proto@1.0.1:
@@ -5945,6 +5972,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  kysely-postgres-js@5.1.0(kysely@0.29.8)(postgres@4.1.0):
+    dependencies:
+      kysely: 0.29.8
+    optionalDependencies:
+      postgres: 4.1.0
+
   kysely@0.28.19: {}
 
   kysely@0.29.8: {}
@@ -6368,6 +6401,10 @@ snapshots:
   postgres-interval@4.1.0: {}
 
   postgres@3.4.7: {}
+
+  postgres@3.4.9: {}
+
+  postgres@4.1.0: {}
 
   prelude-ls@1.2.1: {}
 

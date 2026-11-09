@@ -35,7 +35,12 @@ test.each([
 
 test.each([
     { label: 'no database', db: undefined, message: 'expects a Drizzle database or transaction' },
-    { label: 'postgres.js', db: fakeDb('PostgresJsSession', pgPool), message: 'not "PostgresJsSession"' },
+    { label: 'Neon over HTTP', db: fakeDb('NeonHttpSession', pgPool), message: 'not "NeonHttpSession"' },
+    {
+        label: 'postgres.js, a reserved connection',
+        db: fakeDb('PostgresJsSession', { unsafe: () => {}, reserve: () => {}, release: () => {} }),
+        message: 'over a pool',
+    },
     { label: 'a pg client, not a pool', db: fakeDb('NodePgSession', { connect: () => {} }), message: 'over a pool' },
     {
         label: 'a transaction',
