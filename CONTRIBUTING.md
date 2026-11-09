@@ -12,8 +12,9 @@ docs/       design, benchmarks, releasing
 scripts/    CI scripts
 ```
 
-`test/mikro-orm-6` is a package of its own (a pnpm workspace member), as the drivers of MikroORM 7 pin
-`@mikro-orm/core` as a peer.
+`test/mikro-orm-6` has a `package.json` and a lockfile of its own: MikroORM 6 for the tests. Its drivers take
+`@mikro-orm/core` as a peer, so an npm alias in the root would give them core 7. `pnpm install` at the root installs it
+too (`pnpm:devPreinstall`).
 
 ## Setup
 

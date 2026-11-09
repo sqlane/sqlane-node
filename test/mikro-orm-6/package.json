@@ -2,7 +2,7 @@
     "name": "@sqlane/test-mikro-orm-6",
     "version": "0.0.0",
     "private": true,
-    "description": "MikroORM 6 for the tests of @sqlane/core: a package of its own, as the drivers of MikroORM 7 pin @mikro-orm/core as a peer",
+    "description": "MikroORM 6 for the tests of @sqlane/core: installed apart (pnpm:devPreinstall of the root), as the drivers of MikroORM 7 pin @mikro-orm/core as a peer: an npm alias would resolve it to core 7",
     "type": "module",
     "exports": {
         ".": "./index.js"

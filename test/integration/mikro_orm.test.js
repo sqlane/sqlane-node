@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { MikroORM as MySqlMikroORM } from '@mikro-orm/mysql';
 import { MikroORM as PostgreSqlMikroORM } from '@mikro-orm/postgresql';
-import { MySqlMikroORM as MySqlMikroORM6, PostgreSqlMikroORM as PostgreSqlMikroORM6 } from '@sqlane/test-mikro-orm-6';
+import { MySqlMikroORM as MySqlMikroORM6, PostgreSqlMikroORM as PostgreSqlMikroORM6 } from '../mikro-orm-6/index.js';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
 import { mikroOrmAdapter } from '../../src/adapters/mikro_orm.js';

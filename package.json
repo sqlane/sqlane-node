@@ -96,6 +96,7 @@
         "access": "public"
     },
     "scripts": {
+        "pnpm:devPreinstall": "pnpm install --dir test/mikro-orm-6 --ignore-workspace",
         "lint": "oxlint --deny-warnings",
         "lint:fix": "oxlint --fix",
         "lint:package": "publint --strict",
@@ -131,7 +132,6 @@
         "@prisma/adapter-mariadb": "7.10.1",
         "@prisma/adapter-pg": "7.10.1",
         "@prisma/client": "7.10.1",
-        "@sqlane/test-mikro-orm-6": "workspace:*",
         "@stylistic/eslint-plugin": "5.10.0",
         "@testcontainers/mysql": "12.2.1",
         "@testcontainers/postgresql": "12.2.1",
