@@ -2,6 +2,7 @@
 packages:
   - packages/*
   - test
+  - test/mikro-orm-6
 
 # `pnpm add` writes exact versions, not ^ ranges
 saveExact: true

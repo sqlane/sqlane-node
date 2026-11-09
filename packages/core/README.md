@@ -62,14 +62,15 @@ In tests, run the due jobs without `start()`: `await sqlane.drain()`. More in [`
 | `@sqlane/core/adapter-prisma`    | the client of an interactive transaction, a Prisma client              | Prisma 7: MySQL or PostgreSQL                       |
 | `@sqlane/core/adapter-sequelize` | a Sequelize transaction (also nested), a Sequelize instance            | Sequelize 6: MySQL or PostgreSQL                    |
 | `@sqlane/core/adapter-typeorm`   | the EntityManager or QueryRunner of a transaction, a DataSource        | TypeORM 0.3, 1.x: MySQL (mysql2) or PostgreSQL      |
+| `@sqlane/core/adapter-mikro-orm` | an EntityManager: of a transaction, or outside one                     | MikroORM 6, 7: `@mikro-orm/mysql` or `/postgresql`  |
 
 The paths before 0.4 (`@sqlane/core/mysql2`, `/pg`, `/knex`) still work, until 1.0.
 
-With a pool, or a knex, Kysely, Drizzle, Prisma, Sequelize or TypeORM instance, the enqueue runs in a transaction of its
-own and the workers wake at once. With a knex, Sequelize or TypeORM transaction, they wake at once after the commit of
-the outermost one. With a connection of a
-driver, or a Kysely, Drizzle or Prisma transaction, sqlane cannot see the commit: the workers re-probe after the enqueue
-(about 20 ms).
+With a pool, or a knex, Kysely, Drizzle, Prisma, Sequelize or TypeORM instance, or a MikroORM EntityManager outside a
+transaction, the enqueue runs in a transaction of its own and the workers wake at once. With a knex, Sequelize, TypeORM
+or MikroORM transaction, they wake at once after the commit of the outermost one (MikroORM 7: unless the enqueue ran in
+a nested one). With a connection of a driver, or a Kysely, Drizzle or Prisma transaction, sqlane cannot see the commit:
+the workers re-probe after the enqueue (about 20 ms).
 
 ```js
 import { knexAdapter } from '@sqlane/core/adapter-knex';
@@ -172,8 +173,24 @@ await dataSource.transaction(async (manager) => {
 
 The adapter adds a subscriber to the DataSource of a transaction, for its `afterTransactionCommit`.
 
-The SQL of sqlane runs on the driver connection under knex, Drizzle and Sequelize, through Kysely without its plugins,
-and through the raw queries of Prisma and TypeORM: they do not log it or transform it. MikroORM: later.
+```js
+import { mikroOrmAdapter } from '@sqlane/core/adapter-mikro-orm';
+
+// The EntityManager of the queue's own MikroORM; the dialect: its driver, @mikro-orm/mysql or @mikro-orm/postgresql
+const sqlane = createSqlane({ adapter: mikroOrmAdapter(queueOrm.em, { dialect: 'postgres' }), jobs: [buildReport] });
+
+await orm.em.transactional(async (em) => {
+    em.persist(em.create(Report, { id: reportId }));
+    await sqlane.enqueue(em, buildReport, { reportId }, { jobId: reportId });
+});
+```
+
+As MikroORM's own queries, the global EntityManager inside `em.transactional()` means its transaction:
+`sqlane.enqueue(orm.em, …)` there commits or rolls back with it. `em.begin()` and `em.commit()` work too.
+
+The SQL of sqlane runs on the driver connection under knex, Drizzle and Sequelize, through Kysely without its plugins
+(also under MikroORM: knex in MikroORM 6, Kysely in 7), and through the raw queries of Prisma and TypeORM: they do not
+log it or transform it.
 
 ## Performance
 
