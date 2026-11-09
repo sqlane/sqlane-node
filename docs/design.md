@@ -123,10 +123,13 @@ Choices:
 
 - **Definition apart from the handler.** Producers import a small definition, not the handler and its dependencies.
   `enqueue` and `handle` take a definition or a name.
-- **No payload types, no validation.** An enqueued payload must be JSON: `enqueue` checks it with a `Jsonable<T>`
+- **Optional payload types, no validation.** An enqueued payload must be JSON: `enqueue` checks it with a `Jsonable<T>`
   type inferred from the argument (TS interfaces and optional fields pass; a `Date`, a `Map` or a class instance is
-  a type error; no generics to write). The read side (the handler's `payload`, the argument of `mutexKeys`) is `any`. At runtime:
-  `JSON.stringify`, well-formed strings without NUL (PostgreSQL `jsonb` refuses it), and the size limit, no revivers. The app validates its own payloads.
+  a type error). A definition can declare its payload: `defineJob<{ reportId: string }>(…)`, or in JSDoc the type
+  `JobDefinition<{ reportId: string }>` of the constant. `enqueue` and `enqueueMany` then check the payload against it
+  (and that it is JSON), and the handler's `payload` and the argument of `mutexKeys` have its type. Without one, or by
+  name, the read side is `any`. At runtime: `JSON.stringify`, well-formed strings without NUL (PostgreSQL `jsonb`
+  refuses it), and the size limit, no revivers. The app validates its own payloads.
 - **Names and ids.** A job name matches `^[a-z][a-z0-9_.-]{0,127}$` (no `:`). A `jobId` is a string of 1–120
   printable ASCII characters. Both are case-sensitive on both databases.
 - **Enqueue by name too.** `enqueue(conn, 'job_name', …)` is for producers without the definition (another service,

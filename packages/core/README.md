@@ -69,6 +69,10 @@ await sqlane.start();
 process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));
 ```
 
+TypeScript: `defineJob<{ reportId: string }>({ name: 'build_report' })` declares the payload (in JSDoc:
+`/** @type {JobDefinition<{ reportId: string }>} */` on the constant). `enqueue` then checks it, and the handler and
+`mutexKeys` get it typed. Without one, any JSON payload, and the handler gets `any`.
+
 In tests, run the due jobs without `start()`: `await sqlane.drain()`. More in [`examples/`](https://github.com/sqlane/sqlane-node/tree/main/packages/core/examples).
 
 ## Adapters
