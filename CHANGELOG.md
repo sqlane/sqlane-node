@@ -1,5 +1,11 @@
 # @sqlane/core
 
+## 2.0.1
+
+### Patch Changes
+
+- [#81](https://github.com/sqlane/sqlane-node/pull/81) [`3a5bb78`](https://github.com/sqlane/sqlane-node/commit/3a5bb78f078e2fdb64233d584390757d2ec31881) - Clarify when to choose sqlane, compare queue features and licenses, document measured idle-queue overhead, and add scheduling to the roadmap.
+
 ## 2.0.0
 
 ### Major Changes
