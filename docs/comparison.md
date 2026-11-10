@@ -1,105 +1,123 @@
-# Comparison with other job queues
+# Compare job queues
 
-This page compares sqlane with other job queues for Node.js, and with River, a Go queue that now also has a JS/TS version. It helps you decide
-whether sqlane fits your app, or whether another queue fits better.
+Choose a queue for your transaction model, database and concurrency needs. sqlane combines transactional enqueue on
+MySQL, MariaDB and PostgreSQL with mutex keys shared across job names, under the MIT license.
 
-The facts come from the official documentation of each project, as of November 2026. Projects change quickly, so
-check the linked sources before you decide. If something here is wrong or out of date, please
-[open an issue](https://github.com/sqlane/sqlane-node/issues).
+This comparison checks the published packages on **10 November 2026**: pg-boss 12.38.1, Graphile Worker 0.18.0,
+BullMQ 6.7.2, Sidequest 1.17.0 and River JS 0.3.2. River's Go library is a separate implementation, currently 0.51.2.
+Feature and license sources are linked below.
 
-## Summary
+## Features at a glance
 
-sqlane is not the only queue that adds jobs inside your transaction. pg-boss, Graphile Worker and River do this too.
-sqlane differs from them in three ways.
+✅ = available as open source, including separate dashboard packages. **Pro** = commercial extension.
+— = not found in the inspected documented APIs. A checkmark establishes availability; the notes explain different guarantees.
 
-- It supports MySQL and MariaDB as well as PostgreSQL, with transactional enqueue on all three. On MySQL, none of the
-  other queues on this page adds jobs inside your transaction.
-- It works with the transaction objects of 10 drivers and ORMs, so you keep the library that you already use.
-- Its mutex keys stop jobs for the same entity from running at the same time. A job can have up to 10 keys, and the
-  keys work across job names. The pg-boss options `singletonKey`, `key_strict_fifo` and `groupConcurrency` come close,
-  but they work within one queue, and a job has one key. Graphile Worker's `queue_name` also runs jobs of different
-  tasks in series, but a job has one queue name, and the docs advise against many distinct names. BullMQ's free
-  deduplication with `keepLastIfActive` keeps one active job per deduplication id, but it merges later adds into one
-  follow-up job. Groups with a concurrency limit per group are in BullMQ Pro, the commercial version. River limits
-  concurrency per key only in River Pro. Sidequest documents no limit per key.
+| Feature                                       | sqlane | pg-boss | Graphile Worker | BullMQ | Sidequest | River JS |
+| --------------------------------------------- | ------ | ------- | --------------- | ------ | --------- | -------- |
+| PostgreSQL storage                            | ✅     | ✅      | ✅              | ✅     | ✅        | ✅       |
+| MySQL storage                                 | ✅     | —       | —               | —      | ✅        | —        |
+| MariaDB storage, explicitly supported         | ✅     | —       | —               | —      | —         | —        |
+| Enqueue in your application's SQL transaction | ✅     | ✅      | ✅              | —¹     | —         | ✅       |
+| Multiple resource mutex keys on one job       | ✅     | —       | —               | —      | —         | —        |
+| Cron or recurring jobs                        | —      | ✅      | ✅              | ✅     | ✅²       | ✅²      |
+| Dashboard available                           | —      | ✅      | —               | ✅³    | ✅        | ✅       |
+| MIT license                                   | ✅     | ✅      | ✅              | ✅     | —⁴        | —⁴       |
 
-sqlane also has clear gaps. It has no cron, no dashboard and no priorities. It is new (version 1.0 since 2026) and has
-no known production use yet, while pg-boss, Graphile Worker, BullMQ and River have been released for several years.
+1. BullMQ's PostgreSQL backend uses its own pool; a caller-owned transaction API was not found in the published
+   package. Its Redis backend cannot share an application's SQL transaction.
+2. Scheduling guarantees differ: Sidequest registers cron in each process; River core keeps periodic configuration in
+   leader memory. Neither checkmark promises durable missed-tick replay. See [scheduling](#scheduling-and-operations).
+3. BullMQ has the community MIT-licensed [bull-board](https://github.com/felixmosh/bull-board) as well as commercial
+   Taskforce.sh. The table includes separate dashboard packages, not only bundled ones.
+4. Sidequest is **LGPL-3.0-or-later**; River is **MPL-2.0**. Both are open source. MIT is a distinction from those two,
+   not from pg-boss, Graphile Worker or BullMQ. Follow each project's license terms.
 
-## Feature table
+Storage details: BullMQ also supports Redis-compatible stores; Sidequest also supports SQLite and MongoDB; River JS
+also supports SQLite. MySQL protocol compatibility alone is not an explicit MariaDB support contract.
 
-| Feature                         | sqlane                                                          | pg-boss                                                                                                                  | Graphile Worker                                                                                                                  | BullMQ                                                                                                                                                                                                                                 | Sidequest                                                                          | River                                                                |
-| ------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Language                        | Node.js                                                         | Node.js                                                                                                                  | Node.js                                                                                                                          | Node.js                                                                                                                                                                                                                                | Node.js                                                                            | Go, and a JS/TS version for Node.js 24+ [21]                         |
-| Storage                         | MySQL 8.4+, MariaDB 10.11+, PostgreSQL 15+                      | PostgreSQL 13+, also CockroachDB, Citus and PGlite [1]                                                                   | PostgreSQL 12+ [5]                                                                                                               | Redis-compatible stores (Redis, Valkey, Dragonfly), and an optional PostgreSQL 13+ backend [9][10]                                                                                                                                     | PostgreSQL, MySQL, SQLite, MongoDB [14]                                            | PostgreSQL, SQLite [19][21]                                          |
-| Enqueue in your own transaction | Yes, with mysql2, pg, postgres.js and 7 query builders and ORMs | Yes, with the `db` option, and adapters for Knex, Kysely, Drizzle and Prisma [2]                                         | Yes. Call the SQL function `graphile_worker.add_job()` on your own connection inside your transaction, also from triggers [6][a] | No with Redis, because it is a separate store. Not documented for the PostgreSQL backend [10]                                                                                                                                          | Not yet. `withTransaction(trx)` is on the roadmap [15]                             | Yes, with `InsertTx` [19]                                            |
-| One job at a time per entity    | Mutex keys, up to 10 per job, cluster-wide and across job names | Within one queue: `singletonKey`, the `key_strict_fifo` policy, and `groupConcurrency` per group across all nodes [3][4] | `queue_name` runs jobs in series, but the docs warn against many distinct names, such as UUIDs [7]                               | With deduplication and `keepLastIfActive`, at most one active job per deduplication id, and later adds merge into one follow-up job with the latest data [12]. Groups with a concurrency per group are in BullMQ Pro (commercial) [11] | Concurrency per queue and unique jobs [16]. No exclusion per key found in the docs | Concurrency limits per job arguments, in River Pro (commercial) [20] |
-| Dashboard                       | No                                                              | Yes, `@pg-boss/dashboard` [1]                                                                                            | None in the official docs                                                                                                        | Taskforce.sh, official and commercial [22]                                                                                                                                                                                             | Built in [17]                                                                      | River UI [19]                                                        |
-| Cron and recurring jobs         | No                                                              | Cron and RRULE [1]                                                                                                       | Crontab, with backfill [8]                                                                                                       | Job schedulers [13]                                                                                                                                                                                                                    | Cron, registered in the process [18]                                               | Periodic jobs [19]                                                   |
-| Priorities                      | No                                                              | Yes, the `priority` option of `send()` [23]                                                                              | Yes, the `priority` argument of `add_job()` [6]                                                                                  | Yes, prioritized jobs [24]                                                                                                                                                                                                             | Per queue, not per job [25]                                                        | Yes, from 1 to 4 per job [26]                                        |
-| Maturity                        | Version 1.0, first released in 2026, no known production use    | Version 12, first released in 2016 [27]                                                                                  | Version 0.18, first released in 2019 [27]                                                                                        | Version 6, version 1 released in 2019 [27]                                                                                                                                                                                             | Version 1, 1.0.0 released in 2025 [27]                                             | Version 0.51 of the Go library, first released in 2023 [28]          |
+Sources: [pg-boss](https://github.com/timgit/pg-boss), [Graphile Worker](https://worker.graphile.org/docs),
+[BullMQ PostgreSQL](https://docs.bullmq.io/guide/postgresql), [Sidequest](https://docs.sidequestjs.com/introduction/why),
+[River JS](https://github.com/riverqueue/river/tree/js/v0.3.2/js),
+[Sidequest package license](https://registry.npmjs.org/sidequest/1.17.0),
+[River package license](https://registry.npmjs.org/riverqueue/0.3.2).
 
-## When to choose which queue
+## Where sqlane fits
 
-**Choose sqlane** if your app runs on MySQL, MariaDB or PostgreSQL, and you want each job to commit or roll back with your
-business transaction, through the driver or ORM that you already use. sqlane also fits when jobs for the same entity
-must not run at the same time. Remember that it is new and has no known production use yet, so test it under your
-own load first.
+**Transactional jobs on MySQL or MariaDB.** Use the same transaction object for the business write and the enqueue.
+The job rolls back with the data, and becomes visible to workers after commit. On PostgreSQL, pg-boss, Graphile Worker
+and River also provide this guarantee. sqlane's adapters accept transactions from 10 drivers and ORMs; see
+[adapters](adapters.md).
 
-**Choose pg-boss** if you use PostgreSQL and want an established queue with cron, a dashboard, queue policies and
-workflows. pg-boss also adds jobs inside your transaction. Its `singletonKey`, `key_strict_fifo` and `groupConcurrency`
-options are close to mutex keys, but they work within one queue, and a job has one key.
+**Work touching overlapping resources.** A transfer can lock both `account:alice` and `account:bob`. Another job
+that touches either account waits, even if it has a different job name. Mutex contention does not merge or drop jobs; sqlane acquires
+all of a job's keys together. Jobs must honor their abort signal for the [mutex guarantee](design.md#guarantees).
 
-**Choose Graphile Worker** if you use PostgreSQL and want to create jobs from SQL itself, for example from triggers or
-functions, with very low latency.
+The alternatives already cover some serialization needs:
 
-**Choose BullMQ** if you already run Redis, and you need very high throughput, flows, or workers in several languages.
+| Queue           | How it serializes related work                                                                              |
+| --------------- | ----------------------------------------------------------------------------------------------------------- |
+| pg-boss         | Singleton keys, strict FIFO policies and group concurrency within a queue. One group/key identity per job.  |
+| Graphile Worker | A `queue_name` serializes jobs across task identifiers. One named queue per job.                            |
+| BullMQ          | Pro group concurrency; core deduplication with `keepLastIfActive` merges later adds into one follow-up job. |
+| Sidequest       | Concurrency per queue; no per-job resource mutex API found.                                                 |
+| River           | Pro concurrency limits partition by job arguments; River Pro currently does not support JS.                 |
 
-**Choose Sidequest** if you want a built-in dashboard and cron on PostgreSQL, MySQL, SQLite or MongoDB, and you do not
-need transactional enqueue.
+One composite key such as `alice:bob` does not exclude a job with `alice:charlie`: sqlane locks the individual
+resources. That is the useful distinction from a single group identity. You can also dispatch several application
+job types through one competitor queue; cross-task serialization alone is not unique to sqlane.
 
-**Choose River** if you write Go and use PostgreSQL. It has transactional enqueue, periodic jobs and a UI. River now
-also has a JS/TS version for Node.js 24+ [21], so check whether it covers what you need.
+Sources: [pg-boss queues](https://pgboss.io/api/queues), [workers](https://pgboss.io/api/workers),
+[Graphile named queues](https://worker.graphile.org/docs/library/add-job),
+[BullMQ deduplication](https://docs.bullmq.io/guide/jobs/deduplication),
+[Pro groups](https://docs.bullmq.io/bullmq-pro/groups/concurrency),
+[Sidequest concurrency](https://docs.sidequestjs.com/guide/queues/concurrency),
+[River Pro](https://riverqueue.com/docs/pro).
 
-## Sources
+## What 1,000 idle names cost
 
-1. [pg-boss README](https://github.com/timgit/pg-boss)
-2. [pg-boss: adapters](https://pgboss.io/api/adapters)
-3. [pg-boss: queues](https://pgboss.io/api/queues)
-4. [pg-boss: workers](https://pgboss.io/api/workers)
-5. [Graphile Worker: requirements](https://worker.graphile.org/docs/requirements)
-6. [Graphile Worker: add_job in SQL](https://worker.graphile.org/docs/sql-add-job)
-7. [Graphile Worker: addJob](https://worker.graphile.org/docs/library/add-job) and
-   [job keys](https://worker.graphile.org/docs/job-key)
-8. [Graphile Worker: cron](https://worker.graphile.org/docs/cron)
-9. [BullMQ README](https://github.com/taskforcesh/bullmq) and
-   [architecture](https://docs.bullmq.io/guide/architecture)
-10. [BullMQ: PostgreSQL](https://docs.bullmq.io/guide/postgresql)
-11. [BullMQ Pro: group concurrency](https://docs.bullmq.io/bullmq-pro/groups/concurrency)
-12. [BullMQ: deduplication](https://docs.bullmq.io/guide/jobs/deduplication)
-13. [BullMQ: job schedulers](https://docs.bullmq.io/guide/job-schedulers)
-14. [Sidequest README](https://github.com/sidequestjs/sidequest)
-15. [Sidequest: why Sidequest](https://docs.sidequestjs.com/introduction/why)
-16. [Sidequest: enqueueing](https://docs.sidequestjs.com/guide/jobs/enqueueing) and
-    [queue concurrency](https://docs.sidequestjs.com/guide/queues/concurrency)
-17. [Sidequest: dashboard](https://docs.sidequestjs.com/resources/dashboard)
-18. [Sidequest: recurring jobs](https://docs.sidequestjs.com/guide/jobs/recurring)
-19. [River README](https://github.com/riverqueue/river)
-20. [River Pro: concurrency limits](https://riverqueue.com/docs/pro/concurrency-limits)
-21. [River: JS/TS implementation](https://github.com/riverqueue/river/tree/master/js)
-22. [Taskforce.sh](https://taskforce.sh/): a 15-day free trial, then paid plans
-23. [pg-boss: jobs](https://pgboss.io/api/jobs)
-24. [BullMQ: prioritized jobs](https://docs.bullmq.io/guide/jobs/prioritized)
-25. [Sidequest: queue priority](https://docs.sidequestjs.com/guide/queues/priority)
-26. [River: `JobRow.Priority`](https://pkg.go.dev/github.com/riverqueue/river/rivertype)
-27. The version history on npm: [pg-boss](https://www.npmjs.com/package/pg-boss?activeTab=versions),
-    [graphile-worker](https://www.npmjs.com/package/graphile-worker?activeTab=versions),
-    [bullmq](https://www.npmjs.com/package/bullmq?activeTab=versions) and
-    [sidequest](https://www.npmjs.com/package/sidequest?activeTab=versions)
-28. [River releases](https://github.com/riverqueue/river/releases)
+A job type and an independently controlled queue are different things. BullMQ can dispatch many `job.name` values
+through one Worker; River can handle many kinds in one queue; Graphile Worker claims across task identifiers.
+Forcing a worker pool per task type would misrepresent those libraries.
 
-[a] The Graphile Worker page on `add_job()` does not mention transactions. `add_job()` is an ordinary SQL function, so
-PostgreSQL commits or rolls back its insert with the transaction that calls it.
+sqlane uses one readiness query per poll and a shared pool, even with many handlers and per-handler concurrency caps.
+Its probe reads names with pending jobs; retained completed history does not make a name active. Graphile Worker also
+shares polling across task names, so this advantage is not exclusive to sqlane.
 
-The facts about sqlane come from the [API reference](api.md), the [adapters](adapters.md) and the
-[design](design.md) of this repository.
+BullMQ requires one **blocking connection per Worker**, even when Workers share their ordinary Redis connection.
+`concurrency: 10` on one Worker means ten handler slots, not ten blocking connections. Independently consuming 1,000
+queues requires 1,000 Workers; processing 1,000 job names in one queue does not. Its PostgreSQL backend also keeps a
+LISTEN connection per Worker. See [BullMQ connections](https://docs.bullmq.io/guide/connections).
+
+Sidequest discovers queues with job rows before claiming them. Its discovery includes retained completed, failed and
+future jobs, so configured empty queues and idle queues with history can have different costs. The shared dispatcher
+alone does not establish constant query cost.
+
+The [Docker benchmark](competitor-idle-benchmarks.md) reports measured calls, connections, CPU and memory for 1 and
+1,000 names at a 5-second polling interval, including these differences. An idle benchmark measures overhead, not job throughput or reliability.
+
+## Scheduling and operations
+
+sqlane currently has no built-in cron, dashboard or priorities. Use another queue when those features are central to
+your application. Scheduling is on sqlane's [roadmap](../README.md#roadmap).
+
+- **pg-boss:** PostgreSQL with persisted cron/RRULE scheduling, queue policies, priorities and an MIT dashboard.
+- **Graphile Worker:** PostgreSQL with SQL/trigger enqueue and crontab backfill. Named queues already serialize
+  different tasks, though its docs warn against high-cardinality queue names.
+- **BullMQ:** Redis-compatible or PostgreSQL storage, job schedulers, flows, priorities and a broad ecosystem.
+- **Sidequest:** built-in dashboard, process-local cron and several storage backends. It does not yet document enqueue
+  in the caller's transaction.
+- **River:** PostgreSQL or SQLite, transactional enqueue and periodic jobs. Check the JS implementation's feature
+  coverage separately from Go and River Pro.
+
+Cron is not a single guarantee. Graphile Worker supports backfill of missed ticks; Sidequest's registrations are
+process-local; River core periodic jobs can miss ticks on leader changes; BullMQ produces the next scheduled job when
+the previous one starts. Match these behaviors to your requirements.
+
+Sources: [pg-boss scheduling](https://pgboss.io/api/scheduling), [Graphile cron](https://worker.graphile.org/docs/cron),
+[BullMQ schedulers](https://docs.bullmq.io/guide/job-schedulers),
+[Sidequest recurring jobs](https://docs.sidequestjs.com/guide/jobs/recurring),
+[River periodic jobs](https://riverqueue.com/docs/periodic-jobs).
+
+sqlane's API and schema follow semantic versioning since 1.0. It was first released in 2026 and has no known production
+users yet. The established alternatives have longer operating histories. The [API](api.md), [design](design.md) and
+[benchmarks](benchmarks.md) describe sqlane's current guarantees and tradeoffs.
