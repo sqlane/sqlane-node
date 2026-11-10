@@ -11,6 +11,7 @@ package is `@sqlane/core`.
 [Adapters](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md) ·
 [API](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md) ·
 [Comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) ·
+[Benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/competitor-idle-benchmarks.md) ·
 [Design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md)
 
 **Status:** the API and the schema are stable since version 1.0 and follow
@@ -61,22 +62,27 @@ Prisma, Sequelize, TypeORM and MikroORM, on MySQL, MariaDB or PostgreSQL.
 
 ## Why sqlane
 
-**Use sqlane** if your app runs on MySQL, MariaDB or PostgreSQL and these needs apply to you:
+sqlane fits apps that need reliable background work in the SQL database they already run.
 
-- You want each job to commit or roll back with your data, through the driver or ORM that you already use.
-- Jobs for the same entity, such as two syncs of one order, must not run at the same time, even when they have
-  different job names.
-- You do not want to run Redis or a message broker only for jobs. sqlane stays cheap even with many job names that are
-  idle most of the time.
+- **Your data and its jobs commit together.** Enqueue through your existing driver or ORM transaction. An order
+  and its receipt job either both exist or neither does. Works on **MySQL, MariaDB and PostgreSQL**, with adapters
+  for 10 drivers and ORMs.
+- **Many job names, one polling loop.** Register hundreds of handlers without a separate idle poll or a dedicated
+  connection per name. One readiness query per poll finds names with pending jobs; completed history does not keep a name active.
+  The worker uses one shared connection pool. See the [idle-queue comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/competitor-idle-benchmarks.md).
+- **Coordinate work by entity.** Give `sync_order` and `cancel_order` the same `order:42` mutex key to keep them
+  from overlapping across processes. A job can hold up to 10 keys, for example an order and its customer. Handlers
+  must honor the abort signal; see the [guarantees](https://github.com/sqlane/sqlane-node/blob/main/README.md#guarantees-and-limits).
+- **MIT license, zero runtime dependencies.** Transactional enqueue, mutex keys and every other sqlane feature are
+  in the same [MIT-licensed package](https://github.com/sqlane/sqlane-node/blob/main/LICENSE).
 
-On MySQL, none of the other queues in the
-[comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) adds jobs inside your transaction.
-On PostgreSQL, pg-boss, Graphile Worker and River do. **Use something else** in these cases:
+On PostgreSQL, pg-boss, Graphile Worker and River also support transactional enqueue. Graphile Worker also shares
+polling across task names. sqlane's combination is MySQL/MariaDB support, transaction adapters and mutex keys across
+job names. The [comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) covers the differences,
+licenses and measured idle costs.
 
-- Choose **pg-boss** if you use PostgreSQL and want an established queue with cron, a dashboard and queue policies.
-- Choose **Graphile Worker** if you use PostgreSQL and want to add jobs from SQL, for example from triggers.
-- Choose **BullMQ** if you already run Redis and need very high throughput, flows, or workers in several languages.
-- Choose an established queue if you need a long production track record, because sqlane is new.
+Choose pg-boss or Graphile Worker for built-in cron, BullMQ for workflows and its broader ecosystem, or an
+established queue when a long production history is your main requirement. Scheduling is on the [roadmap](#roadmap).
 
 ## Features
 
@@ -106,36 +112,6 @@ already has, so you install nothing else. On MariaDB, tell the adapter: see
 [MariaDB](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mariadb). SQLite is not supported. sqlane is
 an ES module. CommonJS apps can load it with
 `require()`, which Node.js supports from version 22.12.
-
-## Try it in one minute
-
-The quickstart demo needs Docker and Node.js 22.12+. It runs on MySQL like this:
-
-```sh
-git clone https://github.com/sqlane/sqlane-node.git
-cd sqlane-node/examples/quickstart
-npm install
-docker compose up --detach --wait mysql
-npm run mysql
-```
-
-For PostgreSQL, start the `postgres` service and run `npm run postgres` instead. The output looks like this:
-
-```text
-1. Commit: order 1 and its job
-   send_receipt of order 1 ran 26 ms after the commit
-2. Rollback: order 2 and its job
-   rolled back: payment declined
-   order 2: 0 rows in orders, 0 jobs
-3. Mutex keys: 3 syncs of order 1, 1 sync of order 3
-   ...
-   order 1: at most 1 sync at a time; order 3 ran alongside: yes
-```
-
-First, an order and its job commit together, and the worker runs the job right after the commit. Then a transaction
-fails after its enqueue, so the rollback removes both the order and the job. Last, the three syncs of order 1 share the
-mutex key `order:1`, so they run one after another, while the sync of order 3 runs alongside. The code is in
-[mysql.js](https://github.com/sqlane/sqlane-node/blob/main/examples/quickstart/mysql.js). `docker compose down --volumes` removes the databases.
 
 ## Getting started
 
@@ -224,7 +200,7 @@ mariadb driver (through Knex and Sequelize) is for MariaDB, and pg and postgres.
   ignores its `signal` for longer can overlap with the next job of the same key. For this reason, a job with mutex keys
   needs a timeout.
 - **Not included.** sqlane has no cron, no priorities, no strict order across processes, no dashboard, no workflows,
-  and no cluster-wide concurrency limit per job name. For recurring jobs, use a scheduler that enqueues jobs. Instead
+  and no cluster-wide concurrency limit per job name. Built-in scheduling is on the [roadmap](#roadmap). Instead
   of a dashboard, use `getStats()`, or query the tables with SQL, as the [data model](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#data)
   describes. There is no API to run a failed job again.
 
@@ -248,11 +224,16 @@ numbers will differ.
 
 The [benchmarks page](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks.md) explains each scenario and has the full results.
 
+## Roadmap
+
+- **Scheduling.** Built-in cron and recurring jobs.
+
 ## Documentation
 
 - The [API reference](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md) describes every function and option.
 - The [adapters page](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md) explains each driver and ORM.
 - The [comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) puts sqlane next to other queues.
+- The [idle-queue comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/competitor-idle-benchmarks.md) measures competitor overhead in Docker.
 - The [design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md) explains how sqlane works inside.
 - The [benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks.md) give the measured numbers.
 - The [examples folder](https://github.com/sqlane/sqlane-node/tree/main/examples) has more examples.
