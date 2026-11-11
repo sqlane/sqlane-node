@@ -1,5 +1,6 @@
 // The executors of the drivers: sqlane's SQL on a mysql2 (promise API), mariadb or pg connection, client or pool.
 // Shared by the adapters that reach a driver connection under an ORM.
+import { createHash } from 'node:crypto';
 
 /**
  * @typedef {import('mysql2/promise').Pool
@@ -29,22 +30,50 @@ export function mysql2Executor(connection) {
     };
 }
 
+/** The names of the prepared statements, by their SQL */
+const statementNames = new Map();
+/** Above it, a new SQL text runs unnamed: sqlane's statements are far fewer */
+const MAX_STATEMENT_NAMES = 1000;
+
+/**
+ * @param {string} sql
+ * @returns {string | undefined} The name of its prepared statement, from a hash of the SQL: one per text, on each
+ *     connection.
+ */
+function statementName(sql) {
+    let name = statementNames.get(sql);
+
+    if (name === undefined && statementNames.size < MAX_STATEMENT_NAMES) {
+        name = `sqlane_${createHash('sha256').update(sql).digest('base64url').slice(0, 22)}`;
+        statementNames.set(sql, name);
+    }
+
+    return name;
+}
+
 /**
  * @param {import('pg').Pool | import('pg').PoolClient | import('pg').Client} connection
+ * @param {{ prepare?: boolean }} [options] prepare: named prepared statements, parsed and planned once per connection.
+ *     Default: false.
  * @returns {import('../types.js').Executor}
  */
-export function pgExecutor(connection) {
+export function pgExecutor(connection, { prepare = false } = {}) {
+    /**
+     * @param {string} sql
+     * @param {readonly unknown[]} params
+     * @returns {Promise<import('pg').QueryResult>}
+     */
+    const send = (sql, params) => {
+        const name = prepare ? statementName(sql) : undefined;
+
+        return name === undefined
+            ? connection.query(sql, [...params])
+            : connection.query({ name, text: sql, values: [...params] });
+    };
+
     return {
-        query: async (sql, params) => {
-            const result = await connection.query(sql, [...params]);
-
-            return result.rows;
-        },
-        run: async (sql, params) => {
-            const result = await connection.query(sql, [...params]);
-
-            return result.rowCount ?? 0;
-        },
+        query: async (sql, params) => (await send(sql, params)).rows,
+        run: async (sql, params) => (await send(sql, params)).rowCount ?? 0,
     };
 }
 
