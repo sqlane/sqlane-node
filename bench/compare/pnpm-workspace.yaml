@@ -1,0 +1,7 @@
+# Installed apart from the root package (bench/compare/run.sh). msgpackr-extract: an optional native speedup of BullMQ.
+saveExact: true
+allowBuilds:
+  msgpackr-extract: false
+minimumReleaseAgeExclude:
+  - bullmq@6.7.4
+  - pg-boss@12.38.2
