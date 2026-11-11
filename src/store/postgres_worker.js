@@ -398,7 +398,8 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
                       j.mutex_keys IS NOT NULL AS has_keys
         ),
         ${unkeyClaimed(p)},
-        -- The statement's snapshot: the picked jobs are still pending in it
+        -- The statement's snapshot: the picked jobs are still pending in it. A full claim does not read them: the next
+        -- turn claims again
         next AS (
             SELECT request.name AS job_name,
                    (EXTRACT(EPOCH FROM n.run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
@@ -408,8 +409,10 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
                   WHERE status = 'pending' AND job_name = request.name AND id NOT IN (SELECT id FROM picked)
                   ORDER BY run_at LIMIT 1
              ) AS n
+             WHERE (SELECT count(*) FROM picked) < $5
         )
         SELECT ${claimedJobsJson(p)} AS jobs,
+               (SELECT count(*) FROM picked) >= $5 AS full,
                (SELECT json_agg(json_build_object('name', job_name, 'delayMs', delay_ms)) FROM next)::text AS next
     `, [
         requests.map(request => request.name),
@@ -421,8 +424,12 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
         lockedBy,
         leaseMs,
     ]);
-    /** @type {ProbeRow[]} */
-    const next = (row?.next ?? null) === null ? [] : JSON.parse(String(row?.next));
+    /** @type {ProbeRow[] | null} */
+    let next = (row?.next ?? null) === null ? [] : JSON.parse(String(row?.next));
+
+    if (row?.full) {
+        next = null;
+    }
 
     return { jobs: parseClaimedJobs(row?.jobs, lockToken), next };
 }

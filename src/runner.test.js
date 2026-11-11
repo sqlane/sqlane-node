@@ -937,3 +937,106 @@ test.each([
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/^sqlane: close\(\) got .+: the default is used$/u);
 });
+
+/**
+ * @param {string} name
+ * @returns {import('./store/store.js').StartableJob} A due job of the name.
+ */
+function dueJobOf(name) {
+    return {
+        id: name,
+        name,
+        mutexKeys: [],
+        attempts: 0,
+        maxAttempts: 1,
+        stalls: 0,
+        maxStalls: 2,
+        failureJob: null,
+        enqueuedAt: new Date(),
+        waitedMs: 0,
+        lockToken: `token-${name}`,
+        payload: { found: true, payload: null },
+    };
+}
+
+/**
+ * A store with one due job per name. A claim takes the jobs of the requested names up to the free process slots; a
+ * full claim does not read the next due times, as the real ones.
+ * @param {string[]} names
+ * @returns {{ store: import('./store/store.js').Store, requestSizes: number[] }}
+ */
+function storeOfDueNames(names) {
+    const pending = new Set(names);
+    /** @type {number[]} */
+    const requestSizes = [];
+    /**
+     * @param {import('./store/store.js').DueRequest[]} requests
+     * @returns {import('./store/store.js').ProbeRow[]} The requested names that still have a due job.
+     */
+    const stillDue = requests => requests
+        .filter(request => pending.has(request.name))
+        .map(request => ({ name: request.name, delayMs: -1 }));
+    const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
+        probe: async () => [...pending].map(name => ({ name, delayMs: -1 })),
+        claimDue: async (/** @type {import('./store/store.js').ClaimDueParams} */ { requests, processMax }) => {
+            requestSizes.push(requests.length);
+
+            const jobs = stillDue(requests).slice(0, processMax).map(row => dueJobOf(row.name));
+
+            for (const job of jobs) {
+                pending.delete(job.name);
+            }
+
+            return { jobs, next: jobs.length >= processMax ? null : stillDue(requests) };
+        },
+        completeJobs: async (/** @type {unknown[]} */ jobs) => jobs.length,
+        renewLeases: async (/** @type {import('./store/store.js').OwnedJob[]} */ jobs) => (
+            new Set(jobs.map(job => job.id))
+        ),
+        findStaleJobs: async () => [],
+    }));
+
+    return { store, requestSizes };
+}
+
+test('dispatch: many due names take turns, a claim requests at most 4 names per free slot', async () => {
+    const registry = createRegistry({
+        jobsByName: new Map(),
+        lanes: undefined,
+        concurrency: 2,
+        defaultTimeoutMs: null,
+    });
+    const names = Array.from({ length: 50 }, (_, index) => `name_${index}`);
+    const { store, requestSizes } = storeOfDueNames(names);
+    /** @type {string[]} */
+    const ran = [];
+
+    for (const name of names) {
+        registry.handle(name, () => {
+            ran.push(name);
+        });
+    }
+
+    const runner = createRunner({
+        store,
+        registry,
+        concurrency: 2,
+        defaults: resolveDefaults(),
+        cleanup: false,
+        logger: undefined,
+        onEvent: undefined,
+        hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+        hintsAfterCommit: false,
+        timings: { pollIntervalMs: 60_000 },
+    });
+
+    try {
+        await runner.start();
+        await waitFor(() => ran.length === names.length, 3000);
+
+        expect(ran.toSorted()).toStrictEqual(names.toSorted());
+        expect(Math.max(...requestSizes)).toBeLessThanOrEqual(8);
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
+});

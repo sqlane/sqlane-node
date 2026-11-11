@@ -71,8 +71,9 @@ import * as postgresWorker from './postgres_worker.js';
 /**
  * @typedef {object} ClaimDueResult
  * @property {StartableJob[]} jobs The claimed jobs, in the order of run_at.
- * @property {ProbeRow[]} next The next due time of the requested names with pending jobs that the claim did not take:
- *     zero or less, more of their jobs are due. It may give other names too.
+ * @property {ProbeRow[] | null} next The next due time of the requested names with pending jobs that the claim did not
+ *     take: zero or less, more of their jobs are due. It may give other names too. Null: the claim filled the free
+ *     process slots and did not read them.
  */
 
 /**

@@ -250,11 +250,13 @@ function claimDueWithNext(store, params) {
 }
 
 /**
- * @param {import('../../src/store/store.js').ProbeRow[]} next
+ * @param {import('../../src/store/store.js').ProbeRow[] | null} next
  * @returns {Record<string, number>}
  */
 function delaysByName(next) {
-    return Object.fromEntries(next.map(row => [row.name, row.delayMs]));
+    expect(next).not.toBeNull();
+
+    return Object.fromEntries((next ?? []).map(row => [row.name, row.delayMs]));
 }
 
 describe('claimDue', () => {
@@ -318,6 +320,23 @@ describe('claimDue', () => {
 
         expect(second.jobs).toHaveLength(1);
         expect(delaysByName(second.next).a).toBeGreaterThan(3_590_000);
+    });
+
+    test('a claim that fills the free process slots does not read the next due times', async () => {
+        const { sqlane, store } = await freshTables();
+
+        await Promise.all(['a', 'b', 'c'].map(name => sqlane.enqueue(testAdapter.pool, name, {}, { runAt: ago(10) })));
+
+        const requests = ['a', 'b', 'c'].map(name => ({ name, maxJobs: 2, lane: 0 }));
+        const full = await claimDueWithNext(store, { requests, laneFree: [2], processMax: 2 });
+
+        expect(full.jobs).toHaveLength(2);
+        expect(full.next).toBeNull();
+
+        const rest = await claimDueWithNext(store, { requests, laneFree: [2], processMax: 2 });
+
+        expect(rest.jobs).toHaveLength(1);
+        expect(rest.next).toStrictEqual([]);
     });
 
     test('the free slots of each lane and of the process, oldest first', async () => {
