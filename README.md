@@ -11,7 +11,7 @@ package is `@sqlane/core`.
 [Adapters](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md) ·
 [API](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md) ·
 [Comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) ·
-[Benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/competitor-idle-benchmarks.md) ·
+[Benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks.md) ·
 [Design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md)
 
 **Status:** the API and the schema are stable since version 1.0 and follow
@@ -69,7 +69,7 @@ sqlane fits apps that need reliable background work in the SQL database they alr
   for 10 drivers and ORMs.
 - **Many job names, one polling loop.** Register hundreds of handlers without a separate idle poll or a dedicated
   connection per name. One readiness query per poll finds names with pending jobs; completed history does not keep a name active.
-  The worker uses one shared connection pool. See the [idle-queue comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/competitor-idle-benchmarks.md).
+  The worker uses one shared connection pool.
 - **Coordinate work by entity.** Give `sync_order` and `cancel_order` the same `order:42` mutex key to keep them
   from overlapping across processes. A job can hold up to 10 keys, for example an order and its customer. Handlers
   must honor the abort signal; see the [guarantees](https://github.com/sqlane/sqlane-node/blob/main/README.md#guarantees-and-limits).
@@ -78,8 +78,7 @@ sqlane fits apps that need reliable background work in the SQL database they alr
 
 On PostgreSQL, pg-boss, Graphile Worker and River also support transactional enqueue. Graphile Worker also shares
 polling across task names. sqlane's combination is MySQL/MariaDB support, transaction adapters and mutex keys across
-job names. The [comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) covers the differences,
-licenses and measured idle costs.
+job names. The [comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) covers the differences.
 
 Choose pg-boss or Graphile Worker for built-in cron, BullMQ for workflows and its broader ecosystem, or an
 established queue when a long production history is your main requirement. Scheduling is on the [roadmap](#roadmap).
@@ -233,7 +232,6 @@ The [benchmarks page](https://github.com/sqlane/sqlane-node/blob/main/docs/bench
 - The [API reference](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md) describes every function and option.
 - The [adapters page](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md) explains each driver and ORM.
 - The [comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) puts sqlane next to other queues.
-- The [idle-queue comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/competitor-idle-benchmarks.md) measures competitor overhead in Docker.
 - The [design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md) explains how sqlane works inside.
 - The [benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks.md) give the measured numbers.
 - The [examples folder](https://github.com/sqlane/sqlane-node/tree/main/examples) has more examples.
