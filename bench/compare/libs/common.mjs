@@ -27,6 +27,8 @@ export class UnsupportedError extends Error {
  * @property {boolean} [stall] The shortest recovery of the jobs of a dead worker that the library allows.
  * @property {number} [pollIntervalMs] How often an idle worker polls. Default 500 ms; the library's wakes still run.
  * @property {'mysql' | 'mariadb'} [dialect] sqlane only: the server of a mysql:// URL. Default: mysql.
+ * @property {boolean} [tuned] For the performance runs: the throughput settings that the library's documentation
+ *     offers, instead of its defaults. Each adapter says which.
  * @property {'setup' | 'worker' | 'producer'} [role] For the performance runs: setup creates what the names need; a
  *     producer only enqueues, and runs no background work if the library allows. Default: all of them.
  */

@@ -25,11 +25,14 @@ const THEMES = {
     },
 };
 
+/** @type {{ id: string, variant?: string, label: string }[]} Each library with its defaults, then tuned (run.mjs) */
 const LIBS = [
-    ['sqlane', 'sqlane'],
-    ['graphile-worker', 'Graphile Worker'],
-    ['river', 'River'],
-    ['pg-boss', 'pg-boss'],
+    { id: 'sqlane', label: 'sqlane' },
+    { id: 'graphile-worker', label: 'Graphile Worker' },
+    { id: 'river', label: 'River' },
+    { id: 'river', variant: 'tuned', label: 'River, tuned' },
+    { id: 'pg-boss', label: 'pg-boss' },
+    { id: 'pg-boss', variant: 'tuned', label: 'pg-boss, tuned' },
 ];
 
 const W = 720;
@@ -43,15 +46,14 @@ const FONT = `font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvet
 
 /**
  * @param {string} library
+ * @param {string | undefined} variant
  * @param {string} workload
  * @returns {any} the PostgreSQL run of the library with 1000 job names
  */
-function run(library, workload) {
-    const found = results.perf.find(
-        (/** @type {any} */ r) =>
-            r.library === library && r.workload === workload && r.dialect === 'postgres' && r.names === 1000,
-    );
-    if (!found) throw new Error(`no ${workload} run of ${library}`);
+function run(library, variant, workload) {
+    const matches = (/** @type {any} */ r) => r.library === library && r.variant === variant && r.workload === workload;
+    const found = results.perf.find((/** @type {any} */ r) => matches(r) && r.dialect === 'postgres' && r.names === 1000);
+    if (!found) throw new Error(`no ${workload} run of ${library} ${variant ?? ''}`);
     return found;
 }
 
@@ -158,8 +160,8 @@ const charts = {
         subtitle: 'PostgreSQL 17, 1000 job names, 20 jobs/s in transactions. Lower is better.',
         legend: ['Worker', 'Producer', 'Database'],
         unit: 'M instr.',
-        rows: LIBS.map(([id, label]) => {
-            const r = run(id, 'steady');
+        rows: LIBS.map(({ id, variant, label }) => {
+            const r = run(id, variant, 'steady');
             const parts = [r.worker, r.producer, r.db].map(p => millions(p.instructions) / r.completed);
             return { label, parts, value: `${fixed(sum(parts))} M` };
         }),
@@ -168,8 +170,8 @@ const charts = {
         title: 'From enqueue to handler start, median',
         subtitle: 'PostgreSQL 17, steady load, with each library’s LISTEN/NOTIFY wake. Lower is better.',
         unit: 'ms',
-        rows: LIBS.map(([id, label]) => {
-            const r = run(id, 'steady');
+        rows: LIBS.map(({ id, variant, label }) => {
+            const r = run(id, variant, 'steady');
             return { label, parts: [r.latencyP50Ms], value: `${r.latencyP50Ms} ms · p99 ${r.latencyP99Ms} ms` };
         }),
     },
@@ -177,8 +179,8 @@ const charts = {
         title: 'Database cost while idle, 1000 job names',
         subtitle: 'PostgreSQL 17, no jobs, a poll every 5 s. Database instructions per second. Lower is better.',
         unit: 'M/s',
-        rows: LIBS.map(([id, label]) => {
-            const r = run(id, 'idle');
+        rows: LIBS.map(({ id, variant, label }) => {
+            const r = run(id, variant, 'idle');
             const v = millions(r.db.instructions) / r.seconds;
             return { label, parts: [v], value: `${fixed(v)} M/s` };
         }),
