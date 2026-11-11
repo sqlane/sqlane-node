@@ -3,7 +3,7 @@
 //
 //   pnpm bench:compare                    # all
 //   pnpm bench:compare --only checks      # or: perf
-//   pnpm bench:compare --only perf --libs sqlane,river
+//   pnpm bench:compare --only perf --libs sqlane,river,river:tuned
 //
 // Options: --pg-bin, --mysql-bin, --mariadb-bin (the directories of the server binaries). Writes results.json next to
 // this file and prints Markdown tables. See README.md.
@@ -31,8 +31,11 @@ const { values: args } = parseArgs({
 const PG_BIN = args['pg-bin'];
 const MYSQL_BIN = args['mysql-bin'];
 const MARIADB_BIN = args['mariadb-bin'];
-/** The libraries that enqueue in the caller's transaction: the others are not compared on performance */
-const PERF_LIBRARIES = ['sqlane', 'pg-boss', 'graphile-worker', 'river'];
+/**
+ * The libraries that enqueue in the caller's transaction: the others are not compared on performance. `:tuned`: the
+ * library with the throughput settings that its documentation offers (see `tuned` in libs/common.mjs).
+ */
+const PERF_LIBRARIES = ['sqlane', 'pg-boss', 'pg-boss:tuned', 'graphile-worker', 'river', 'river:tuned'];
 const WARMUP_S = 5;
 const MEASURE_S = 15;
 const NAMES = 1000;
@@ -249,9 +252,10 @@ function delta(before, after, role) {
  *     server: { url: string, pid: number }, dialect?: string }} run
  * @returns {Promise<Record<string, any>>}
  */
-async function runWorkload({ library, workload, names, server, dialect }) {
+async function runWorkload({ library: entry, workload, names, server, dialect }) {
+    const [library, variant] = entry.split(':');
     // A name, and an output directory, per database server too: a stale `ready` would start a window early
-    const database = `perf_${library.replaceAll('-', '_')}_${dialect ?? 'postgres'}_${workload}_${names}`;
+    const database = `perf_${entry.replaceAll(/[-:]/gu, '_')}_${dialect ?? 'postgres'}_${workload}_${names}`;
     const url = await freshDatabase(server.url, database);
     const out = join(tmp, database);
     const backlog = workload === 'drain' ? BACKLOG : 0;
@@ -259,6 +263,7 @@ async function runWorkload({ library, workload, names, server, dialect }) {
         join(HERE, 'perf.mjs'), '--library', library, '--url', url, '--names', String(names), '--out', tmp,
         '--warmup', String(WARMUP_S), '--measure', String(MEASURE_S), '--rate', String(RATE), '--backlog', String(backlog),
         ...dialect ? ['--dialect', dialect] : [],
+        ...variant === 'tuned' ? ['--tuned'] : [],
     ].map(arg => (arg === tmp ? out : arg));
     const postgres = !server.url.startsWith('mysql:');
 
@@ -271,7 +276,10 @@ async function runWorkload({ library, workload, names, server, dialect }) {
     const db = `${server.pid}+`;
 
     try {
-        return await measureWorkload({ library, workload, names, dialect, url, out, common, db, server, database });
+        return {
+            ...await measureWorkload({ library, workload, names, dialect, url, out, common, db, server, database }),
+            ...variant && { variant },
+        };
     } finally {
         if (postgres) {
             // No autovacuum of its tables in the next runs
@@ -409,6 +417,12 @@ function sum(values) {
 }
 
 /**
+ * @param {Record<string, any>} row
+ * @returns {string} The library, and its variant.
+ */
+const label = row => (row.variant ? `${row.library} (${row.variant})` : row.library);
+
+/**
  * @param {Record<string, any>[]} runs
  * @returns {string}
  */
@@ -425,7 +439,7 @@ function tables(runs) {
         const cpu = sum(roles.map(role => row[role]?.cpuSeconds ?? 0)) / row.completed * 1000;
         const total = millions(sum(instructions));
 
-        lines.push(`| ${row.library} | ${row.dialect} | ${row.completed} | ${instructions.map(millions).join(' / ')} = **${total}** | ${cpu.toFixed(1)} | ${row.latencyP50Ms} / ${row.latencyP99Ms} |`);
+        lines.push(`| ${label(row)} | ${row.dialect} | ${row.completed} | ${instructions.map(millions).join(' / ')} = **${total}** | ${cpu.toFixed(1)} | ${row.latencyP50Ms} / ${row.latencyP99Ms} |`);
     }
 
     lines.push('\nIdle: no jobs. Per second of the window.\n');
@@ -433,7 +447,7 @@ function tables(runs) {
     lines.push('| --- | --- | --- | --- | --- | --- |');
 
     for (const row of runs.filter(entry => entry.workload === 'idle')) {
-        lines.push(`| ${row.library} | ${row.names} | ${millions(row.db.instructions / row.seconds)} | ${millions(row.worker.instructions / row.seconds)} | ${(row.statements / row.seconds).toFixed(1)} | ${row.connections} |`);
+        lines.push(`| ${label(row)} | ${row.names} | ${millions(row.db.instructions / row.seconds)} | ${millions(row.worker.instructions / row.seconds)} | ${(row.statements / row.seconds).toFixed(1)} | ${row.connections} |`);
     }
 
     lines.push(`\nDrain: ${BACKLOG} due jobs over 1000 job names.\n`);
@@ -444,7 +458,7 @@ function tables(runs) {
         const worker = row.worker.instructions / row.completed;
         const db = row.db.instructions / row.completed;
 
-        lines.push(`| ${row.library} | ${(row.drainMs / 1000).toFixed(1)} | ${millions(worker)} / ${millions(db)} = **${millions(worker + db)}** |`);
+        lines.push(`| ${label(row)} | ${(row.drainMs / 1000).toFixed(1)} | ${millions(worker)} / ${millions(db)} = **${millions(worker + db)}** |`);
     }
 
     return lines.join('\n');
@@ -453,7 +467,8 @@ function tables(runs) {
 try {
     const postgres = await startPostgres();
     /** @type {Record<string, any>} */
-    const results = { date: new Date().toISOString(), node: process.version };
+    // A run of one part keeps the other part's results
+    const results = { ...readJson(join(HERE, 'results.json')), date: new Date().toISOString(), node: process.version };
 
     if (args.only !== 'perf') {
         const log = join(tmp, 'checks.log');
@@ -484,8 +499,13 @@ try {
             }));
         }
 
-        results.perf = runs;
-        console.log(`\n${tables(runs)}`);
+        // A run of some libraries replaces their rows only
+        /** @type {Record<string, any>[]} */
+        const previous = results.perf ?? [];
+        const kept = previous.filter(row => !libraries.includes(row.variant ? `${row.library}:${row.variant}` : row.library));
+
+        results.perf = [...kept, ...runs];
+        console.log(`\n${tables(results.perf)}`);
     }
 
     writeFileSync(join(HERE, 'results.json'), `${JSON.stringify(results, null, 4)}\n`);

@@ -11,7 +11,7 @@ const { version } = JSON.parse(readFileSync(new URL('../node_modules/riverqueue/
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
-    async open({ url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, role }) {
+    async open({ url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, role, tuned = false }) {
         /** @type {string[]} */
         const notes = [];
 
@@ -48,13 +48,21 @@ export const adapter = {
         }
 
         const workerOptions = {
-            queues: { default: { maxWorkers: concurrency, pollInterval: { milliseconds: pollIntervalMs } } },
+            queues: {
+                default: {
+                    maxWorkers: concurrency,
+                    pollInterval: { milliseconds: pollIntervalMs },
+                },
+            },
             workers,
         };
         // A producer: an insert-only client, without queues and workers
         const client = new Client(driver, {
             ...role !== 'producer' && workerOptions,
             logger: false,
+            // Tuned: the shortest time between two claims that River allows, which also spaces the insert
+            // notifications of a producer (default: 100 ms)
+            ...tuned && { fetchCooldown: { milliseconds: 1 } },
             ...stall && { jobTimeout: { seconds: 2 } },
             maintenance: {
                 // The checks: scheduled jobs and retries become available within 0.5 s (default: 1 s)
