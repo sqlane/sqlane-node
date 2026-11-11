@@ -533,7 +533,8 @@ export function createRunner({
 
     /**
      * Completes the job in the next write. One write at a time: the jobs that finish during a write go together in the
-     * next one, in one transaction. A lone job waits for no other.
+     * next one, in one transaction. The first write waits for the jobs that finish in the same turn of the event loop
+     * (the jobs of one claim, with short handlers): one commit for them, and their slots free together for one claim.
      * @param {import('./store/store.js').FinishedJob} job
      * @returns {Promise<boolean>} Every job in its batch was completed. Rejects with the error of its write.
      */
@@ -544,15 +545,14 @@ export function createRunner({
         toComplete.push({ job, written });
 
         if (!completing) {
-            void writeCompletions();
+            completing = true;
+            setImmediate(() => void writeCompletions());
         }
 
         return written.promise;
     }
 
     async function writeCompletions() {
-        completing = true;
-
         while (toComplete.length) {
             const batch = toComplete.slice(0, MAX_COMPLETE_BATCH);
 
