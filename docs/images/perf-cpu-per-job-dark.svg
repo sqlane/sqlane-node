@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="254" viewBox="0 0 720 254" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="CPU instructions per job, steady load">
+<title>CPU instructions per job, steady load</title>
+<text x="0" y="20" font-size="16" font-weight="600" fill="#f0f6fc">CPU instructions per job, steady load</text>
+<text x="0" y="42" font-size="13" fill="#9198a1">PostgreSQL 17, 1000 job names, 20 jobs/s in transactions. Lower is better.</text>
+<rect x="0" y="56" width="10" height="10" rx="2" fill="#3987e5"/>
+<text x="15" y="65" font-size="12" fill="#9198a1">Worker</text>
+<rect x="75" y="56" width="10" height="10" rx="2" fill="#d95926"/>
+<text x="90" y="65" font-size="12" fill="#9198a1">Producer</text>
+<rect x="164" y="56" width="10" height="10" rx="2" fill="#199e70"/>
+<text x="179" y="65" font-size="12" fill="#9198a1">Database</text>
+<line x1="140.0" y1="80" x2="140.0" y2="220" stroke="#3d444d"/>
+<text x="140.0" y="238" font-size="11" fill="#9198a1" text-anchor="middle">0</text>
+<line x1="283.3" y1="80" x2="283.3" y2="220" stroke="#262c36"/>
+<text x="283.3" y="238" font-size="11" fill="#9198a1" text-anchor="middle">10</text>
+<line x1="426.7" y1="80" x2="426.7" y2="220" stroke="#262c36"/>
+<text x="426.7" y="238" font-size="11" fill="#9198a1" text-anchor="middle">20</text>
+<line x1="570.0" y1="80" x2="570.0" y2="220" stroke="#262c36"/>
+<text x="570.0" y="238" font-size="11" fill="#9198a1" text-anchor="middle">30</text>
+<text x="592" y="238" font-size="11" fill="#9198a1">M instr.</text>
+<text x="132" y="105" font-size="13" fill="#f0f6fc" text-anchor="end" font-weight="600">sqlane</text>
+<rect x="140" y="92" width="16.2" height="18" fill="#3987e5"/>
+<rect x="158.22177942555555" y="92" width="13.9" height="18" fill="#d95926"/>
+<path d="M174.11551042333332,92H200.8A4,4 0 0 1 204.8,96V106A4,4 0 0 1 200.8,110H174.11551042333332Z" fill="#199e70"/>
+<text x="210.8" y="105" font-size="13" fill="#f0f6fc" font-weight="600">4.5 M</text>
+<text x="132" y="139" font-size="13" fill="#f0f6fc" text-anchor="end">Graphile Worker</text>
+<rect x="140" y="126" width="78.5" height="18" fill="#3987e5"/>
+<rect x="220.47737665222223" y="126" width="12.5" height="18" fill="#d95926"/>
+<path d="M234.99223095000002,126H297.3A4,4 0 0 1 301.3,130V140A4,4 0 0 1 297.3,144H234.99223095000002Z" fill="#199e70"/>
+<text x="307.3" y="139" font-size="13" fill="#f0f6fc">11.3 M</text>
+<text x="132" y="173" font-size="13" fill="#f0f6fc" text-anchor="end">River</text>
+<rect x="140" y="160" width="25.6" height="18" fill="#3987e5"/>
+<rect x="167.64741921070234" y="160" width="21.5" height="18" fill="#d95926"/>
+<path d="M191.1596199342252,160H303.0A4,4 0 0 1 307.0,164V174A4,4 0 0 1 303.0,178H191.1596199342252Z" fill="#199e70"/>
+<text x="313.0" y="173" font-size="13" fill="#f0f6fc">11.7 M</text>
+<text x="132" y="207" font-size="13" fill="#f0f6fc" text-anchor="end">pg-boss</text>
+<rect x="140" y="194" width="79.2" height="18" fill="#3987e5"/>
+<rect x="221.15776627333335" y="194" width="15.8" height="18" fill="#d95926"/>
+<path d="M238.94701003666668,194H533.1A4,4 0 0 1 537.1,198V208A4,4 0 0 1 533.1,212H238.94701003666668Z" fill="#199e70"/>
+<text x="543.1" y="207" font-size="13" fill="#f0f6fc">27.7 M</text>
+</svg>
