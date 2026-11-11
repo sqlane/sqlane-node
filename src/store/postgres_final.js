@@ -175,7 +175,7 @@ async function addFailureJob(executor, p, row, { error, buildFailureJob }) {
     await executor.run('SAVEPOINT sqlane_failure_job', []);
 
     try {
-        await insertJobsPostgres(executor, p, [newJob], enqueueToken());
+        await insertJobsPostgres(executor, p, [newJob], { enqueueToken: enqueueToken() });
         await executor.run('RELEASE SAVEPOINT sqlane_failure_job', []);
 
         return { added: newJob };

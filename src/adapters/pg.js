@@ -152,6 +152,7 @@ export function pgAdapter(pool, options = {}) {
         inTransaction: (connection, func) => (isPool(connection)
             ? inOwnTransaction(connection, toExecutor, func)
             : func(toExecutor(connection))),
+        inStatement: (connection, func) => func(toExecutor(connection)),
         // A pool: the enqueue ran in a transaction of its own, committed when it returned
         afterCommit: (connection, onCommit) => {
             if (!isPool(connection)) {
