@@ -68,6 +68,19 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
         `, createdJobs.flatMap(job => [job.id, job.payloadJson]));
     }
 
+    const withKeys = createdJobs.filter(job => job.mutexKeys.length);
+
+    if (withKeys.length) {
+        await executor.query(`
+            INSERT INTO ${p}job_keys (mutex_key, run_at, job_id, job_name)
+            SELECT k.mutex_key, j.run_at, j.id, j.job_name FROM ${p}jobs j, JSON_TABLE(j.mutex_keys, '$[*]' COLUMNS (
+                mutex_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin PATH '$'
+            )) AS k
+             WHERE j.id IN (${withKeys.map(() => '?').join(', ')})
+            ON DUPLICATE KEY UPDATE job_id = job_id
+        `, withKeys.map(job => job.id));
+    }
+
     return created;
 }
 

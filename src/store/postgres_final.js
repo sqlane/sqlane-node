@@ -160,6 +160,29 @@ export async function completeJobs(executor, p, jobs) {
 }
 
 /**
+ * Runs an UPDATE that makes jobs pending again, and adds their job_keys: one statement.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string} update An UPDATE of the jobs, without RETURNING.
+ * @param {unknown[]} params
+ * @returns {Promise<number>} The jobs that it changed.
+ */
+async function pendingAgain(executor, p, update, params) {
+    const [row] = await executor.query(`
+        WITH pending AS (${update} RETURNING id, run_at, job_name, mutex_keys),
+        job_keys AS (
+            INSERT INTO ${p}job_keys (mutex_key, run_at, job_id, job_name)
+            SELECT k.mutex_key, pending.run_at, pending.id, pending.job_name
+              FROM pending CROSS JOIN LATERAL unnest(pending.mutex_keys) AS k(mutex_key)
+            ON CONFLICT DO NOTHING
+        )
+        SELECT count(*)::integer AS changed FROM pending
+    `, params);
+
+    return Number(row?.changed ?? 0);
+}
+
+/**
  * The attempt failed: pending again after the delay, one more attempt used; its keys are freed.
  * @param {Executor} executor
  * @param {string} p
@@ -168,7 +191,7 @@ export async function completeJobs(executor, p, jobs) {
  * @returns {Promise<boolean>} False: no change.
  */
 export async function retryJob(executor, p, job, { delayMs, error }) {
-    const changed = await executor.run(`
+    const changed = await pendingAgain(executor, p, `
         UPDATE ${p}jobs
            SET status = 'pending', run_at = ${runAt(`$3 * ${MS}`)}, attempts = attempts + 1, ${CLEAR_LOCK},
                last_error = $4::text::jsonb, updated_at = ${NOW}
@@ -281,7 +304,7 @@ export async function failJob(executor, p, job, { error, buildFailureJob }) {
  * @returns {Promise<boolean>} False: no change.
  */
 export async function releaseJob(executor, p, job, { delayMs, lingerMs }) {
-    const changed = await executor.run(`
+    const changed = await pendingAgain(executor, p, `
         UPDATE ${p}jobs SET status = 'pending', run_at = ${runAt(`$3 * ${MS}`)}, ${CLEAR_LOCK}, updated_at = ${NOW}
          WHERE id = $1 AND lock_token = $2
     `, [job.id, job.lockToken, delayMs]);
@@ -337,7 +360,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
     await lingerHolds(executor, p, { id, lockToken: String(row.lock_token) }, leaseMs);
 
     if (Number(row.stalls) < Number(row.max_stalls)) {
-        await executor.run(`
+        await pendingAgain(executor, p, `
             UPDATE ${p}jobs
                SET status = 'pending', run_at = ${runAt(`LEAST(30000 * power(2, stalls), 3600000) * ${MS}`)},
                    stalls = stalls + 1, ${CLEAR_LOCK}, last_error = $2::text::jsonb, updated_at = ${NOW}
@@ -422,8 +445,12 @@ export async function deleteExpiredJobs(executor, p, limit) {
  */
 export async function makeDue(executor, p, names) {
     await executor.run(`
-        UPDATE ${p}jobs SET run_at = ${runAt('interval \'0\'')}
-         WHERE status = 'pending' AND job_name = ANY($1::text[]) AND run_at > ${NOW}
+        WITH moved AS (
+            UPDATE ${p}jobs SET run_at = ${runAt('interval \'0\'')}
+             WHERE status = 'pending' AND job_name = ANY($1::text[]) AND run_at > ${NOW}
+            RETURNING id, run_at
+        )
+        UPDATE ${p}job_keys jk SET run_at = moved.run_at FROM moved WHERE jk.job_id = moved.id
     `, [names]);
 }
 

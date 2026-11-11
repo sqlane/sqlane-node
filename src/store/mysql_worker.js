@@ -7,7 +7,7 @@ import { fitSlots } from './fit_slots.js';
 /** @typedef {import('./store.js').ClaimParams} ClaimParams */
 /** @typedef {import('./store.js').ClaimedJob} ClaimedJob */
 
-/** The due jobs of each keyed name that the FIFO of the mutex keys reads */
+/** The due jobs of each name with mutex keys that the FIFO of the mutex keys reads */
 export const MUTEX_WINDOW_SIZE = 500;
 
 const NOW = 'UTC_TIMESTAMP(3)';
@@ -89,18 +89,56 @@ function dueJobsSql(p, names, limitSql) {
 }
 
 /**
- * The due jobs that can start now, oldest first: at most `limit` of each name. A job of a keyed name waits if one of
- * its keys is held, or an older due job of a keyed name has it (FIFO per key over the window of the keyed names).
+ * @param {string} p
+ * @param {number} nameCount The names with mutex keys, as parameters.
+ * @returns {string} The oldest due job with the key `f.mutex_key` among the names with mutex keys: one range of
+ *     the job_keys, read in order up to the first job of such a name.
+ */
+const headSql = (p, nameCount) => `(
+                SELECT jk.job_id FROM ${p}job_keys jk
+                 WHERE jk.mutex_key = f.mutex_key AND jk.run_at <= ${NOW}
+                   AND jk.job_name IN (${placeholders(nameCount)})
+                 ORDER BY jk.run_at, jk.job_id LIMIT 1
+            )`;
+
+/**
+ * The names whose jobs may start after a release of the keys: of the oldest due job of each key.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} keys
+ * @param {string[]} namesWithKeys The handled names whose definition has mutex keys.
+ * @returns {Promise<string[]>}
+ */
+export async function namesWaitingFor(executor, p, keys, namesWithKeys) {
+    if (!keys.length || !namesWithKeys.length) {
+        return [];
+    }
+
+    const rows = await executor.query(`
+        SELECT DISTINCT j.job_name FROM (
+            SELECT ${headSql(p, namesWithKeys.length)} AS id
+              FROM JSON_TABLE(?, '$[*]' COLUMNS (
+                  mutex_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin PATH '$'
+              )) AS f
+        ) AS head JOIN ${p}jobs j ON j.id = head.id
+    `, [...namesWithKeys, JSON.stringify(keys)]);
+
+    return rows.map(row => String(row.job_name));
+}
+
+/**
+ * The due jobs that can start now, oldest first: at most `limit` of each name. A job of a name with mutex keys waits
+ * if one of its keys is held, or an older due job of such a name has it (FIFO per key, from the job_keys).
  * @param {Executor} executor
  * @param {string} p
  * @param {Map<string, number>} limitsByName
- * @param {string[]} keyedNames The handled names whose definition has mutex keys.
+ * @param {string[]} namesWithKeys The handled names whose definition has mutex keys.
  * @returns {Promise<Candidate[]>}
  */
-export async function findCandidates(executor, p, limitsByName, keyedNames) {
-    const keyed = new Set(keyedNames);
-    const plainNames = [...limitsByName.keys()].filter(name => !keyed.has(name));
-    const keyedRequested = [...limitsByName.keys()].filter(name => keyed.has(name));
+export async function findCandidates(executor, p, limitsByName, namesWithKeys) {
+    const hasKeys = new Set(namesWithKeys);
+    const plainNames = [...limitsByName.keys()].filter(name => !hasKeys.has(name));
+    const requestedWithKeys = [...limitsByName.keys()].filter(name => hasKeys.has(name));
     /** @type {Record<string, unknown>[]} */
     const rows = [];
 
@@ -111,33 +149,36 @@ export async function findCandidates(executor, p, limitsByName, keyedNames) {
         `, plainNames.flatMap(name => [name, limitsByName.get(name)])));
     }
 
-    if (keyedRequested.length) {
-        const conditions = keyedRequested.map(() => '(job_name = ? AND name_rank <= ?)').join(' OR ');
+    if (requestedWithKeys.length) {
+        const conditions = requestedWithKeys.map(() => '(job_name = ? AND name_rank <= ?)').join(' OR ');
 
         rows.push(...await executor.query(`
-            WITH w AS (${dueJobsSql(p, keyedNames, () => String(MUTEX_WINDOW_SIZE))}),
+            WITH w AS (${dueJobsSql(p, requestedWithKeys, () => String(MUTEX_WINDOW_SIZE))}),
             wk AS (
-                SELECT w.id, k.mutex_key,
-                       ROW_NUMBER() OVER (PARTITION BY k.mutex_key ORDER BY w.run_at, w.id) AS key_rank
-                  FROM w, JSON_TABLE(w.mutex_keys, '$[*]' COLUMNS (
-                      mutex_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin PATH '$'
-                  )) AS k
+                SELECT w.id, k.mutex_key FROM w, JSON_TABLE(w.mutex_keys, '$[*]' COLUMNS (
+                    mutex_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin PATH '$'
+                )) AS k
             ),
-            busy AS (
-                SELECT wk.mutex_key FROM wk JOIN ${p}mutexes m ON m.mutex_key = wk.mutex_key
-                 WHERE wk.key_rank = 1 AND ${HELD}
-            ),
-            blocked AS (
-                SELECT id FROM wk WHERE key_rank > 1
-                 UNION SELECT wk.id FROM wk JOIN busy ON busy.mutex_key = wk.mutex_key
+            heads AS (
+                SELECT f.mutex_key, ${headSql(p, namesWithKeys.length)} AS id
+                  FROM (SELECT DISTINCT mutex_key FROM wk) AS f
+                 WHERE NOT EXISTS (SELECT 1 FROM ${p}mutexes m WHERE m.mutex_key = f.mutex_key AND ${HELD})
             ),
             eligible AS (
                 SELECT w.id, w.job_name, w.run_at,
                        ROW_NUMBER() OVER (PARTITION BY w.job_name ORDER BY w.run_at, w.id) AS name_rank
-                  FROM w WHERE NOT EXISTS (SELECT 1 FROM blocked b WHERE b.id = w.id)
+                  FROM w
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM wk WHERE wk.id = w.id
+                        AND NOT EXISTS (SELECT 1 FROM heads h WHERE h.mutex_key = wk.mutex_key AND h.id = w.id)
+                 )
             )
             SELECT id, job_name, ${epochMs('run_at')} AS run_at_ms FROM eligible WHERE ${conditions}
-        `, [...keyedNames, ...keyedRequested.flatMap(name => [name, limitsByName.get(name)])]));
+        `, [
+            ...requestedWithKeys,
+            ...namesWithKeys,
+            ...requestedWithKeys.flatMap(name => [name, limitsByName.get(name)]),
+        ]));
     }
 
     return rows
@@ -146,11 +187,25 @@ export async function findCandidates(executor, p, limitsByName, keyedNames) {
 }
 
 /**
+ * Deletes the job_keys of claimed jobs: they are not pending. Call it in the claim transaction.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} ids The claimed jobs with keys.
+ * @returns {Promise<void>}
+ */
+async function unkey(executor, p, ids) {
+    if (ids.length) {
+        await executor.run(`DELETE FROM ${p}job_keys WHERE job_id IN (${placeholders(ids.length)})`, ids);
+    }
+}
+
+/**
  * Takes the keys of the picked jobs, all or none per job. A held key stays with its holder; an ended linger is taken
  * over. Keys are inserted in ascending order: no deadlocks between claims.
  * @param {Executor} executor
  * @param {string} p
- * @param {{ id: string, mutexKeys: readonly string[] }[]} jobs The picked keyed jobs: their keys are distinct.
+ * @param {{ id: string, mutexKeys: readonly string[] }[]} jobs The picked jobs with mutex keys: their keys are
+ *     distinct.
  * @param {string} lockToken
  * @returns {Promise<Set<string>>} The ids of the jobs that got all their keys.
  */
@@ -228,8 +283,8 @@ export async function claim(executor, p, { candidateIds, lockToken, lockedBy, le
         `, lockedKeys)).map(row => String(row.mutex_key)))
         : new Set();
     const picked = pick(lockedRows, busyKeys);
-    const keyedPicked = picked.filter(row => row.mutexKeys.length);
-    const withKeys = keyedPicked.length ? await takeKeys(executor, p, keyedPicked, lockToken) : new Set();
+    const pickedWithKeys = picked.filter(row => row.mutexKeys.length);
+    const withKeys = pickedWithKeys.length ? await takeKeys(executor, p, pickedWithKeys, lockToken) : new Set();
     const claimed = picked.filter(row => !row.mutexKeys.length || withKeys.has(row.id));
 
     if (claimed.length) {
@@ -240,6 +295,7 @@ export async function claim(executor, p, { candidateIds, lockToken, lockedBy, le
                    updated_at = ${NOW}
              WHERE id IN (${placeholders(claimed.length)})
         `, [lockToken, lockedBy, leaseMs * 1000, ...claimed.map(row => row.id)]);
+        await unkey(executor, p, claimed.filter(row => row.mutexKeys.length).map(row => row.id));
     }
 
     return claimed;
@@ -261,7 +317,7 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
 
     const locked = (await executor.query(requests.map(() => `(
         SELECT j.id, j.job_name, ${epochMs('j.run_at')} AS run_at_ms, j.attempts, j.max_attempts, j.stalls,
-               j.max_stalls, j.failure_job, ${epochMs('j.created_at')} AS created_at_ms,
+               j.max_stalls, j.failure_job, ${epochMs('j.created_at')} AS created_at_ms, j.mutex_keys IS NOT NULL AS has_keys,
                TIMESTAMPDIFF(MICROSECOND, j.run_at, ${NOW}) DIV 1000 AS waited_ms,
                CAST(pl.payload AS CHAR) AS payload, pl.id IS NOT NULL AS payload_found
           FROM ${p}jobs j FORCE INDEX (${p}jobs_status_name_run_at)
@@ -272,6 +328,7 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
     )`).join(' UNION ALL '), requests.flatMap(request => [request.name, request.maxJobs])))
         .map(row => ({
             runAtMs: Number(row.run_at_ms),
+            hasKeys: Boolean(Number(row.has_keys)),
             /** @type {import('./store.js').StartableJob} */
             job: {
                 id: String(row.id),
@@ -290,9 +347,9 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
                     : { found: false, payload: undefined },
             },
         }))
-        .toSorted((a, b) => a.runAtMs - b.runAtMs || (a.job.id < b.job.id ? -1 : 1))
-        .map(({ job }) => job);
-    const picked = fitSlots(locked, requests, laneFree, processMax);
+        .toSorted((a, b) => a.runAtMs - b.runAtMs || (a.job.id < b.job.id ? -1 : 1));
+    const idsWithKeys = new Set(locked.filter(row => row.hasKeys).map(row => row.job.id));
+    const picked = fitSlots(locked.map(({ job }) => job), requests, laneFree, processMax);
 
     if (picked.length) {
         await executor.query(`
@@ -302,6 +359,8 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
                    updated_at = ${NOW}
              WHERE id IN (${placeholders(picked.length)})
         `, [lockToken, lockedBy, leaseMs * 1000, ...picked.map(job => job.id)]);
+        // A job with keys of a name without them: its keys are not taken, its job_keys go
+        await unkey(executor, p, picked.filter(job => idsWithKeys.has(job.id)).map(job => job.id));
     }
 
     // In the transaction: the claimed jobs are running

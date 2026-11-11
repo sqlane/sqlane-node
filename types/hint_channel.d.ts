@@ -1,5 +1,7 @@
-/** The message after a release of mutex keys: every process probes all its names */
+/** The message of a wake of all names: every process probes all its names */
 export declare const ANY_NAME = "*";
+/** The prefix of the message after a release of a mutex key: `#<key>`. A job name cannot start with it. */
+export declare const KEY_PREFIX = "#";
 export type HintChannel = {
     /**
      * Fire-and-forget: never throws, never waits.

@@ -233,8 +233,9 @@ test('close() leaves no timer that keeps the process alive', async () => {
 });
 
 /**
- * A runner with spare slots and held handlers. A plain claim takes all due jobs; a keyed claim takes only one.
- * @param {boolean} keyed
+ * A runner with spare slots and held handlers. A plain claim takes all due jobs; a claim with mutex keys takes only
+ * one.
+ * @param {boolean} withKeys
  * @param {{
  *     claimDelayMs?: number,
  *     futureDelayMs?: number,
@@ -251,11 +252,13 @@ test('close() leaves no timer that keeps the process alive', async () => {
  *     started: string[],
  *     events: import('./types.js').SqlaneEvent[],
  *     store: import('./store/store.js').Store,
+ *     probedNames: (string[] | null)[],
+ *     releasedKeys: string[][],
  *     addJob: (id: string) => void,
  *     release: () => void,
  * }}
  */
-function runnerWithHeldJobs(keyed, {
+function runnerWithHeldJobs(withKeys, {
     claimDelayMs = 0,
     futureDelayMs,
     sameNameFutureMs,
@@ -277,13 +280,17 @@ function runnerWithHeldJobs(keyed, {
     const events = [];
     /** @type {number[]} */
     const lookupTimes = [];
+    /** @type {(string[] | null)[]} The names of each probe */
+    const probedNames = [];
+    /** @type {string[][]} The keys of each lookup of the jobs that wait for released keys */
+    const releasedKeys = [];
     const pending = Array.from({
-        length: keyed || sameNameFutureMs !== undefined || futureDelayMs !== undefined ? 2 : 1,
+        length: withKeys || sameNameFutureMs !== undefined || futureDelayMs !== undefined ? 2 : 1,
     }, (_, index) => ({
         id: `job-${index + 1}`,
         name: index > 0 && futureDelayMs !== undefined ? 'later' : 'ping',
         runAtMs: index > 0 ? Date.now() + (sameNameFutureMs ?? futureDelayMs ?? 0) : 0,
-        mutexKeys: keyed ? [`key-${index + 1}`] : [],
+        mutexKeys: withKeys ? [`key-${index + 1}`] : [],
         attempts: 0,
         maxAttempts: 3,
         stalls: 0,
@@ -310,8 +317,9 @@ function runnerWithHeldJobs(keyed, {
         return [...times].map(([name, runAtMs]) => ({ name, delayMs: runAtMs - Date.now() }));
     }
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
-        probe: async () => {
+        probe: async (/** @type {string[] | null} */ names) => {
             lookupTimes.push(Date.now());
+            probedNames.push(names);
             const times = new Map();
 
             for (const job of pending) {
@@ -337,6 +345,14 @@ function runnerWithHeldJobs(keyed, {
             return { jobs: due, next: nextDueTimes(names) };
         },
         findCandidates: async () => pending.map(job => ({ id: job.id, name: job.name, runAtMs: 0 })),
+        namesWaitingFor: async (/** @type {string[]} */ keys) => {
+            lookupTimes.push(Date.now());
+            releasedKeys.push(keys);
+
+            const waiting = pending.filter(job => job.mutexKeys.some(key => keys.includes(key)));
+
+            return [...new Set(waiting.map(job => job.name))];
+        },
         claim: async () => pending.splice(0, 1),
         readPayloads: async (/** @type {string[]} */ ids) => new Map(ids.map(id => [id, null])),
         completeJobs: async (/** @type {unknown[]} */ jobs) => completeCount ?? jobs.length,
@@ -346,7 +362,7 @@ function runnerWithHeldJobs(keyed, {
         releaseJob: async () => true,
         findStaleJobs: async () => [],
     }));
-    const definition = keyed ? defineJob({ name: 'ping', mutexKeys: () => ['key'], timeout: '1m' }) : 'ping';
+    const definition = withKeys ? defineJob({ name: 'ping', mutexKeys: () => ['key'], timeout: '1m' }) : 'ping';
     let nextError = handlerError;
 
     /** @param {import('./types.js').HandlerContext} context */
@@ -384,6 +400,8 @@ function runnerWithHeldJobs(keyed, {
         started,
         events,
         store,
+        probedNames,
+        releasedKeys,
         addJob: id => pending.push({ ...template, id, runAtMs: 0 }),
         release: () => held.resolve(undefined),
     };
@@ -415,7 +433,7 @@ test('dispatch: a plain claim gives its next due times, then a successful comple
     }
 });
 
-test('dispatch: a partial keyed claim refills spare slots before a handler completes', async () => {
+test('dispatch: a partial claim of jobs with mutex keys refills spare slots before a handler completes', async () => {
     const { runner, lookups, started, events, release } = runnerWithHeldJobs(true);
 
     try {
@@ -469,12 +487,12 @@ test('dispatch: a delayed job of the same name starts while its earlier handler 
 });
 
 test.each([
-    { reason: 'a full process', keyed: false, options: { processConcurrency: 1 } },
-    { reason: 'a full lane', keyed: false, options: { laneConcurrency: 1 } },
-    { reason: 'an unconfirmed completion', keyed: false, options: { completeCount: 0 } },
-    { reason: 'mutex keys', keyed: true, options: {} },
-])('dispatch: completion still wakes for $reason', async ({ keyed, options }) => {
-    const { runner, lookups, started, events, release } = runnerWithHeldJobs(keyed, options);
+    { reason: 'a full process', withKeys: false, options: { processConcurrency: 1 } },
+    { reason: 'a full lane', withKeys: false, options: { laneConcurrency: 1 } },
+    { reason: 'an unconfirmed completion', withKeys: false, options: { completeCount: 0 } },
+    { reason: 'mutex keys', withKeys: true, options: {} },
+])('dispatch: completion still wakes for $reason', async ({ withKeys, options }) => {
+    const { runner, lookups, started, events, release } = runnerWithHeldJobs(withKeys, options);
 
     try {
         await runner.start();
@@ -488,6 +506,27 @@ test.each([
 
         expect(events).toContainEqual(expect.objectContaining({ type: 'completed', jobId: 'job-1' }));
         expect(lookups()).toBeGreaterThan(lookupsWhileHeld);
+    } finally {
+        release();
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('dispatch: a completion with mutex keys looks up the jobs that wait for its keys, not all names', async () => {
+    const { runner, started, events, probedNames, releasedKeys, release } = runnerWithHeldJobs(true);
+
+    try {
+        await runner.start();
+        await waitFor(() => started.length === 2, 1000);
+        await sleep(50);
+        const fullProbes = probedNames.filter(names => names === null).length;
+
+        release();
+        await waitFor(() => events.filter(event => event.type === 'completed').length === 2, 1000);
+        await waitFor(() => releasedKeys.length > 0, 1000);
+
+        expect(releasedKeys.flat().toSorted()).toStrictEqual(['key-1', 'key-2']);
+        expect(probedNames.filter(names => names === null)).toHaveLength(fullProbes);
     } finally {
         release();
         await runner.close({ deadline: 0 });

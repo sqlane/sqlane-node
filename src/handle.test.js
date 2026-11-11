@@ -5,7 +5,7 @@ import { ClosedError, ConfigError } from './errors.js';
 
 /** An adapter that is never called: the checks run before any SQL */
 const adapter = /** @type {import('./types.js').Adapter<any>} */ ({ dialect: 'mysql' });
-const keyed = defineJob({ name: 'keyed', mutexKeys: () => ['k'] });
+const withKeys = defineJob({ name: 'with_keys', mutexKeys: () => ['k'] });
 
 /**
  * @param {Partial<import('./types.js').SqlaneOptions<any, 'heavy'>>} [options]
@@ -25,7 +25,7 @@ test.each([
     ['an unknown option', () => sqlaneWith().handle('a', noop, /** @type {any} */ ({ retries: 3 }))],
     ['a handler that is not a function', () => sqlaneWith().handle('a', /** @type {any} */ ('handler'))],
     ['a bad name', () => sqlaneWith().handle('Bad', noop)],
-    ['a keyed definition without a timeout', () => sqlaneWith().handle(keyed, noop)],
+    ['a definition with mutex keys without a timeout', () => sqlaneWith().handle(withKeys, noop)],
     ['a second handler of a name', () => {
         const sqlane = sqlaneWith();
 
@@ -40,9 +40,9 @@ test.each([
     expect(func).toThrow(ConfigError);
 });
 
-test('a keyed definition takes its timeout from handle() or the defaults', () => {
-    expect(() => sqlaneWith().handle(keyed, noop, { timeout: '1m' })).not.toThrow();
-    expect(() => sqlaneWith({ defaults: { timeout: '1m' } }).handle(keyed, noop)).not.toThrow();
+test('a definition with mutex keys takes its timeout from handle() or the defaults', () => {
+    expect(() => sqlaneWith().handle(withKeys, noop, { timeout: '1m' })).not.toThrow();
+    expect(() => sqlaneWith({ defaults: { timeout: '1m' } }).handle(withKeys, noop)).not.toThrow();
 });
 
 test.each([

@@ -59,6 +59,27 @@ export function mariadbMigrations(p) {
                 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_bin`,
             ],
         },
+        {
+            // The FIFO of a mutex key, and the wake after its release, read the pending jobs of a key in order: a row
+            // per key of each pending job. A claim deletes the rows of its jobs, a return to pending adds them again.
+            id: '0002_job_keys',
+            statements: [
+                `CREATE TABLE IF NOT EXISTS ${p}job_keys (
+                    mutex_key VARCHAR(255) ${ASCII} NOT NULL,
+                    run_at DATETIME(3) NOT NULL,
+                    job_id VARCHAR(255) ${ASCII} NOT NULL,
+                    job_name VARCHAR(128) ${ASCII} NOT NULL,
+                    PRIMARY KEY (mutex_key, run_at, job_id),
+                    KEY ${p}job_keys_job_id (job_id)
+                ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_bin`,
+                `INSERT INTO ${p}job_keys (mutex_key, run_at, job_id, job_name)
+                SELECT k.mutex_key, j.run_at, j.id, j.job_name FROM ${p}jobs j, JSON_TABLE(j.mutex_keys, '$[*]' COLUMNS (
+                        mutex_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin PATH '$'
+                    )) AS k
+                 WHERE j.status = 'pending'
+                ON DUPLICATE KEY UPDATE job_id = job_id`,
+            ],
+        },
     ];
 }
 

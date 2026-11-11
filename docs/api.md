@@ -82,8 +82,8 @@ does not need to import the handler and its dependencies.
 | `mutexKeys`   | `(payload: P) => readonly string[]`           | None                                                                | A function that returns the mutex keys of a job. It must be synchronous and use only the payload. sqlane calls it at enqueue, with the payload as JSON gives it back.                                                                                                                                                                                            |
 | `failureJob`  | `string` or `JobDefinition`                   | None                                                                | The job name that sqlane adds when a job of this name fails for good. A job cannot be its own failure job. The failure job cannot have a `failureJob` of its own. Its payload is a [`FailedJobPayload`](#failedjobpayload).                                                                                                                                      |
 
-`defineJob` throws a `ConfigError` if an option is unknown or has a bad value. It does not check whether a keyed
-definition has a timeout, because `handle()` checks that.
+`defineJob` throws a `ConfigError` if an option is unknown or has a bad value. It does not check whether a
+definition with mutex keys has a timeout, because `handle()` checks that.
 
 ```js
 import { defineJob } from '@sqlane/core';

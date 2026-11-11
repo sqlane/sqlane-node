@@ -140,7 +140,12 @@ export type Store = {
      * pending jobs; null: of each name. It may give other names too.
      */
     probe: (names: string[] | null) => Promise<ProbeRow[]>;
-    findCandidates: (limitsByName: Map<string, number>, keyedNames: string[]) => Promise<Candidate[]>;
+    findCandidates: (limitsByName: Map<string, number>, namesWithKeys: string[]) => Promise<Candidate[]>;
+    /**
+     * The names whose jobs may
+     * start after a release of the keys: of the oldest due job of each key, among the names with mutex keys.
+     */
+    namesWaitingFor: (keys: string[], namesWithKeys: string[]) => Promise<string[]>;
     /**
      * In a queue transaction of its own.
      */
@@ -291,7 +296,9 @@ export type Store = {
  * @typedef {object} Store
  * @property {(names: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given name with
  *     pending jobs; null: of each name. It may give other names too.
- * @property {(limitsByName: Map<string, number>, keyedNames: string[]) => Promise<Candidate[]>} findCandidates
+ * @property {(limitsByName: Map<string, number>, namesWithKeys: string[]) => Promise<Candidate[]>} findCandidates
+ * @property {(keys: string[], namesWithKeys: string[]) => Promise<string[]>} namesWaitingFor The names whose jobs may
+ *     start after a release of the keys: of the oldest due job of each key, among the names with mutex keys.
  * @property {(params: ClaimParams) => Promise<ClaimedJob[]>} claim In a queue transaction of its own.
  * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, claims and reads the due jobs of
  *     names without mutex keys, at once: one statement on PostgreSQL. The keys of their rows are not taken: the
