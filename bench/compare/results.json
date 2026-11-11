@@ -1,0 +1,702 @@
+{
+    "date": "2026-11-11T13:42:26.521Z",
+    "node": "v26.13.0",
+    "checks": [
+        {
+            "library": "sqlane",
+            "version": "2.0.1",
+            "checks": {
+                "transaction": {
+                    "result": "yes",
+                    "note": "the rolled-back job never ran, the committed one ran",
+                    "ms": 4108
+                },
+                "delay": {
+                    "result": "yes",
+                    "note": "delay 2 s: started after 2.0 s",
+                    "ms": 2042
+                },
+                "retry": {
+                    "result": "yes",
+                    "note": "backoff 2 s: second attempt after 2.0 s",
+                    "ms": 2040
+                },
+                "timeout": {
+                    "result": "yes",
+                    "note": "timeout 1 s: signal aborted after 1.0 s",
+                    "ms": 1056
+                },
+                "stall": {
+                    "result": "yes",
+                    "note": "ran again 33.7 s after the kill; test-only option: lease 3 s (default and minimum public: 4 min)",
+                    "ms": 33909
+                },
+                "exclusion": {
+                    "result": "yes",
+                    "note": "no overlap, the others ran in parallel",
+                    "ms": 1277
+                },
+                "exclusionMany": {
+                    "result": "yes",
+                    "note": "no overlap, the others ran in parallel",
+                    "ms": 1251
+                },
+                "priority": {
+                    "result": "no",
+                    "note": "no priority option",
+                    "ms": 18
+                }
+            }
+        },
+        {
+            "library": "pg-boss",
+            "version": "12.38.2",
+            "checks": {
+                "transaction": {
+                    "result": "yes",
+                    "note": "the rolled-back job never ran, the committed one ran",
+                    "ms": 4183
+                },
+                "delay": {
+                    "result": "yes",
+                    "note": "delay 2 s: started after 2.0 s",
+                    "ms": 2101
+                },
+                "retry": {
+                    "result": "yes",
+                    "note": "backoff 2 s: second attempt after 2.0 s",
+                    "ms": 2119
+                },
+                "timeout": {
+                    "result": "yes",
+                    "note": "timeout 1 s: signal aborted after 1.0 s",
+                    "ms": 1096
+                },
+                "stall": {
+                    "result": "yes",
+                    "note": "ran again 2.5 s after the kill; expireInSeconds: 2, monitor and maintenance every 1 s",
+                    "ms": 2737
+                },
+                "exclusion": {
+                    "result": "partial",
+                    "note": "no overlap, the others ran in parallel; both job names in one queue, the handler dispatches by name; `groupConcurrency: 1`",
+                    "ms": 1313
+                },
+                "exclusionMany": {
+                    "result": "no",
+                    "note": "jobs that share a resource overlapped 1 times; both job names in one queue, the handler dispatches by name; `groupConcurrency: 1`; a job has one group: the first of its resources",
+                    "ms": 701
+                },
+                "priority": {
+                    "result": "yes",
+                    "note": "enqueued last, ran first",
+                    "ms": 1100
+                }
+            }
+        },
+        {
+            "library": "graphile-worker",
+            "version": "0.18.0",
+            "checks": {
+                "transaction": {
+                    "result": "yes",
+                    "note": "the rolled-back job never ran, the committed one ran",
+                    "ms": 4220
+                },
+                "delay": {
+                    "result": "yes",
+                    "note": "delay 2 s: started after 2.0 s",
+                    "ms": 2090
+                },
+                "retry": {
+                    "result": "partial",
+                    "note": "backoff 2 s: second attempt after 3.0 s; the backoff is not configurable: e^attempts seconds",
+                    "ms": 3105
+                },
+                "timeout": {
+                    "result": "no",
+                    "note": "no job timeout",
+                    "ms": 57
+                },
+                "stall": {
+                    "result": "no",
+                    "note": "not within 70 s; a job locked by a dead worker is unlocked after 4 hours, not configurable",
+                    "ms": 70202
+                },
+                "exclusion": {
+                    "result": "yes",
+                    "note": "no overlap, the others ran in parallel; `queue_name`: one named queue per resource, its jobs run one at a time across task identifiers",
+                    "ms": 1281
+                },
+                "exclusionMany": {
+                    "result": "no",
+                    "note": "jobs that share a resource overlapped 1 times; `queue_name`: one named queue per resource, its jobs run one at a time across task identifiers; a job has one `queue_name`: the first of its resources",
+                    "ms": 1190
+                },
+                "priority": {
+                    "result": "yes",
+                    "note": "enqueued last, ran first",
+                    "ms": 82
+                }
+            }
+        },
+        {
+            "library": "river",
+            "version": "0.3.2",
+            "checks": {
+                "transaction": {
+                    "result": "yes",
+                    "note": "the rolled-back job never ran, the committed one ran",
+                    "ms": 4321
+                },
+                "delay": {
+                    "result": "yes",
+                    "note": "delay 2 s: started after 2.1 s",
+                    "ms": 2193
+                },
+                "retry": {
+                    "result": "yes",
+                    "note": "backoff 2 s: second attempt after 2.2 s",
+                    "ms": 2347
+                },
+                "timeout": {
+                    "result": "yes",
+                    "note": "timeout 1 s: signal aborted after 1.0 s",
+                    "ms": 1154
+                },
+                "stall": {
+                    "result": "yes",
+                    "note": "ran again 17.9 s after the kill; job timeout 2 s, `rescueAfter: 3 s`, rescuer every 1 s (default: rescue after 1 hour)",
+                    "ms": 18093
+                },
+                "exclusion": {
+                    "result": "no",
+                    "note": "no exclusion of jobs by resource (concurrency limits by argument are River Pro, Go only)",
+                    "ms": 0
+                },
+                "exclusionMany": {
+                    "result": "no",
+                    "note": "no exclusion of jobs by resource (concurrency limits by argument are River Pro, Go only)",
+                    "ms": 0
+                },
+                "priority": {
+                    "result": "yes",
+                    "note": "enqueued last, ran first",
+                    "ms": 389
+                }
+            }
+        },
+        {
+            "library": "bullmq",
+            "version": "6.7.4",
+            "checks": {
+                "transaction": {
+                    "result": "no",
+                    "note": "jobs that ran: [1,2] (order 1 was rolled back); enqueue on its own connection: no API takes the caller's",
+                    "ms": 206
+                },
+                "delay": {
+                    "result": "yes",
+                    "note": "delay 2 s: started after 2.0 s",
+                    "ms": 2036
+                },
+                "retry": {
+                    "result": "yes",
+                    "note": "backoff 2 s: second attempt after 2.0 s",
+                    "ms": 2089
+                },
+                "timeout": {
+                    "result": "no",
+                    "note": "no job timeout",
+                    "ms": 0
+                },
+                "stall": {
+                    "result": "yes",
+                    "note": "ran again 2.0 s after the kill; `lockDuration: 2 s`, `stalledInterval: 1 s` (default: 30 s each)",
+                    "ms": 2223
+                },
+                "exclusion": {
+                    "result": "no",
+                    "note": "no exclusion of jobs by resource (group concurrency is BullMQ Pro)",
+                    "ms": 0
+                },
+                "exclusionMany": {
+                    "result": "no",
+                    "note": "no exclusion of jobs by resource (group concurrency is BullMQ Pro)",
+                    "ms": 0
+                },
+                "priority": {
+                    "result": "yes",
+                    "note": "enqueued last, ran first",
+                    "ms": 92
+                }
+            }
+        },
+        {
+            "library": "sidequest",
+            "version": "1.17.0",
+            "checks": {
+                "transaction": {
+                    "result": "no",
+                    "note": "jobs that ran: [1,2] (order 1 was rolled back); engine in this process, `runner: \"inline\"`; enqueue on its own connection: no API takes the caller's",
+                    "ms": 267
+                },
+                "delay": {
+                    "result": "yes",
+                    "note": "delay 2 s: started after 2.0 s",
+                    "ms": 2096
+                },
+                "retry": {
+                    "result": "yes",
+                    "note": "backoff 2 s: second attempt after 2.0 s; engine in this process, `runner: \"inline\"`",
+                    "ms": 2189
+                },
+                "timeout": {
+                    "result": "yes",
+                    "note": "timeout 1 s: signal aborted after 1.0 s",
+                    "ms": 1169
+                },
+                "stall": {
+                    "result": "yes",
+                    "note": "ran again 27.2 s after the kill; engine in this process, `runner: \"inline\"`; `releaseStaleJobsIntervalMin: 1` (its minimum: a cron of minutes), `releaseStaleJobsMaxStaleMs: 2000` (default: every 60 min, stale after 10 min)",
+                    "ms": 27452
+                },
+                "exclusion": {
+                    "result": "no",
+                    "note": "no exclusion of jobs by resource",
+                    "ms": 0
+                },
+                "exclusionMany": {
+                    "result": "no",
+                    "note": "no exclusion of jobs by resource",
+                    "ms": 0
+                },
+                "priority": {
+                    "result": "partial",
+                    "note": "enqueued last, ran first; a queue per priority: Sidequest has priorities of queues, not of jobs",
+                    "ms": 372
+                }
+            }
+        }
+    ],
+    "perf": [
+        {
+            "library": "sqlane",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 300,
+            "latencyP50Ms": 3,
+            "latencyP99Ms": 17,
+            "statements": 1802,
+            "connections": 4,
+            "worker": {
+                "instructions": 381386081,
+                "cycles": 685903646,
+                "cpuSeconds": 0.38
+            },
+            "producer": {
+                "instructions": 332659486,
+                "cycles": 987169057,
+                "cpuSeconds": 0.52
+            },
+            "db": {
+                "instructions": 642900331,
+                "cycles": 1188568744,
+                "cpuSeconds": 0.62
+            }
+        },
+        {
+            "library": "sqlane",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 8,
+            "connections": 2,
+            "worker": {
+                "instructions": 8955241,
+                "cycles": 29597457,
+                "cpuSeconds": 0.009999999999999995
+            },
+            "db": {
+                "instructions": 7978905,
+                "cycles": 20466477,
+                "cpuSeconds": 0.02
+            }
+        },
+        {
+            "library": "sqlane",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 3,
+            "connections": 2,
+            "worker": {
+                "instructions": 8294087,
+                "cycles": 21838992,
+                "cpuSeconds": 0.020000000000000004
+            },
+            "db": {
+                "instructions": 1181114,
+                "cycles": 5295855,
+                "cpuSeconds": 0
+            }
+        },
+        {
+            "library": "sqlane",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 1608,
+            "worker": {
+                "instructions": 5032602591,
+                "cycles": 2167268822,
+                "cpuSeconds": 0.7,
+                "byCommand": {
+                    "node": [5032602591, 2167268822, 0.7]
+                }
+            },
+            "db": {
+                "instructions": 7147402713,
+                "cycles": 2445799309,
+                "cpuSeconds": 0.78
+            }
+        },
+        {
+            "library": "pg-boss",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 300,
+            "latencyP50Ms": 11,
+            "latencyP99Ms": 31,
+            "statements": 5097,
+            "connections": 10,
+            "worker": {
+                "instructions": 1698650922,
+                "cycles": 2011400343,
+                "cpuSeconds": 0.9700000000000001
+            },
+            "producer": {
+                "instructions": 372333009,
+                "cycles": 1454601965,
+                "cpuSeconds": 0.74
+            },
+            "db": {
+                "instructions": 6239685595,
+                "cycles": 5173946927,
+                "cpuSeconds": 2.4800000000000004
+            }
+        },
+        {
+            "library": "pg-boss",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 38,
+            "connections": 6,
+            "worker": {
+                "instructions": 48410852,
+                "cycles": 133530831,
+                "cpuSeconds": 0.07
+            },
+            "db": {
+                "instructions": 66079012,
+                "cycles": 81319364,
+                "cpuSeconds": 0.039999999999999994
+            }
+        },
+        {
+            "library": "pg-boss",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 3044,
+            "connections": 6,
+            "worker": {
+                "instructions": 1096099119,
+                "cycles": 709532499,
+                "cpuSeconds": 0.29999999999999993
+            },
+            "db": {
+                "instructions": 4018207921,
+                "cycles": 1809935446,
+                "cpuSeconds": 0.7300000000000001
+            }
+        },
+        {
+            "library": "pg-boss",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 45181,
+            "worker": {
+                "instructions": 12085616533,
+                "cycles": 8204343560,
+                "cpuSeconds": 3.18,
+                "byCommand": {
+                    "node": [12085616533, 8204343560, 3.18]
+                }
+            },
+            "db": {
+                "instructions": 36393602969,
+                "cycles": 15971048664,
+                "cpuSeconds": 5.709999999999999
+            }
+        },
+        {
+            "library": "graphile-worker",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 300,
+            "latencyP50Ms": 9,
+            "latencyP99Ms": 23,
+            "statements": 2121,
+            "connections": 7,
+            "worker": {
+                "instructions": 1684410209,
+                "cycles": 1679632410,
+                "cpuSeconds": 0.8899999999999999
+            },
+            "producer": {
+                "instructions": 303799276,
+                "cycles": 1219731178,
+                "cpuSeconds": 0.6500000000000001
+            },
+            "db": {
+                "instructions": 1387788465,
+                "cycles": 2824610564,
+                "cpuSeconds": 1.47
+            }
+        },
+        {
+            "library": "graphile-worker",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 25,
+            "connections": 5,
+            "worker": {
+                "instructions": 27951889,
+                "cycles": 59747703,
+                "cpuSeconds": 0.04000000000000001
+            },
+            "db": {
+                "instructions": 15023549,
+                "cycles": 33432505,
+                "cpuSeconds": 0.010000000000000002
+            }
+        },
+        {
+            "library": "graphile-worker",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 24,
+            "connections": 5,
+            "worker": {
+                "instructions": 76070205,
+                "cycles": 60401466,
+                "cpuSeconds": 0.04000000000000001
+            },
+            "db": {
+                "instructions": 28416498,
+                "cycles": 31844048,
+                "cpuSeconds": 0.010000000000000002
+            }
+        },
+        {
+            "library": "graphile-worker",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 2125,
+            "worker": {
+                "instructions": 26374315706,
+                "cycles": 7151817682,
+                "cpuSeconds": 2.35,
+                "byCommand": {
+                    "node": [26374315706, 7151817682, 2.35]
+                }
+            },
+            "db": {
+                "instructions": 33531411389,
+                "cycles": 11116049580,
+                "cpuSeconds": 3.68
+            }
+        },
+        {
+            "library": "river",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 299,
+            "latencyP50Ms": 56,
+            "latencyP99Ms": 118,
+            "statements": 1578,
+            "connections": 7,
+            "worker": {
+                "instructions": 576738024,
+                "cycles": 931684326,
+                "cpuSeconds": 0.51
+            },
+            "producer": {
+                "instructions": 490475443,
+                "cycles": 1398612941,
+                "cpuSeconds": 0.7500000000000001
+            },
+            "db": {
+                "instructions": 2416536762,
+                "cycles": 2264464824,
+                "cpuSeconds": 1.24
+            }
+        },
+        {
+            "library": "river",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 32,
+            "connections": 5,
+            "worker": {
+                "instructions": 59421119,
+                "cycles": 118267392,
+                "cpuSeconds": 0.06
+            },
+            "db": {
+                "instructions": 27650029,
+                "cycles": 41080388,
+                "cpuSeconds": 0.030000000000000002
+            }
+        },
+        {
+            "library": "river",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 32,
+            "connections": 5,
+            "worker": {
+                "instructions": 61757626,
+                "cycles": 135761291,
+                "cpuSeconds": 0.07
+            },
+            "db": {
+                "instructions": 30043139,
+                "cycles": 43994638,
+                "cpuSeconds": 0.020000000000000004
+            }
+        },
+        {
+            "library": "river",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 127374,
+            "worker": {
+                "instructions": 10163122438,
+                "cycles": 14079304104,
+                "cpuSeconds": 7.89,
+                "byCommand": {
+                    "node": [10163122438, 14079304104, 7.89]
+                }
+            },
+            "db": {
+                "instructions": 58631885768,
+                "cycles": 25324189653,
+                "cpuSeconds": 14.84
+            }
+        },
+        {
+            "library": "sqlane",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "mysql",
+            "seconds": 15,
+            "completed": 300,
+            "latencyP50Ms": 7,
+            "latencyP99Ms": 57,
+            "worker": {
+                "instructions": 990997940,
+                "cycles": 1743030735,
+                "cpuSeconds": 0.98
+            },
+            "producer": {
+                "instructions": 481761213,
+                "cycles": 1187903293,
+                "cpuSeconds": 0.7
+            },
+            "db": {
+                "instructions": 2902236820,
+                "cycles": 3864709839,
+                "cpuSeconds": 2.22
+            }
+        },
+        {
+            "library": "sqlane",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "mariadb",
+            "seconds": 15,
+            "completed": 300,
+            "latencyP50Ms": 34,
+            "latencyP99Ms": 50,
+            "worker": {
+                "instructions": 977062383,
+                "cycles": 2303139822,
+                "cpuSeconds": 1.2999999999999998
+            },
+            "producer": {
+                "instructions": 487711021,
+                "cycles": 1456895866,
+                "cpuSeconds": 0.81
+            },
+            "db": {
+                "instructions": 1687341233,
+                "cycles": 3449512326,
+                "cpuSeconds": 1.9400000000000002
+            }
+        }
+    ]
+}
