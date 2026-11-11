@@ -10,14 +10,22 @@ const SHARED_QUEUE = 'shared';
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
-    async open({ url, names, handler, concurrency = 4, stall = false }) {
+    async open({ url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, role }) {
         /** @type {string[]} */
         const notes = [];
         /** @type {string[]} */
         const limits = [];
+        // pg-boss passes its options to pg.Pool: no idle timeout, as the other adapters (CPU counters of closed
+        // connections are lost)
+        const poolOptions = { idleTimeoutMillis: 0 };
         const boss = new PgBoss({
             connectionString: url,
             max: 5,
+            ...poolOptions,
+            // Its wakes, as the other libraries': off by default
+            useListenNotify: true,
+            // A producer: no maintenance, no cron
+            ...role === 'producer' && { supervise: false, schedule: false },
             ...stall && { monitorIntervalSeconds: 1, superviseIntervalSeconds: 1, maintenanceIntervalSeconds: 1 },
         });
 
@@ -31,19 +39,23 @@ export const adapter = {
          */
         const queueOf = name => (exclusive ? SHARED_QUEUE : name);
 
+        const createQueues = role === undefined || role === 'setup';
+
         if (exclusive) {
             limits.push('both job names in one queue, the handler dispatches by name; `groupConcurrency: 1`');
-            await boss.createQueue(SHARED_QUEUE);
+            await boss.createQueue(SHARED_QUEUE, { notify: true });
         }
 
         for (const [name, spec] of Object.entries(names)) {
-            if (exclusive) {
+            if (exclusive || !createQueues) {
                 continue;
             }
 
             const expireInSeconds = spec.timeoutMs ? Math.max(1, Math.round(spec.timeoutMs / 1000)) : undefined;
 
             await boss.createQueue(name, {
+                // Its wakes: NOTIFY of the inserts to the workers of the queue
+                notify: true,
                 retryLimit: (spec.maxAttempts ?? 1) - 1,
                 ...spec.backoffMs !== undefined && { retryDelay: spec.backoffMs / 1000 },
                 ...expireInSeconds && { expireInSeconds },
@@ -56,6 +68,9 @@ export const adapter = {
 
         /** @type {string[]} */
         const workers = [];
+        const queueNames = exclusive ? [SHARED_QUEUE] : Object.keys(names);
+        // A worker per queue: the process concurrency shared among them, at least 1 each
+        const localConcurrency = Math.max(1, Math.floor(concurrency / queueNames.length));
 
         return {
             notes,
@@ -76,10 +91,11 @@ export const adapter = {
                 });
             },
             start: async () => {
-                for (const queue of exclusive ? [SHARED_QUEUE] : Object.keys(names)) {
+                for (const queue of queueNames) {
                     workers.push(await boss.work(queue, {
-                        localConcurrency: concurrency,
-                        pollingIntervalSeconds: 0.5,
+                        localConcurrency,
+                        pollingIntervalSeconds: pollIntervalMs / 1000,
+                        notifyPollingIntervalSeconds: pollIntervalMs / 1000,
                         ...exclusive && { groupConcurrency: 1 },
                     }, async ([job]) => {
                         await handler(job.data.name, job.data, job.signal);

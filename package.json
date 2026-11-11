@@ -103,6 +103,7 @@
         "check": "hk check --all",
         "bench": "node bench/run.js",
         "bench:cpu": "bench/cpu/measure.sh",
+        "bench:compare": "pnpm --dir bench/compare install --frozen-lockfile && node bench/compare/run.mjs",
         "changeset": "changeset",
         "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern CHANGELOG.md",
         "prisma:generate": "prisma generate --schema test/prisma/mysql/schema.prisma && prisma generate --schema test/prisma/postgres/schema.prisma",

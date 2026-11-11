@@ -11,12 +11,13 @@ const { version } = JSON.parse(readFileSync(new URL('../node_modules/graphile-wo
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
-    async open({ url, names, handler, concurrency = 4, stall = false }) {
+    async open({ url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500 }) {
         /** @type {string[]} */
         const notes = [];
         /** @type {string[]} */
         const limits = [];
-        const pool = new Pool({ connectionString: url, max: 5 });
+        // No idle timeout: a closed connection takes its CPU counters with it (see docs/cpu-cost.md, pitfall 5)
+        const pool = new Pool({ connectionString: url, max: 5, idleTimeoutMillis: 0 });
 
         pool.on('error', () => {});
 
@@ -74,7 +75,7 @@ export const adapter = {
                 runner = await run({
                     pgPool: pool,
                     concurrency,
-                    pollInterval: 500,
+                    pollInterval: pollIntervalMs,
                     noHandleSignals: true,
                     logger: silentLogger(),
                     taskList: Object.fromEntries(Object.keys(names).map(name => [
