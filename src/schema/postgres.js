@@ -52,6 +52,15 @@ export function postgresMigrations(p) {
                 `CREATE INDEX IF NOT EXISTS ${p}mutexes_job_id ON ${p}mutexes (job_id)`,
             ],
         },
+        {
+            // The claims read the due jobs of a name in the order of (run_at, id): from the index, with no sort, in
+            // every plan (a cached generic one too). The index has the pending jobs only: small.
+            id: '0002_pending_order',
+            statements: [
+                `DROP INDEX IF EXISTS ${p}jobs_pending`,
+                `CREATE INDEX IF NOT EXISTS ${p}jobs_pending ON ${p}jobs (job_name, run_at, id) WHERE status = 'pending'`,
+            ],
+        },
     ];
 }
 
