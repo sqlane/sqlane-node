@@ -1,5 +1,56 @@
 # @sqlane/core
 
+## 3.0.0
+
+### Major Changes
+
+- [#83](https://github.com/sqlane/sqlane-node/pull/83) [`3d918e5`](https://github.com/sqlane/sqlane-node/commit/3d918e5f2325973b474557d328cc6ec4f2ec0e25) - Lower the CPU cost of each job: about 70% less on PostgreSQL, 35–40% less on MySQL and MariaDB.
+
+    - A wake checks only the job names it concerns: a NOTIFY, a commit or a completion no longer probes every job name.
+      The poll interval still checks all names.
+    - On PostgreSQL, a wake for job names without mutex keys claims their jobs at once: the claim also reports when the
+      next job of each name is due, so no separate probe runs.
+    - The pg adapter uses named prepared statements (new option `prepare`, default `true`; set `false` behind PgBouncer
+      before 1.21 in transaction mode). A claim of one name and a completion of one job use scalar parameters, so
+      PostgreSQL reuses a cached plan.
+    - An enqueue on PostgreSQL is one statement that also sends its NOTIFY; on a pool it runs without `BEGIN`/`COMMIT`.
+    - New PostgreSQL migration `0002_pending_order`: the pending-jobs index becomes `(job_name, run_at, id)`, so claims read
+      jobs in order without a sort. Run `migrate()` after the upgrade.
+    - MySQL and MariaDB: the checks that follow a hint probe only the names enqueued within their steps, and claim only
+      names with due jobs. Under a steady load they no longer probe every job name.
+    - Mutex keys: a release wakes the jobs that wait for its keys (a NOTIFY or hint `#<key>`), not every job name. The
+      FIFO of a key reads a new table, `sqlane_job_keys`: a row per key of each pending job, in the order of `run_at`
+      (migrations `0003_job_keys` on PostgreSQL, `0002_job_keys` on MySQL and MariaDB). It no longer reads the due jobs of
+      every name with mutex keys. Per job with mutex keys: about 25% fewer instructions on PostgreSQL, 85–90% fewer on
+      MySQL and MariaDB; with a long queue on one key, 80–97% fewer. MariaDB no longer stalls with thousands of due jobs
+      that wait for a held key. Processes of an older version ignore `#<key>` hints: during a rolling upgrade, their jobs
+      with mutex keys can wait for the poll.
+
+### Patch Changes
+
+- [#87](https://github.com/sqlane/sqlane-node/pull/87) [`3ece593`](https://github.com/sqlane/sqlane-node/commit/3ece593ada68402695bc44025b93c3b150fc774f) - README: a "How it compares" section with a table of the checked capabilities, a chart of the CPU cost per job next to
+  pg-boss, Graphile Worker and River, and the headline numbers of the performance comparison. The performance section
+  is shorter, with ranges across the databases.
+
+- [#85](https://github.com/sqlane/sqlane-node/pull/85) [`6a6bdad`](https://github.com/sqlane/sqlane-node/commit/6a6bdad13970e805b8d1aaad03be0bc65cd5a58c) - Drain a backlog over many job names much faster: 10,000 due jobs over 1000 names, 8 slots and empty handlers, from
+  18.6 s to 1.4 s on PostgreSQL, 258 s to about 5 s on MySQL and 175 s to 16 s on MariaDB, with 90 to 98% less CPU per
+  job.
+
+    - A claim requested every due job name and locked up to the free slots of each: with 1000 due names, thousands of rows
+      to start a few jobs. It now requests at most 4 names per free slot, the next names at the next turn, and a full claim
+      no longer reads the next due time of each name.
+    - The first completion write waits for one turn of the event loop: the jobs whose handlers finish in it, such as those
+      whose I/O completes in the same poll, are completed in one write, and their slots free together for one claim. In a
+      drain on MariaDB with handlers that hash and read a file: a third fewer commits per job and about 20% less time,
+      which matters where a commit waits for the disk.
+
+- [#86](https://github.com/sqlane/sqlane-node/pull/86) [`d5791f2`](https://github.com/sqlane/sqlane-node/commit/d5791f24706e52fdee5081303682f8271f3fd7f1) - README: link the rebuilt comparison with other job queues. Its features are now checked by running each library
+  (`pnpm bench:compare`), and a new page compares the CPU cost, latency and idle cost of the queues that enqueue in
+  your transaction.
+
+- [#88](https://github.com/sqlane/sqlane-node/pull/88) [`ea879fc`](https://github.com/sqlane/sqlane-node/commit/ea879fc16c79b56c5d53761d326bc200c429506a) - README: the performance comparison also measures pg-boss and River with the throughput settings of their
+  documentation. sqlane uses 2.4–6× fewer CPU instructions per job than the others, with their defaults or tuned.
+
 ## 2.0.1
 
 ### Patch Changes
