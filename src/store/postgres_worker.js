@@ -17,13 +17,40 @@ const epochMs = column => `(EXTRACT(EPOCH FROM ${column}) * 1000)::bigint`;
 const HELD = '(m.held_until IS NULL OR m.held_until >= clock_timestamp())';
 
 /**
- * The next due time of each job name with pending jobs. PostgreSQL has no loose index scan: a recursive CTE skips from
- * one pending name to the next on the partial index, two index probes per pending name.
+ * The next due time of each given job name with pending jobs: one index probe per name.
  * @param {Executor} executor
  * @param {string} p
+ * @param {string[]} names
  * @returns {Promise<ProbeRow[]>}
  */
-export async function probe(executor, p) {
+async function probeNames(executor, p, names) {
+    const rows = await executor.query(`
+        SELECT request.name AS job_name,
+               (EXTRACT(EPOCH FROM next.run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
+          FROM unnest($1::text[]) AS request(name)
+         CROSS JOIN LATERAL (
+             SELECT run_at FROM ${p}jobs
+              WHERE status = 'pending' AND job_name = request.name ORDER BY run_at LIMIT 1
+         ) AS next
+    `, [names]);
+
+    return rows.map(row => ({ name: String(row.job_name), delayMs: Number(row.delay_ms) }));
+}
+
+/**
+ * The next due time of each given job name with pending jobs; null: of each job name. PostgreSQL has no loose index
+ * scan: for all names, a recursive CTE skips from one pending name to the next on the partial index, two index probes
+ * per pending name.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[] | null} names
+ * @returns {Promise<ProbeRow[]>}
+ */
+export async function probe(executor, p, names) {
+    if (names) {
+        return names.length ? probeNames(executor, p, names) : [];
+    }
+
     const rows = await executor.query(`
         WITH RECURSIVE names AS (
             (SELECT job_name FROM ${p}jobs WHERE status = 'pending' ORDER BY job_name LIMIT 1)
@@ -206,20 +233,76 @@ export async function claim(executor, p, { candidateIds, lockToken, lockedBy, le
 }
 
 /**
+ * @param {string} p
+ * @returns {string} The jobs of the CTE `claimed`, with their payloads, as a JSON text: oldest first.
+ */
+function claimedJobsJson(p) {
+    return `(
+        SELECT json_agg(json_build_object(
+                   'id', c.id, 'name', c.job_name, 'attempts', c.attempts,
+                   'maxAttempts', c.max_attempts, 'stalls', c.stalls, 'maxStalls', c.max_stalls,
+                   'failureJob', c.failure_job, 'createdAtMs', c.created_at_ms, 'waitedMs', c.waited_ms,
+                   'found', pl.id IS NOT NULL, 'payload', pl.payload
+               ) ORDER BY c.run_at, c.id)
+          FROM claimed c LEFT JOIN ${p}payloads pl ON pl.id = c.id
+    )::text`;
+}
+
+/**
+ * @param {unknown} json The text of `claimedJobsJson`: null for none.
+ * @param {string} lockToken
+ * @returns {import('./store.js').StartableJob[]}
+ */
+function parseClaimedJobs(json, lockToken) {
+    /** @type {{ id: string, name: string, attempts: number, maxAttempts: number, stalls: number, maxStalls: number,
+     *     failureJob: string | null, createdAtMs: number, waitedMs: number, found: boolean, payload: unknown }[]} */
+    const jobs = (json ?? null) === null ? [] : JSON.parse(String(json));
+
+    return jobs.map(job => ({
+        id: job.id,
+        name: job.name,
+        mutexKeys: [],
+        attempts: job.attempts,
+        maxAttempts: job.maxAttempts,
+        stalls: job.stalls,
+        maxStalls: job.maxStalls,
+        failureJob: job.failureJob,
+        enqueuedAt: new Date(job.createdAtMs),
+        waitedMs: job.waitedMs,
+        lockToken,
+        payload: job.found ? { found: true, payload: job.payload } : { found: false, payload: undefined },
+    }));
+}
+
+/**
  * Finds, claims and reads the due jobs of names without mutex keys, in one statement (a transaction of its own): the
  * oldest due jobs of each name that no other claim holds (SKIP LOCKED), within the free slots of their lanes and of
- * the process (as `fitSlots`), with their payloads.
+ * the process (as `fitSlots`), with their payloads. Then the next due time of each requested name, among its pending
+ * jobs that this claim did not take.
  * @param {Executor} executor Outside a transaction.
  * @param {string} p
  * @param {import('./store.js').ClaimDueParams} params
- * @returns {Promise<import('./store.js').StartableJob[]>} In the order of run_at.
+ * @returns {Promise<import('./store.js').ClaimDueResult>} The jobs in the order of run_at.
  */
 export async function claimDue(executor, p, { requests, laneFree, processMax, lockToken, lockedBy, leaseMs }) {
     if (!requests.length || processMax <= 0) {
-        return [];
+        return { jobs: [], next: [] };
     }
 
-    const rows = await executor.query(`
+    if (requests.length === 1) {
+        const [{ name, maxJobs, lane }] = requests;
+
+        return claimDueOfName(executor, p, {
+            name,
+            limit: Math.min(maxJobs, laneFree[lane], processMax),
+            lockToken,
+            lockedBy,
+            leaseMs,
+        });
+    }
+
+    // One row: the claimed jobs and the next due times, as JSON texts
+    const [row] = await executor.query(`
         WITH locked AS (
             SELECT due.id, due.run_at, request.lane
               FROM unnest($1::text[], $2::integer[], $3::integer[]) AS request(name, max_jobs, lane)
@@ -248,10 +331,20 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
             RETURNING j.id, j.job_name, j.run_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.failure_job,
                       ${epochMs('j.created_at')} AS created_at_ms,
                       (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
+        ),
+        -- The statement's snapshot: the picked jobs are still pending in it
+        next AS (
+            SELECT request.name AS job_name,
+                   (EXTRACT(EPOCH FROM n.run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
+              FROM unnest($1::text[]) AS request(name)
+             CROSS JOIN LATERAL (
+                 SELECT run_at FROM ${p}jobs
+                  WHERE status = 'pending' AND job_name = request.name AND id NOT IN (SELECT id FROM picked)
+                  ORDER BY run_at LIMIT 1
+             ) AS n
         )
-        SELECT c.*, pl.payload::text AS payload, pl.id IS NOT NULL AS payload_found
-          FROM claimed c LEFT JOIN ${p}payloads pl ON pl.id = c.id
-         ORDER BY c.run_at, c.id
+        SELECT ${claimedJobsJson(p)} AS jobs,
+               (SELECT json_agg(json_build_object('name', job_name, 'delayMs', delay_ms)) FROM next)::text AS next
     `, [
         requests.map(request => request.name),
         requests.map(request => request.maxJobs),
@@ -262,23 +355,53 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
         lockedBy,
         leaseMs,
     ]);
+    /** @type {ProbeRow[]} */
+    const next = (row?.next ?? null) === null ? [] : JSON.parse(String(row?.next));
 
-    return rows.map(row => ({
-        id: String(row.id),
-        name: String(row.job_name),
-        mutexKeys: [],
-        attempts: Number(row.attempts),
-        maxAttempts: Number(row.max_attempts),
-        stalls: Number(row.stalls),
-        maxStalls: Number(row.max_stalls),
-        failureJob: row.failure_job === null ? null : String(row.failure_job),
-        enqueuedAt: new Date(Number(row.created_at_ms)),
-        waitedMs: Number(row.waited_ms),
-        lockToken,
-        payload: row.payload_found
-            ? { found: true, payload: JSON.parse(String(row.payload)) }
-            : { found: false, payload: undefined },
-    }));
+    return { jobs: parseClaimedJobs(row?.jobs, lockToken), next };
+}
+
+/**
+ * Claims the due jobs of one name, as `claimDue`. Scalar parameters: PostgreSQL caches a generic plan of the prepared
+ * statement, and plans it no more.
+ * @param {Executor} executor Outside a transaction.
+ * @param {string} p
+ * @param {{ name: string, limit: number, lockToken: string, lockedBy: string, leaseMs: number }} params
+ * @returns {Promise<import('./store.js').ClaimDueResult>}
+ */
+async function claimDueOfName(executor, p, { name, limit, lockToken, lockedBy, leaseMs }) {
+    const [row] = await executor.query(`
+        WITH picked AS (
+            SELECT id FROM ${p}jobs
+             WHERE status = 'pending' AND job_name = $1 AND run_at <= clock_timestamp()
+             ORDER BY run_at, id LIMIT $2
+               FOR UPDATE SKIP LOCKED
+        ),
+        claimed AS (
+            UPDATE ${p}jobs AS j
+               SET status = 'running', lock_token = $3, locked_by = $4,
+                   locked_until = clock_timestamp() + $5 * interval '1 millisecond', started_at = clock_timestamp(),
+                   timed_out_at = NULL, updated_at = clock_timestamp()
+              FROM picked
+             WHERE j.id = picked.id
+            RETURNING j.id, j.job_name, j.run_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.failure_job,
+                      ${epochMs('j.created_at')} AS created_at_ms,
+                      (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
+        )
+        -- The statement's snapshot: the picked jobs are still pending in it
+        SELECT ${claimedJobsJson(p)} AS jobs,
+               (
+                   SELECT (EXTRACT(EPOCH FROM run_at - clock_timestamp()) * 1000)::bigint FROM ${p}jobs
+                    WHERE status = 'pending' AND job_name = $1 AND id NOT IN (SELECT id FROM picked)
+                    ORDER BY run_at LIMIT 1
+               ) AS next_delay_ms
+    `, [name, limit, lockToken, lockedBy, leaseMs]);
+    const nextDelay = row?.next_delay_ms ?? null;
+
+    return {
+        jobs: parseClaimedJobs(row?.jobs, lockToken),
+        next: nextDelay === null ? [] : [{ name, delayMs: Number(nextDelay) }],
+    };
 }
 
 /**

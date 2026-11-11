@@ -42,25 +42,38 @@ function parseKeys(json) {
  * The SQL of the probe. `GROUP BY status, job_name`: the whole index prefix, else MariaDB does not use a loose index
  * scan.
  * @param {string} p
+ * @param {number} [nameCount] The names of the probe, as parameters; none: all names.
  * @returns {string}
  */
-export function probeSql(p) {
+export function probeSql(p, nameCount = 0) {
+    const names = nameCount ? ` AND job_name IN (${Array.from({ length: nameCount }, () => '?').join(', ')})` : '';
+
     return `
         SELECT job_name, TIMESTAMPDIFF(MICROSECOND, ${NOW}, MIN(run_at)) DIV 1000 AS delay_ms
           FROM ${p}jobs FORCE INDEX (${p}jobs_status_name_run_at)
-         WHERE status = 'pending'
+         WHERE status = 'pending'${names}
          GROUP BY status, job_name
     `;
 }
 
+/** Above it, the probe reads all names: a long list of names makes a slow range plan */
+const MAX_PROBE_NAMES = 100;
+
 /**
- * The next due time of each job name with pending jobs: one index dive per pending name (loose index scan).
+ * The next due time of each given job name with pending jobs; null, or many names: of each job name. One index dive
+ * per name (loose index scan).
  * @param {Executor} executor
  * @param {string} p
+ * @param {string[] | null} names
  * @returns {Promise<ProbeRow[]>}
  */
-export async function probe(executor, p) {
-    const rows = await executor.query(probeSql(p), []);
+export async function probe(executor, p, names) {
+    if (names && !names.length) {
+        return [];
+    }
+
+    const some = names && names.length <= MAX_PROBE_NAMES ? names : [];
+    const rows = await executor.query(probeSql(p, some.length), some);
 
     return rows.map(row => ({ name: String(row.job_name), delayMs: Number(row.delay_ms) }));
 }
@@ -244,11 +257,11 @@ export async function claim(executor, p, { candidateIds, lockToken, lockedBy, le
  * @param {Executor} executor
  * @param {string} p
  * @param {import('./store.js').ClaimDueParams} params
- * @returns {Promise<import('./store.js').StartableJob[]>} In the order of run_at.
+ * @returns {Promise<import('./store.js').ClaimDueResult>} The jobs in the order of run_at.
  */
 export async function claimDue(executor, p, { requests, laneFree, processMax, lockToken, lockedBy, leaseMs }) {
     if (!requests.length || processMax <= 0) {
-        return [];
+        return { jobs: [], next: [] };
     }
 
     const locked = (await executor.query(requests.map(() => `(
@@ -297,7 +310,8 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
         `, [lockToken, lockedBy, leaseMs * 1000, ...picked.map(job => job.id)]);
     }
 
-    return picked;
+    // In the transaction: the claimed jobs are running
+    return { jobs: picked, next: await probe(executor, p, requests.map(request => request.name)) };
 }
 
 /**

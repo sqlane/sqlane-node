@@ -189,7 +189,7 @@ export async function benchProbe({ dialect, url, nextPrefix, sizes }) {
             // oxlint-disable-next-line no-await-in-loop -- one step after the other
             await analyze(pool, p);
             // oxlint-disable-next-line no-await-in-loop -- one step after the other
-            rows.push({ pendingNames, probe: await time(() => store.probe(), samples) });
+            rows.push({ pendingNames, probe: await time(() => store.probe(null), samples) });
 
             if (target === 10) {
                 // Slow, and about the same for any number of pending names: measured once

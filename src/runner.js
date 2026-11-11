@@ -66,6 +66,7 @@ const MAX_COMPLETE_BATCH = 100;
  * @property {boolean} released Released or abandoned on close: the result is not written.
  * @property {boolean} timedOut
  * @property {boolean} leaseLost
+ * @property {boolean} completionConfirmed The completion batch changed every owned row.
  * @property {number} leaseEndsAt
  * @property {number} startedAt
  */
@@ -106,13 +107,20 @@ const MAX_COMPLETE_BATCH = 100;
  * @returns {Promise<void>}
  */
 async function waitAtMost(promise, ms, { ref = true } = {}) {
-    const controller = new AbortController();
+    /** @type {NodeJS.Timeout | undefined} */
+    let timer;
 
     try {
-        // The race handles the rejection of the aborted timer
-        await Promise.race([promise, sleep(Math.max(ms, 0), undefined, { signal: controller.signal, ref })]);
+        // A plain timer, cleared: an aborted sleep would build an error at each wait
+        await Promise.race([promise, new Promise((resolve) => {
+            timer = setTimeout(resolve, Math.max(ms, 0));
+
+            if (!ref) {
+                timer.unref();
+            }
+        })]);
     } finally {
-        controller.abort();
+        clearTimeout(timer);
     }
 }
 
@@ -169,6 +177,24 @@ export function createRunner({
     /** @type {Map<string, RunningJob>} */
     const running = new Map();
     let wakeCount = 0;
+    /** A wake of all names since the last turn: the next turn probes all names */
+    let wakeAll = true;
+    /** @type {Set<string>} The names of the wakes since the last turn whose jobs are visible: claimed at once */
+    const wakeNames = new Set();
+    /** @type {Set<string>} The names of the wakes since the last turn that may have no visible job: probed first */
+    const wakeProbeNames = new Set();
+    /** @type {Set<string>} The names whose last probe saw due jobs: probed again at each turn, until none is due */
+    const backlog = new Set();
+    /** @type {Map<string, number>} The next due time of the names with only future pending jobs, by the probes */
+    const scheduled = new Map();
+    /** The earliest time of `scheduled`; null: to compute again */
+    let earliestScheduled = /** @type {number | null} */ (Infinity);
+    /** @type {Set<string>} The handled names whose definition has mutex keys: set by start() */
+    let keyedNames = new Set();
+    /** The time of the next probe of all names: the poll */
+    let fullProbeAt = 0;
+    /** @type {Map<string, number>} The names of the enqueues of the current series of re-probes: their last enqueue */
+    const reprobeNames = new Map();
     /** @type {(() => void) | null} */
     let endSleep = null;
     /** @type {Promise<void> | null} */
@@ -182,8 +208,9 @@ export function createRunner({
     /** @type {{ timer: NodeJS.Timeout, at: number } | null} The next re-probe */
     let reprobe = null;
     let contentionDelayMs = 0;
+    let claimsInFlight = 0;
     const counts = { completed: 0, retried: 0, failed: 0 };
-    /** @type {{ job: import('./store/store.js').FinishedJob, written: PromiseWithResolvers<void> }[]} */
+    /** @type {{ job: import('./store/store.js').FinishedJob, written: PromiseWithResolvers<boolean> }[]} */
     let toComplete = [];
     let completing = false;
     /** The jobs that finished: their results are written */
@@ -250,9 +277,101 @@ export function createRunner({
         setTimer(run, intervalMs * Math.random());
     }
 
-    function wakeUp() {
+    /**
+     * Ends the sleep of the dispatcher. The next turn looks at the given names, or at all names.
+     * @param {readonly string[]} [names] The names that may have ready jobs. None, or `*`: all names.
+     * @param {{ speculative?: boolean }} [options] speculative: the jobs may not be visible yet, or there may be none
+     *     (a claim on MySQL is a transaction of several statements): a probe first. Else the turn claims at once.
+     */
+    function wakeUp(names, { speculative = false } = {}) {
+        if (!names || names.includes(ANY_NAME)) {
+            wakeAll = true;
+        } else {
+            for (const name of names) {
+                (speculative ? wakeProbeNames : wakeNames).add(name);
+            }
+        }
+
         wakeCount++;
         endSleep?.();
+    }
+
+    /**
+     * The names that the next turn looks at. Claimed at once: those of the certain wakes, of the backlog, and those
+     * whose next due time came. Probed first: those of the speculative wakes. All names at a wake of all names, and
+     * each poll interval.
+     * @returns {{ claim: Set<string>, probe: Set<string> } | null} Null: all names.
+     */
+    function takeScope() {
+        const now = Date.now();
+
+        if (wakeAll || now >= fullProbeAt) {
+            wakeAll = false;
+            wakeNames.clear();
+            wakeProbeNames.clear();
+
+            return null;
+        }
+
+        const claim = new Set([...wakeNames, ...backlog]);
+
+        if (earliestDueTime() <= now) {
+            for (const [name, at] of scheduled) {
+                if (at <= now) {
+                    claim.add(name);
+                }
+            }
+        }
+
+        const probe = new Set([...wakeProbeNames].filter(name => !claim.has(name)));
+
+        wakeNames.clear();
+        wakeProbeNames.clear();
+
+        return { claim, probe };
+    }
+
+    /**
+     * @param {string} name
+     * @param {number} at
+     */
+    function schedule(name, at) {
+        scheduled.set(name, at);
+
+        if (earliestScheduled !== null) {
+            earliestScheduled = Math.min(earliestScheduled, at);
+        }
+    }
+
+    /** @param {string} name */
+    function unschedule(name) {
+        const at = scheduled.get(name);
+
+        if (at !== undefined) {
+            scheduled.delete(name);
+
+            if (at === earliestScheduled) {
+                earliestScheduled = null;
+            }
+        }
+    }
+
+    /** @returns {number} The earliest next due time that the probes saw: Infinity for none. */
+    function earliestDueTime() {
+        if (earliestScheduled === null) {
+            earliestScheduled = Infinity;
+
+            for (const at of scheduled.values()) {
+                earliestScheduled = Math.min(earliestScheduled, at);
+            }
+        }
+
+        return earliestScheduled;
+    }
+
+    /** @returns {number} The delay until the next due time that a probe saw, or the next full probe. */
+    function nextDelayMs() {
+        return Math.max(0, Math.min(fullProbeAt, earliestDueTime()) - Date.now());
     }
 
     /**
@@ -266,17 +385,16 @@ export function createRunner({
             return;
         }
 
-        const controller = new AbortController();
+        // A plain timer: an aborted sleep would build an error at each wake
+        await new Promise((resolve) => {
+            const timer = setTimeout(resolve, Math.max(delayMs, 0));
 
-        endSleep = () => controller.abort();
-
-        try {
-            await sleep(Math.max(delayMs, 0), undefined, { signal: controller.signal });
-        } catch {
-            // Woken
-        } finally {
-            endSleep = null;
-        }
+            endSleep = () => {
+                clearTimeout(timer);
+                resolve(undefined);
+            };
+        });
+        endSleep = null;
     }
 
     // ---- slots ----
@@ -382,9 +500,10 @@ export function createRunner({
      * Completes the job in the next write. One write at a time: the jobs that finish during a write go together in the
      * next one, in one transaction. A lone job waits for no other.
      * @param {import('./store/store.js').FinishedJob} job
-     * @returns {Promise<void>} Rejects with the error of its write.
+     * @returns {Promise<boolean>} Every job in its batch was completed. Rejects with the error of its write.
      */
     function completeJob(job) {
+        /** @type {PromiseWithResolvers<boolean>} */
         const written = Promise.withResolvers();
 
         toComplete.push({ job, written });
@@ -407,10 +526,13 @@ export function createRunner({
             try {
                 // In the order of the ids: the row locks of two writes come in one order
                 // oxlint-disable-next-line no-await-in-loop -- one write at a time
-                await store.completeJobs(batch.map(entry => entry.job).toSorted((a, b) => (a.id < b.id ? -1 : 1)));
+                const changed = await store.completeJobs(
+                    batch.map(entry => entry.job).toSorted((a, b) => (a.id < b.id ? -1 : 1)),
+                );
 
                 for (const { written } of batch) {
-                    written.resolve();
+                    // The count cannot identify stale entries in a partial batch: keep all their wakes.
+                    written.resolve(changed === batch.length);
                 }
             } catch (error) {
                 for (const { written } of batch) {
@@ -462,7 +584,9 @@ export function createRunner({
         const durationMs = Date.now() - job.startedAt;
 
         if (error === null && !job.timedOut) {
-            await writeResult(job, () => completeJob(claimed));
+            await writeResult(job, async () => {
+                job.completionConfirmed = await completeJob(claimed);
+            });
             counts.completed++;
             emit({ type: 'completed', ...base, durationMs });
 
@@ -611,6 +735,7 @@ export function createRunner({
             released: false,
             timedOut: false,
             leaseLost: false,
+            completionConfirmed: false,
             leaseEndsAt: Date.now() + t.leaseMs,
             startedAt: Date.now(),
         };
@@ -625,10 +750,19 @@ export function createRunner({
             } catch (error) {
                 reportError('run_job', error);
             } finally {
+                // A successful keyless completion with spare capacity adds no ready work. The post-claim probe
+                // already scheduled pending jobs. Claims in flight may have captured an older slot count.
+                const mustWake = state !== 'started' || claimsInFlight > 0 || !job.completionConfirmed
+                    || job.released || job.leaseLost || claimed.mutexKeys.length > 0 || freeSlots(entry.lane) === 0;
+
                 entry.lane.running--;
                 running.delete(job.key);
                 finishedCount++;
-                wakeUp();
+
+                if (mustWake) {
+                    // Its keys can unblock the jobs of other names: all names. Else its own name, and the backlog.
+                    wakeUp(claimed.mutexKeys.length ? undefined : [claimed.name], { speculative: true });
+                }
 
                 if (claimed.mutexKeys.length) {
                     // Its keys are free: the jobs that wait for them can start, here or elsewhere
@@ -646,11 +780,16 @@ export function createRunner({
      * @returns {Promise<{ candidates: number, claimed: number }>}
      */
     async function claimAndStart(dueNames) {
-        const keyed = new Set(registry.keyedNames());
-        const plain = await claimAndStartPlain(dueNames.filter(name => !keyed.has(name)));
-        const withKeys = await claimAndStartKeyed(dueNames.filter(name => keyed.has(name)));
+        claimsInFlight++;
 
-        return { candidates: plain.candidates + withKeys.candidates, claimed: plain.claimed + withKeys.claimed };
+        try {
+            const plain = await claimAndStartPlain(dueNames.filter(name => !keyedNames.has(name)));
+            const withKeys = await claimAndStartKeyed(dueNames.filter(name => keyedNames.has(name)));
+
+            return { candidates: plain.candidates + withKeys.candidates, claimed: plain.claimed + withKeys.claimed };
+        } finally {
+            claimsInFlight--;
+        }
     }
 
     /**
@@ -679,7 +818,7 @@ export function createRunner({
             return { candidates: 0, claimed: 0 };
         }
 
-        const claimed = await store.claimDue({
+        const { jobs, next } = await store.claimDue({
             requests,
             laneFree: lanes.map(lane => freeSlots(lane)),
             processMax: freeProcessSlots(),
@@ -687,13 +826,35 @@ export function createRunner({
             lockedBy,
             leaseMs: t.leaseMs,
         });
+        const requested = new Set(requests.map(request => request.name));
+        const now = Date.now();
+        let stillDue = 0;
 
-        for (const job of claimed) {
+        for (const name of requested) {
+            unschedule(name);
+            backlog.delete(name);
+        }
+
+        for (const row of next) {
+            if (!requested.has(row.name)) {
+                continue;
+            }
+
+            if (row.delayMs > 0) {
+                schedule(row.name, now + row.delayMs);
+            } else {
+                // Due jobs left: over the free slots, or held by other claims
+                backlog.add(row.name);
+                stillDue++;
+            }
+        }
+
+        for (const job of jobs) {
             startJob(job, job.payload);
         }
 
-        // The probe saw due jobs: none claimed means other processes hold them
-        return { candidates: requests.length, claimed: claimed.length };
+        // Names with due jobs left and none claimed: other processes hold them
+        return { candidates: stillDue, claimed: jobs.length };
     }
 
     /**
@@ -719,7 +880,7 @@ export function createRunner({
             return { candidates: 0, claimed: 0 };
         }
 
-        const candidates = await store.findCandidates(limits, registry.keyedNames());
+        const candidates = await store.findCandidates(limits, [...keyedNames]);
 
         if (!candidates.length) {
             return { candidates: 0, claimed: 0 };
@@ -767,19 +928,75 @@ export function createRunner({
      * @returns {Promise<number>} The delay before the next turn (a wake ends it sooner).
      */
     async function dispatch() {
-        const names = new Set(namesWithFreeSlots());
+        const scope = takeScope();
+        /** @type {Set<string>} */
+        let names;
 
-        if (!names.size) {
-            return t.pollIntervalMs;
+        if (scope) {
+            names = new Set();
+
+            for (const name of [...scope.claim, ...scope.probe]) {
+                const entry = registry.getEntry(name);
+
+                if (entry && freeSlots(entry.lane) > 0) {
+                    names.add(name);
+                } else if (entry) {
+                    // No free slot: the turn after a completion looks at it again
+                    (scope.claim.has(name) ? backlog : wakeProbeNames).add(name);
+                }
+            }
+        } else {
+            names = new Set(namesWithFreeSlots());
         }
 
-        const probe = (await store.probe()).filter(row => registry.getEntry(row.name));
-        const due = probe.filter(row => row.delayMs <= 0 && names.has(row.name)).map(row => row.name);
-        const delays = probe.filter(row => row.delayMs > 0).map(row => row.delayMs);
-        const nextDelayMs = Math.min(t.pollIntervalMs, ...delays);
+        if (!names.size) {
+            if (!scope) {
+                // A completion probes all names
+                wakeAll = true;
+            }
+
+            return nextDelayMs();
+        }
+
+        // The names of a certain wake without mutex keys: claimed at once, the claim gives their next due time. The
+        // others: probed first.
+        const direct = scope ? [...names].filter(name => scope.claim.has(name) && !keyedNames.has(name)) : [];
+        const probed = scope ? [...names].filter(name => !scope.claim.has(name) || keyedNames.has(name)) : null;
+        const probe = probed?.length === 0
+            ? []
+            : (await store.probe(probed)).filter(row => registry.getEntry(row.name));
+        const now = Date.now();
+
+        if (probed) {
+            for (const name of probed) {
+                unschedule(name);
+                backlog.delete(name);
+            }
+        } else {
+            scheduled.clear();
+            earliestScheduled = Infinity;
+            backlog.clear();
+            fullProbeAt = now + t.pollIntervalMs;
+        }
+
+        /** @type {string[]} */
+        const due = [...direct];
+
+        for (const row of probe) {
+            if (row.delayMs > 0) {
+                schedule(row.name, now + row.delayMs);
+            } else {
+                // Probed again at the next turns, until none is due
+                backlog.add(row.name);
+
+                if (names.has(row.name)) {
+                    due.push(row.name);
+                }
+            }
+        }
 
         if (!due.length) {
-            return nextDelayMs;
+            return nextDelayMs();
         }
 
         const { candidates, claimed } = await claimAndStart(due);
@@ -798,7 +1015,7 @@ export function createRunner({
         }
 
         // The due jobs wait for keys: a key release wakes this process, the poll is the fallback
-        return nextDelayMs;
+        return nextDelayMs();
     }
 
     async function loop() {
@@ -812,6 +1029,8 @@ export function createRunner({
                 delayMs = await dispatch();
             } catch (error) {
                 reportError('dispatch', error);
+                // The names of its wakes are lost: all names
+                wakeAll = true;
                 delayMs = Math.min(t.pollIntervalMs, 1000);
             }
 
@@ -997,7 +1216,7 @@ export function createRunner({
             return;
         }
 
-        wakeUp();
+        wakeUp(names);
         onEnqueued(names);
     }
 
@@ -1013,8 +1232,12 @@ export function createRunner({
             return;
         }
 
-        // A wake probes all the names: one series of re-probes, from the last enqueue
+        // One series of re-probes, from the last enqueue: of the names enqueued within its steps
         reprobeFrom = Date.now();
+
+        for (const name of names) {
+            reprobeNames.set(name, reprobeFrom);
+        }
 
         // A re-probe that comes sooner stays: then the series goes on from this enqueue. A burst of enqueues gives a
         // re-probe at most each first step, not one per enqueue.
@@ -1041,19 +1264,28 @@ export function createRunner({
     /** Sets the timer of the next step of the series, if one is left before the poll. */
     function scheduleReprobe() {
         const now = Date.now();
-        const at = REPROBE_DELAYS_MS
-            .filter(delay => delay < t.pollIntervalMs)
-            .map(delay => reprobeFrom + delay)
-            .find(time => time > now);
+        const delays = REPROBE_DELAYS_MS.filter(delay => delay < t.pollIntervalMs);
+        const at = delays.map(delay => reprobeFrom + delay).find(time => time > now);
+        const lastDelay = delays.at(-1) ?? 0;
 
         if (at === undefined || state !== 'started') {
             reprobe = null;
+            reprobeNames.clear();
 
             return;
         }
 
         const timer = setTimer(() => {
-            wakeUp();
+            const stepAt = Date.now();
+
+            for (const [name, enqueuedAt] of reprobeNames) {
+                // Its last step is past: a series that goes on for later enqueues does not probe it again
+                if (stepAt - enqueuedAt > lastDelay) {
+                    reprobeNames.delete(name);
+                }
+            }
+
+            wakeUp([...reprobeNames.keys()], { speculative: true });
             scheduleReprobe();
         }, at - now);
 
@@ -1070,6 +1302,7 @@ export function createRunner({
         }
 
         registry.validate();
+        keyedNames = new Set(registry.keyedNames());
         state = 'started';
         every('recover_stale_jobs', recoverStaleJobs, t.recoveryIntervalMs);
 
@@ -1086,7 +1319,7 @@ export function createRunner({
                 if (!hintsAfterCommit) {
                     onEnqueued([name]);
                 } else if (state === 'started' && handlesAny([name])) {
-                    wakeUp();
+                    wakeUp([name]);
                 }
             });
         } catch (error) {
@@ -1114,6 +1347,7 @@ export function createRunner({
         }
 
         registry.validate();
+        keyedNames = new Set(registry.keyedNames());
         state = 'draining';
 
         const before = { ...counts };
@@ -1292,7 +1526,7 @@ export function createRunner({
         start,
         drain,
         close,
-        wake: wakeUp,
+        wake: () => wakeUp(),
         onEnqueued,
         onCommitted,
         isClosed: () => state === 'closing' || state === 'closed',

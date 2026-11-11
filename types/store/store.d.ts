@@ -86,6 +86,17 @@ export type StartableJob = ClaimedJob & {
         payload: unknown;
     };
 };
+export type ClaimDueResult = {
+    /**
+     * The claimed jobs, in the order of run_at.
+     */
+    jobs: StartableJob[];
+    /**
+     * The next due time of the requested names with pending jobs that the claim did not take:
+     * zero or less, more of their jobs are due. It may give other names too.
+     */
+    next: ProbeRow[];
+};
 export type OwnedJob = {
     id: string;
     lockToken: string;
@@ -124,7 +135,11 @@ export type StaleJobResult = {
     runMs: number;
 };
 export type Store = {
-    probe: () => Promise<ProbeRow[]>;
+    /**
+     * The next due time of each given name with
+     * pending jobs; null: of each name. It may give other names too.
+     */
+    probe: (names: string[] | null) => Promise<ProbeRow[]>;
     findCandidates: (limitsByName: Map<string, number>, keyedNames: string[]) => Promise<Candidate[]>;
     /**
      * In a queue transaction of its own.
@@ -135,12 +150,13 @@ export type Store = {
      * names without mutex keys, at once: one statement on PostgreSQL. The keys of their rows are not taken: the
      * definition of this process decides.
      */
-    claimDue: (params: ClaimDueParams) => Promise<StartableJob[]>;
+    claimDue: (params: ClaimDueParams) => Promise<ClaimDueResult>;
     readPayloads: (ids: string[]) => Promise<Map<string, unknown>>;
     renewLeases: (jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>;
     markTimedOut: (job: OwnedJob) => Promise<boolean>;
     /**
-     * In one transaction: the jobs that it completed.
+     * In one transaction (one statement on PostgreSQL):
+     * the jobs that it completed.
      */
     completeJobs: (jobs: FinishedJob[]) => Promise<number>;
     retryJob: (job: OwnedJob, params: {
@@ -233,6 +249,12 @@ export type Store = {
  * @typedef {ClaimedJob & { payload: { found: boolean, payload: unknown } }} StartableJob
  */
 /**
+ * @typedef {object} ClaimDueResult
+ * @property {StartableJob[]} jobs The claimed jobs, in the order of run_at.
+ * @property {ProbeRow[]} next The next due time of the requested names with pending jobs that the claim did not take:
+ *     zero or less, more of their jobs are due. It may give other names too.
+ */
+/**
  * A job that this process claimed: every write of it checks the lock token.
  * @typedef {object} OwnedJob
  * @property {string} id
@@ -267,16 +289,18 @@ export type Store = {
  */
 /**
  * @typedef {object} Store
- * @property {() => Promise<ProbeRow[]>} probe
+ * @property {(names: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given name with
+ *     pending jobs; null: of each name. It may give other names too.
  * @property {(limitsByName: Map<string, number>, keyedNames: string[]) => Promise<Candidate[]>} findCandidates
  * @property {(params: ClaimParams) => Promise<ClaimedJob[]>} claim In a queue transaction of its own.
- * @property {(params: ClaimDueParams) => Promise<StartableJob[]>} claimDue Finds, claims and reads the due jobs of
+ * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, claims and reads the due jobs of
  *     names without mutex keys, at once: one statement on PostgreSQL. The keys of their rows are not taken: the
  *     definition of this process decides.
  * @property {(ids: string[]) => Promise<Map<string, unknown>>} readPayloads
  * @property {(jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>} renewLeases
  * @property {(job: OwnedJob) => Promise<boolean>} markTimedOut
- * @property {(jobs: FinishedJob[]) => Promise<number>} completeJobs In one transaction: the jobs that it completed.
+ * @property {(jobs: FinishedJob[]) => Promise<number>} completeJobs In one transaction (one statement on PostgreSQL):
+ *     the jobs that it completed.
  * @property {(job: OwnedJob, params: { delayMs: number, error: import('../error_json.js').ErrorJson })
  *     => Promise<boolean>} retryJob
  * @property {(

@@ -116,11 +116,26 @@ describe('probe', () => {
         await sqlane.enqueue(testAdapter.pool, 'due_now', {}, { delay: '1h' });
         await sqlane.enqueue(testAdapter.pool, 'later', {}, { delay: '1h' });
 
-        const rows = (await store.probe()).toSorted(byName);
+        const rows = (await store.probe(null)).toSorted(byName);
 
         expect(rows.map(row => row.name)).toStrictEqual(['due_now', 'later']);
         expect(rows[0].delayMs).toBeLessThanOrEqual(-9000);
         expect(rows[1].delayMs).toBeGreaterThan(3_590_000);
+    });
+
+    test('of given names: only those with pending jobs', async () => {
+        const { sqlane, store } = await freshTables();
+
+        await sqlane.enqueue(testAdapter.pool, 'due_now', {}, { runAt: ago(10) });
+        await sqlane.enqueue(testAdapter.pool, 'later', {}, { delay: '1h' });
+        await sqlane.enqueue(testAdapter.pool, 'other', {});
+
+        const rows = (await store.probe(['due_now', 'later', 'none'])).toSorted(byName);
+
+        expect(rows.map(row => row.name)).toStrictEqual(['due_now', 'later']);
+        expect(rows[0].delayMs).toBeLessThanOrEqual(-9000);
+        expect(rows[1].delayMs).toBeGreaterThan(3_590_000);
+        await expect(store.probe([])).resolves.toStrictEqual([]);
     });
 
     test('reads only the names with pending jobs: 1,000 idle names cost nothing', async () => {
@@ -131,7 +146,7 @@ describe('probe', () => {
         await setAllStatus(p, 'completed');
         await sqlane.enqueueMany(testAdapter.pool, 'busy', [{ payload: {} }, { payload: {} }]);
 
-        await expect(store.probe()).resolves.toMatchObject([{ name: 'busy' }]);
+        await expect(store.probe(null)).resolves.toMatchObject([{ name: 'busy' }]);
     });
 
     test.runIf(inject('databaseDialect') !== 'postgres')('mysql: a loose index scan', async () => {
@@ -213,7 +228,16 @@ describe('claim', () => {
  * @param {Partial<import('../../src/store/store.js').ClaimDueParams>} params
  * @returns {Promise<import('../../src/store/store.js').StartableJob[]>}
  */
-function claimDue(store, params) {
+async function claimDue(store, params) {
+    return (await claimDueWithNext(store, params)).jobs;
+}
+
+/**
+ * @param {import('../../src/store/store.js').Store} store
+ * @param {Partial<import('../../src/store/store.js').ClaimDueParams>} params
+ * @returns {Promise<import('../../src/store/store.js').ClaimDueResult>}
+ */
+function claimDueWithNext(store, params) {
     return store.claimDue({
         requests: [],
         laneFree: [],
@@ -223,6 +247,14 @@ function claimDue(store, params) {
         leaseMs: LEASE_MS,
         ...params,
     });
+}
+
+/**
+ * @param {import('../../src/store/store.js').ProbeRow[]} next
+ * @returns {Record<string, number>}
+ */
+function delaysByName(next) {
+    return Object.fromEntries(next.map(row => [row.name, row.delayMs]));
 }
 
 describe('claimDue', () => {
@@ -261,6 +293,31 @@ describe('claimDue', () => {
 
         expect(rows.map(row => row.id).toSorted()).toStrictEqual([a1.id, b1.id, a2.id].toSorted());
         expect(rows[0]).toMatchObject({ lock_token: 'TOKEN1', locked_by: 'test:TOKEN1' });
+    });
+
+    test('gives the next due time of the requested names, among the jobs that it did not take', async () => {
+        const { sqlane, store } = await freshTables();
+
+        await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(30) });
+        await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(20) });
+        await sqlane.enqueue(testAdapter.pool, 'a', {}, { delay: '1h' });
+        await sqlane.enqueue(testAdapter.pool, 'b', {}, { runAt: ago(10) });
+        await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(10) });
+
+        const first = await claimDueWithNext(store, {
+            requests: [{ name: 'a', maxJobs: 1, lane: 0 }, { name: 'b', maxJobs: 1, lane: 0 }],
+            laneFree: [5],
+        });
+
+        expect(first.jobs.map(job => job.name)).toStrictEqual(['a', 'b']);
+        // a: one due job left; b: none left; c: not requested
+        expect(Object.keys(delaysByName(first.next)).filter(name => name !== 'c')).toStrictEqual(['a']);
+        expect(delaysByName(first.next).a).toBeLessThanOrEqual(-19_000);
+
+        const second = await claimDueWithNext(store, { requests: [{ name: 'a', maxJobs: 5, lane: 0 }], laneFree: [5] });
+
+        expect(second.jobs).toHaveLength(1);
+        expect(delaysByName(second.next).a).toBeGreaterThan(3_590_000);
     });
 
     test('the free slots of each lane and of the process, oldest first', async () => {

@@ -1,7 +1,8 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expect, test } from 'vitest';
 import { resolveDefaults } from './defaults.js';
-import { LeaseLostError, ShutdownError } from './errors.js';
+import { defineJob } from './define_job.js';
+import { LeaseLostError, RetryJobError, ShutdownError } from './errors.js';
 import { createHintChannel } from './hint_channel.js';
 import { createRegistry } from './registry.js';
 import { createRunner } from './runner.js';
@@ -29,7 +30,7 @@ function runnerWith(makeDueErrors) {
             }
         },
         findCandidates: async () => [],
-        claimDue: async () => [],
+        claimDue: async () => ({ jobs: [], next: [] }),
     }));
 
     registry.handle('ping', () => {});
@@ -71,7 +72,7 @@ test('drain: another error rejects', async () => {
 /**
  * @typedef {object} HintedRunner
  * @property {import('./runner.js').Runner} runner
- * @property {() => number} probes The probes so far.
+ * @property {() => number} lookups The probes and the claims of due jobs so far.
  * @property {(name: string) => void} deliver Delivers a hint message.
  */
 
@@ -87,14 +88,20 @@ async function runnerWithHint(hintsAfterCommit) {
         concurrency: 10,
         defaultTimeoutMs: null,
     });
-    let probes = 0;
+    // The probes and the claims of due jobs
+    let lookups = 0;
     /** @type {((message: string) => void) | null} */
     let deliver = null;
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
         probe: async () => {
-            probes++;
+            lookups++;
 
             return [];
+        },
+        claimDue: async () => {
+            lookups++;
+
+            return { jobs: [], next: [] };
         },
     }));
 
@@ -127,20 +134,88 @@ async function runnerWithHint(hintsAfterCommit) {
     // The first turn
     await sleep(50);
 
-    return { runner, probes: () => probes, deliver: name => deliver?.(name) };
+    return { runner, lookups: () => lookups, deliver: name => deliver?.(name) };
 }
 
 test.each([
-    { hint: 'NOTIFY, after the commit: probes at once', hintsAfterCommit: true, probes: 1 },
-    { hint: 'other, before the commit: re-probes from 20 ms', hintsAfterCommit: false, probes: 0 },
-])('a hint: $hint', async ({ hintsAfterCommit, probes: expected }) => {
-    const { runner, probes, deliver } = await runnerWithHint(hintsAfterCommit);
-    const before = probes();
+    { hint: 'NOTIFY, after the commit: looks at once', hintsAfterCommit: true, lookups: 1 },
+    { hint: 'other, before the commit: looks again from 20 ms', hintsAfterCommit: false, lookups: 0 },
+])('a hint: $hint', async ({ hintsAfterCommit, lookups: expected }) => {
+    const { runner, lookups, deliver } = await runnerWithHint(hintsAfterCommit);
+    const before = lookups();
 
     deliver('ping');
     await sleep(10);
-    expect(probes() - before).toBe(expected);
+    expect(lookups() - before).toBe(expected);
     await runner.close({ deadline: 0 });
+});
+
+test('hints before the commit: the re-probes of a name end with its steps, while later enqueues go on', async () => {
+    const registry = createRegistry({
+        jobsByName: new Map(),
+        lanes: undefined,
+        concurrency: 10,
+        defaultTimeoutMs: null,
+    });
+    /** @type {string[]} The names of each probe, joined; "null": all names */
+    const probed = [];
+    const hints = { deliver: /** @type {(message: string) => void} */ (() => {}) };
+    const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
+        probe: async (/** @type {string[] | null} */ names) => {
+            probed.push(String(names));
+
+            return [];
+        },
+    }));
+
+    registry.handle('old', () => {});
+    registry.handle('new', () => {});
+
+    const runner = createRunner({
+        store,
+        registry,
+        concurrency: 10,
+        defaults: resolveDefaults(),
+        cleanup: false,
+        logger: undefined,
+        onEvent: undefined,
+        hintChannel: createHintChannel({
+            hint: {
+                publish: async () => {},
+                subscribe: async (_channel, onMessage) => {
+                    hints.deliver = onMessage;
+
+                    return async () => {};
+                },
+            },
+            channel: 'c',
+            reportError: () => {},
+        }),
+        hintsAfterCommit: false,
+        // Steps of 20, 50, 100 and 200 ms
+        timings: { pollIntervalMs: 300 },
+    });
+
+    try {
+        await runner.start();
+        await sleep(50);
+        hints.deliver('old');
+
+        // Enqueues of `new` keep the series going, past the last step of `old`
+        for (let index = 0; index < 8; index++) {
+            // oxlint-disable-next-line no-await-in-loop -- one enqueue after the other
+            await sleep(60);
+            hints.deliver('new');
+        }
+
+        const lastProbes = probed.slice(-3);
+
+        expect(probed.some(names => names.split(',').includes('old'))).toBe(true);
+        expect(lastProbes.every(names => !names.split(',').includes('old'))).toBe(true);
+        expect(lastProbes.some(names => names.split(',').includes('new'))).toBe(true);
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
 });
 
 /** @returns {number} The timers that keep the process alive. */
@@ -155,6 +230,332 @@ test('close() leaves no timer that keeps the process alive', async () => {
     await runner.start();
     await runner.close({ deadline: '30s' });
     expect(refTimers()).toBe(before);
+});
+
+/**
+ * A runner with spare slots and held handlers. A plain claim takes all due jobs; a keyed claim takes only one.
+ * @param {boolean} keyed
+ * @param {{
+ *     claimDelayMs?: number,
+ *     futureDelayMs?: number,
+ *     sameNameFutureMs?: number,
+ *     processConcurrency?: number,
+ *     laneConcurrency?: number,
+ *     completeCount?: number,
+ *     handlerError?: unknown,
+ * }} [options]
+ * @returns {{
+ *     runner: import('./runner.js').Runner,
+ *     lookups: () => number,
+ *     lookupTimes: number[],
+ *     started: string[],
+ *     events: import('./types.js').SqlaneEvent[],
+ *     store: import('./store/store.js').Store,
+ *     addJob: (id: string) => void,
+ *     release: () => void,
+ * }}
+ */
+function runnerWithHeldJobs(keyed, {
+    claimDelayMs = 0,
+    futureDelayMs,
+    sameNameFutureMs,
+    processConcurrency = 10,
+    laneConcurrency = 5,
+    completeCount,
+    handlerError,
+} = {}) {
+    const registry = createRegistry({
+        jobsByName: new Map(),
+        lanes: undefined,
+        concurrency: processConcurrency,
+        defaultTimeoutMs: null,
+    });
+    const held = Promise.withResolvers();
+    /** @type {string[]} */
+    const started = [];
+    /** @type {import('./types.js').SqlaneEvent[]} */
+    const events = [];
+    /** @type {number[]} */
+    const lookupTimes = [];
+    const pending = Array.from({
+        length: keyed || sameNameFutureMs !== undefined || futureDelayMs !== undefined ? 2 : 1,
+    }, (_, index) => ({
+        id: `job-${index + 1}`,
+        name: index > 0 && futureDelayMs !== undefined ? 'later' : 'ping',
+        runAtMs: index > 0 ? Date.now() + (sameNameFutureMs ?? futureDelayMs ?? 0) : 0,
+        mutexKeys: keyed ? [`key-${index + 1}`] : [],
+        attempts: 0,
+        maxAttempts: 3,
+        stalls: 0,
+        maxStalls: 2,
+        failureJob: null,
+        enqueuedAt: new Date(),
+        waitedMs: 0,
+        lockToken: `token-${index + 1}`,
+        payload: { found: true, payload: null },
+    }));
+    const template = pending[0];
+
+    /**
+     * @param {Set<string>} names
+     * @returns {import('./store/store.js').ProbeRow[]} The next due time of the names with pending jobs.
+     */
+    function nextDueTimes(names) {
+        const times = new Map();
+
+        for (const job of pending.filter(pendingJob => names.has(pendingJob.name))) {
+            times.set(job.name, Math.min(times.get(job.name) ?? Infinity, job.runAtMs));
+        }
+
+        return [...times].map(([name, runAtMs]) => ({ name, delayMs: runAtMs - Date.now() }));
+    }
+    const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
+        probe: async () => {
+            lookupTimes.push(Date.now());
+            const times = new Map();
+
+            for (const job of pending) {
+                times.set(job.name, Math.min(times.get(job.name) ?? Infinity, job.runAtMs));
+            }
+
+            return [...times].map(([name, runAtMs]) => ({ name, delayMs: runAtMs - Date.now() }));
+        },
+        claimDue: async (/** @type {import('./store/store.js').ClaimDueParams} */ { requests }) => {
+            lookupTimes.push(Date.now());
+
+            if (claimDelayMs > 0) {
+                await sleep(claimDelayMs);
+            }
+
+            const names = new Set(requests.map(request => request.name));
+            const due = pending.filter(job => names.has(job.name) && job.runAtMs <= Date.now());
+
+            for (const job of due) {
+                pending.splice(pending.indexOf(job), 1);
+            }
+
+            return { jobs: due, next: nextDueTimes(names) };
+        },
+        findCandidates: async () => pending.map(job => ({ id: job.id, name: job.name, runAtMs: 0 })),
+        claim: async () => pending.splice(0, 1),
+        readPayloads: async (/** @type {string[]} */ ids) => new Map(ids.map(id => [id, null])),
+        completeJobs: async (/** @type {unknown[]} */ jobs) => completeCount ?? jobs.length,
+        renewLeases: async (/** @type {import('./store/store.js').OwnedJob[]} */ jobs) => (
+            new Set(jobs.map(job => job.id))
+        ),
+        releaseJob: async () => true,
+        findStaleJobs: async () => [],
+    }));
+    const definition = keyed ? defineJob({ name: 'ping', mutexKeys: () => ['key'], timeout: '1m' }) : 'ping';
+    let nextError = handlerError;
+
+    /** @param {import('./types.js').HandlerContext} context */
+    async function handler({ job }) {
+        started.push(job.id);
+        await held.promise;
+
+        if (nextError !== undefined) {
+            const error = nextError;
+
+            nextError = undefined;
+
+            throw error;
+        }
+    }
+
+    registry.handle(definition, handler, { concurrency: laneConcurrency });
+    registry.handle('later', handler);
+
+    return {
+        runner: createRunner({
+            store,
+            registry,
+            concurrency: processConcurrency,
+            defaults: resolveDefaults(),
+            cleanup: false,
+            logger: undefined,
+            onEvent: event => events.push(event),
+            hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+            hintsAfterCommit: false,
+            timings: { pollIntervalMs: 60_000 },
+        }),
+        lookups: () => lookupTimes.length,
+        lookupTimes,
+        started,
+        events,
+        store,
+        addJob: id => pending.push({ ...template, id, runAtMs: 0 }),
+        release: () => held.resolve(undefined),
+    };
+}
+
+test('dispatch: a plain claim gives its next due times, then a successful completion with spare slots keeps it asleep', async () => {
+    const { runner, lookups, started, events, release } = runnerWithHeldJobs(false);
+
+    try {
+        await runner.start();
+        await waitFor(() => started.length === 1, 1000);
+        await sleep(50);
+
+        expect(started).toStrictEqual(['job-1']);
+        expect(runner.canStartNow('ping')).toBe(true);
+        expect(lookups()).toBe(2);
+
+        const lookupsWhileHeld = lookups();
+
+        release();
+        await waitFor(() => events.some(event => event.type === 'completed'), 1000);
+        await sleep(50);
+
+        expect(events).toContainEqual(expect.objectContaining({ type: 'completed', jobId: 'job-1' }));
+        expect(lookups()).toBe(lookupsWhileHeld);
+    } finally {
+        release();
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('dispatch: a partial keyed claim refills spare slots before a handler completes', async () => {
+    const { runner, lookups, started, events, release } = runnerWithHeldJobs(true);
+
+    try {
+        await runner.start();
+        await waitFor(() => started.length === 2, 1000);
+
+        expect(started).toStrictEqual(['job-1', 'job-2']);
+        expect(lookups()).toBeGreaterThanOrEqual(2);
+        expect(events.filter(event => event.type === 'completed')).toStrictEqual([]);
+    } finally {
+        release();
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('dispatch: a slow plain claim preserves the next due deadline', async () => {
+    const { runner, lookups, lookupTimes, started, events, release } = runnerWithHeldJobs(false, {
+        claimDelayMs: 300,
+        futureDelayMs: 600,
+    });
+
+    try {
+        await runner.start();
+        await waitFor(() => started.length === 2, 1500);
+
+        expect(started).toStrictEqual(['job-1', 'job-2']);
+        expect(events.filter(event => event.type === 'completed')).toStrictEqual([]);
+        expect(lookups()).toBeGreaterThanOrEqual(3);
+        // The claim ends at 300 ms; the next one takes the future job at its existing 600 ms deadline.
+        expect(lookupTimes[2] - lookupTimes[0]).toBeGreaterThanOrEqual(550);
+        expect(lookupTimes[2] - lookupTimes[0]).toBeLessThan(750);
+    } finally {
+        release();
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('dispatch: a delayed job of the same name starts while its earlier handler is held', async () => {
+    const { runner, started, events, release } = runnerWithHeldJobs(false, { sameNameFutureMs: 200 });
+
+    try {
+        await runner.start();
+        await waitFor(() => started.length === 2, 1000);
+
+        expect(started).toStrictEqual(['job-1', 'job-2']);
+        expect(events.filter(event => event.type === 'completed')).toStrictEqual([]);
+    } finally {
+        release();
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test.each([
+    { reason: 'a full process', keyed: false, options: { processConcurrency: 1 } },
+    { reason: 'a full lane', keyed: false, options: { laneConcurrency: 1 } },
+    { reason: 'an unconfirmed completion', keyed: false, options: { completeCount: 0 } },
+    { reason: 'mutex keys', keyed: true, options: {} },
+])('dispatch: completion still wakes for $reason', async ({ keyed, options }) => {
+    const { runner, lookups, started, events, release } = runnerWithHeldJobs(keyed, options);
+
+    try {
+        await runner.start();
+        await waitFor(() => started.length > 0, 1000);
+        await sleep(50);
+        const lookupsWhileHeld = lookups();
+
+        release();
+        await waitFor(() => events.some(event => event.type === 'completed'), 1000);
+        await waitFor(() => lookups() > lookupsWhileHeld, 1000);
+
+        expect(events).toContainEqual(expect.objectContaining({ type: 'completed', jobId: 'job-1' }));
+        expect(lookups()).toBeGreaterThan(lookupsWhileHeld);
+    } finally {
+        release();
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('dispatch: a retry with spare slots wakes and runs its newly due job', async () => {
+    const { runner, lookups, started, events, store, addJob, release } = runnerWithHeldJobs(false, {
+        handlerError: new RetryJobError('retry now', { delay: 0 }),
+    });
+
+    store.retryJob = async () => {
+        addJob('job-retry');
+
+        return true;
+    };
+
+    try {
+        await runner.start();
+        await waitFor(() => lookups() >= 2, 1000);
+        release();
+        await waitFor(() => started.length === 2, 1000);
+
+        expect(started).toStrictEqual(['job-1', 'job-retry']);
+        expect(events).toContainEqual(expect.objectContaining({ type: 'retried', jobId: 'job-1' }));
+    } finally {
+        release();
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('dispatch: completion during an awaited claim wakes a refill after that claim fails', async () => {
+    const { runner, lookups, started, events, store, addJob, release } = runnerWithHeldJobs(false);
+    const claiming = Promise.withResolvers();
+    const originalClaim = store.claimDue;
+    let claimStarted = false;
+
+    try {
+        await runner.start();
+        await waitFor(() => lookups() >= 2, 1000);
+        addJob('job-2');
+        store.claimDue = async () => {
+            claimStarted = true;
+            await claiming.promise;
+
+            return { jobs: [], next: [] };
+        };
+        runner.wake();
+        await waitFor(() => claimStarted, 1000);
+
+        expect(claimStarted).toBe(true);
+        expect(runner.canStartNow('ping')).toBe(true);
+
+        release();
+        await waitFor(() => events.some(event => event.type === 'completed'), 1000);
+        // The rejected claim would otherwise make dispatch sleep for its 1 s error backoff.
+        store.claimDue = originalClaim;
+        claiming.reject(new Error('claim connection lost'));
+        await waitFor(() => started.length === 2, 300);
+
+        expect(started).toStrictEqual(['job-1', 'job-2']);
+        expect(events).toContainEqual(expect.objectContaining({ type: 'error', operation: 'dispatch' }));
+    } finally {
+        store.claimDue = originalClaim;
+        claiming.resolve(undefined);
+        release();
+        await runner.close({ deadline: 0 });
+    }
 });
 
 const LEASE_TIMINGS = { leaseMs: 800, renewIntervalMs: 200, recoveryIntervalMs: 60_000 };
@@ -210,7 +611,7 @@ async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
 
             due = false;
 
-            return claimed;
+            return { jobs: claimed, next: [] };
         },
         renewLeases: (/** @type {import('./store/store.js').OwnedJob[]} */ jobs) => {
             renewCalls++;

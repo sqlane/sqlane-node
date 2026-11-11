@@ -14,16 +14,19 @@ export declare const MUTEX_WINDOW_SIZE = 500;
  * The SQL of the probe. `GROUP BY status, job_name`: the whole index prefix, else MariaDB does not use a loose index
  * scan.
  * @param {string} p
+ * @param {number} [nameCount] The names of the probe, as parameters; none: all names.
  * @returns {string}
  */
-export declare function probeSql(p: string): string;
+export declare function probeSql(p: string, nameCount?: number): string;
 /**
- * The next due time of each job name with pending jobs: one index dive per pending name (loose index scan).
+ * The next due time of each given job name with pending jobs; null, or many names: of each job name. One index dive
+ * per name (loose index scan).
  * @param {Executor} executor
  * @param {string} p
+ * @param {string[] | null} names
  * @returns {Promise<ProbeRow[]>}
  */
-export declare function probe(executor: Executor, p: string): Promise<ProbeRow[]>;
+export declare function probe(executor: Executor, p: string, names: string[] | null): Promise<ProbeRow[]>;
 /**
  * The due jobs that can start now, oldest first: at most `limit` of each name. A job of a keyed name waits if one of
  * its keys is held, or an older due job of a keyed name has it (FIFO per key over the window of the keyed names).
@@ -49,9 +52,9 @@ export declare function claim(executor: Executor, p: string, { candidateIds, loc
  * @param {Executor} executor
  * @param {string} p
  * @param {import('./store.js').ClaimDueParams} params
- * @returns {Promise<import('./store.js').StartableJob[]>} In the order of run_at.
+ * @returns {Promise<import('./store.js').ClaimDueResult>} The jobs in the order of run_at.
  */
-export declare function claimDue(executor: Executor, p: string, { requests, laneFree, processMax, lockToken, lockedBy, leaseMs }: import('./store.js').ClaimDueParams): Promise<import('./store.js').StartableJob[]>;
+export declare function claimDue(executor: Executor, p: string, { requests, laneFree, processMax, lockToken, lockedBy, leaseMs }: import('./store.js').ClaimDueParams): Promise<import('./store.js').ClaimDueResult>;
 /**
  * @param {Executor} executor
  * @param {string} p

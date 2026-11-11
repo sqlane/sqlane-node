@@ -50,6 +50,10 @@ export type RunningJob = {
     released: boolean;
     timedOut: boolean;
     leaseLost: boolean;
+    /**
+     * The completion batch changed every owned row.
+     */
+    completionConfirmed: boolean;
     leaseEndsAt: number;
     startedAt: number;
 };
