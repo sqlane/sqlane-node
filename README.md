@@ -96,11 +96,11 @@ Next to the queues that also enqueue in your transaction, on PostgreSQL with 100
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-dark.svg">
-  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 4.5 M, Graphile Worker 11.3 M, River 11.7 M, pg-boss 27.7 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-light.svg">
+  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 4.6 M, Graphile Worker 10.9 M, River 11.8 M, River tuned 14.6 M, pg-boss 27.4 M, pg-boss tuned 27.0 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-light.svg">
 </picture>
 
-- **2.5–6× fewer CPU instructions per job** than Graphile Worker, River and pg-boss under steady load.
-- **3 ms** from the commit to the start of the handler at the median, against 9–56 ms.
+- **2.4–6× fewer CPU instructions per job** than Graphile Worker, River and pg-boss under steady load, with their
+  defaults or tuned.
 - **1000 idle job names cost what 1 costs.** pg-boss polls each queue: 1000 idle queues take about a quarter of a
   database core.
 

@@ -1,26 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="720" height="234" viewBox="0 0 720 234" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="From enqueue to handler start, median">
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="302" viewBox="0 0 720 302" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="From enqueue to handler start, median">
 <title>From enqueue to handler start, median</title>
 <text x="0" y="20" font-size="16" font-weight="600" fill="#1f2328">From enqueue to handler start, median</text>
 <text x="0" y="42" font-size="13" fill="#59636e">PostgreSQL 17, steady load, with each library’s LISTEN/NOTIFY wake. Lower is better.</text>
-<line x1="140.0" y1="60" x2="140.0" y2="200" stroke="#c3c2b7"/>
-<text x="140.0" y="218" font-size="11" fill="#59636e" text-anchor="middle">0</text>
-<line x1="283.3" y1="60" x2="283.3" y2="200" stroke="#e1e0d9"/>
-<text x="283.3" y="218" font-size="11" fill="#59636e" text-anchor="middle">20</text>
-<line x1="426.7" y1="60" x2="426.7" y2="200" stroke="#e1e0d9"/>
-<text x="426.7" y="218" font-size="11" fill="#59636e" text-anchor="middle">40</text>
-<line x1="570.0" y1="60" x2="570.0" y2="200" stroke="#e1e0d9"/>
-<text x="570.0" y="218" font-size="11" fill="#59636e" text-anchor="middle">60</text>
-<text x="592" y="218" font-size="11" fill="#59636e">ms</text>
+<line x1="140.0" y1="60" x2="140.0" y2="268" stroke="#c3c2b7"/>
+<text x="140.0" y="286" font-size="11" fill="#59636e" text-anchor="middle">0</text>
+<line x1="283.3" y1="60" x2="283.3" y2="268" stroke="#e1e0d9"/>
+<text x="283.3" y="286" font-size="11" fill="#59636e" text-anchor="middle">20</text>
+<line x1="426.7" y1="60" x2="426.7" y2="268" stroke="#e1e0d9"/>
+<text x="426.7" y="286" font-size="11" fill="#59636e" text-anchor="middle">40</text>
+<line x1="570.0" y1="60" x2="570.0" y2="268" stroke="#e1e0d9"/>
+<text x="570.0" y="286" font-size="11" fill="#59636e" text-anchor="middle">60</text>
+<text x="592" y="286" font-size="11" fill="#59636e">ms</text>
 <text x="132" y="85" font-size="13" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
 <path d="M140,72H157.5A4,4 0 0 1 161.5,76V86A4,4 0 0 1 157.5,90H140Z" fill="#2a78d6"/>
-<text x="167.5" y="85" font-size="13" fill="#1f2328" font-weight="600">3 ms · p99 17 ms</text>
+<text x="167.5" y="85" font-size="13" fill="#1f2328" font-weight="600">3 ms · p99 7 ms</text>
 <text x="132" y="119" font-size="13" fill="#1f2328" text-anchor="end">Graphile Worker</text>
-<path d="M140,106H200.5A4,4 0 0 1 204.5,110V120A4,4 0 0 1 200.5,124H140Z" fill="#2a78d6"/>
-<text x="210.5" y="119" font-size="13" fill="#1f2328">9 ms · p99 23 ms</text>
+<path d="M140,106H164.7A4,4 0 0 1 168.7,110V120A4,4 0 0 1 164.7,124H140Z" fill="#2a78d6"/>
+<text x="174.7" y="119" font-size="13" fill="#1f2328">4 ms · p99 8 ms</text>
 <text x="132" y="153" font-size="13" fill="#1f2328" text-anchor="end">River</text>
-<path d="M140,140H537.3A4,4 0 0 1 541.3,144V154A4,4 0 0 1 537.3,158H140Z" fill="#2a78d6"/>
-<text x="547.3" y="153" font-size="13" fill="#1f2328">56 ms · p99 118 ms</text>
-<text x="132" y="187" font-size="13" fill="#1f2328" text-anchor="end">pg-boss</text>
-<path d="M140,174H214.8A4,4 0 0 1 218.8,178V188A4,4 0 0 1 214.8,192H140Z" fill="#2a78d6"/>
-<text x="224.8" y="187" font-size="13" fill="#1f2328">11 ms · p99 31 ms</text>
+<path d="M140,140H544.5A4,4 0 0 1 548.5,144V154A4,4 0 0 1 544.5,158H140Z" fill="#2a78d6"/>
+<text x="554.5" y="153" font-size="13" fill="#1f2328">57 ms · p99 110 ms</text>
+<text x="132" y="187" font-size="13" fill="#1f2328" text-anchor="end">River, tuned</text>
+<path d="M140,174H171.8A4,4 0 0 1 175.8,178V188A4,4 0 0 1 171.8,192H140Z" fill="#2a78d6"/>
+<text x="181.8" y="187" font-size="13" fill="#1f2328">5 ms · p99 10 ms</text>
+<text x="132" y="221" font-size="13" fill="#1f2328" text-anchor="end">pg-boss</text>
+<path d="M140,208H171.8A4,4 0 0 1 175.8,212V222A4,4 0 0 1 171.8,226H140Z" fill="#2a78d6"/>
+<text x="181.8" y="221" font-size="13" fill="#1f2328">5 ms · p99 35 ms</text>
+<text x="132" y="255" font-size="13" fill="#1f2328" text-anchor="end">pg-boss, tuned</text>
+<path d="M140,242H171.8A4,4 0 0 1 175.8,246V256A4,4 0 0 1 171.8,260H140Z" fill="#2a78d6"/>
+<text x="181.8" y="255" font-size="13" fill="#1f2328">5 ms · p99 36 ms</text>
 </svg>
