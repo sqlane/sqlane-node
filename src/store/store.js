@@ -69,6 +69,13 @@ import * as postgresWorker from './postgres_worker.js';
  */
 
 /**
+ * @typedef {object} ClaimDueResult
+ * @property {StartableJob[]} jobs The claimed jobs, in the order of run_at.
+ * @property {ProbeRow[]} next The next due time of the requested names with pending jobs that the claim did not take:
+ *     zero or less, more of their jobs are due. It may give other names too.
+ */
+
+/**
  * A job that this process claimed: every write of it checks the lock token.
  * @typedef {object} OwnedJob
  * @property {string} id
@@ -109,16 +116,18 @@ import * as postgresWorker from './postgres_worker.js';
 
 /**
  * @typedef {object} Store
- * @property {() => Promise<ProbeRow[]>} probe
+ * @property {(names: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given name with
+ *     pending jobs; null: of each name. It may give other names too.
  * @property {(limitsByName: Map<string, number>, keyedNames: string[]) => Promise<Candidate[]>} findCandidates
  * @property {(params: ClaimParams) => Promise<ClaimedJob[]>} claim In a queue transaction of its own.
- * @property {(params: ClaimDueParams) => Promise<StartableJob[]>} claimDue Finds, claims and reads the due jobs of
+ * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, claims and reads the due jobs of
  *     names without mutex keys, at once: one statement on PostgreSQL. The keys of their rows are not taken: the
  *     definition of this process decides.
  * @property {(ids: string[]) => Promise<Map<string, unknown>>} readPayloads
  * @property {(jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>} renewLeases
  * @property {(job: OwnedJob) => Promise<boolean>} markTimedOut
- * @property {(jobs: FinishedJob[]) => Promise<number>} completeJobs In one transaction: the jobs that it completed.
+ * @property {(jobs: FinishedJob[]) => Promise<number>} completeJobs In one transaction (one statement on PostgreSQL):
+ *     the jobs that it completed.
  * @property {(job: OwnedJob, params: { delayMs: number, error: import('../error_json.js').ErrorJson })
  *     => Promise<boolean>} retryJob
  * @property {(
@@ -155,7 +164,7 @@ export function createStore(adapter, tablePrefix) {
     const p = tablePrefix;
 
     return {
-        probe: () => sql.probe(adapter.queue, tablePrefix),
+        probe: names => sql.probe(adapter.queue, tablePrefix, names),
         findCandidates: (limitsByName, keyedNames) => sql.findCandidates(
             adapter.queue,
             tablePrefix,
@@ -170,7 +179,9 @@ export function createStore(adapter, tablePrefix) {
         readPayloads: ids => sql.readPayloads(adapter.queue, tablePrefix, ids),
         renewLeases: (jobs, leaseMs) => inQueue(executor => final.renewLeases(executor, p, jobs, leaseMs)),
         markTimedOut: job => final.markTimedOut(adapter.queue, p, job),
-        completeJobs: jobs => inQueue(executor => final.completeJobs(executor, p, jobs)),
+        completeJobs: jobs => (adapter.dialect === 'postgres'
+            ? postgresFinal.completeJobs(adapter.queue, p, jobs)
+            : inQueue(executor => final.completeJobs(executor, p, jobs))),
         retryJob: (job, params) => inQueue(executor => final.retryJob(executor, p, job, params)),
         failJob: (job, params) => inQueue(executor => final.failJob(executor, p, job, params)),
         releaseJob: (job, params) => inQueue(executor => final.releaseJob(executor, p, job, params)),

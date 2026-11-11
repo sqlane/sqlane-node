@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, inject, test, vi } from 'vitest';
 import { resolveDefaults } from '../../src/defaults.js';
 import { toErrorJson } from '../../src/error_json.js';
 import { createSqlane, defineJob } from '../../src/index.js';
@@ -149,6 +149,40 @@ async function readHolds(p) {
     }));
 }
 
+/**
+ * Observes driver queries, including transaction boundaries, without counting pool.query() forwarding twice.
+ * @param {import('pg').Pool} pool
+ * @returns {() => number} Stops recording, restores the clients, and returns the query count.
+ */
+function recordPostgresQueries(pool) {
+    /** @type {Set<import('pg').PoolClient>} */
+    const clients = new Set();
+    /** @type {{ mock: { calls: unknown[][] }, mockRestore: () => void }[]} */
+    const spies = [];
+
+    /** @param {import('pg').PoolClient} client */
+    function trackQueries(client) {
+        if (!clients.has(client)) {
+            clients.add(client);
+            spies.push(vi.spyOn(client, 'query'));
+        }
+    }
+
+    pool.on('acquire', trackQueries);
+
+    return () => {
+        pool.off('acquire', trackQueries);
+        let count = 0;
+
+        for (const spy of spies) {
+            count += spy.mock.calls.length;
+            spy.mockRestore();
+        }
+
+        return count;
+    };
+}
+
 /** @type {import('../../src/store/store.js').FailureJobBuilder} */
 function buildFailureJob(failed) {
     return buildNewJob({
@@ -182,6 +216,56 @@ test('completeJobs: completed until its retention, without payload and keys; a r
     expect(row).toMatchObject({ status: 'completed', lock_token: null, payload: null, lease_in_ms: null });
     expect(row?.expires_in_ms).toBeGreaterThan(590_000);
     await expect(readHolds(tables.p)).resolves.toStrictEqual([]);
+});
+
+test.runIf(inject('databaseDialect') === 'postgres')('completeJobs: PostgreSQL completes in one driver query', async () => {
+    const tables = await freshTables();
+    const job = await claimedJob(tables, { retention: { completed: '10m' } });
+    const stopRecording = recordPostgresQueries(/** @type {import('pg').Pool} */ (testAdapter.pool));
+    let queryCount = 0;
+
+    try {
+        await expect(tables.store.completeJobs([job])).resolves.toBe(1);
+    } finally {
+        queryCount = stopRecording();
+    }
+
+    const row = await readJob(tables.p, job.id);
+
+    expect(row).toMatchObject({ status: 'completed', lock_token: null, payload: null, lease_in_ms: null });
+    expect(row?.expires_in_ms).toBeGreaterThan(590_000);
+    await expect(readHolds(tables.p)).resolves.toStrictEqual([]);
+    expect(queryCount).toBe(1);
+});
+
+test.runIf(inject('databaseDialect') === 'postgres')('completeJobs: PostgreSQL rolls back when payload cleanup fails', async () => {
+    const tables = await freshTables();
+    const job = await claimedJob(tables);
+
+    await database.query(`
+        CREATE FUNCTION ${tables.p}reject_payload_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'completion payload delete refused';
+        END;
+        $$
+    `);
+
+    try {
+        await database.query(`
+            CREATE TRIGGER reject_payload_delete BEFORE DELETE ON ${tables.p}payloads
+            FOR EACH ROW EXECUTE FUNCTION ${tables.p}reject_payload_delete()
+        `);
+
+        await expect(tables.store.completeJobs([job])).rejects.toThrow('completion payload delete refused');
+        await expect(readJob(tables.p, job.id)).resolves.toMatchObject({
+            status: 'running',
+            lock_token: job.lockToken,
+            payload: { orderId: 1 },
+        });
+        await expect(readHolds(tables.p)).resolves.toMatchObject([{ mutex_key: 'order:1', job_id: job.id }]);
+    } finally {
+        await database.query(`DROP FUNCTION ${tables.p}reject_payload_delete() CASCADE`);
+    }
 });
 
 test('completeJobs: one write for many jobs, the own ones only; the payload of a job not completed stays', async () => {

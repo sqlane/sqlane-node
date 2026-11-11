@@ -1,5 +1,6 @@
 // The final writes on PostgreSQL: lease renewal, complete, retry, fail, release, stall recovery, sweeps. Each write of
-// a job checks its lock token: a process that lost the lease changes nothing. Each runs in a queue transaction.
+// a job checks its lock token: a process that lost the lease changes nothing. Completion is one atomic statement;
+// multi-statement writes run in a queue transaction.
 import { createMonotonicUlid } from '../ulid.js';
 import { insertJobsPostgres } from './postgres_enqueue.js';
 
@@ -92,6 +93,35 @@ async function lingerHolds(executor, p, job, lingerMs) {
 }
 
 /**
+ * One job is done, as `completeJobs`. Scalar parameters: PostgreSQL caches a generic plan of the prepared statement,
+ * and plans it no more.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {import('./store.js').FinishedJob} job
+ * @returns {Promise<number>}
+ */
+async function completeJob(executor, p, job) {
+    const [row] = await executor.query(`
+        WITH done AS (
+            UPDATE ${p}jobs
+               SET status = 'completed', finished_at = ${NOW}, expires_at = ${NOW} + completed_retention_ms * ${MS},
+                   ${CLEAR_LOCK}, updated_at = ${NOW}
+             WHERE id = $1 AND lock_token = $2
+            RETURNING id
+        ),
+        payloads AS (
+            DELETE FROM ${p}payloads WHERE id = $1 AND EXISTS (SELECT FROM done)
+        ),
+        holds AS (
+            DELETE FROM ${p}mutexes WHERE job_id = $1 AND lock_token = $2
+        )
+        SELECT count(*)::integer AS changed FROM done
+    `, [job.id, job.lockToken]);
+
+    return Number(row?.changed ?? 0);
+}
+
+/**
  * The jobs are done: completed until their retention ends, without their payloads; their keys are freed. One
  * statement for many jobs.
  * @param {Executor} executor
@@ -101,6 +131,10 @@ async function lingerHolds(executor, p, job, lingerMs) {
  *     committed.
  */
 export async function completeJobs(executor, p, jobs) {
+    if (jobs.length === 1) {
+        return completeJob(executor, p, jobs[0]);
+    }
+
     const [row] = await executor.query(`
         WITH owned AS (
             SELECT * FROM unnest($1::text[], $2::text[]) AS o(id, lock_token)
