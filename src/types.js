@@ -233,6 +233,9 @@
  *     in a `READ COMMITTED` transaction on a connection of the queue's pool.
  * @property {<T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T>} inTransaction Used by sqlane:
  *     a pool → func in a transaction of its own; a connection or a client → func on it, in the caller's transaction.
+ * @property {<T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T>} [inStatement] Used by sqlane,
+ *     PostgreSQL: runs func, which sends one statement: a pool → on the pool, outside a transaction (the statement is
+ *     atomic); a connection or a client → on it, in the caller's transaction. Without it: `inTransaction`.
  * @property {(connection: C, onCommit: () => void) => boolean} [afterCommit] Used by sqlane, after an enqueue on the
  *     connection: calls onCommit once its transaction commits (at once when it has committed: a pool), never when it
  *     rolls back. Returns false when the adapter cannot tell (a connection in the caller's transaction): sqlane then

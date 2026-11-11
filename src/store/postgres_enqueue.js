@@ -1,14 +1,15 @@
 // Enqueue on PostgreSQL: one statement, atomic even outside a transaction.
 
 /**
- * Inserts the jobs and their payloads.
+ * Inserts the jobs and their payloads. With a notify channel, a NOTIFY of the job name when it created a job, in the
+ * same statement.
  * @param {import('../types.js').Executor} executor
  * @param {string} p The table prefix.
- * @param {import('../new_job.js').NewJob[]} jobs Their ids are distinct.
- * @param {string} enqueueToken
+ * @param {import('../new_job.js').NewJob[]} jobs Their ids are distinct, of one name.
+ * @param {{ enqueueToken: string, notifyChannel?: string | null }} options
  * @returns {Promise<Set<string>>} The ids that this call created.
  */
-export async function insertJobsPostgres(executor, p, jobs, enqueueToken) {
+export async function insertJobsPostgres(executor, p, jobs, { enqueueToken, notifyChannel = null }) {
     const input = jobs.map(job => ({
         id: job.id,
         job_name: job.name,
@@ -46,9 +47,14 @@ export async function insertJobsPostgres(executor, p, jobs, enqueueToken) {
             INSERT INTO ${p}payloads (id, payload)
             SELECT input.id, input.payload FROM input JOIN inserted ON inserted.id = input.id
             ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload
+        ),
+        -- One NOTIFY per transaction and name: PostgreSQL drops the repeated ones
+        notified AS (
+            SELECT pg_notify($3, $4) FROM (SELECT FROM inserted LIMIT 1) AS created WHERE $3::text IS NOT NULL
         )
-        SELECT id FROM inserted
-    `, [JSON.stringify(input), enqueueToken]);
+        -- The NOTIFY runs once, at the first created row
+        SELECT id FROM inserted WHERE (SELECT count(*) FROM notified) >= 0
+    `, [JSON.stringify(input), enqueueToken, notifyChannel, jobs[0]?.name ?? null]);
 
     return new Set(rows.map(row => String(row.id)));
 }

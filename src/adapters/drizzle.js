@@ -126,6 +126,8 @@ export function drizzleAdapter(db, options = {}) {
         inTransaction: (connection, func) => (isTransaction(connection)
             ? func(base.wrap(clientOf(connection)))
             : connection.transaction(tx => func(base.wrap(clientOf(tx))))),
+        // A database: on its pool, outside a transaction. A transaction: on its client.
+        inStatement: (connection, func) => func(base.wrap(clientOf(connection))),
         // A database: the enqueue ran in a transaction of its own, committed when it returned. A transaction: Drizzle
         // has no hook.
         afterCommit: (connection, onCommit) => {

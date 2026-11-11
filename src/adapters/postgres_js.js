@@ -96,6 +96,7 @@ export function postgresJsAdapter(sql, options = {}) {
         inTransaction: (connection, func) => (isPool(connection)
             ? /** @type {NonNullable<PostgresJsSql['begin']>} */ (connection.begin)('', tx => func(executorOf(tx)))
             : func(executorOf(connection))),
+        inStatement: (connection, func) => func(executorOf(connection)),
         // The pool: the enqueue ran in a transaction of its own, committed when it returned
         afterCommit: (connection, onCommit) => {
             if (!isPool(connection)) {

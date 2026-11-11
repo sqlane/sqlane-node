@@ -44,11 +44,10 @@ export function createEnqueuer({
     maxPayloadBytes,
     notifyChannel,
 }) {
-    const insertJobs = {
-        mysql: insertJobsMysql,
-        mariadb: insertJobsMariadb,
-        postgres: insertJobsPostgres,
-    }[adapter.dialect];
+    // MySQL, MariaDB: several statements, in a transaction. PostgreSQL: one statement (insertJobsPostgres).
+    /** @type {Record<string, typeof insertJobsMysql | undefined>} */
+    const insertJobsByDialect = { mysql: insertJobsMysql, mariadb: insertJobsMariadb };
+    const insertJobs = insertJobsByDialect[adapter.dialect];
 
     /**
      * @param {import('./types.js').JobDefinition | string} job
@@ -103,16 +102,24 @@ export function createEnqueuer({
         }
 
         const token = enqueueToken();
-        const created = await adapter.inTransaction(connection, async (executor) => {
-            const createdIds = await insertJobs(executor, tablePrefix, [...firstById.values()], token);
+        const jobs = [...firstById.values()];
+        /** @type {Set<string>} */
+        let created;
 
-            if (notifyChannel && createdIds.size) {
-                // One NOTIFY per transaction and name: PostgreSQL drops the repeated ones
-                await executor.query('SELECT pg_notify($1, $2)', [notifyChannel, name]);
-            }
+        if (insertJobs) {
+            created = await adapter.inTransaction(
+                connection,
+                executor => insertJobs(executor, tablePrefix, jobs, token),
+            );
+        } else {
+            // PostgreSQL: one statement, with its NOTIFY; atomic outside a transaction
+            const options = { enqueueToken: token, notifyChannel };
 
-            return createdIds;
-        });
+            created = await (adapter.inStatement ?? adapter.inTransaction)(
+                connection,
+                executor => insertJobsPostgres(executor, tablePrefix, jobs, options),
+            );
+        }
 
         return newJobs.map(newJob => ({
             id: newJob.id,
