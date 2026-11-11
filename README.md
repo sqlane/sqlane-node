@@ -76,11 +76,33 @@ sqlane fits apps that need reliable background work in the SQL database they alr
 - **MIT license, zero runtime dependencies.** Transactional enqueue, mutex keys and every other sqlane feature are
   in the same [MIT-licensed package](https://github.com/sqlane/sqlane-node/blob/main/LICENSE).
 
-On PostgreSQL, pg-boss, Graphile Worker and River also support transactional enqueue. Graphile Worker also shares
-polling across task names. sqlane's combination is MySQL/MariaDB support, transaction adapters and mutex keys across
-job names. The [comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) covers the differences, checked
-by running each library, and the [performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison-performance.md)
-their CPU cost, latency and idle cost.
+## How it compares
+
+The first four rows are checked by running each library next to sqlane on PostgreSQL 17, the others come from their
+documentation ([comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md)):
+
+|                                        | sqlane | pg-boss | Graphile Worker | BullMQ | Sidequest     | River |
+| -------------------------------------- | ------ | ------- | --------------- | ------ | ------------- | ----- |
+| Enqueue in the caller's transaction    | ✅     | ✅      | ✅              | ❌     | ❌            | ✅    |
+| Exclusion by several resources per job | ✅     | ❌      | ❌              | ❌     | ❌            | ❌    |
+| Timeout that aborts the handler        | ✅     | ✅      | ❌              | ❌     | ✅            | ✅    |
+| Priority                               | ❌     | ✅      | ✅              | ✅     | 🟠 per queue  | ✅    |
+| MySQL and MariaDB                      | ✅     | ❌      | ❌              | ❌     | 🟠 MySQL only | ❌    |
+| Cron                                   | ❌     | ✅      | ✅              | ✅     | ✅            | ✅    |
+| Dashboard                              | ❌     | ✅      | ❌              | ✅     | ✅            | ✅    |
+
+Next to the queues that also enqueue in your transaction, on PostgreSQL with 1000 job names
+([performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison-performance.md)):
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-dark.svg">
+  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 4.5 M, Graphile Worker 11.3 M, River 11.7 M, pg-boss 27.7 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-light.svg">
+</picture>
+
+- **2.5–6× fewer CPU instructions per job** than Graphile Worker, River and pg-boss under steady load.
+- **3 ms** from the commit to the start of the handler at the median, against 9–56 ms.
+- **1000 idle job names cost what 1 costs.** pg-boss polls each queue: 1000 idle queues take about a quarter of a
+  database core.
 
 Choose pg-boss or Graphile Worker for built-in cron, BullMQ for workflows and its broader ecosystem, or an
 established queue when a long production history is your main requirement. Scheduling is on the [roadmap](#roadmap).
@@ -210,20 +232,15 @@ how sqlane keeps it.
 
 ## Performance
 
-These numbers come from `pnpm bench` in this repository, on a laptop (Apple M1 Pro), with the databases in Docker. Your
-numbers will differ.
+On a laptop (Apple M1 Pro) with empty handlers, across MySQL, MariaDB and PostgreSQL:
 
-- **Start after the commit.** The benchmark enqueues with the mysql2 and pg adapters, so the workers wake by re-probes
-  (repeated checks after the enqueue) or by a hint. The median time from the commit to the start of the handler is
-  20–25 ms. With PostgreSQL NOTIFY, a worker in another process starts the job in about 2.4 ms.
-- **Idle job names.** A worker finds the job names with pending jobs in one query. With 1000 job names and pending jobs in
-  10 of them, this query takes about 0.3–0.5 ms on MySQL 8.4, MariaDB and PostgreSQL 15.
-- **Throughput.** 8 producers that each run `enqueue` in a transaction of its own add about 1,700 jobs/s on MySQL 8.4,
-  2,100 on MariaDB 11.8 and 4,100 on PostgreSQL 15. With `enqueueMany` and batches of 100, they add about 51,000, 90,000
-  and 114,000 jobs/s. One process runs about 4,200 (MySQL 8.4), 4,300 (MariaDB 11.8) and 6,800 (PostgreSQL 15) empty
-  jobs per second at concurrency 50.
+- One process runs about **4,000–9,800 jobs/s** at concurrency 50.
+- 8 producers enqueue **1,700–4,100 jobs/s** with a transaction each, or **51,000–114,000** with `enqueueMany` of 100.
+- A job starts **20–25 ms** after the commit at the median, or about **2.4 ms** with PostgreSQL NOTIFY.
 
-The [benchmarks page](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks.md) explains each scenario and has the full results.
+The [benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks.md) have each database and
+scenario, and the [performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison-performance.md)
+measures sqlane next to pg-boss, Graphile Worker and River.
 
 ## Roadmap
 
