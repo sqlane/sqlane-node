@@ -13,6 +13,8 @@ steps {
     // JSDoc type check of the whole project (the builtin only matches *.ts)
     ["tsc"] = (Builtins.tsc) {
         glob = List("**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "tsconfig.json")
+        // A package of its own, with dependencies that CI does not install: see bench/compare/README.md
+        exclude = List("bench/compare/**")
     }
     // The package that npm would publish: exports, files; TypeScript finds the declarations of each export (Are the
     // Types Wrong). One step: both pack the package, in the same place.

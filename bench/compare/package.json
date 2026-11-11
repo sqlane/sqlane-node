@@ -1,0 +1,19 @@
+{
+    "name": "@sqlane/bench-compare",
+    "version": "0.0.0",
+    "private": true,
+    "description": "The queues that docs/comparison.md and docs/comparison-performance.md compare with sqlane: installed apart, by bench/compare/run.sh",
+    "type": "module",
+    "dependencies": {
+        "@riverqueue/driver-pg": "0.3.2",
+        "@riverqueue/migrate": "0.3.2",
+        "@sidequest/postgres-backend": "1.17.0",
+        "bullmq": "6.7.4",
+        "graphile-worker": "0.18.0",
+        "pg": "8.23.1",
+        "pg-boss": "12.38.2",
+        "riverqueue": "0.3.2",
+        "sidequest": "1.17.0",
+        "zod": "4.6.7"
+    }
+}

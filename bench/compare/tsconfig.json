@@ -1,0 +1,7 @@
+{
+    // The type check of bench/compare, with the libraries that its package installs:
+    //   pnpm --dir bench/compare install && pnpm exec tsc -p bench/compare
+    "extends": "../../tsconfig.json",
+    "include": ["."],
+    "exclude": ["node_modules"]
+}
