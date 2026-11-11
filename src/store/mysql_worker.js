@@ -364,7 +364,11 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
     }
 
     // In the transaction: the claimed jobs are running
-    return { jobs: picked, next: await probe(executor, p, requests.map(request => request.name)) };
+    // A full claim: the next turn claims again; the next due times only after a claim that took fewer
+    return {
+        jobs: picked,
+        next: picked.length >= processMax ? null : await probe(executor, p, requests.map(request => request.name)),
+    };
 }
 
 /**

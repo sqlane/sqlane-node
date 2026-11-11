@@ -50,6 +50,11 @@ export const DEFAULT_TIMINGS = {
 /** The wakes after the last enqueue (or hint), until its commit makes the job visible */
 const REPROBE_DELAYS_MS = [20, 50, 100, 200, 500, 1000, 2000];
 const RELEASE_EXTRA_DELAY_MS = 2000;
+/**
+ * A claim of names without mutex keys requests at most this many names per free process slot: a claim locks up to the
+ * free slots of each name it requests, and reads their next due times. More due names take turns.
+ */
+const CLAIM_NAMES_PER_SLOT = 4;
 const STALLED = { name: 'StalledError', message: 'The lease of the job ended: its process stopped or blocked' };
 const BATCH = 1000;
 /** The completed jobs of one write */
@@ -210,6 +215,10 @@ export function createRunner({
     /** @type {{ timer: NodeJS.Timeout, at: number } | null} The next re-probe */
     let reprobe = null;
     let contentionDelayMs = 0;
+    /** Where the next turn of due names starts, when they are more than a claim requests */
+    let claimTurn = 0;
+    /** The last claim left due names out: the next turn runs at once, for them */
+    let namesLeftOut = false;
     let claimsInFlight = 0;
     const counts = { completed: 0, retried: 0, failed: 0 };
     /** @type {{ job: import('./store/store.js').FinishedJob, written: PromiseWithResolvers<boolean> }[]} */
@@ -833,7 +842,7 @@ export function createRunner({
         /** @type {import('./store/store.js').DueRequest[]} */
         const requests = [];
 
-        for (const name of dueNames) {
+        for (const name of takeTurn(dueNames)) {
             const entry = registry.getEntry(name);
             const free = entry ? freeSlots(entry.lane) : 0;
 
@@ -865,7 +874,14 @@ export function createRunner({
             backlog.delete(name);
         }
 
-        for (const row of next) {
+        if (next === null) {
+            // The claim filled the free slots, without reading the next due times: its names may have more due jobs
+            for (const name of requested) {
+                backlog.add(name);
+            }
+        }
+
+        for (const row of next ?? []) {
             if (!requested.has(row.name)) {
                 continue;
             }
@@ -885,6 +901,36 @@ export function createRunner({
 
         // Names with due jobs left and none claimed: other processes hold them
         return { candidates: stillDue, claimed: jobs.length };
+    }
+
+    /**
+     * The names of this turn: all of them, or, when they are many, the next ones in turn. The others stay in the
+     * backlog, for the next turns.
+     * @param {string[]} dueNames
+     * @returns {string[]}
+     */
+    function takeTurn(dueNames) {
+        const limit = CLAIM_NAMES_PER_SLOT * Math.max(freeProcessSlots(), 1);
+
+        namesLeftOut = dueNames.length > limit;
+
+        if (!namesLeftOut) {
+            return dueNames;
+        }
+
+        const from = claimTurn % dueNames.length;
+        const turn = [...dueNames.slice(from), ...dueNames.slice(0, from)].slice(0, limit);
+        const inTurn = new Set(turn);
+
+        claimTurn = from + limit;
+
+        for (const name of dueNames) {
+            if (!inTurn.has(name)) {
+                backlog.add(name);
+            }
+        }
+
+        return turn;
     }
 
     /**
@@ -1052,11 +1098,18 @@ export function createRunner({
             return nextDelayMs();
         }
 
+        namesLeftOut = false;
+
         const { candidates, claimed } = await claimAndStart(due);
 
         if (claimed) {
             contentionDelayMs = 0;
 
+            return 0;
+        }
+
+        if (namesLeftOut) {
+            // The names of the next turn: each turn that claims nothing takes its names out of the backlog
             return 0;
         }
 

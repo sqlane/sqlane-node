@@ -92,10 +92,11 @@ export type ClaimDueResult = {
      */
     jobs: StartableJob[];
     /**
-     * The next due time of the requested names with pending jobs that the claim did not take:
-     * zero or less, more of their jobs are due. It may give other names too.
+     * The next due time of the requested names with pending jobs that the claim did not
+     * take: zero or less, more of their jobs are due. It may give other names too. Null: the claim filled the free
+     * process slots and did not read them.
      */
-    next: ProbeRow[];
+    next: ProbeRow[] | null;
 };
 export type OwnedJob = {
     id: string;
@@ -256,8 +257,9 @@ export type Store = {
 /**
  * @typedef {object} ClaimDueResult
  * @property {StartableJob[]} jobs The claimed jobs, in the order of run_at.
- * @property {ProbeRow[]} next The next due time of the requested names with pending jobs that the claim did not take:
- *     zero or less, more of their jobs are due. It may give other names too.
+ * @property {ProbeRow[] | null} next The next due time of the requested names with pending jobs that the claim did not
+ *     take: zero or less, more of their jobs are due. It may give other names too. Null: the claim filled the free
+ *     process slots and did not read them.
  */
 /**
  * A job that this process claimed: every write of it checks the lock token.

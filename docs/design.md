@@ -206,7 +206,7 @@ loop while started
   probe: the next run_at of each job name that has pending jobs (one statement)
   if nothing due: wait until the next run_at (at most the poll interval) or a wake
   claim the oldest due jobs that pass the key check (not held, FIFO per key), at most the free slots
-  of each lane and of the process
+  of each lane and of the process; with many due names, 4 names per free slot, the next ones at the next turn
   claimed: start the handlers, loop at once
   none (other processes took them): back off 10–200 ms, with ±50 % jitter
   none (all due jobs wait for keys): wait for a key-release wake or the poll interval
@@ -221,6 +221,12 @@ pending rows.
   `GROUP BY` names the whole index prefix, because `GROUP BY job_name` alone gets a full index scan.
 - PostgreSQL has no loose index scan. Instead, a recursive CTE skips from one pending name to the next on the partial
   index. It makes two index lookups per pending name.
+
+**A backlog over many names takes turns.** A claim locks up to the free slots of each name that it requests, so a
+claim of all 1000 due names would lock thousands of rows to start a few jobs. A claim therefore requests at most 4 names
+per free process slot, and the next claim the next names. A claim that fills the free slots does not read the next due
+times of its names: they stay in the backlog, and the next turn claims them again. So the oldest-first order holds
+within the names of a turn, and the turns go round all due names.
 
 The process ignores the names that it does not handle. An idle name has no pending row, so it costs nothing. With 1000
 names and pending jobs in 10 of them, the probe reads 10 index entries. A probe with one query per registered name (a
