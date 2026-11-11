@@ -8,7 +8,7 @@ types/      its declarations: generated from the JSDoc of src/ (`pnpm build:type
 test/       integration tests (MySQL, MariaDB and PostgreSQL in Docker, testcontainers), type tests, test databases
 examples/   usage examples; examples/quickstart: runs with the published package (CI: with the packed one)
 bench/      the benchmarks
-docs/       api, adapters, comparison, design, benchmarks, releasing
+docs/       api, adapters, comparison, design, benchmarks, cpu-cost, releasing
 scripts/    CI scripts
 ```
 
@@ -39,6 +39,7 @@ hk install --global --mise   # Git hooks, also for GUI Git clients: lint, format
 | `pnpm build:types`  | Generate `types/` from the JSDoc of `src/`                 |
 | `pnpm check`        | Run all hook checks on all files (`hk check --all`)        |
 | `pnpm bench`        | Run the [benchmarks](docs/benchmarks.md) (Docker)          |
+| `pnpm bench:cpu`    | Measure the [CPU cost per job](docs/cpu-cost.md) vs `main` |
 
 ## Commits and changesets
 
