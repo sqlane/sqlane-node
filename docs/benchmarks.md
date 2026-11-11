@@ -10,6 +10,8 @@ the same files on both, and the numbers compare the databases, not their default
 tmpfs, and the client runs on the same machine. Each scenario has tables of its own. The handlers are empty, so the
 numbers show the cost of the queue itself.
 
+For the CPU cost of each job, in the worker, the producer and the database, see [CPU cost per job](cpu-cost.md).
+
 - **Probe.** The probe is the statement that finds the job names with pending jobs. The scenario has 1000 job names with
   100 completed jobs each, and 10 pending jobs in each of 0, 1, 10, 100 or 1000 names. It compares the probe with one
   `MIN(run_at)` query per name (a `UNION ALL` of 1000 queries), whose cost grows with the number of all names.
