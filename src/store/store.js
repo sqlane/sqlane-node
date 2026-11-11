@@ -118,7 +118,9 @@ import * as postgresWorker from './postgres_worker.js';
  * @typedef {object} Store
  * @property {(names: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given name with
  *     pending jobs; null: of each name. It may give other names too.
- * @property {(limitsByName: Map<string, number>, keyedNames: string[]) => Promise<Candidate[]>} findCandidates
+ * @property {(limitsByName: Map<string, number>, namesWithKeys: string[]) => Promise<Candidate[]>} findCandidates
+ * @property {(keys: string[], namesWithKeys: string[]) => Promise<string[]>} namesWaitingFor The names whose jobs may
+ *     start after a release of the keys: of the oldest due job of each key, among the names with mutex keys.
  * @property {(params: ClaimParams) => Promise<ClaimedJob[]>} claim In a queue transaction of its own.
  * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, claims and reads the due jobs of
  *     names without mutex keys, at once: one statement on PostgreSQL. The keys of their rows are not taken: the
@@ -165,12 +167,13 @@ export function createStore(adapter, tablePrefix) {
 
     return {
         probe: names => sql.probe(adapter.queue, tablePrefix, names),
-        findCandidates: (limitsByName, keyedNames) => sql.findCandidates(
+        findCandidates: (limitsByName, namesWithKeys) => sql.findCandidates(
             adapter.queue,
             tablePrefix,
             limitsByName,
-            keyedNames,
+            namesWithKeys,
         ),
+        namesWaitingFor: (keys, namesWithKeys) => sql.namesWaitingFor(adapter.queue, tablePrefix, keys, namesWithKeys),
         claim: params => adapter.queueTransaction(executor => sql.claim(executor, tablePrefix, params)),
         claimDue: params => (adapter.dialect === 'postgres'
             // One statement: a transaction of its own

@@ -61,6 +61,26 @@ export function postgresMigrations(p) {
                 `CREATE INDEX IF NOT EXISTS ${p}jobs_pending ON ${p}jobs (job_name, run_at, id) WHERE status = 'pending'`,
             ],
         },
+        {
+            // The FIFO of a mutex key, and the wake after its release, read the pending jobs of a key in order: a row
+            // per key of each pending job. A claim deletes the rows of its jobs, a return to pending adds them again.
+            id: '0003_job_keys',
+            statements: [
+                `CREATE TABLE IF NOT EXISTS ${p}job_keys (
+                    mutex_key varchar(255) COLLATE "C" NOT NULL,
+                    run_at timestamptz(3) NOT NULL,
+                    job_id varchar(255) COLLATE "C" NOT NULL,
+                    job_name varchar(128) COLLATE "C" NOT NULL,
+                    PRIMARY KEY (mutex_key, run_at, job_id)
+                )`,
+                `CREATE INDEX IF NOT EXISTS ${p}job_keys_job_id ON ${p}job_keys (job_id)`,
+                `INSERT INTO ${p}job_keys (mutex_key, run_at, job_id, job_name)
+                SELECT k.mutex_key, j.run_at, j.id, j.job_name
+                  FROM ${p}jobs j CROSS JOIN LATERAL unnest(j.mutex_keys) AS k(mutex_key)
+                 WHERE j.status = 'pending'
+                ON CONFLICT DO NOTHING`,
+            ],
+        },
     ];
 }
 

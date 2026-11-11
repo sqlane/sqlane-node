@@ -6,8 +6,10 @@
 /** @typedef {import('./store.js').ClaimParams} ClaimParams */
 /** @typedef {import('./store.js').ClaimedJob} ClaimedJob */
 
-/** The due jobs of each keyed name that the FIFO of the mutex keys reads */
+/** The due jobs of each name with mutex keys that the FIFO of the mutex keys reads */
 export const MUTEX_WINDOW_SIZE = 500;
+/** The first due jobs of a key among which the FIFO finds the oldest of a name with mutex keys */
+export const KEY_WINDOW_SIZE = 100;
 
 /**
  * @param {string} column
@@ -72,18 +74,60 @@ export async function probe(executor, p, names) {
 }
 
 /**
- * The due jobs that can start now, oldest first: at most `limit` of each name. A job of a keyed name waits if one of
- * its keys is held, or an older due job of a keyed name has it (FIFO per key over the window of the keyed names).
+ * @param {string} p
+ * @param {string} key The SQL of a mutex key.
+ * @param {string} namesWithKeys The SQL of the names with mutex keys.
+ * @returns {string} The oldest due job with the key among the names with mutex keys, within the first due jobs of
+ *     the key. They are one range of the job_keys, with index conditions only (statement_timestamp() is stable,
+ *     clock_timestamp() is not): the plan reads them in order, whatever the statistics. Then the names: a subquery,
+ *     read once; `= ANY($n)` costs a custom plan an estimate per name.
+ */
+function headSql(p, key, namesWithKeys) {
+    return `
+        SELECT h.id, h.job_name FROM (
+            SELECT jk.job_id AS id, jk.job_name, jk.run_at FROM ${p}job_keys jk
+             WHERE jk.mutex_key = ${key} AND jk.run_at <= statement_timestamp()
+             ORDER BY jk.run_at, jk.job_id LIMIT ${KEY_WINDOW_SIZE}
+        ) AS h
+         WHERE h.job_name = ANY((SELECT ${namesWithKeys}::text[])::text[])
+         ORDER BY h.run_at, h.id LIMIT 1`;
+}
+
+/**
+ * The names whose jobs may start after a release of the keys: of the oldest due job of each key.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} keys
+ * @param {string[]} namesWithKeys The handled names whose definition has mutex keys.
+ * @returns {Promise<string[]>}
+ */
+export async function namesWaitingFor(executor, p, keys, namesWithKeys) {
+    if (!keys.length || !namesWithKeys.length) {
+        return [];
+    }
+
+    const rows = await executor.query(`
+        SELECT DISTINCT head.job_name
+          FROM unnest($1::text[]) AS freed(mutex_key)
+         CROSS JOIN LATERAL (${headSql(p, 'freed.mutex_key', '$2')}) AS head
+    `, [keys, namesWithKeys]);
+
+    return rows.map(row => String(row.job_name));
+}
+
+/**
+ * The due jobs that can start now, oldest first: at most `limit` of each name. A job of a name with mutex keys waits
+ * if one of its keys is held, or an older due job of such a name has it (FIFO per key, from the job_keys).
  * @param {Executor} executor
  * @param {string} p
  * @param {Map<string, number>} limitsByName
- * @param {string[]} keyedNames The handled names whose definition has mutex keys.
+ * @param {string[]} namesWithKeys The handled names whose definition has mutex keys.
  * @returns {Promise<Candidate[]>}
  */
-export async function findCandidates(executor, p, limitsByName, keyedNames) {
-    const keyed = new Set(keyedNames);
-    const plainNames = [...limitsByName.keys()].filter(name => !keyed.has(name));
-    const keyedRequested = [...limitsByName.keys()].filter(name => keyed.has(name));
+export async function findCandidates(executor, p, limitsByName, namesWithKeys) {
+    const hasKeys = new Set(namesWithKeys);
+    const plainNames = [...limitsByName.keys()].filter(name => !hasKeys.has(name));
+    const requestedWithKeys = [...limitsByName.keys()].filter(name => hasKeys.has(name));
     /** @type {Record<string, unknown>[]} */
     const rows = [];
 
@@ -99,38 +143,42 @@ export async function findCandidates(executor, p, limitsByName, keyedNames) {
         `, [plainNames, plainNames.map(name => limitsByName.get(name))]));
     }
 
-    if (keyedRequested.length) {
+    if (requestedWithKeys.length) {
         rows.push(...await executor.query(`
-            WITH w AS (
-                SELECT due.* FROM unnest($1::text[]) AS keyed(name)
+            WITH request AS (
+                SELECT * FROM unnest($1::text[], $2::integer[]) AS request(name, max_jobs)
+            ),
+            w AS (
+                SELECT due.* FROM request
                  CROSS JOIN LATERAL (
                      SELECT id, job_name, run_at, mutex_keys FROM ${p}jobs
-                      WHERE status = 'pending' AND job_name = keyed.name AND run_at <= clock_timestamp()
+                      WHERE status = 'pending' AND job_name = request.name AND run_at <= clock_timestamp()
                       ORDER BY run_at, id LIMIT ${MUTEX_WINDOW_SIZE}
                  ) AS due
             ),
             wk AS (
-                SELECT w.id, k.mutex_key,
-                       ROW_NUMBER() OVER (PARTITION BY k.mutex_key ORDER BY w.run_at, w.id) AS key_rank
-                  FROM w CROSS JOIN LATERAL unnest(w.mutex_keys) AS k(mutex_key)
+                SELECT w.id, k.mutex_key FROM w CROSS JOIN LATERAL unnest(w.mutex_keys) AS k(mutex_key)
             ),
-            busy AS (
-                SELECT wk.mutex_key FROM wk JOIN ${p}mutexes m ON m.mutex_key = wk.mutex_key
-                 WHERE wk.key_rank = 1 AND ${HELD}
+            free_keys AS MATERIALIZED (
+                SELECT DISTINCT wk.mutex_key FROM wk
+                 WHERE NOT EXISTS (SELECT 1 FROM ${p}mutexes m WHERE m.mutex_key = wk.mutex_key AND ${HELD})
             ),
-            blocked AS (
-                SELECT id FROM wk WHERE key_rank > 1
-                 UNION SELECT wk.id FROM wk JOIN busy ON busy.mutex_key = wk.mutex_key
+            heads AS (
+                SELECT free_keys.mutex_key, head.id
+                  FROM free_keys CROSS JOIN LATERAL (${headSql(p, 'free_keys.mutex_key', '$3')}) AS head
             ),
             eligible AS (
                 SELECT w.id, w.job_name, w.run_at,
                        ROW_NUMBER() OVER (PARTITION BY w.job_name ORDER BY w.run_at, w.id) AS name_rank
-                  FROM w WHERE NOT EXISTS (SELECT 1 FROM blocked b WHERE b.id = w.id)
+                  FROM w
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM wk WHERE wk.id = w.id
+                        AND NOT EXISTS (SELECT 1 FROM heads h WHERE h.mutex_key = wk.mutex_key AND h.id = w.id)
+                 )
             )
             SELECT e.id, e.job_name, ${epochMs('e.run_at')} AS run_at_ms
-              FROM eligible e JOIN unnest($2::text[], $3::integer[]) AS request(name, max_jobs)
-                ON request.name = e.job_name AND e.name_rank <= request.max_jobs
-        `, [keyedNames, keyedRequested, keyedRequested.map(name => limitsByName.get(name))]));
+              FROM eligible e JOIN request ON request.name = e.job_name AND e.name_rank <= request.max_jobs
+        `, [requestedWithKeys, requestedWithKeys.map(name => limitsByName.get(name)), namesWithKeys]));
     }
 
     return rows
@@ -139,11 +187,23 @@ export async function findCandidates(executor, p, limitsByName, keyedNames) {
 }
 
 /**
+ * @param {string} p
+ * @returns {string} The CTE that deletes the job_keys of the jobs with mutex keys of the CTE `claimed`: they are not
+ *     pending.
+ */
+function unkeyClaimed(p) {
+    return `dropped_job_keys AS (
+            DELETE FROM ${p}job_keys jk USING claimed c WHERE c.has_keys AND jk.job_id = c.id
+        )`;
+}
+
+/**
  * Takes the keys of the picked jobs, all or none per job. A held key stays with its holder; an ended linger is taken
  * over. Keys are inserted in ascending order: no deadlocks between claims.
  * @param {Executor} executor
  * @param {string} p
- * @param {{ id: string, mutexKeys: readonly string[] }[]} jobs The picked keyed jobs: their keys are distinct.
+ * @param {{ id: string, mutexKeys: readonly string[] }[]} jobs The picked jobs with mutex keys: their keys are
+ *     distinct.
  * @param {string} lockToken
  * @returns {Promise<Set<string>>} The ids of the jobs that got all their keys.
  */
@@ -215,17 +275,21 @@ export async function claim(executor, p, { candidateIds, lockToken, lockedBy, le
         `, [lockedKeys])).map(row => String(row.mutex_key)))
         : new Set();
     const picked = pick(lockedRows, busyKeys);
-    const keyedPicked = picked.filter(row => row.mutexKeys.length);
-    const withKeys = keyedPicked.length ? await takeKeys(executor, p, keyedPicked, lockToken) : new Set();
+    const pickedWithKeys = picked.filter(row => row.mutexKeys.length);
+    const withKeys = pickedWithKeys.length ? await takeKeys(executor, p, pickedWithKeys, lockToken) : new Set();
     const claimed = picked.filter(row => !row.mutexKeys.length || withKeys.has(row.id));
 
     if (claimed.length) {
         await executor.query(`
-            UPDATE ${p}jobs
-               SET status = 'running', lock_token = $2, locked_by = $3,
-                   locked_until = clock_timestamp() + $4 * interval '1 millisecond', started_at = clock_timestamp(),
-                   timed_out_at = NULL, updated_at = clock_timestamp()
-             WHERE id = ANY($1::text[])
+            WITH running AS (
+                UPDATE ${p}jobs
+                   SET status = 'running', lock_token = $2, locked_by = $3,
+                       locked_until = clock_timestamp() + $4 * interval '1 millisecond', started_at = clock_timestamp(),
+                       timed_out_at = NULL, updated_at = clock_timestamp()
+                 WHERE id = ANY($1::text[])
+                RETURNING id
+            )
+            DELETE FROM ${p}job_keys WHERE job_id IN (SELECT id FROM running)
         `, [claimed.map(row => row.id), lockToken, lockedBy, leaseMs]);
     }
 
@@ -330,8 +394,10 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
              WHERE j.id = picked.id
             RETURNING j.id, j.job_name, j.run_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.failure_job,
                       ${epochMs('j.created_at')} AS created_at_ms,
-                      (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
+                      (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms,
+                      j.mutex_keys IS NOT NULL AS has_keys
         ),
+        ${unkeyClaimed(p)},
         -- The statement's snapshot: the picked jobs are still pending in it
         next AS (
             SELECT request.name AS job_name,
@@ -386,8 +452,10 @@ async function claimDueOfName(executor, p, { name, limit, lockToken, lockedBy, l
              WHERE j.id = picked.id
             RETURNING j.id, j.job_name, j.run_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.failure_job,
                       ${epochMs('j.created_at')} AS created_at_ms,
-                      (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
-        )
+                      (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms,
+                      j.mutex_keys IS NOT NULL AS has_keys
+        ),
+        ${unkeyClaimed(p)}
         -- The statement's snapshot: the picked jobs are still pending in it
         SELECT ${claimedJobsJson(p)} AS jobs,
                (

@@ -17,7 +17,7 @@ import {
     RetryJobError,
     ShutdownError,
 } from './errors.js';
-import { ANY_NAME } from './hint_channel.js';
+import { ANY_NAME, KEY_PREFIX } from './hint_channel.js';
 import { buildNewJob } from './new_job.js';
 import { isTransientDbError } from './transient_error.js';
 
@@ -183,6 +183,8 @@ export function createRunner({
     const wakeNames = new Set();
     /** @type {Set<string>} The names of the wakes since the last turn that may have no visible job: probed first */
     const wakeProbeNames = new Set();
+    /** @type {Set<string>} The mutex keys released since the last turn: the jobs that wait for them can start */
+    const wakeKeys = new Set();
     /** @type {Set<string>} The names whose last probe saw due jobs: probed again at each turn, until none is due */
     const backlog = new Set();
     /** @type {Map<string, number>} The next due time of the names with only future pending jobs, by the probes */
@@ -190,7 +192,7 @@ export function createRunner({
     /** The earliest time of `scheduled`; null: to compute again */
     let earliestScheduled = /** @type {number | null} */ (Infinity);
     /** @type {Set<string>} The handled names whose definition has mutex keys: set by start() */
-    let keyedNames = new Set();
+    let namesWithKeys = new Set();
     /** The time of the next probe of all names: the poll */
     let fullProbeAt = 0;
     /** @type {Map<string, number>} The names of the enqueues of the current series of re-probes: their last enqueue */
@@ -297,10 +299,29 @@ export function createRunner({
     }
 
     /**
+     * Ends the sleep of the dispatcher after a release of mutex keys: the next turn looks at the names of the oldest
+     * due job of each key.
+     * @param {readonly string[]} keys
+     */
+    function wakeUpKeys(keys) {
+        if (!namesWithKeys.size) {
+            return;
+        }
+
+        for (const key of keys) {
+            wakeKeys.add(key);
+        }
+
+        wakeCount++;
+        endSleep?.();
+    }
+
+    /**
      * The names that the next turn looks at. Claimed at once: those of the certain wakes, of the backlog, and those
      * whose next due time came. Probed first: those of the speculative wakes. All names at a wake of all names, and
      * each poll interval.
-     * @returns {{ claim: Set<string>, probe: Set<string> } | null} Null: all names.
+     * Keys: the released mutex keys.
+     * @returns {{ claim: Set<string>, probe: Set<string>, keys: Set<string> } | null} Null: all names.
      */
     function takeScope() {
         const now = Date.now();
@@ -309,9 +330,14 @@ export function createRunner({
             wakeAll = false;
             wakeNames.clear();
             wakeProbeNames.clear();
+            wakeKeys.clear();
 
             return null;
         }
+
+        const keys = new Set(wakeKeys);
+
+        wakeKeys.clear();
 
         const claim = new Set([...wakeNames, ...backlog]);
 
@@ -328,7 +354,7 @@ export function createRunner({
         wakeNames.clear();
         wakeProbeNames.clear();
 
-        return { claim, probe };
+        return { claim, probe, keys };
     }
 
     /**
@@ -753,20 +779,24 @@ export function createRunner({
                 // A successful keyless completion with spare capacity adds no ready work. The post-claim probe
                 // already scheduled pending jobs. Claims in flight may have captured an older slot count.
                 const mustWake = state !== 'started' || claimsInFlight > 0 || !job.completionConfirmed
-                    || job.released || job.leaseLost || claimed.mutexKeys.length > 0 || freeSlots(entry.lane) === 0;
+                    || job.released || job.leaseLost || freeSlots(entry.lane) === 0;
 
                 entry.lane.running--;
                 running.delete(job.key);
                 finishedCount++;
 
                 if (mustWake) {
-                    // Its keys can unblock the jobs of other names: all names. Else its own name, and the backlog.
-                    wakeUp(claimed.mutexKeys.length ? undefined : [claimed.name], { speculative: true });
+                    // Its own name, and the backlog
+                    wakeUp([claimed.name], { speculative: true });
                 }
 
                 if (claimed.mutexKeys.length) {
                     // Its keys are free: the jobs that wait for them can start, here or elsewhere
-                    hintChannel.publish(ANY_NAME);
+                    wakeUpKeys(claimed.mutexKeys);
+
+                    for (const key of claimed.mutexKeys) {
+                        hintChannel.publish(KEY_PREFIX + key);
+                    }
                 }
             }
         })();
@@ -783,8 +813,8 @@ export function createRunner({
         claimsInFlight++;
 
         try {
-            const plain = await claimAndStartPlain(dueNames.filter(name => !keyedNames.has(name)));
-            const withKeys = await claimAndStartKeyed(dueNames.filter(name => keyedNames.has(name)));
+            const plain = await claimAndStartPlain(dueNames.filter(name => !namesWithKeys.has(name)));
+            const withKeys = await claimAndStartWithKeys(dueNames.filter(name => namesWithKeys.has(name)));
 
             return { candidates: plain.candidates + withKeys.candidates, claimed: plain.claimed + withKeys.claimed };
         } finally {
@@ -862,7 +892,7 @@ export function createRunner({
      * @param {string[]} dueNames
      * @returns {Promise<{ candidates: number, claimed: number }>}
      */
-    async function claimAndStartKeyed(dueNames) {
+    async function claimAndStartWithKeys(dueNames) {
         /** @type {Map<string, number>} */
         const limits = new Map();
 
@@ -880,7 +910,15 @@ export function createRunner({
             return { candidates: 0, claimed: 0 };
         }
 
-        const candidates = await store.findCandidates(limits, [...keyedNames]);
+        const candidates = await store.findCandidates(limits, [...namesWithKeys]);
+        const withCandidates = new Set(candidates.map(candidate => candidate.name));
+
+        for (const name of limits.keys()) {
+            if (!withCandidates.has(name)) {
+                // Its due jobs wait for keys: the release of a key wakes it
+                backlog.delete(name);
+            }
+        }
 
         if (!candidates.length) {
             return { candidates: 0, claimed: 0 };
@@ -931,9 +969,19 @@ export function createRunner({
         const scope = takeScope();
         /** @type {Set<string>} */
         let names;
+        /** @type {string[]} The names with mutex keys with a job at the head of a released key: due, claimed at once */
+        let waiting = [];
 
         if (scope) {
             names = new Set();
+
+            if (scope.keys.size) {
+                waiting = await store.namesWaitingFor([...scope.keys], [...namesWithKeys]);
+
+                for (const name of waiting) {
+                    scope.claim.add(name);
+                }
+            }
 
             for (const name of [...scope.claim, ...scope.probe]) {
                 const entry = registry.getEntry(name);
@@ -960,8 +1008,13 @@ export function createRunner({
 
         // The names of a certain wake without mutex keys: claimed at once, the claim gives their next due time. The
         // others: probed first.
-        const direct = scope ? [...names].filter(name => scope.claim.has(name) && !keyedNames.has(name)) : [];
-        const probed = scope ? [...names].filter(name => !scope.claim.has(name) || keyedNames.has(name)) : null;
+        const known = new Set(waiting);
+        const direct = scope
+            ? [...names].filter(name => scope.claim.has(name) && (!namesWithKeys.has(name) || known.has(name)))
+            : [];
+        const probed = scope
+            ? [...names].filter(name => !scope.claim.has(name) || (namesWithKeys.has(name) && !known.has(name)))
+            : null;
         const probe = probed?.length === 0
             ? []
             : (await store.probe(probed)).filter(row => registry.getEntry(row.name));
@@ -1302,7 +1355,7 @@ export function createRunner({
         }
 
         registry.validate();
-        keyedNames = new Set(registry.keyedNames());
+        namesWithKeys = new Set(registry.namesWithKeys());
         state = 'started';
         every('recover_stale_jobs', recoverStaleJobs, t.recoveryIntervalMs);
 
@@ -1316,7 +1369,12 @@ export function createRunner({
             // NOTIFY comes after the commit: the job is visible. Another hint is sent before the commit of its enqueue:
             // re-probe until the job is visible.
             await hintChannel.listen((name) => {
-                if (!hintsAfterCommit) {
+                if (name.startsWith(KEY_PREFIX)) {
+                    // A release: committed before its message
+                    if (state === 'started') {
+                        wakeUpKeys([name.slice(KEY_PREFIX.length)]);
+                    }
+                } else if (!hintsAfterCommit) {
                     onEnqueued([name]);
                 } else if (state === 'started' && handlesAny([name])) {
                     wakeUp([name]);
@@ -1347,7 +1405,7 @@ export function createRunner({
         }
 
         registry.validate();
-        keyedNames = new Set(registry.keyedNames());
+        namesWithKeys = new Set(registry.namesWithKeys());
         state = 'draining';
 
         const before = { ...counts };

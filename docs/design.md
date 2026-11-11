@@ -77,7 +77,7 @@ reasons behind the shape of the API.
 - **Handlers own their transactions.** sqlane does not wrap a handler in a transaction or any other app wrapper. It
   stores no result.
 - **AbortSignal** for timeouts and close, instead of a hidden race. The lease is renewed while the handler runs, so a
-  long job needs no timeout. A keyed job needs one (see [Mutex keys](#mutex-keys)).
+  long job needs no timeout. A job with mutex keys needs one (see [Mutex keys](#mutex-keys)).
 - **No implicit work.** `createSqlane` connects, migrates and starts nothing.
 
 ## Data
@@ -126,8 +126,14 @@ Indexes:
 `id` (PK), `payload` (json). Apart from the hot table: the claim and the probe do not read it. Deleted when the job
 completes; kept for a failed job.
 
-The keys are a column of the job row, not a table: they commit with the job even in autocommit, and a duplicate
-cannot add keys to an existing job. The FIFO reads them with `JSON_TABLE` (MySQL) or `unnest` (PostgreSQL).
+The keys are a column of the job row: they commit with the job even in autocommit, and a duplicate cannot add keys to
+an existing job. `sqlane_job_keys` indexes them for the FIFO.
+
+### `sqlane_job_keys`
+
+`mutex_key`, `run_at`, `job_id` (PK in this order), `job_name`; an index on `job_id`. One row per key of each pending
+job: the enqueue adds them, a claim deletes them, and a return to `pending` (retry, release, stall) adds them again, in
+the same statement or transaction. So the oldest due job of a key is the first row of one index range.
 
 ### `sqlane_mutexes`
 
@@ -199,7 +205,7 @@ loop while started
   if no names: wait for a wake
   probe: the next run_at of each job name that has pending jobs (one statement)
   if nothing due: wait until the next run_at (at most the poll interval) or a wake
-  claim the oldest due jobs that pass the key check (not held, FIFO in the window), at most the free slots
+  claim the oldest due jobs that pass the key check (not held, FIFO per key), at most the free slots
   of each lane and of the process
   claimed: start the handlers, loop at once
   none (other processes took them): back off 10–200 ms, with ±50 % jitter
@@ -312,7 +318,7 @@ So one turn of a process makes 2 round trips to the database on PostgreSQL: the 
 MySQL with the mysql2 adapter, it makes 6 round trips: the probe, and 5 for the claim transaction (the isolation level, `BEGIN`, the locking
 read, the `UPDATE` and `COMMIT`).
 
-**Names with mutex keys:** the candidates (the FIFO per key over the window), then one short transaction on the
+**Names with mutex keys:** the candidates (the FIFO per key, from `sqlane_job_keys`), then one short transaction on the
 queue's pool:
 
 1. `SELECT … WHERE id IN (candidates) AND status = 'pending' AND run_at <= now ORDER BY run_at, id FOR UPDATE SKIP
@@ -361,12 +367,16 @@ A mutex key is a string, such as `order:42`. Two jobs that share a key do not ru
   them.
 - **FIFO per key.** A job starts only if none of its keys is held by a job of any name, and no older due job has one of
   its keys. So a job with the keys A and B does not starve behind newer jobs of A or B.
-- **Window.** The FIFO looks at the oldest 500 due jobs of each keyed name that the claiming process handles. A keyed
-  name is a handled name whose definition has `mutexKeys`. A job of another name can get keys from its enqueue
-  options. These keys still exclude other jobs at the claim, but without the FIFO. A name that no process handles never blocks a key, for
-  example a retired name or a misspelled name that someone enqueued by name. Processes that handle different names see
-  different windows, so the FIFO across names is approximate. More than 500 due jobs on one key delay the jobs behind
-  them, so you should merge such jobs.
+- **Which jobs count.** For each key of a candidate, the FIFO reads the due jobs of the key in order, from
+  `sqlane_job_keys`, and takes the oldest one of a name with mutex keys that the claiming process handles: a handled
+  name whose definition has `mutexKeys`. A job of another name can get keys from its enqueue options. These keys still
+  exclude other jobs at the claim, but without the FIFO. A name that no process handles never blocks a key,
+  for example a retired name or a misspelled name that someone enqueued by name. On PostgreSQL the FIFO reads the
+  first 100 due jobs of a key: more than 100 due jobs of other names at the front of a key make the process wait for
+  them. The candidates of a name are its oldest 500 due jobs. Processes that handle different names see different
+  jobs, so the FIFO across names is approximate.
+- **Wake-ups.** A completion with keys sends `#<key>` per key (NOTIFY, or the hint). Each process then looks up the
+  oldest due job of each released key and claims for its name, instead of probing all names.
 - **Timeout.** JavaScript cannot stop a handler. On a timeout, sqlane aborts the `signal` with a `JobTimeoutError` and
   emits a `timed_out` event. The job stays `running`, and its lease is renewed. It keeps its keys, its lane slot and its
   process slot until the handler settles, but for at most one more lease. During this time, `getStats()` counts it as
@@ -376,8 +386,8 @@ A mutex key is a string, such as `order:42`. Two jobs that share a key do not ru
   release on close while the handler still runs. The keys then stay until `exitsBy` plus 2 s (see [Close](#close)). The
   second case is a stall. The keys then stay for one lease, because the old handler may still run. So the old run and
   the new run do not overlap, unless a handler ignores its `signal` past the lease or past `exitsBy`.
-- **A keyed job needs a timeout.** The lease is renewed while a handler runs. Without a timeout, a hung keyed handler
-  would hold its keys in the whole cluster forever. So `handle()` throws a `ConfigError` if the definition has
+- **A job with mutex keys needs a timeout.** The lease is renewed while a handler runs. Without a timeout, a hung
+  handler would hold its keys in the whole cluster forever. So `handle()` throws a `ConfigError` if the definition has
   `mutexKeys` and no timeout. A job can also get keys only from its enqueue options. If its handler has no timeout, the
   job fails for good at the claim with a `FatalJobError` ("a job with mutex keys needs a timeout"), and its failure job
   runs.

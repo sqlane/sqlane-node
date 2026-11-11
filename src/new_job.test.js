@@ -75,10 +75,10 @@ describe('with a definition', () => {
     });
 
     test('the mutex keys come from the payload as JSON gives it back', () => {
-        const keyed = defineJob({ name: 'keyed', mutexKeys: payload => [String(payload.at)] });
+        const withKeys = defineJob({ name: 'with_keys', mutexKeys: payload => [String(payload.at)] });
         const at = new Date('2030-01-01T00:00:00Z');
 
-        expect(build({ name: 'keyed', definition: keyed, payload: { at } }).mutexKeys)
+        expect(build({ name: 'with_keys', definition: withKeys, payload: { at } }).mutexKeys)
             .toStrictEqual(['2030-01-01T00:00:00.000Z']);
     });
 

@@ -25,7 +25,7 @@ export type Registry = {
     /**
      * The handled names whose definition has mutex keys.
      */
-    keyedNames: () => string[];
+    namesWithKeys: () => string[];
     /**
      * Checks the handlers together: each failure job resolves and has none of its own.
      */
@@ -53,7 +53,7 @@ export type Registry = {
  * @property {(name: string) => HandlerEntry | undefined} getEntry
  * @property {() => HandlerEntry[]} entries
  * @property {(name: string) => JobDefinition | null} findDefinition In `jobs`, else handled.
- * @property {() => string[]} keyedNames The handled names whose definition has mutex keys.
+ * @property {() => string[]} namesWithKeys The handled names whose definition has mutex keys.
  * @property {() => void} validate Checks the handlers together: each failure job resolves and has none of its own.
  */
 /**

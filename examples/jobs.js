@@ -17,7 +17,7 @@ export const syncOrder = defineJob({
     name: 'sync_order',
     // Two jobs of one order never run at the same time, in the whole cluster
     mutexKeys: payload => [`order:${payload.orderId}`],
-    timeout: '2m', // a keyed job needs a timeout
+    timeout: '2m', // a job with mutex keys needs a timeout
 });
 
 export const sendEmail = defineJob({

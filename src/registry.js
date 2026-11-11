@@ -28,7 +28,7 @@ import { checkDuration, checkInteger, checkObject, isPlainObject, JOB_NAME_REGEX
  * @property {(name: string) => HandlerEntry | undefined} getEntry
  * @property {() => HandlerEntry[]} entries
  * @property {(name: string) => JobDefinition | null} findDefinition In `jobs`, else handled.
- * @property {() => string[]} keyedNames The handled names whose definition has mutex keys.
+ * @property {() => string[]} namesWithKeys The handled names whose definition has mutex keys.
  * @property {() => void} validate Checks the handlers together: each failure job resolves and has none of its own.
  */
 
@@ -161,7 +161,7 @@ export function createRegistry({ jobsByName, lanes, concurrency, defaultTimeoutM
         getEntry: name => entriesByName.get(name),
         entries: () => [...entriesByName.values()],
         findDefinition,
-        keyedNames: () => [...entriesByName.values()]
+        namesWithKeys: () => [...entriesByName.values()]
             .filter(entry => entry.definition?.mutexKeys)
             .map(entry => entry.name),
         validate,

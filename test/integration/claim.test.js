@@ -380,40 +380,103 @@ describe('claimDue', () => {
 });
 
 describe('mutex keys', () => {
-    const keyed = defineJob({ name: 'sync_order', mutexKeys: payload => [`order:${payload.orderId}`], timeout: '1m' });
+    const syncOrder = defineJob({ name: 'sync_order', mutexKeys: payload => [`order:${payload.orderId}`], timeout: '1m' });
     const other = defineJob({ name: 'ship_order', mutexKeys: payload => [`order:${payload.orderId}`], timeout: '1m' });
 
     test('a held key: the job waits; a free key: it runs', async () => {
         const { sqlane, store } = await freshTables();
-        const first = await sqlane.enqueue(testAdapter.pool, keyed, { orderId: 1 }, { runAt: ago(30) });
+        const first = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(30) });
 
         await claimAll(store, [first.id], 'T1');
 
-        const blocked = await sqlane.enqueue(testAdapter.pool, keyed, { orderId: 1 }, { runAt: ago(20) });
-        const free = await sqlane.enqueue(testAdapter.pool, keyed, { orderId: 2 }, { runAt: ago(10) });
+        const blocked = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
+        const free = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 2 }, { runAt: ago(10) });
         const candidates = await store.findCandidates(new Map([['sync_order', 10]]), ['sync_order']);
 
         expect(candidates.map(candidate => candidate.id)).toStrictEqual([free.id]);
         await expect(claimAll(store, [blocked.id, free.id], 'T2')).resolves.toMatchObject([{ id: free.id }]);
     });
 
-    test('FIFO per key, across the keyed names: a newer job waits behind an older one with its key', async () => {
+    test('FIFO per key, across the names with mutex keys: a newer job waits behind an older one with its key', async () => {
         const { sqlane, store } = await freshTables();
         const older = await sqlane.enqueue(testAdapter.pool, other, { orderId: 1 }, { runAt: ago(30) });
-        const newer = await sqlane.enqueue(testAdapter.pool, keyed, { orderId: 1 }, { runAt: ago(20) });
-        const keyedNames = ['sync_order', 'ship_order'];
+        const newer = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
+        const namesWithKeys = ['sync_order', 'ship_order'];
 
-        await expect(store.findCandidates(new Map([['sync_order', 10]]), keyedNames)).resolves.toStrictEqual([]);
-        await expect(store.findCandidates(new Map([['ship_order', 10]]), keyedNames))
+        await expect(store.findCandidates(new Map([['sync_order', 10]]), namesWithKeys)).resolves.toStrictEqual([]);
+        await expect(store.findCandidates(new Map([['ship_order', 10]]), namesWithKeys))
             .resolves.toMatchObject([{ id: older.id }]);
         // A name that this process does not handle does not block
         await expect(store.findCandidates(new Map([['sync_order', 10]]), ['sync_order']))
             .resolves.toMatchObject([{ id: newer.id }]);
     });
 
+    test('a release of keys: the names of the oldest due job of each key, among the names with mutex keys', async () => {
+        const { sqlane, store } = await freshTables();
+        const namesWithKeys = ['sync_order', 'ship_order'];
+
+        await sqlane.enqueue(testAdapter.pool, other, { orderId: 1 }, { runAt: ago(30) });
+        await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
+        await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 2 }, { runAt: ago(10) });
+        // Not due: it waits for its time, not for the key
+        await sqlane.enqueue(testAdapter.pool, other, { orderId: 3 }, { delay: '1h' });
+
+        await expect(store.namesWaitingFor(['order:1'], namesWithKeys)).resolves.toStrictEqual(['ship_order']);
+        await expect(store.namesWaitingFor(['order:1'], ['sync_order'])).resolves.toStrictEqual(['sync_order']);
+        await expect(store.namesWaitingFor(['order:1', 'order:2'], namesWithKeys).then(names => names.toSorted()))
+            .resolves.toStrictEqual(['ship_order', 'sync_order']);
+        await expect(store.namesWaitingFor(['order:3', 'order:4'], namesWithKeys)).resolves.toStrictEqual([]);
+    });
+
+    test('FIFO per key with two keys: a job waits behind an older one with either key', async () => {
+        const { sqlane, store } = await freshTables();
+        const older = await sqlane.enqueue(testAdapter.pool, 'both', {}, { mutexKeys: ['b'], runAt: ago(30) });
+
+        // The second waits for the first (key b), the third for the second (key a)
+        await sqlane.enqueue(testAdapter.pool, 'both', {}, { mutexKeys: ['a', 'b'], runAt: ago(20) });
+        await sqlane.enqueue(testAdapter.pool, 'both', {}, { mutexKeys: ['a'], runAt: ago(10) });
+        const candidates = await store.findCandidates(new Map([['both', 10]]), ['both']);
+
+        expect(candidates.map(candidate => candidate.id)).toStrictEqual([older.id]);
+    });
+
+    test('job_keys: a row per key of each pending job', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const listKeys = () => database.query(`SELECT mutex_key, job_id FROM ${p}job_keys ORDER BY mutex_key, job_id`);
+        const retried = await sqlane.enqueue(testAdapter.pool, 'both', {}, { mutexKeys: ['a', 'b'], runAt: ago(30) });
+        const released = await sqlane.enqueue(testAdapter.pool, 'one', {}, { mutexKeys: ['c'], runAt: ago(20) });
+        const plain = await sqlane.enqueue(testAdapter.pool, 'plain', {}, { mutexKeys: ['d'], runAt: ago(10) });
+
+        await sqlane.enqueue(testAdapter.pool, 'plain', {}, { runAt: ago(5) });
+        await expect(listKeys()).resolves.toStrictEqual([
+            { mutex_key: 'a', job_id: retried.id },
+            { mutex_key: 'b', job_id: retried.id },
+            { mutex_key: 'c', job_id: released.id },
+            { mutex_key: 'd', job_id: plain.id },
+        ]);
+
+        // A claim deletes them: the claim of jobs with mutex keys, and the claim of a name without keys
+        const claimed = await claimAll(store, [retried.id, released.id], 'T1');
+
+        await claimDue(store, { requests: [{ name: 'plain', maxJobs: 2, lane: 0 }], laneFree: [2] });
+        await expect(listKeys()).resolves.toStrictEqual([]);
+
+        // Pending again: they are back
+        await expect(store.retryJob(claimed[0], { delayMs: 0, error: { name: 'Error', message: 'again' } }))
+            .resolves.toBe(true);
+        await expect(store.releaseJob(claimed[1], { delayMs: 0, lingerMs: 0 })).resolves.toBe(true);
+        await expect(listKeys()).resolves.toStrictEqual([
+            { mutex_key: 'a', job_id: retried.id },
+            { mutex_key: 'b', job_id: retried.id },
+            { mutex_key: 'c', job_id: released.id },
+        ]);
+        await expect(store.namesWaitingFor(['a', 'c'], ['both', 'one']).then(names => names.toSorted()))
+            .resolves.toStrictEqual(['both', 'one']);
+    });
+
     test('concurrent claims of two jobs with a common key: one gets it', async () => {
         const { p, sqlane, store } = await freshTables();
-        const a = await sqlane.enqueue(testAdapter.pool, keyed, { orderId: 7 }, { runAt: ago(20) });
+        const a = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 7 }, { runAt: ago(20) });
         const b = await sqlane.enqueue(testAdapter.pool, other, { orderId: 7 }, { runAt: ago(10) });
         const claims = await Promise.all([claimAll(store, [a.id], 'T1'), claimAll(store, [b.id], 'T2')]);
 
@@ -448,8 +511,8 @@ describe('mutex keys', () => {
         await database.query(LINGER_SQL[database.family](p), ['order:1', 3600]);
         await database.query(LINGER_SQL[database.family](p), ['order:2', -1]);
 
-        const lingering = await sqlane.enqueue(testAdapter.pool, keyed, { orderId: 1 }, { runAt: ago(20) });
-        const ended = await sqlane.enqueue(testAdapter.pool, keyed, { orderId: 2 }, { runAt: ago(10) });
+        const lingering = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
+        const ended = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 2 }, { runAt: ago(10) });
         const candidates = await store.findCandidates(new Map([['sync_order', 10]]), ['sync_order']);
 
         expect(candidates.map(candidate => candidate.id)).toStrictEqual([ended.id]);

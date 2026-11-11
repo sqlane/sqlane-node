@@ -16,3 +16,10 @@ Lower the CPU cost of each job: about 70% less on PostgreSQL, 35–40% less on M
   jobs in order without a sort. Run `migrate()` after the upgrade.
 - MySQL and MariaDB: the checks that follow a hint probe only the names enqueued within their steps, and claim only
   names with due jobs. Under a steady load they no longer probe every job name.
+- Mutex keys: a release wakes the jobs that wait for its keys (a NOTIFY or hint `#<key>`), not every job name. The
+  FIFO of a key reads a new table, `sqlane_job_keys`: a row per key of each pending job, in the order of `run_at`
+  (migrations `0003_job_keys` on PostgreSQL, `0002_job_keys` on MySQL and MariaDB). It no longer reads the due jobs of
+  every name with mutex keys. Per job with mutex keys: about 25% fewer instructions on PostgreSQL, 85–90% fewer on
+  MySQL and MariaDB; with a long queue on one key, 80–97% fewer. MariaDB no longer stalls with thousands of due jobs
+  that wait for a held key. Processes of an older version ignore `#<key>` hints: during a rolling upgrade, their jobs
+  with mutex keys can wait for the poll.

@@ -41,7 +41,13 @@ export async function insertJobsPostgres(executor, p, jobs, { enqueueToken, noti
                    clock_timestamp(), clock_timestamp()
               FROM input ORDER BY id
             ON CONFLICT (id) DO NOTHING
-            RETURNING id
+            RETURNING id, run_at, job_name, mutex_keys
+        ),
+        job_keys AS (
+            INSERT INTO ${p}job_keys (mutex_key, run_at, job_id, job_name)
+            SELECT k.mutex_key, inserted.run_at, inserted.id, inserted.job_name
+              FROM inserted CROSS JOIN LATERAL unnest(inserted.mutex_keys) AS k(mutex_key)
+            ON CONFLICT DO NOTHING
         ),
         payloads AS (
             INSERT INTO ${p}payloads (id, payload)

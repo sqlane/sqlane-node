@@ -122,16 +122,34 @@ export async function completeJobs(executor, p, jobs) {
         `, ids);
     }
 
-    const keyed = jobs.filter(job => job.mutexKeys.length);
+    const withKeys = jobs.filter(job => job.mutexKeys.length);
 
-    if (keyed.length) {
+    if (withKeys.length) {
         await executor.run(`
             DELETE FROM ${p}mutexes
-             WHERE job_id IN (${placeholders(keyed.length)}) AND (job_id, lock_token) IN (${keyed.map(() => '(?, ?)').join(', ')})
-        `, [...keyed.map(job => job.id), ...keyed.flatMap(job => [job.id, job.lockToken])]);
+             WHERE job_id IN (${placeholders(withKeys.length)}) AND (job_id, lock_token) IN (${withKeys.map(() => '(?, ?)').join(', ')})
+        `, [...withKeys.map(job => job.id), ...withKeys.flatMap(job => [job.id, job.lockToken])]);
     }
 
     return changed;
+}
+
+/**
+ * Adds the job_keys of a job that is pending again. Call it in its transaction.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string} id
+ * @returns {Promise<void>}
+ */
+async function addJobKeys(executor, p, id) {
+    await executor.run(`
+        INSERT INTO ${p}job_keys (mutex_key, run_at, job_id, job_name)
+        SELECT k.mutex_key, j.run_at, j.id, j.job_name FROM ${p}jobs j, JSON_TABLE(j.mutex_keys, '$[*]' COLUMNS (
+            mutex_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin PATH '$'
+        )) AS k
+         WHERE j.id = ? AND j.status = 'pending'
+        ON DUPLICATE KEY UPDATE job_id = job_id
+    `, [id]);
 }
 
 /**
@@ -149,6 +167,10 @@ export async function retryJob(executor, p, job, { delayMs, error }) {
                last_error = ?, updated_at = ${NOW}
          WHERE id = ? AND lock_token = ?
     `, [delayMs * 1000, JSON.stringify(error), job.id, job.lockToken]);
+
+    if (changed) {
+        await addJobKeys(executor, p, job.id);
+    }
 
     await deleteHolds(executor, p, job);
 
@@ -268,6 +290,10 @@ export async function releaseJob(executor, p, job, { delayMs, lingerMs }) {
          WHERE id = ? AND lock_token = ?
     `, [delayMs * 1000, job.id, job.lockToken]);
 
+    if (changed) {
+        await addJobKeys(executor, p, job.id);
+    }
+
     await lingerHolds(executor, p, job, lingerMs);
 
     return changed > 0;
@@ -329,6 +355,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
                    stalls = stalls + 1, ${CLEAR_LOCK}, last_error = ?, updated_at = ${NOW}
              WHERE id = ?
         `, [JSON.stringify(error), id]);
+        await addJobKeys(executor, p, id);
 
         return { result: 'released', failureJob: null, ...stalledRun(row) };
     }
@@ -418,6 +445,10 @@ export async function makeDue(executor, p, names) {
     await executor.run(`
         UPDATE ${p}jobs SET run_at = ${NOW}
          WHERE status = 'pending' AND job_name IN (${placeholders(names.length)}) AND run_at > ${NOW}
+    `, names);
+    await executor.run(`
+        UPDATE ${p}job_keys jk JOIN ${p}jobs j ON j.id = jk.job_id SET jk.run_at = j.run_at
+         WHERE jk.job_name IN (${placeholders(names.length)}) AND jk.run_at <> j.run_at
     `, names);
 }
 

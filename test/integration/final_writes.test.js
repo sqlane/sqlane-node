@@ -58,7 +58,7 @@ const INSERT_ORPHAN_SQL = {
 
 const LEASE_MS = 240_000;
 const defaults = resolveDefaults();
-const keyed = defineJob({
+const withKeys = defineJob({
     name: 'sync_order',
     mutexKeys: payload => [`order:${payload.orderId}`],
     timeout: '1m',
@@ -96,14 +96,14 @@ async function freshTables() {
 }
 
 /**
- * Enqueues a due keyed job and claims it.
+ * Enqueues a due job with mutex keys and claims it.
  * @param {{ sqlane: import('../../src/types.js').Sqlane<any, never>, store: Store }} tables
  * @param {Record<string, unknown>} [options] Enqueue options.
  * @param {number} [leaseMs]
  * @returns {Promise<ClaimedJob>}
  */
 async function claimedJob({ sqlane, store }, options = {}, leaseMs = LEASE_MS) {
-    const { id } = await sqlane.enqueue(testAdapter.pool, keyed, { orderId: 1 }, {
+    const { id } = await sqlane.enqueue(testAdapter.pool, withKeys, { orderId: 1 }, {
         runAt: new Date(Date.now() - 1000),
         ...options,
     });

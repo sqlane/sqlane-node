@@ -16,7 +16,9 @@ const LOCK_SQL = {
 };
 
 /** The migrations of the dialect, in order */
-const ALL_MIGRATIONS = inject('databaseDialect') === 'postgres' ? ['0001_initial', '0002_pending_order'] : ['0001_initial'];
+const ALL_MIGRATIONS = inject('databaseDialect') === 'postgres'
+    ? ['0001_initial', '0002_pending_order', '0003_job_keys']
+    : ['0001_initial', '0002_job_keys'];
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
@@ -67,7 +69,8 @@ async function listTables(tablePrefix) {
              WHERE table_schema = current_schema() AND starts_with(table_name, $1) ORDER BY table_name
         `, [tablePrefix]);
 
-    return rows.map(row => String(row.name));
+    // In JS: the collation of information_schema orders `_` before or after letters
+    return rows.map(row => String(row.name)).toSorted();
 }
 
 test('applies the migrations once', async () => {
@@ -76,7 +79,7 @@ test('applies the migrations once', async () => {
 
     await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
     await expect(listTables(tablePrefix)).resolves.toStrictEqual(
-        ['jobs', 'migrations', 'mutexes', 'payloads'].map(table => `${tablePrefix}${table}`),
+        ['job_keys', 'jobs', 'migrations', 'mutexes', 'payloads'].map(table => `${tablePrefix}${table}`).toSorted(),
     );
     await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [] });
 });

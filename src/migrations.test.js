@@ -3,9 +3,9 @@ import { ConfigError } from './errors.js';
 import { getMigrations } from './migrations.js';
 
 test.each([
-    { dialect: 'mysql', ids: ['0001_initial'] },
-    { dialect: 'mariadb', ids: ['0001_initial'] },
-    { dialect: 'postgres', ids: ['0001_initial', '0002_pending_order'] },
+    { dialect: 'mysql', ids: ['0001_initial', '0002_job_keys'] },
+    { dialect: 'mariadb', ids: ['0001_initial', '0002_job_keys'] },
+    { dialect: 'postgres', ids: ['0001_initial', '0002_pending_order', '0003_job_keys'] },
 ])('$dialect: the migrations use the table prefix', ({ dialect, ids }) => {
     const migrations = getMigrations({ dialect: /** @type {import('./types.js').Dialect} */ (dialect), tablePrefix: 'q_' });
 
