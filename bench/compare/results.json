@@ -1,5 +1,5 @@
 {
-    "date": "2026-11-11T13:42:26.521Z",
+    "date": "2026-11-11T16:07:11.359Z",
     "node": "v26.13.0",
     "checks": [
         {
@@ -288,22 +288,22 @@
             "seconds": 15,
             "completed": 300,
             "latencyP50Ms": 3,
-            "latencyP99Ms": 17,
-            "statements": 1802,
-            "connections": 4,
+            "latencyP99Ms": 7,
+            "statements": 1809,
+            "connections": 5,
             "worker": {
-                "instructions": 381386081,
-                "cycles": 685903646,
-                "cpuSeconds": 0.38
+                "instructions": 382332021,
+                "cycles": 593520110,
+                "cpuSeconds": 0.33999999999999997
             },
             "producer": {
-                "instructions": 332659486,
-                "cycles": 987169057,
-                "cpuSeconds": 0.52
+                "instructions": 329740087,
+                "cycles": 866174483,
+                "cpuSeconds": 0.51
             },
             "db": {
-                "instructions": 642900331,
-                "cycles": 1188568744,
+                "instructions": 676442342,
+                "cycles": 1071580054,
                 "cpuSeconds": 0.62
             }
         },
@@ -316,17 +316,17 @@
             "completed": 0,
             "latencyP50Ms": null,
             "latencyP99Ms": null,
-            "statements": 8,
+            "statements": 3,
             "connections": 2,
             "worker": {
-                "instructions": 8955241,
-                "cycles": 29597457,
-                "cpuSeconds": 0.009999999999999995
+                "instructions": 6091969,
+                "cycles": 13502124,
+                "cpuSeconds": 0
             },
             "db": {
-                "instructions": 7978905,
-                "cycles": 20466477,
-                "cpuSeconds": 0.02
+                "instructions": 1129933,
+                "cycles": 3275495,
+                "cpuSeconds": 0.01
             }
         },
         {
@@ -341,14 +341,14 @@
             "statements": 3,
             "connections": 2,
             "worker": {
-                "instructions": 8294087,
-                "cycles": 21838992,
-                "cpuSeconds": 0.020000000000000004
+                "instructions": 8061602,
+                "cycles": 17542338,
+                "cpuSeconds": 0.010000000000000009
             },
             "db": {
-                "instructions": 1181114,
-                "cycles": 5295855,
-                "cpuSeconds": 0
+                "instructions": 957538,
+                "cycles": 4258047,
+                "cpuSeconds": 0.01
             }
         },
         {
@@ -357,19 +357,19 @@
             "names": 1000,
             "dialect": "postgres",
             "completed": 10000,
-            "drainMs": 1608,
+            "drainMs": 1668,
             "worker": {
-                "instructions": 5032602591,
-                "cycles": 2167268822,
-                "cpuSeconds": 0.7,
+                "instructions": 5034850227,
+                "cycles": 2288807402,
+                "cpuSeconds": 0.74,
                 "byCommand": {
-                    "node": [5032602591, 2167268822, 0.7]
+                    "node": [5034850227, 2288807402, 0.74]
                 }
             },
             "db": {
-                "instructions": 7147402713,
-                "cycles": 2445799309,
-                "cpuSeconds": 0.78
+                "instructions": 6964605430,
+                "cycles": 2489422836,
+                "cpuSeconds": 0.8
             }
         },
         {
@@ -378,25 +378,25 @@
             "names": 1000,
             "dialect": "postgres",
             "seconds": 15,
-            "completed": 300,
-            "latencyP50Ms": 11,
-            "latencyP99Ms": 31,
-            "statements": 5097,
+            "completed": 301,
+            "latencyP50Ms": 5,
+            "latencyP99Ms": 35,
+            "statements": 5103,
             "connections": 10,
             "worker": {
-                "instructions": 1698650922,
-                "cycles": 2011400343,
-                "cpuSeconds": 0.9700000000000001
+                "instructions": 1654031180,
+                "cycles": 1038074501,
+                "cpuSeconds": 0.5900000000000001
             },
             "producer": {
-                "instructions": 372333009,
-                "cycles": 1454601965,
-                "cpuSeconds": 0.74
+                "instructions": 344040097,
+                "cycles": 885880956,
+                "cpuSeconds": 0.69
             },
             "db": {
-                "instructions": 6239685595,
-                "cycles": 5173946927,
-                "cpuSeconds": 2.4800000000000004
+                "instructions": 6234961067,
+                "cycles": 3594701073,
+                "cpuSeconds": 1.96
             }
         },
         {
@@ -411,14 +411,14 @@
             "statements": 38,
             "connections": 6,
             "worker": {
-                "instructions": 48410852,
-                "cycles": 133530831,
-                "cpuSeconds": 0.07
+                "instructions": 44820355,
+                "cycles": 69255504,
+                "cpuSeconds": 0.06
             },
             "db": {
-                "instructions": 66079012,
-                "cycles": 81319364,
-                "cpuSeconds": 0.039999999999999994
+                "instructions": 64019731,
+                "cycles": 50413668,
+                "cpuSeconds": 0.04000000000000001
             }
         },
         {
@@ -433,14 +433,14 @@
             "statements": 3044,
             "connections": 6,
             "worker": {
-                "instructions": 1096099119,
-                "cycles": 709532499,
-                "cpuSeconds": 0.29999999999999993
+                "instructions": 1181038208,
+                "cycles": 638635428,
+                "cpuSeconds": 0.31999999999999995
             },
             "db": {
-                "instructions": 4018207921,
-                "cycles": 1809935446,
-                "cpuSeconds": 0.7300000000000001
+                "instructions": 4006727475,
+                "cycles": 1660321142,
+                "cpuSeconds": 0.76
             }
         },
         {
@@ -449,20 +449,116 @@
             "names": 1000,
             "dialect": "postgres",
             "completed": 10000,
-            "drainMs": 45181,
+            "drainMs": 45133,
             "worker": {
-                "instructions": 12085616533,
-                "cycles": 8204343560,
-                "cpuSeconds": 3.18,
+                "instructions": 11710669566,
+                "cycles": 6713305994,
+                "cpuSeconds": 2.73,
                 "byCommand": {
-                    "node": [12085616533, 8204343560, 3.18]
+                    "node": [11710669566, 6713305994, 2.73]
                 }
             },
             "db": {
-                "instructions": 36393602969,
-                "cycles": 15971048664,
-                "cpuSeconds": 5.709999999999999
+                "instructions": 35675758857,
+                "cycles": 14700324394,
+                "cpuSeconds": 5.14
             }
+        },
+        {
+            "library": "pg-boss",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 300,
+            "latencyP50Ms": 5,
+            "latencyP99Ms": 36,
+            "statements": 5096,
+            "connections": 10,
+            "worker": {
+                "instructions": 1624375623,
+                "cycles": 1064078948,
+                "cpuSeconds": 0.5900000000000001
+            },
+            "producer": {
+                "instructions": 346477464,
+                "cycles": 955073359,
+                "cpuSeconds": 0.71
+            },
+            "db": {
+                "instructions": 6136670092,
+                "cycles": 3613608429,
+                "cpuSeconds": 2.0600000000000005
+            },
+            "variant": "tuned"
+        },
+        {
+            "library": "pg-boss",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 38,
+            "connections": 6,
+            "worker": {
+                "instructions": 44409303,
+                "cycles": 69635302,
+                "cpuSeconds": 0.06
+            },
+            "db": {
+                "instructions": 56299325,
+                "cycles": 50085457,
+                "cpuSeconds": 0.03
+            },
+            "variant": "tuned"
+        },
+        {
+            "library": "pg-boss",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 3044,
+            "connections": 6,
+            "worker": {
+                "instructions": 1101496797,
+                "cycles": 604690138,
+                "cpuSeconds": 0.31000000000000005
+            },
+            "db": {
+                "instructions": 4002164316,
+                "cycles": 1678569121,
+                "cpuSeconds": 0.76
+            },
+            "variant": "tuned"
+        },
+        {
+            "library": "pg-boss",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 410,
+            "worker": {
+                "instructions": 4304887114,
+                "cycles": 2007106422,
+                "cpuSeconds": 0.65,
+                "byCommand": {
+                    "node": [4304887114, 2007106422, 0.65]
+                }
+            },
+            "db": {
+                "instructions": 10727480585,
+                "cycles": 4081460337,
+                "cpuSeconds": 1.35
+            },
+            "variant": "tuned"
         },
         {
             "library": "graphile-worker",
@@ -470,25 +566,25 @@
             "names": 1000,
             "dialect": "postgres",
             "seconds": 15,
-            "completed": 300,
-            "latencyP50Ms": 9,
-            "latencyP99Ms": 23,
-            "statements": 2121,
+            "completed": 301,
+            "latencyP50Ms": 4,
+            "latencyP99Ms": 8,
+            "statements": 2122,
             "connections": 7,
             "worker": {
-                "instructions": 1684410209,
-                "cycles": 1679632410,
-                "cpuSeconds": 0.8899999999999999
+                "instructions": 1651411764,
+                "cycles": 602402318,
+                "cpuSeconds": 0.4799999999999999
             },
             "producer": {
-                "instructions": 303799276,
-                "cycles": 1219731178,
-                "cpuSeconds": 0.6500000000000001
+                "instructions": 279607036,
+                "cycles": 718927866,
+                "cpuSeconds": 0.5700000000000001
             },
             "db": {
-                "instructions": 1387788465,
-                "cycles": 2824610564,
-                "cpuSeconds": 1.47
+                "instructions": 1338219436,
+                "cycles": 1580871074,
+                "cpuSeconds": 1.12
             }
         },
         {
@@ -500,17 +596,17 @@
             "completed": 0,
             "latencyP50Ms": null,
             "latencyP99Ms": null,
-            "statements": 25,
+            "statements": 24,
             "connections": 5,
             "worker": {
-                "instructions": 27951889,
-                "cycles": 59747703,
-                "cpuSeconds": 0.04000000000000001
+                "instructions": 26185336,
+                "cycles": 31641354,
+                "cpuSeconds": 0.01999999999999999
             },
             "db": {
-                "instructions": 15023549,
-                "cycles": 33432505,
-                "cpuSeconds": 0.010000000000000002
+                "instructions": 13052268,
+                "cycles": 19386395,
+                "cpuSeconds": 0.02
             }
         },
         {
@@ -525,14 +621,14 @@
             "statements": 24,
             "connections": 5,
             "worker": {
-                "instructions": 76070205,
-                "cycles": 60401466,
-                "cpuSeconds": 0.04000000000000001
+                "instructions": 72690544,
+                "cycles": 42324604,
+                "cpuSeconds": 0.03
             },
             "db": {
-                "instructions": 28416498,
-                "cycles": 31844048,
-                "cpuSeconds": 0.010000000000000002
+                "instructions": 29571193,
+                "cycles": 22597839,
+                "cpuSeconds": 0.02
             }
         },
         {
@@ -541,19 +637,19 @@
             "names": 1000,
             "dialect": "postgres",
             "completed": 10000,
-            "drainMs": 2125,
+            "drainMs": 1826,
             "worker": {
-                "instructions": 26374315706,
-                "cycles": 7151817682,
-                "cpuSeconds": 2.35,
+                "instructions": 26261653792,
+                "cycles": 6547580795,
+                "cpuSeconds": 2.11,
                 "byCommand": {
-                    "node": [26374315706, 7151817682, 2.35]
+                    "node": [26261653792, 6547580795, 2.11]
                 }
             },
             "db": {
-                "instructions": 33531411389,
-                "cycles": 11116049580,
-                "cpuSeconds": 3.68
+                "instructions": 33328287867,
+                "cycles": 9647181775,
+                "cpuSeconds": 3.17
             }
         },
         {
@@ -562,25 +658,25 @@
             "names": 1000,
             "dialect": "postgres",
             "seconds": 15,
-            "completed": 299,
-            "latencyP50Ms": 56,
-            "latencyP99Ms": 118,
-            "statements": 1578,
+            "completed": 300,
+            "latencyP50Ms": 57,
+            "latencyP99Ms": 110,
+            "statements": 1575,
             "connections": 7,
             "worker": {
-                "instructions": 576738024,
-                "cycles": 931684326,
-                "cpuSeconds": 0.51
+                "instructions": 558791383,
+                "cycles": 584234775,
+                "cpuSeconds": 0.43
             },
             "producer": {
-                "instructions": 490475443,
-                "cycles": 1398612941,
-                "cpuSeconds": 0.7500000000000001
+                "instructions": 471146730,
+                "cycles": 998295256,
+                "cpuSeconds": 0.79
             },
             "db": {
-                "instructions": 2416536762,
-                "cycles": 2264464824,
-                "cpuSeconds": 1.24
+                "instructions": 2497472998,
+                "cycles": 2035104947,
+                "cpuSeconds": 1.3699999999999999
             }
         },
         {
@@ -595,14 +691,14 @@
             "statements": 32,
             "connections": 5,
             "worker": {
-                "instructions": 59421119,
-                "cycles": 118267392,
-                "cpuSeconds": 0.06
+                "instructions": 56853791,
+                "cycles": 115999235,
+                "cpuSeconds": 0.09000000000000002
             },
             "db": {
-                "instructions": 27650029,
-                "cycles": 41080388,
-                "cpuSeconds": 0.030000000000000002
+                "instructions": 25393084,
+                "cycles": 43034491,
+                "cpuSeconds": 0.039999999999999994
             }
         },
         {
@@ -617,14 +713,14 @@
             "statements": 32,
             "connections": 5,
             "worker": {
-                "instructions": 61757626,
-                "cycles": 135761291,
-                "cpuSeconds": 0.07
+                "instructions": 57833739,
+                "cycles": 134754066,
+                "cpuSeconds": 0.09000000000000002
             },
             "db": {
-                "instructions": 30043139,
-                "cycles": 43994638,
-                "cpuSeconds": 0.020000000000000004
+                "instructions": 25037278,
+                "cycles": 44364861,
+                "cpuSeconds": 0.039999999999999994
             }
         },
         {
@@ -633,19 +729,19 @@
             "names": 1000,
             "dialect": "postgres",
             "completed": 10000,
-            "drainMs": 127374,
+            "drainMs": 126400,
             "worker": {
-                "instructions": 10163122438,
-                "cycles": 14079304104,
-                "cpuSeconds": 7.89,
+                "instructions": 10103508979,
+                "cycles": 9358128622,
+                "cpuSeconds": 6.99,
                 "byCommand": {
-                    "node": [10163122438, 14079304104, 7.89]
+                    "node": [10103508979, 9358128622, 6.99]
                 }
             },
             "db": {
-                "instructions": 58631885768,
-                "cycles": 25324189653,
-                "cpuSeconds": 14.84
+                "instructions": 50376613913,
+                "cycles": 22246409100,
+                "cpuSeconds": 15.21
             }
         },
         {
@@ -655,22 +751,22 @@
             "dialect": "mysql",
             "seconds": 15,
             "completed": 300,
-            "latencyP50Ms": 7,
-            "latencyP99Ms": 57,
+            "latencyP50Ms": 9,
+            "latencyP99Ms": 37,
             "worker": {
-                "instructions": 990997940,
-                "cycles": 1743030735,
-                "cpuSeconds": 0.98
+                "instructions": 952391497,
+                "cycles": 1281489598,
+                "cpuSeconds": 0.8800000000000001
             },
             "producer": {
-                "instructions": 481761213,
-                "cycles": 1187903293,
-                "cpuSeconds": 0.7
+                "instructions": 487352082,
+                "cycles": 1244538658,
+                "cpuSeconds": 0.8900000000000001
             },
             "db": {
-                "instructions": 2902236820,
-                "cycles": 3864709839,
-                "cpuSeconds": 2.22
+                "instructions": 2916007066,
+                "cycles": 3201588135,
+                "cpuSeconds": 2.2600000000000002
             }
         },
         {
@@ -680,23 +776,119 @@
             "dialect": "mariadb",
             "seconds": 15,
             "completed": 300,
-            "latencyP50Ms": 34,
-            "latencyP99Ms": 50,
+            "latencyP50Ms": 36,
+            "latencyP99Ms": 45,
             "worker": {
-                "instructions": 977062383,
-                "cycles": 2303139822,
-                "cpuSeconds": 1.2999999999999998
+                "instructions": 980910482,
+                "cycles": 1797869763,
+                "cpuSeconds": 1.2000000000000002
             },
             "producer": {
-                "instructions": 487711021,
-                "cycles": 1456895866,
-                "cpuSeconds": 0.81
+                "instructions": 494441251,
+                "cycles": 1340796338,
+                "cpuSeconds": 0.8600000000000001
             },
             "db": {
-                "instructions": 1687341233,
-                "cycles": 3449512326,
-                "cpuSeconds": 1.9400000000000002
+                "instructions": 1693183857,
+                "cycles": 2739164081,
+                "cpuSeconds": 1.7600000000000002
             }
+        },
+        {
+            "library": "river",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 300,
+            "latencyP50Ms": 5,
+            "latencyP99Ms": 10,
+            "statements": 2003,
+            "connections": 7,
+            "worker": {
+                "instructions": 687483584,
+                "cycles": 760043412,
+                "cpuSeconds": 0.54
+            },
+            "producer": {
+                "instructions": 567256466,
+                "cycles": 919762644,
+                "cpuSeconds": 0.62
+            },
+            "db": {
+                "instructions": 3110984711,
+                "cycles": 1948825574,
+                "cpuSeconds": 1.37
+            },
+            "variant": "tuned"
+        },
+        {
+            "library": "river",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 32,
+            "connections": 5,
+            "worker": {
+                "instructions": 55902773,
+                "cycles": 114346406,
+                "cpuSeconds": 0.07999999999999999
+            },
+            "db": {
+                "instructions": 26796500,
+                "cycles": 39863169,
+                "cpuSeconds": 0.030000000000000002
+            },
+            "variant": "tuned"
+        },
+        {
+            "library": "river",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 32,
+            "connections": 5,
+            "worker": {
+                "instructions": 56893540,
+                "cycles": 125688110,
+                "cpuSeconds": 0.08000000000000002
+            },
+            "db": {
+                "instructions": 24442436,
+                "cycles": 41067873,
+                "cpuSeconds": 0.039999999999999994
+            },
+            "variant": "tuned"
+        },
+        {
+            "library": "river",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 2313,
+            "worker": {
+                "instructions": 8255258325,
+                "cycles": 3150686549,
+                "cpuSeconds": 1.04,
+                "byCommand": {
+                    "node": [8255258325, 3150686549, 1.04]
+                }
+            },
+            "db": {
+                "instructions": 8049607260,
+                "cycles": 2848448666,
+                "cpuSeconds": 0.9299999999999999
+            },
+            "variant": "tuned"
         }
     ]
 }
