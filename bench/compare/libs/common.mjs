@@ -25,12 +25,17 @@ export class UnsupportedError extends Error {
  * @property {(name: string, payload: any, signal?: AbortSignal) => Promise<void>} handler
  * @property {number} [concurrency] Default 4.
  * @property {boolean} [stall] The shortest recovery of the jobs of a dead worker that the library allows.
+ * @property {number} [pollIntervalMs] How often an idle worker polls. Default 500 ms; the library's wakes still run.
+ * @property {'mysql' | 'mariadb'} [dialect] sqlane only: the server of a mysql:// URL. Default: mysql.
+ * @property {'setup' | 'worker' | 'producer'} [role] For the performance runs: setup creates what the names need; a
+ *     producer only enqueues, and runs no background work if the library allows. Default: all of them.
  */
 
 /**
  * @typedef {object} Queue
  * @property {(name: string, payload: Record<string, any>, options?: { delayMs?: number, priority?: 'high' | 'low',
- *     client?: import('pg').Client }) => Promise<void>} enqueue client: in the caller's open transaction on it.
+ *     client?: any }) => Promise<void>} enqueue client: a pg Client or a mysql2 connection, in the caller's open
+ *     transaction.
  * @property {() => Promise<void>} start
  * @property {() => Promise<void>} stop
  * @property {string[]} notes How the adapter maps an option to the library: the check reports them.

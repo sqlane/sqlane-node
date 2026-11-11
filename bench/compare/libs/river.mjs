@@ -11,7 +11,7 @@ const { version } = JSON.parse(readFileSync(new URL('../node_modules/riverqueue/
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
-    async open({ url, names, handler, concurrency = 4, stall = false }) {
+    async open({ url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, role }) {
         /** @type {string[]} */
         const notes = [];
 
@@ -19,7 +19,8 @@ export const adapter = {
             throw new UnsupportedError('no exclusion of jobs by resource (concurrency limits by argument are River Pro, Go only)');
         }
 
-        const pool = new Pool({ connectionString: url, max: 5 });
+        // No idle timeout: a closed connection takes its CPU counters with it (see docs/cpu-cost.md, pitfall 5)
+        const pool = new Pool({ connectionString: url, max: 5, idleTimeoutMillis: 0 });
 
         pool.on('error', () => {});
 
@@ -46,13 +47,18 @@ export const adapter = {
             notes.push('job timeout 2 s, `rescueAfter: 3 s`, rescuer every 1 s (default: rescue after 1 hour)');
         }
 
-        const client = new Client(driver, {
-            queues: { default: { maxWorkers: concurrency, pollInterval: { milliseconds: 500 } } },
+        const workerOptions = {
+            queues: { default: { maxWorkers: concurrency, pollInterval: { milliseconds: pollIntervalMs } } },
             workers,
+        };
+        // A producer: an insert-only client, without queues and workers
+        const client = new Client(driver, {
+            ...role !== 'producer' && workerOptions,
             logger: false,
             ...stall && { jobTimeout: { seconds: 2 } },
             maintenance: {
-                schedulerInterval: { milliseconds: 500 },
+                // The checks: scheduled jobs and retries become available within 0.5 s (default: 1 s)
+                ...role === undefined && { schedulerInterval: { milliseconds: 500 } },
                 ...stall && { rescueAfter: { seconds: 3 }, rescuerInterval: { seconds: 1 } },
             },
         });

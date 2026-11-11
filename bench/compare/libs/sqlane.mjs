@@ -1,23 +1,72 @@
 // sqlane, from this checkout: the pg adapter, LISTEN/NOTIFY wakes.
+import { createSocket } from 'node:dgram';
 import { readFileSync } from 'node:fs';
+import { createPool } from 'mysql2/promise';
 import { Pool } from 'pg';
+import { mysql2Adapter } from '../../../src/adapters/mysql2.js';
 import { pgAdapter } from '../../../src/adapters/pg.js';
 import { createSqlane, defineJob } from '../../../src/index.js';
 import { UnsupportedError } from './common.mjs';
+
+/** The UDP port of the hints on MySQL and MariaDB: one run at a time */
+const HINT_PORT = 41_301;
+
+/**
+ * Hints over UDP on localhost: they stand in for the Redis pub/sub that sqlane recommends on MySQL and MariaDB, which
+ * have no NOTIFY (as bench/cpu/app.js).
+ * @type {import('../../../src/types.js').Hint}
+ */
+const UDP_HINT = {
+    publish: async (channel, message) => {
+        const socket = createSocket('udp4');
+
+        await new Promise((resolve) => {
+            socket.send(`${channel}\n${message}`, HINT_PORT, '127.0.0.1', () => resolve(undefined));
+        });
+        socket.close();
+    },
+    subscribe: async (channel, onMessage) => {
+        const socket = createSocket('udp4');
+
+        socket.on('message', (buffer) => {
+            const [messageChannel, message] = buffer.toString().split('\n');
+
+            if (messageChannel === channel) {
+                onMessage(message);
+            }
+        });
+        await new Promise((resolve) => {
+            socket.bind(HINT_PORT, '127.0.0.1', () => resolve(undefined));
+        });
+
+        return async () => {
+            socket.close();
+        };
+    },
+};
 
 const { version } = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
 
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
-    async open({ url, names, handler, concurrency = 4, stall = false }) {
-        const pool = new Pool({ connectionString: url, max: 5 });
+    async open({ url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, dialect = 'mysql' }) {
+        const mysql = url.startsWith('mysql:');
+        // MySQL and MariaDB: the pool of mysql2 (from the root package). No idle timeout: a closed connection takes its
+        // CPU counters with it (see docs/cpu-cost.md, pitfall 5)
+        const pool = mysql
+            ? createPool({ uri: url, connectionLimit: 5 })
+            : new Pool({ connectionString: url, max: 5, idleTimeoutMillis: 0 });
         /** @type {string[]} */
         const notes = [];
         const sqlane = createSqlane({
-            adapter: pgAdapter(pool, { notify: true }),
+            // One adapter type for both: the connections are the caller's (any)
+            adapter: /** @type {import('../../../src/types.js').Adapter<any>} */ (mysql
+                ? mysql2Adapter(/** @type {import('mysql2/promise').Pool} */ (pool), { dialect })
+                : pgAdapter(/** @type {Pool} */ (pool), { notify: true })),
+            ...mysql && { hint: UDP_HINT },
             concurrency,
-            pollInterval: '1s',
+            pollInterval: pollIntervalMs,
             // A lease of 4 minutes: no public option shortens it
             ...stall && { timings: { leaseMs: 3000, renewIntervalMs: 1000, recoveryIntervalMs: 1000 } },
         });
