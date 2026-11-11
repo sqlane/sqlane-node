@@ -2,10 +2,14 @@ import { expect, test } from 'vitest';
 import { ConfigError } from './errors.js';
 import { getMigrations } from './migrations.js';
 
-test.each(['mysql', 'mariadb', 'postgres'])('%s: the migrations use the table prefix', (dialect) => {
+test.each([
+    { dialect: 'mysql', ids: ['0001_initial'] },
+    { dialect: 'mariadb', ids: ['0001_initial'] },
+    { dialect: 'postgres', ids: ['0001_initial', '0002_pending_order'] },
+])('$dialect: the migrations use the table prefix', ({ dialect, ids }) => {
     const migrations = getMigrations({ dialect: /** @type {import('./types.js').Dialect} */ (dialect), tablePrefix: 'q_' });
 
-    expect(migrations.map(({ id }) => id)).toStrictEqual(['0001_initial']);
+    expect(migrations.map(({ id }) => id)).toStrictEqual(ids);
     expect(migrations[0].statements.join('\n')).toMatch(/CREATE TABLE IF NOT EXISTS q_jobs /);
     expect(migrations[0].statements.join('\n')).not.toMatch(/sqlane_/);
 });

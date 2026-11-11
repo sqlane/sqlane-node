@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from 'vitest';
+import { afterAll, beforeAll, expect, inject, test } from 'vitest';
 import { createSqlane, getMigrations, MigrationLockTimeoutError } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
@@ -14,6 +14,9 @@ const LOCK_SQL = {
     mysql: { lock: 'SELECT GET_LOCK(?, 0)', unlock: 'SELECT RELEASE_LOCK(?)' },
     postgres: { lock: 'SELECT pg_advisory_lock(hashtext($1))', unlock: 'SELECT pg_advisory_unlock(hashtext($1))' },
 };
+
+/** The migrations of the dialect, in order */
+const ALL_MIGRATIONS = inject('databaseDialect') === 'postgres' ? ['0001_initial', '0002_pending_order'] : ['0001_initial'];
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
@@ -71,7 +74,7 @@ test('applies the migrations once', async () => {
     const tablePrefix = nextPrefix();
     const sqlane = sqlaneOf(tablePrefix);
 
-    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: ['0001_initial'] });
+    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
     await expect(listTables(tablePrefix)).resolves.toStrictEqual(
         ['jobs', 'migrations', 'mutexes', 'payloads'].map(table => `${tablePrefix}${table}`),
     );
@@ -82,7 +85,7 @@ test('concurrent migrations apply each version once', async () => {
     const tablePrefix = nextPrefix();
     const results = await Promise.all([sqlaneOf(tablePrefix).migrate(), sqlaneOf(tablePrefix).migrate()]);
 
-    expect(results.flatMap(result => result.applied)).toStrictEqual(['0001_initial']);
+    expect(results.flatMap(result => result.applied)).toStrictEqual(ALL_MIGRATIONS);
 });
 
 test('ids are case-sensitive', async () => {
@@ -108,7 +111,8 @@ test('waits for the migration lock up to lockTimeout', async () => {
         await database.query(unlock, [lockName]);
     }
 
-    await expect(sqlaneOf(tablePrefix).migrate({ lockTimeout: '1s' })).resolves.toStrictEqual({ applied: ['0001_initial'] });
+    await expect(sqlaneOf(tablePrefix).migrate({ lockTimeout: '1s' }))
+        .resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
 });
 
 test('getMigrations gives the statements that migrate() applies', async () => {
