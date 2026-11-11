@@ -11,9 +11,13 @@ export type Mysql2Queryable = import('mysql2/promise').Pool | import('mysql2/pro
 export declare function mysql2Executor(connection: Mysql2Queryable): import('../types.js').Executor;
 /**
  * @param {import('pg').Pool | import('pg').PoolClient | import('pg').Client} connection
+ * @param {{ prepare?: boolean }} [options] prepare: named prepared statements, parsed and planned once per connection.
+ *     Default: false.
  * @returns {import('../types.js').Executor}
  */
-export declare function pgExecutor(connection: import('pg').Pool | import('pg').PoolClient | import('pg').Client): import('../types.js').Executor;
+export declare function pgExecutor(connection: import('pg').Pool | import('pg').PoolClient | import('pg').Client, { prepare }?: {
+    prepare?: boolean;
+}): import('../types.js').Executor;
 export type MariadbConnection = {
     query: (options: object, values: unknown[], callback?: (error: Error | null, result: any) => void) => any;
 };

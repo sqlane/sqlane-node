@@ -201,7 +201,8 @@ this.
 import { pgAdapter } from '@sqlane/core/adapter-pg';
 ```
 
-The adapter supports pg (node-postgres) 8.13 and later. `pgAdapter(pool, { notify })` takes the queue's own `Pool`.
+The adapter supports pg (node-postgres) 8.13 and later. `pgAdapter(pool, { notify, prepare })` takes the queue's own
+`Pool`.
 
 `enqueue` accepts a `Client` or a `PoolClient` in a transaction, or a `Pool`.
 
@@ -238,6 +239,10 @@ the queue's pool for LISTEN, so give that pool at least 2 connections. Each enqu
 PostgreSQL drops the duplicate notifications of a transaction, so it delivers one notification per transaction and job
 name. NOTIFY takes a global lock at the commit, so under a heavy write load it can limit the commit rate of the whole
 database.
+
+**Prepared statements.** By default (`prepare: true`), sqlane runs its SQL as named prepared statements. Each
+connection parses and plans a statement once, and PostgreSQL then reuses a cached plan. A pooler in transaction mode
+without prepared statement support, such as PgBouncer before 1.21, cannot keep them: set `{ prepare: false }` there.
 
 ## postgres.js
 

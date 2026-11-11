@@ -5,6 +5,12 @@ export type PgAdapterOptions = {
      * Default: false.
      */
     notify?: boolean;
+    /**
+     * Named prepared statements: each SQL text is parsed and planned once per connection.
+     * Set false behind a pooler in transaction mode without prepared statement support (PgBouncer before 1.21).
+     * Default: true.
+     */
+    prepare?: boolean;
 };
 /**
  * The adapter for pg. `enqueue` then takes a `Client`, a `PoolClient` (in a transaction) or a `Pool`.

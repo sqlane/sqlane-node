@@ -1,4 +1,4 @@
-import { pgExecutor as toExecutor } from './executors.js';
+import { pgExecutor } from './executors.js';
 
 /** @typedef {import('pg').Pool | import('pg').PoolClient | import('pg').Client} PgConnection */
 
@@ -6,6 +6,9 @@ import { pgExecutor as toExecutor } from './executors.js';
  * @typedef {object} PgAdapterOptions
  * @property {boolean} [notify] Hints by LISTEN/NOTIFY: `pg_notify` in the enqueue transaction, delivered on commit.
  *     Default: false.
+ * @property {boolean} [prepare] Named prepared statements: each SQL text is parsed and planned once per connection.
+ *     Set false behind a pooler in transaction mode without prepared statement support (PgBouncer before 1.21).
+ *     Default: true.
  */
 
 /**
@@ -20,11 +23,12 @@ function isPool(connection) {
  * Runs func in a transaction of its own, on a client of the pool.
  * @template T
  * @param {import('pg').Pool} pool
+ * @param {(connection: PgConnection) => import('../types.js').Executor} toExecutor
  * @param {(executor: import('../types.js').Executor) => Promise<T>} func
  * @param {boolean} [readCommitted] Default: false: the isolation level of the session.
  * @returns {Promise<T>}
  */
-async function inOwnTransaction(pool, func, readCommitted = false) {
+async function inOwnTransaction(pool, toExecutor, func, readCommitted = false) {
     const client = await pool.connect();
 
     try {
@@ -124,6 +128,13 @@ async function listen(pool, channel, onMessage) {
  * @returns {import('../types.js').Adapter<PgConnection>}
  */
 export function pgAdapter(pool, options = {}) {
+    const prepare = options.prepare ?? true;
+    /**
+     * @param {PgConnection} connection
+     * @returns {import('../types.js').Executor}
+     */
+    const toExecutor = connection => pgExecutor(connection, { prepare });
+
     return {
         dialect: 'postgres',
         wrap: toExecutor,
@@ -137,9 +148,9 @@ export function pgAdapter(pool, options = {}) {
                 client.release();
             }
         },
-        queueTransaction: func => inOwnTransaction(pool, func, true),
+        queueTransaction: func => inOwnTransaction(pool, toExecutor, func, true),
         inTransaction: (connection, func) => (isPool(connection)
-            ? inOwnTransaction(connection, func)
+            ? inOwnTransaction(connection, toExecutor, func)
             : func(toExecutor(connection))),
         // A pool: the enqueue ran in a transaction of its own, committed when it returned
         afterCommit: (connection, onCommit) => {
