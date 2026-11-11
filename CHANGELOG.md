@@ -1,5 +1,11 @@
 # @sqlane/core
 
+## 3.0.1
+
+### Patch Changes
+
+- [#89](https://github.com/sqlane/sqlane-node/pull/89) [`4f6cf53`](https://github.com/sqlane/sqlane-node/commit/4f6cf535ed098afef833268a11bedad808305b39) - README and package description: lead with MySQL and MariaDB.
+
 ## 3.0.0
 
 ### Major Changes
