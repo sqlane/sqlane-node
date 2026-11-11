@@ -1,7 +1,7 @@
 # sqlane
 
-A transactional job queue for Node.js that stores its jobs in your own MySQL, MariaDB or PostgreSQL database. Its npm
-package is `@sqlane/core`.
+Transactional job queue for Node.js on MySQL, MariaDB and PostgreSQL. No Redis: your jobs live in your own database
+and commit with your data. Its npm package is `@sqlane/core`.
 
 [![npm](https://img.shields.io/npm/v/@sqlane/core)](https://www.npmjs.com/package/@sqlane/core)
 [![CI](https://github.com/sqlane/sqlane-node/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sqlane/sqlane-node/actions/workflows/ci.yml)
