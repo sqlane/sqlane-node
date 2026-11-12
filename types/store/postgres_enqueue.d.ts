@@ -1,4 +1,10 @@
 /**
+ * A job as the input of the insert: a row of `jsonb_to_recordset`. Shared with the insert of the schedules.
+ * @param {import('../new_job.js').NewJob} job
+ * @returns {Record<string, unknown>}
+ */
+export declare function toJobInput(job: import('../new_job.js').NewJob): Record<string, unknown>;
+/**
  * Inserts the jobs and their payloads. With a notify channel, a NOTIFY of the job name when it created a job, in the
  * same statement.
  * @param {import('../types.js').Executor} executor
