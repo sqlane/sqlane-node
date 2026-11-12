@@ -1,16 +1,12 @@
 // Enqueue on PostgreSQL: one statement, atomic even outside a transaction.
 
 /**
- * Inserts the jobs and their payloads. With a notify channel, a NOTIFY of the job name when it created a job, in the
- * same statement.
- * @param {import('../types.js').Executor} executor
- * @param {string} p The table prefix.
- * @param {import('../new_job.js').NewJob[]} jobs Their ids are distinct, of one name.
- * @param {{ enqueueToken: string, notifyChannel?: string | null }} options
- * @returns {Promise<Set<string>>} The ids that this call created.
+ * A job as the input of the insert: a row of `jsonb_to_recordset`. Shared with the insert of the schedules.
+ * @param {import('../new_job.js').NewJob} job
+ * @returns {Record<string, unknown>}
  */
-export async function insertJobsPostgres(executor, p, jobs, { enqueueToken, notifyChannel = null }) {
-    const input = jobs.map(job => ({
+export function toJobInput(job) {
+    return {
         id: job.id,
         job_name: job.name,
         payload: JSON.parse(job.payloadJson),
@@ -22,7 +18,20 @@ export async function insertJobsPostgres(executor, p, jobs, { enqueueToken, noti
         failure_job: job.failureJob,
         delay_ms: job.delayMs,
         run_at: job.runAt?.toISOString() ?? null,
-    }));
+    };
+}
+
+/**
+ * Inserts the jobs and their payloads. With a notify channel, a NOTIFY of the job name when it created a job, in the
+ * same statement.
+ * @param {import('../types.js').Executor} executor
+ * @param {string} p The table prefix.
+ * @param {import('../new_job.js').NewJob[]} jobs Their ids are distinct, of one name.
+ * @param {{ enqueueToken: string, notifyChannel?: string | null }} options
+ * @returns {Promise<Set<string>>} The ids that this call created.
+ */
+export async function insertJobsPostgres(executor, p, jobs, { enqueueToken, notifyChannel = null }) {
+    const input = jobs.map(toJobInput);
     const rows = await executor.query(`
         WITH input AS (
             SELECT * FROM jsonb_to_recordset($1::text::jsonb) AS r(
