@@ -1,6 +1,9 @@
-/** MySQL: deadlock, lock wait timeout. PostgreSQL: serialization failure, deadlock. Prisma: a conflict, a deadlock. */
-const TRANSIENT_CODES = new Set(['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT', '40001', '40P01', 'P2034']);
-const TRANSIENT_ERRNOS = new Set([1205, 1213]);
+/**
+ * MySQL: deadlock, lock wait timeout. MariaDB: a record changed since the read view (`innodb_snapshot_isolation`).
+ * PostgreSQL: serialization failure, deadlock. Prisma: a conflict, a deadlock.
+ */
+const TRANSIENT_CODES = new Set(['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT', 'ER_CHECKREAD', '40001', '40P01', 'P2034']);
+const TRANSIENT_ERRNOS = new Set([1020, 1205, 1213]);
 /** The kind of an error of a Prisma driver adapter */
 const TRANSIENT_KINDS = new Set(['TransactionWriteConflict']);
 /** PostgreSQL: undefined table. MySQL, MariaDB: no such table. Prisma: the table does not exist. */

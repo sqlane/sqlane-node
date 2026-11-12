@@ -304,7 +304,7 @@ export async function claim(executor, p, { candidateIds, lockToken, lockedBy, le
 /**
  * Finds, claims and reads the due jobs of names without mutex keys. Call it in a queue transaction. One statement
  * locks the oldest due jobs of each name that no other claim holds (SKIP LOCKED), with their payloads; the ones that
- * fit the free slots (`fitSlots`) are claimed.
+ * fit the free slots (`fitSlots`) are claimed. A second read gets the payloads that the statement did not see.
  * @param {Executor} executor
  * @param {string} p
  * @param {import('./store.js').ClaimDueParams} params
@@ -350,6 +350,19 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
         .toSorted((a, b) => a.runAtMs - b.runAtMs || (a.job.id < b.job.id ? -1 : 1));
     const idsWithKeys = new Set(locked.filter(row => row.hasKeys).map(row => row.job.id));
     const picked = fitSlots(locked.map(({ job }) => job), requests, laneFree, processMax);
+    // `OF j` leaves the payloads to a consistent read, from the read view of the statement's first one: a job whose
+    // enqueue committed later in the statement is locked without its payload. A new statement (READ COMMITTED) sees it
+    const unseen = picked.filter(job => !job.payload.found).map(job => job.id);
+
+    if (unseen.length) {
+        const payloads = await readPayloads(executor, p, unseen);
+
+        for (const job of picked) {
+            if (payloads.has(job.id)) {
+                job.payload = { found: true, payload: payloads.get(job.id) };
+            }
+        }
+    }
 
     if (picked.length) {
         await executor.query(`

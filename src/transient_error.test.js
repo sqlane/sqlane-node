@@ -4,6 +4,12 @@ import { isConnectionError, isMissingTableError, isTransientDbError } from './tr
 test.each([
     ['a MySQL deadlock', { code: 'ER_LOCK_DEADLOCK', errno: 1213 }],
     ['a MySQL lock wait timeout', { errno: 1205 }],
+    ['a MariaDB record changed since the read view', { code: 'ER_CHECKREAD', errno: 1020 }],
+    ['a MariaDB record changed since the read view, by its errno', { errno: 1020 }],
+    ['a MariaDB record changed since the read view, through Prisma', {
+        code: 'P2010',
+        meta: { driverAdapterError: { cause: { originalCode: '1020' } } },
+    }],
     ['a PostgreSQL serialization failure', { code: '40001' }],
     ['a PostgreSQL deadlock', { code: '40P01' }],
     ['a deadlock as the cause', new Error('claim failed', { cause: { code: '40P01' } })],

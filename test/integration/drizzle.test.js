@@ -13,6 +13,7 @@ import { connectTestDatabase } from '../support/test_database.js';
 import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { drizzleAdapter } from '../../src/adapters/drizzle.js';
 import { createSqlane, defineJob } from '../../src/index.js';
+import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/adapters/drizzle.js').DrizzleConnection} DrizzleConnection */
 /** @typedef {import('../../src/types.js').Sqlane<DrizzleConnection, never>} Sqlane */
@@ -139,6 +140,11 @@ describe.each([
 
         return { sqlane, p, events };
     }
+
+    test('the queue transaction is READ COMMITTED', async () => {
+        await expect(readsAcrossCommit(drizzleAdapter(queueDb, mysqlFamilyOptions()), database))
+            .resolves.toStrictEqual([0, 1]);
+    });
 
     test('enqueue in a transaction: the job commits with it, and rolls back with it', async () => {
         const { sqlane, p } = await freshSqlane();

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, inject, test } from 'vitest';
 import { createSqlane, defineJob } from '../../src/index.js';
 import { probeSql } from '../../src/store/mysql_worker.js';
 import { createStore } from '../../src/store/store.js';
+import { readsAcrossCommit } from './helpers/isolation.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
 
@@ -259,6 +260,27 @@ function delaysByName(next) {
     return Object.fromEntries((next ?? []).map(row => [row.name, row.delayMs]));
 }
 
+/**
+ * @param {import('../../src/types.js').Executor} executor
+ * @param {() => Promise<unknown>} func Runs after the claim statement of claimDue on MySQL and MariaDB, before the next
+ *     one.
+ * @returns {import('../../src/types.js').Executor}
+ */
+function afterClaimStatement(executor, func) {
+    return {
+        ...executor,
+        query: async (sql, params) => {
+            const rows = await executor.query(sql, params);
+
+            if (sql.includes('SKIP LOCKED')) {
+                await func();
+            }
+
+            return rows;
+        },
+    };
+}
+
 describe('claimDue', () => {
     test('claims the oldest due jobs of each name, with their payloads, in one go', async () => {
         const { p, sqlane, store } = await freshTables();
@@ -395,6 +417,30 @@ describe('claimDue', () => {
 
         await expect(claimDue(store, { requests: [{ name: 'a', maxJobs: 1, lane: 0 }], laneFree: [1] }))
             .resolves.toMatchObject([{ id, payload: { found: false } }]);
+    });
+
+    test('the queue transaction is READ COMMITTED', async () => {
+        await expect(readsAcrossCommit(testAdapter.adapter, database)).resolves.toStrictEqual([0, 1]);
+    });
+
+    // The claim statement reads the payloads without a lock (MySQL: `FOR UPDATE OF j`; MariaDB: a subquery), from its
+    // first read view: an enqueue that commits later in the statement has its job locked, its payload not seen. Here it
+    // commits right after.
+    test.runIf(inject('databaseDialect') !== 'postgres')('mysql, mariadb: a payload that the claim statement did not see: read again', async () => {
+        const { p, sqlane } = await freshTables();
+        const { id } = await sqlane.enqueue(testAdapter.pool, 'a', { n: 1 }, { runAt: ago(5) });
+        const { adapter } = testAdapter;
+
+        await database.query(`DELETE FROM ${p}payloads`);
+
+        const store = createStore({
+            ...adapter,
+            queueTransaction: func => adapter.queueTransaction(executor => func(afterClaimStatement(executor, () =>
+                database.query(`INSERT INTO ${p}payloads (id, payload) VALUES (?, '{"n": 1}')`, [id])))),
+        }, p);
+
+        await expect(claimDue(store, { requests: [{ name: 'a', maxJobs: 1, lane: 0 }], laneFree: [1] }))
+            .resolves.toMatchObject([{ id, payload: { found: true, payload: { n: 1 } } }]);
     });
 });
 

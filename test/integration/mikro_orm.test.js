@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from '
 import { connectTestDatabase } from '../support/test_database.js';
 import { mikroOrmAdapter } from '../../src/adapters/mikro_orm.js';
 import { createSqlane, defineJob } from '../../src/index.js';
+import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any, never>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -132,6 +133,11 @@ describe.each([
 
         return { sqlane, p, events };
     }
+
+    test('the queue transaction is READ COMMITTED', async () => {
+        await expect(readsAcrossCommit(mikroOrmAdapter(queueOrm.em, { dialect }), database))
+            .resolves.toStrictEqual([0, 1]);
+    });
 
     test('enqueue with the EntityManager of a transaction: the job commits with it, and rolls back with it', async () => {
         const { sqlane, p } = await freshSqlane();

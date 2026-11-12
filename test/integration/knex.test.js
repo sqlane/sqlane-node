@@ -6,6 +6,7 @@ import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
 import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { knexAdapter } from '../../src/adapters/knex.js';
+import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<import('../../src/adapters/knex.js').KnexConnection, never>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -33,6 +34,8 @@ async function waitFor(condition) {
 const CLIENTS = { mysql: ['mysql2'], mariadb: ['mysql2', 'mariadb'], postgres: ['pg'] }[inject('databaseDialect')];
 
 describe.each(CLIENTS)('knex, client %s', (client) => {
+    // The mariadb client tells MariaDB; mysql2 needs the option
+    const adapterOptions = client === 'mariadb' ? undefined : mysqlFamilyOptions();
     /** @type {import('../support/test_database.js').TestDatabaseConnection} */
     let database;
     /** @type {import('knex').Knex} The app's knex */
@@ -106,6 +109,11 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         const { sqlane, p } = await freshSqlane();
 
         await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+    });
+
+    test('the queue transaction is READ COMMITTED', async () => {
+        await expect(readsAcrossCommit(knexAdapter(queueKnex, adapterOptions), database))
+            .resolves.toStrictEqual([0, 1]);
     });
 
     test('enqueue in a knex transaction: the job commits with it, and rolls back with it', async () => {
