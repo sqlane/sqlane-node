@@ -6,7 +6,7 @@ import { Pool } from 'pg';
 import { mysql2Adapter } from '../../../src/adapters/mysql2.js';
 import { pgAdapter } from '../../../src/adapters/pg.js';
 import { createSqlane, defineJob } from '../../../src/index.js';
-import { UnsupportedError } from './common.mjs';
+import { queryRows, scheduleKeys, UnsupportedError } from './common.mjs';
 
 /** The UDP port of the hints on MySQL and MariaDB: one run at a time */
 const HINT_PORT = 41_301;
@@ -50,7 +50,16 @@ const { version } = JSON.parse(readFileSync(new URL('../../../package.json', imp
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
-    async open({ url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, dialect = 'mysql' }) {
+    // The id of a slot's job: `<name>:schedule:<key>:<ISO>`
+    scheduledJobs: async url => ({
+        jobs: (await queryRows(url, String.raw`
+            SELECT split_part(id, ':', 3) AS key, substring(id FROM '^[^:]*:schedule:[^:]*:(.*)$') AS slot
+            FROM sqlane_jobs WHERE id LIKE '%:schedule:%'
+        `)).map(row => [row.key, row.slot]),
+    }),
+    async open({
+        url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, dialect = 'mysql', role, schedules,
+    }) {
         const mysql = url.startsWith('mysql:');
         // MySQL and MariaDB: the pool of mysql2 (from the root package). No idle timeout: a closed connection takes its
         // CPU counters with it (see docs/cpu-cost.md, pitfall 5)
@@ -96,7 +105,18 @@ export const adapter = {
             });
 
             definitions.set(name, definition);
-            sqlane.handle(definition, ({ job, payload, signal }) => handler(job.name, payload, signal));
+            sqlane.handle(definition, ({ job, payload, signal }) => (
+                handler(job.name, payload, signal, job.scheduledAt?.getTime())
+            ));
+        }
+
+        // Schedules in code, in each worker: no jitter, `missed: 'once'` (the defaults), UTC
+        if (schedules && role !== 'setup') {
+            const [definition] = definitions.values();
+
+            for (const key of scheduleKeys(schedules.count)) {
+                sqlane.schedule(definition, { cron: schedules.cron, key, payload: { s: key } });
+            }
         }
 
         return {

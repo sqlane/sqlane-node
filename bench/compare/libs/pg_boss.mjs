@@ -2,15 +2,58 @@
 /* oxlint-disable no-await-in-loop -- queues and workers are created one after the other */
 import { readFileSync } from 'node:fs';
 import { PgBoss } from 'pg-boss';
+import { queryRows, scheduleKeys } from './common.mjs';
 
 const { version } = JSON.parse(readFileSync(new URL('../node_modules/pg-boss/package.json', import.meta.url), 'utf8'));
 /** All the job names of an exclusion check share it: pg-boss groups jobs within a queue */
 const SHARED_QUEUE = 'shared';
 
+/**
+ * @param {string} slot pg-boss's slot: UTC wall time, `YYYY-MM-DD HH:MM:SS`
+ * @returns {string}
+ */
+const isoOf = slot => new Date(`${slot.replace(' ', 'T')}Z`).toISOString();
+
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
-    async open({ url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, role }) {
+    // Its jobs do not carry the slot. The cron pass files each occurrence as a job of its send-it queue, with the slot
+    // in the data; that job's handler sends the job. Completed jobs stay for days
+    scheduledJobs: async (url) => {
+        const jobs = await queryRows(url, `
+            SELECT data->>'s' AS key FROM pgboss.job WHERE name <> '__pgboss__send-it' AND data->>'s' IS NOT NULL
+        `);
+        const sendIts = await queryRows(url, `
+            SELECT data->>'key' AS key, data->>'slot' AS slot, state,
+                (extract(EPOCH FROM completed_on) * 1000)::float8 AS completed FROM pgboss.job
+            WHERE name = '__pgboss__send-it' ORDER BY data->>'slot'
+        `);
+        /** @type {Record<string, string[]>} */
+        const filed = {};
+        /** @type {Record<string, string[]>} */
+        const forwarded = {};
+
+        /** @type {number[]} */
+        const forwardedAt = [];
+
+        for (const { key, slot, state, completed } of sendIts) {
+            if (completed !== null) {
+                forwardedAt.push(completed);
+            }
+
+            (filed[key] ??= []).push(isoOf(slot));
+
+            // Active: its handler may have sent the job already
+            if (state === 'completed' || state === 'active') {
+                (forwarded[key] ??= []).push(isoOf(slot));
+            }
+        }
+
+        return { jobs: jobs.map(row => [row.key, null]), filed, forwarded, forwardedAt };
+    },
+    async open({
+        url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, role, schedules,
+    }) {
         /** @type {string[]} */
         const notes = [];
         /** @type {string[]} */
@@ -24,9 +67,12 @@ export const adapter = {
             ...poolOptions,
             // Its wakes, as the other libraries': off by default
             useListenNotify: true,
-            // A producer: no maintenance, no cron
-            ...role === 'producer' && { supervise: false, schedule: false },
+            // A producer, and the setup: no maintenance, no cron
+            ...(role === 'producer' || role === 'setup') && { supervise: false, schedule: false },
             ...stall && { monitorIntervalSeconds: 1, superviseIntervalSeconds: 1, maintenanceIntervalSeconds: 1 },
+            // Schedules: the worker that forwards the cron pass's occurrences as jobs, 50 per poll, polls every 1 s,
+            // the shortest that its scheduling documentation allows (default 5 s: at most 600 a minute per instance)
+            cronWorkerIntervalSeconds: 1,
         });
 
         boss.on('error', () => {});
@@ -66,6 +112,15 @@ export const adapter = {
             }
         }
 
+        // Schedules live in its tables: the setup stores them, as it creates the queues
+        if (schedules && createQueues) {
+            const [name] = Object.keys(names);
+
+            for (const key of scheduleKeys(schedules.count)) {
+                await boss.schedule(name, schedules.cron, { s: key }, { key, tz: 'UTC' });
+            }
+        }
+
         /** @type {string[]} */
         const workers = [];
         const queueNames = exclusive ? [SHARED_QUEUE] : Object.keys(names);
@@ -102,7 +157,8 @@ export const adapter = {
                         ...exclusive && { groupConcurrency: 1 },
                         ...batch,
                     }, async (jobs) => {
-                        await Promise.all(jobs.map(job => handler(job.data.name, job.data, job.signal)));
+                        // A scheduled job's data is the schedule's: no name
+                        await Promise.all(jobs.map(job => handler(job.data.name ?? job.name, job.data, job.signal)));
                     }));
                 }
             },

@@ -55,6 +55,19 @@ function run(library, workload) {
 }
 
 /**
+ * @param {string} library
+ * @param {number} processes
+ * @returns {any} the run of 1000 firing schedules of the library with that many worker processes
+ */
+function fireRun(library, processes) {
+    const found = results.perf.find((/** @type {any} */ r) => (
+        r.library === library && r.workload === 'cron-fire' && r.processes === processes
+    ));
+    if (!found) throw new Error(`no cron-fire run of ${library}`);
+    return found;
+}
+
+/**
  * @param {number[]} values
  * @returns {number} their sum
  */
@@ -94,7 +107,7 @@ function barShape({ x, y, w, fill, round }) {
 }
 
 /** The palette index of each series, so a series has one color in every chart */
-const SERIES = { Worker: 0, Producer: 1, Database: 2 };
+const SERIES = { Worker: 0, Workers: 0, Producer: 1, Database: 2 };
 
 /**
  * @param {{ title: string, subtitle: string, legend?: string[], unit: string,
@@ -188,6 +201,19 @@ const charts = {
             const r = run(id, 'idle');
             const v = millions(r.db.instructions) / r.seconds;
             return { label, parts: [v], value: `${fixed(v)} M/s` };
+        }),
+    },
+    'perf-cron': {
+        title: 'CPU instructions per fired job of a schedule, 3 workers',
+        subtitle: 'PostgreSQL 17, 1000 schedules due every minute, 3 worker processes, median of 3 runs. Lower is better.',
+        legend: ['Workers', 'Database'],
+        unit: 'M instr.',
+        rows: LIBS.map(({ id, label }) => {
+            const r = fireRun(id, 3);
+            // The CPU window holds one slot of each schedule per minute
+            const slots = (r.schedules * r.seconds) / 60;
+            const parts = [r.worker, r.db].map(p => millions(p.instructions) / slots);
+            return { label, parts, value: `${fixed(sum(parts))} M` };
         }),
     },
 };
