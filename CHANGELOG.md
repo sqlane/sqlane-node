@@ -1,5 +1,12 @@
 # @sqlane/core
 
+## 4.0.1
+
+### Patch Changes
+
+- [#93](https://github.com/sqlane/sqlane-node/pull/93) [`9fb7a41`](https://github.com/sqlane/sqlane-node/commit/9fb7a41f86ca0685d005d2b44387b0d2b02445f7) - README: the performance chart and its bullet compare sqlane with River and pg-boss at the throughput settings of their
+  documentation; Graphile Worker, River and pg-boss use 2.3–5.8× as many CPU instructions per job.
+
 ## 4.0.0
 
 ### Major Changes
