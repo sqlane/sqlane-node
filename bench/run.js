@@ -1,11 +1,21 @@
-// The benchmarks: `pnpm bench [--db <name>]… [--quick]`. Starts the databases in Docker (data on disk, default
-// config), runs the scenarios of each one after the other, prints the results as Markdown. Not in CI: the numbers
-// depend on the machine.
+// The benchmarks: `pnpm bench [--db <name>]… [--quick] [--schedules]`. Starts the databases in Docker (data on disk,
+// default config), runs the scenarios of each one after the other, prints the results as Markdown. Not in CI: the
+// numbers depend on the machine. `--schedules` runs the scenarios of the schedules instead (about 9 minutes per
+// database; `--quick`: about 3).
 import { availableParallelism, cpus, totalmem } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
 import { TEST_DATABASES } from '../test/support/databases.js';
-import { benchEnqueue, benchLatency, benchProbe, benchProcess, SIZES } from './scenarios.js';
+import {
+    benchEnqueue,
+    benchLatency,
+    benchProbe,
+    benchProcess,
+    benchScheduleBurst,
+    benchScheduleFire,
+    benchScheduleIdle,
+    SIZES,
+} from './scenarios.js';
 
 /** @typedef {import('./scenarios.js').BenchContext} BenchContext */
 
@@ -122,11 +132,107 @@ async function runScenarios(context) {
     return sections.join('\n');
 }
 
+/**
+ * The scenarios of the schedules.
+ * @param {BenchContext & { name: string }} context
+ * @param {boolean} quick
+ * @returns {Promise<string>} The results, in Markdown.
+ */
+async function runScheduleScenarios(context, quick) {
+    const sections = [];
+    const seconds = quick ? 30 : 60;
+    const idleModes = [
+        { label: 'No schedules', schedules: 0, options: { cron: '0 0 1 1 *' } },
+        { label: '1000 schedules, `0 0 1 1 *`', schedules: 1000, options: { cron: '0 0 1 1 *' } },
+        { label: '1000 schedules, `0 0 1 1 *`, `jitter: 1d`', schedules: 1000, options: { cron: '0 0 1 1 *', jitter: '1d' } },
+    ];
+    const idle = [];
+
+    for (const mode of idleModes) {
+        // oxlint-disable-next-line no-await-in-loop -- one scenario at a time
+        idle.push(await step(context, `schedules idle, ${mode.label}`, () => benchScheduleIdle(context, {
+            ...mode,
+            options: /** @type {import('../src/types.js').ScheduleOptions} */ (mode.options),
+            seconds,
+        })));
+    }
+
+    sections.push(
+        `Idle, 2 processes, ${seconds} s after start():\n`,
+        table(
+            ['Schedules', 'Statements on the schedules', 'Statements/min', 'CPU ms/min', 'Fires', 'Timer wakes'],
+            idle.map(row => [
+                row.label,
+                String(row.scheduleStatementsAfterStart),
+                rate(row.statementsPerMinute),
+                ms(row.cpuMsPerMinute),
+                String(row.fires),
+                String(row.wakes),
+            ]),
+        ),
+    );
+
+    const fires = [];
+
+    for (const schedules of [1, 100, 1000]) {
+        // oxlint-disable-next-line no-await-in-loop -- one scenario at a time
+        fires.push(await step(context, `schedules fire, ${schedules}`, () => benchScheduleFire(context, { schedules })));
+    }
+
+    sections.push(
+        '\nSlots due at once, 1 process:\n',
+        table(
+            ['Schedules', 'From the slot to the last job (ms)', 'Statements per slot'],
+            fires.map(row => [String(row.schedules), ms(row.ms), row.statementsPerSlot.toFixed(2)]),
+        ),
+    );
+
+    const minutes = quick ? 1.1 : 2.1;
+    const bursts = [];
+
+    for (const mode of [
+        { label: '`* * * * *`', options: { cron: '* * * * *' } },
+        { label: '`* * * * *`, `jitter: 1m`', options: { cron: '* * * * *', jitter: '1m' } },
+    ]) {
+        // oxlint-disable-next-line no-await-in-loop -- one scenario at a time
+        bursts.push(await step(context, `schedules burst, ${mode.label}`, () => benchScheduleBurst(context, {
+            ...mode,
+            options: /** @type {import('../src/types.js').ScheduleOptions} */ (mode.options),
+            minutes,
+        })));
+    }
+
+    sections.push(
+        `\nBurst: 1000 schedules on 1000 names, 4 processes (queue pool 3), a load of 50 jobs/s, ${minutes} min:\n`,
+        table(
+            [
+                'Schedules', 'Slots', 'Fires/min', 'Winner p50/p99 (ms)', 'Loser p50/p99 (ms)',
+                'Loser holds a connection p50/p99 (ms)', 'lease_lost',
+                'Claim p99 in the burst / outside (ms)', 'Future pending rows',
+            ],
+            bursts.map(row => [
+                row.label,
+                String(row.slots),
+                rate(row.fireTransactionsPerMinute),
+                `${ms(row.winnerMs.p50)} / ${ms(row.winnerMs.p99)}`,
+                `${ms(row.loserMs.p50)} / ${ms(row.loserMs.p99)}`,
+                `${ms(row.loserHeldMs.p50)} / ${ms(row.loserHeldMs.p99)}`,
+                String(row.leaseLost),
+                `${ms(row.claimDuring.p99)} / ${ms(row.claimOutside.p99)}`,
+                String(row.futurePendingRows),
+            ]),
+        ),
+    );
+
+    return sections.join('\n');
+}
+
 async function main() {
     const { values } = parseArgs({
         options: {
             db: { type: 'string', multiple: true, default: TEST_DATABASES.map(({ name }) => name) },
             quick: { type: 'boolean', default: false },
+            schedules: { type: 'boolean', default: false },
         },
     });
 
@@ -150,13 +256,17 @@ async function main() {
         for (const [index, database] of databases.entries()) {
             let prefixCount = 0;
             // oxlint-disable-next-line no-await-in-loop -- one database at a time
-            const results = await runScenarios({
+            const context = {
                 name: database.name,
                 dialect: database.dialect,
                 url: containers[index].getConnectionUri(),
                 nextPrefix: () => `bench${++prefixCount}_`,
                 sizes: values.quick ? SIZES.quick : SIZES.full,
-            });
+            };
+            // oxlint-disable-next-line no-await-in-loop -- one database at a time
+            const results = await (values.schedules
+                ? runScheduleScenarios(context, values.quick)
+                : runScenarios(context));
 
             console.log(`\n### ${database.name}\n\n${results}`);
         }

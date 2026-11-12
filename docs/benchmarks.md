@@ -226,10 +226,37 @@ Throughput (jobs/s):
 
 </details>
 
+## Schedules
+
+`pnpm bench --schedules` measures the [schedules](api.md#schedule). Same machine, databases in Docker:
+
+| Scenario                                                                      | MySQL 8.4 | MariaDB 10.11 | MariaDB 11.8 | PostgreSQL 15 | PostgreSQL 18 |
+| ----------------------------------------------------------------------------- | --------- | ------------- | ------------ | ------------- | ------------- |
+| Idle, 1000 schedules that do not fire: statements on the schedules per minute | 0         | 0             | 0            | 0             | 0             |
+| Idle: all statements per minute, 1000 schedules / none                        | 34 / 34   | 34 / 34       | 38 / 34      | 38 / 34       | 34 / 31       |
+| 1000 slots due at once, 1 process: from the slot to the last job (ms)         | 165       | 172           | 163          | 116           | 109           |
+| Statements per slot, 1000 slots due at once                                   | 0.05      | 0.05          | 0.05         | 0.03          | 0.03          |
+| Burst of 1000 slots, 4 processes: winner transaction p50 / p99 (ms)           | 20 / 35   | 13 / 50       | 16 / 28      | 11 / 30       | 10 / 23       |
+| Burst: loser transaction p50 / p99 (ms)                                       | 2.3 / 9.2 | 2.0 / 15      | 2.3 / 15     | 3.9 / 29      | 3.0 / 15      |
+| Burst, `jitter: '1m'`: loser transaction p50 / p99 (ms)                       | 2.7 / 19  | 2.4 / 7.0     | 2.3 / 6.2    | 3.1 / 10      | 2.6 / 6.7     |
+
+- **Idle schedules cost no statement.** Each process keeps one timer for the earliest slot of its schedules. While no
+  slot is due, 1000 schedules run no statement, and the probes per minute are those of the handled names.
+- **A burst is shared, never waited for.** 1000 slots at the same minute take about 10 transactions of 100 slots. A
+  process that finds a row locked by another process skips it (SKIP LOCKED): a loser's transaction takes 2–4 ms at the
+  median, the pool acquire included. From the connection on, a loser holds it 2.5 ms at the median and about 6 ms at p99
+  (PostgreSQL); a p99 above that is the wait for a connection of the queue pool during the burst. No lease was lost. In
+  the first 2 seconds of a burst the 1000 scheduled jobs compete with the other jobs for the handlers; with
+  `jitter: '1m'` the slots spread over the minute.
+- **Scenarios.** Idle: 2 processes, 1000 handled names, 60 s after `start()`, cron `0 0 1 1 *`. Fire: N `every: '10s'`
+  schedules in 1 process. Burst: 1000 `* * * * *` schedules on 1000 names over 4 processes with a queue pool of 3
+  each, while a producer enqueues 50 jobs/s that the same processes run, for 2 minutes.
+
 ## Method
 
 `pnpm bench` starts the databases in Docker and prints these tables in about 2.5 minutes. The option
-`--db postgres-18` runs only one database, and `--quick` runs fewer samples for a fast check. The time of each scenario
+`--db postgres-18` runs only one database, and `--quick` runs fewer samples for a fast check. `--schedules` runs the
+scenarios of the [schedules](#schedules) instead, in about 9 minutes per database. The time of each scenario
 goes to stderr. The benchmarks do not run in CI, because the numbers depend on the machine.
 
 The databases run from the official Docker images with their default configuration, with one exception: MariaDB gets

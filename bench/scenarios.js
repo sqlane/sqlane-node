@@ -407,3 +407,366 @@ export async function benchProcess({ dialect, url, nextPrefix, sizes }, { label,
         await Promise.all([producerPool, ...pools].map(pool => pool.end()));
     }
 }
+
+/**
+ * An adapter that counts the statements of the queue, and times the queue transactions that lock rows of the
+ * schedules.
+ * @param {import('../src/types.js').Adapter<any>} adapter
+ * @param {string} p
+ * @returns {{ adapter: import('../src/types.js').Adapter<any>, stats: ScheduleStatementStats }}
+ */
+function countingAdapter(adapter, p) {
+    /** @type {ScheduleStatementStats} */
+    const stats = { statements: 0, scheduleStatements: 0, fires: [] };
+    /**
+     * @param {import('../src/types.js').Executor} executor
+     * @param {{ jobs: boolean, schedules: boolean }} [marks] Set by the statements of a transaction.
+     * @returns {import('../src/types.js').Executor}
+     */
+    const counting = (executor, marks) => ({
+        query: (sql, params) => {
+            stats.statements++;
+
+            if (sql.includes(`${p}schedules`)) {
+                stats.scheduleStatements++;
+
+                if (marks) {
+                    marks.schedules = true;
+                }
+            }
+
+            if (marks && sql.includes(`INSERT INTO ${p}jobs`)) {
+                marks.jobs = true;
+            }
+
+            return executor.query(sql, params);
+        },
+        run: (sql, params) => {
+            stats.statements++;
+
+            return executor.run(sql, params);
+        },
+    });
+
+    return {
+        stats,
+        adapter: {
+            ...adapter,
+            queue: counting(adapter.queue),
+            withConnection: func => adapter.withConnection(executor => func(counting(executor))),
+            queueTransaction: async (func) => {
+                const marks = { jobs: false, schedules: false };
+                const startedAt = performance.now();
+                let heldFrom = 0;
+
+                try {
+                    // From the connection to the end: the time the transaction holds it, without the pool acquire
+                    return await adapter.queueTransaction((executor) => {
+                        heldFrom = performance.now();
+
+                        return func(counting(executor, marks));
+                    });
+                } finally {
+                    if (marks.schedules) {
+                        const endedAt = performance.now();
+
+                        stats.fires.push({ ms: endedAt - startedAt, heldMs: endedAt - heldFrom, won: marks.jobs });
+                    }
+                }
+            },
+        },
+    };
+}
+
+/**
+ * @typedef {object} ScheduleStatementStats
+ * @property {number} statements All the statements of the queue.
+ * @property {number} scheduleStatements The statements on the table of the schedules.
+ * @property {{ ms: number, heldMs: number, won: boolean }[]} fires The queue transactions on the schedules: `ms` with
+ *     the pool acquire, `heldMs` from the connection on; `won`, they inserted jobs.
+ */
+
+/**
+ * @typedef {object} ScheduleIdleResult
+ * @property {string} label
+ * @property {number} schedules
+ * @property {number} scheduleStatementsAfterStart On the table of the schedules, after start(): 0 when idle.
+ * @property {number} statementsPerMinute All the statements of the 2 processes.
+ * @property {number} cpuMsPerMinute Of this process (the 2 instances).
+ * @property {number} fires The fire transactions in the window (jitter: the slots that came).
+ * @property {number} wakes The wakes of the timers of the 2 instances in the window.
+ */
+
+/**
+ * 2 processes (instances) with N registered schedules that do not fire in the window, on N names: the statements and
+ * the CPU after start(), against N = 0.
+ * @param {BenchContext} context
+ * @param {{ label: string, schedules: number, options: import('../src/types.js').ScheduleOptions, seconds: number }}
+ *     mode
+ * @returns {Promise<ScheduleIdleResult>}
+ */
+export async function benchScheduleIdle({ dialect, url, nextPrefix }, { label, schedules, options, seconds }) {
+    const p = nextPrefix();
+    // 1000 handled names in each mode: only the schedules differ
+    const names = jobNames(1000);
+    const pools = [createBenchPool(dialect, url, 3), createBenchPool(dialect, url, 3)];
+    const counted = pools.map(pool => countingAdapter(pool.adapter(), p));
+    const wakes = { count: 0 };
+    const instances = counted.map(({ adapter }) => createSqlane(/** @type {any} */ ({
+        adapter,
+        tablePrefix: p,
+        // Undocumented, for the tests and benchmarks: counts the wakes of the timer of the schedules
+        timings: { schedules: { onWake: () => wakes.count++ } },
+    })));
+
+    try {
+        await instances[0].migrate();
+
+        for (const sqlane of instances) {
+            for (const name of names.slice(0, schedules)) {
+                sqlane.schedule(name, options);
+            }
+
+            // The worker side: the handled names are probed as without schedules
+            for (const name of names) {
+                sqlane.handle(name, () => {});
+            }
+        }
+
+        await Promise.all(instances.map(sqlane => sqlane.start()));
+
+        // The work of start() ends first: the fire of the due slots is not awaited by start()
+        await sleep(2000);
+
+        const before = counted.map(({ stats }) => ({ ...stats, fires: stats.fires.length }));
+        const wakesBefore = wakes.count;
+        const cpuBefore = process.cpuUsage();
+
+        await sleep(seconds * 1000);
+
+        const cpu = process.cpuUsage(cpuBefore);
+        const minutes = seconds / 60;
+        /**
+         * @param {(stats: ScheduleStatementStats, index: number) => number} value
+         * @returns {number} The sum over the 2 instances.
+         */
+        const sum = (value) => {
+            let total = 0;
+
+            for (const [index, { stats }] of counted.entries()) {
+                total += value(stats, index);
+            }
+
+            return total;
+        };
+
+        return {
+            label,
+            schedules,
+            scheduleStatementsAfterStart: sum((stats, index) => stats.scheduleStatements
+                - before[index].scheduleStatements),
+            statementsPerMinute: sum((stats, index) => stats.statements - before[index].statements) / minutes,
+            cpuMsPerMinute: ((cpu.user + cpu.system) / 1000) / minutes,
+            fires: sum((stats, index) => stats.fires.length - before[index].fires),
+            wakes: wakes.count - wakesBefore,
+        };
+    } finally {
+        await Promise.all(instances.map(sqlane => sqlane.close()));
+        await Promise.all(pools.map(pool => pool.end()));
+    }
+}
+
+/**
+ * @typedef {object} ScheduleFireResult
+ * @property {number} schedules
+ * @property {number} ms From the slot to the last decided slot, by the clock of the process.
+ * @property {number} statementsPerSlot The statements of the queue for the fire, per slot.
+ */
+
+/**
+ * N schedules due at the same instant, in 1 process: the time to enqueue all their slots, and the statements per slot.
+ * @param {BenchContext} context
+ * @param {{ schedules: number }} mode
+ * @returns {Promise<ScheduleFireResult>}
+ */
+export async function benchScheduleFire({ dialect, url, nextPrefix }, { schedules }) {
+    const p = nextPrefix();
+    const pool = createBenchPool(dialect, url, 3);
+    const { adapter, stats } = countingAdapter(pool.adapter(), p);
+    /** @type {number[]} */
+    const firedAt = [];
+    const sqlane = createSqlane({
+        adapter,
+        tablePrefix: p,
+        onEvent: (event) => {
+            if (event.type === 'schedule_fired') {
+                firedAt.push(Date.now());
+            }
+        },
+    });
+
+    try {
+        await sqlane.migrate();
+
+        for (const name of jobNames(schedules)) {
+            sqlane.schedule(name, { every: '10s' });
+        }
+
+        await sqlane.start();
+
+        // The first slot may come right after the registration: measure the second one
+        await sleep(10_000 - (Date.now() % 10_000) + 200);
+        await sleep(1000);
+
+        const slot = Math.floor(Date.now() / 10_000) * 10_000 + 10_000;
+        const statementsBefore = stats.statements;
+
+        firedAt.length = 0;
+        await sleep(slot - Date.now() + 5000);
+
+        return {
+            schedules,
+            ms: Math.max(...firedAt) - slot,
+            statementsPerSlot: (stats.statements - statementsBefore) / firedAt.length,
+        };
+    } finally {
+        await sqlane.close();
+        await pool.end();
+    }
+}
+
+/**
+ * @param {number} at
+ * @returns {boolean} Within 2 s after the start of a minute: a slot of the burst.
+ */
+function nearSlot(at) {
+    return at % 60_000 < 2000;
+}
+
+/**
+ * @typedef {object} ScheduleBurstResult
+ * @property {string} label
+ * @property {number} slots The slots enqueued in the window.
+ * @property {number} fireTransactionsPerMinute
+ * @property {Percentiles} winnerMs The fire transactions that inserted jobs.
+ * @property {Percentiles} loserMs The fire transactions that inserted none, with the pool acquire.
+ * @property {Percentiles} loserHeldMs The same, from the connection on: the time they hold it.
+ * @property {number} leaseLost
+ * @property {Percentiles} claimDuring From the commit to the start of the load jobs enqueued within 2 s after a slot.
+ * @property {Percentiles} claimOutside The other load jobs.
+ * @property {number} futurePendingRows The most pending rows of the schedules more than 1 s ahead, sampled.
+ */
+
+/**
+ * 1000 schedules at the same minute on 1000 names, across 4 processes with a queue pool of 3 each, while a producer
+ * enqueues a steady load that the 4 processes run: the fire transactions, the time losers hold a connection, and the
+ * claim latency of the load during the bursts and outside them.
+ * @param {BenchContext} context
+ * @param {{ label: string, options: import('../src/types.js').ScheduleOptions, minutes: number }} mode
+ * @returns {Promise<ScheduleBurstResult>}
+ */
+export async function benchScheduleBurst({ dialect, url, nextPrefix }, { label, options, minutes }) {
+    const p = nextPrefix();
+    const names = jobNames(1000);
+    const hint = memoryHint();
+    const pools = Array.from({ length: 4 }, () => createBenchPool(dialect, url, 3));
+    const counted = pools.map(pool => countingAdapter(pool.adapter({ notify: dialect === 'postgres' }), p));
+    const producerPool = createBenchPool(dialect, url, 4);
+    const producer = createSqlane({
+        adapter: producerPool.adapter({ notify: dialect === 'postgres' }),
+        tablePrefix: p,
+        hint: dialect === 'postgres' ? null : hint,
+    });
+    let leaseLost = 0;
+    let slots = 0;
+    /** @type {Map<string, number>} */
+    const committedAt = new Map();
+    /** @type {{ at: number, ms: number }[]} */
+    const latencies = [];
+    let futurePendingRows = 0;
+    const instances = counted.map(({ adapter }) => createSqlane({
+        adapter,
+        tablePrefix: p,
+        hint: dialect === 'postgres' ? null : hint,
+        onEvent: (event) => {
+            leaseLost += Number(event.type === 'lease_lost');
+            slots += Number(event.type === 'schedule_fired');
+        },
+    }));
+    const state = { running: true };
+
+    try {
+        await producer.migrate();
+
+        for (const sqlane of instances) {
+            for (const name of names) {
+                sqlane.schedule(name, options);
+                sqlane.handle(name, () => {});
+            }
+
+            sqlane.handle('load', ({ job }) => {
+                const at = committedAt.get(job.id);
+
+                if (at !== undefined) {
+                    latencies.push({ at, ms: Date.now() - at });
+                }
+            });
+        }
+
+        await Promise.all(instances.map(sqlane => sqlane.start()));
+
+        const startedAt = Date.now();
+        const firesBefore = counted.map(({ stats }) => stats.fires.length);
+        const load = (async () => {
+            while (state.running) {
+                // oxlint-disable-next-line no-await-in-loop -- a steady load: 50 jobs/s
+                await producerPool.transaction(async (connection) => {
+                    const { id } = await producer.enqueue(connection, 'load', {});
+
+                    committedAt.set(id, Date.now());
+                });
+                // oxlint-disable-next-line no-await-in-loop -- a steady load
+                await sleep(20);
+            }
+        })();
+        const sampler = (async () => {
+            const ahead = dialect === 'postgres'
+                ? `run_at > clock_timestamp() + interval '1 second'`
+                : 'run_at > UTC_TIMESTAMP(3) + INTERVAL 1 SECOND';
+
+            while (state.running) {
+                // oxlint-disable-next-line no-await-in-loop -- samples
+                const rows = await producerPool.raw.query(`SELECT COUNT(*) AS n FROM ${p}jobs
+                    WHERE status = 'pending' AND job_name <> 'load' AND ${ahead}`);
+                const count = Number((dialect === 'postgres' ? rows.rows : rows[0])[0].n);
+
+                futurePendingRows = Math.max(futurePendingRows, count);
+                // oxlint-disable-next-line no-await-in-loop -- samples
+                await sleep(1000);
+            }
+        })();
+
+        await sleep(minutes * 60_000);
+        state.running = false;
+        await Promise.all([load, sampler]);
+
+        const fires = counted.flatMap(({ stats }, index) => stats.fires.slice(firesBefore[index]));
+
+        return {
+            label,
+            slots,
+            fireTransactionsPerMinute: fires.length / ((Date.now() - startedAt) / 60_000),
+            winnerMs: percentiles(fires.filter(({ won }) => won).map(({ ms }) => ms)),
+            loserMs: percentiles(fires.filter(({ won }) => !won).map(({ ms }) => ms)),
+            loserHeldMs: percentiles(fires.filter(({ won }) => !won).map(({ heldMs }) => heldMs)),
+            leaseLost,
+            claimDuring: percentiles(latencies.filter(({ at }) => nearSlot(at)).map(({ ms }) => ms)),
+            claimOutside: percentiles(latencies.filter(({ at }) => !nearSlot(at)).map(({ ms }) => ms)),
+            futurePendingRows,
+        };
+    } finally {
+        state.running = false;
+        await Promise.all([producer, ...instances].map(sqlane => sqlane.close()));
+        await Promise.all([producerPool, ...pools].map(pool => pool.end()));
+    }
+}
