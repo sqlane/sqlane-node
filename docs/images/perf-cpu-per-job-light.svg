@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="720" height="322" viewBox="0 0 720 322" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="CPU instructions per job, steady load">
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="254" viewBox="0 0 720 254" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="CPU instructions per job, steady load">
 <title>CPU instructions per job, steady load</title>
 <text x="0" y="20" font-size="16" font-weight="600" fill="#1f2328">CPU instructions per job, steady load</text>
 <text x="0" y="42" font-size="13" fill="#59636e">PostgreSQL 17, 1000 job names, 20 jobs/s in transactions. Lower is better.</text>
@@ -8,15 +8,15 @@
 <text x="90" y="65" font-size="12" fill="#59636e">Producer</text>
 <rect x="164" y="56" width="10" height="10" rx="2" fill="#1baf7a"/>
 <text x="179" y="65" font-size="12" fill="#59636e">Database</text>
-<line x1="140.0" y1="80" x2="140.0" y2="288" stroke="#c3c2b7"/>
-<text x="140.0" y="306" font-size="11" fill="#59636e" text-anchor="middle">0</text>
-<line x1="283.3" y1="80" x2="283.3" y2="288" stroke="#e1e0d9"/>
-<text x="283.3" y="306" font-size="11" fill="#59636e" text-anchor="middle">10</text>
-<line x1="426.7" y1="80" x2="426.7" y2="288" stroke="#e1e0d9"/>
-<text x="426.7" y="306" font-size="11" fill="#59636e" text-anchor="middle">20</text>
-<line x1="570.0" y1="80" x2="570.0" y2="288" stroke="#e1e0d9"/>
-<text x="570.0" y="306" font-size="11" fill="#59636e" text-anchor="middle">30</text>
-<text x="592" y="306" font-size="11" fill="#59636e">M instr.</text>
+<line x1="140.0" y1="80" x2="140.0" y2="220" stroke="#c3c2b7"/>
+<text x="140.0" y="238" font-size="11" fill="#59636e" text-anchor="middle">0</text>
+<line x1="283.3" y1="80" x2="283.3" y2="220" stroke="#e1e0d9"/>
+<text x="283.3" y="238" font-size="11" fill="#59636e" text-anchor="middle">10</text>
+<line x1="426.7" y1="80" x2="426.7" y2="220" stroke="#e1e0d9"/>
+<text x="426.7" y="238" font-size="11" fill="#59636e" text-anchor="middle">20</text>
+<line x1="570.0" y1="80" x2="570.0" y2="220" stroke="#e1e0d9"/>
+<text x="570.0" y="238" font-size="11" fill="#59636e" text-anchor="middle">30</text>
+<text x="592" y="238" font-size="11" fill="#59636e">M instr.</text>
 <text x="132" y="105" font-size="13" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
 <rect x="140" y="92" width="16.3" height="18" fill="#2a78d6"/>
 <rect x="158.26697433666666" y="92" width="13.8" height="18" fill="#eb6834"/>
@@ -28,23 +28,13 @@
 <path d="M231.9532761904762,126H291.7A4,4 0 0 1 295.7,130V140A4,4 0 0 1 291.7,144H231.9532761904762Z" fill="#1baf7a"/>
 <text x="301.7" y="139" font-size="13" fill="#1f2328">10.9 M</text>
 <text x="132" y="173" font-size="13" fill="#1f2328" text-anchor="end">River</text>
-<rect x="140" y="160" width="24.7" height="18" fill="#2a78d6"/>
-<rect x="166.6978105211111" y="160" width="20.5" height="18" fill="#eb6834"/>
-<path d="M189.20815428777777,160H304.5A4,4 0 0 1 308.5,164V174A4,4 0 0 1 304.5,178H189.20815428777777Z" fill="#1baf7a"/>
-<text x="314.5" y="173" font-size="13" fill="#1f2328">11.8 M</text>
-<text x="132" y="207" font-size="13" fill="#1f2328" text-anchor="end">River, tuned</text>
-<rect x="140" y="194" width="30.8" height="18" fill="#2a78d6"/>
-<rect x="172.84643790222222" y="194" width="25.1" height="18" fill="#eb6834"/>
-<path d="M199.94869127777778,194H344.6A4,4 0 0 1 348.6,198V208A4,4 0 0 1 344.6,212H199.94869127777778Z" fill="#1baf7a"/>
-<text x="354.6" y="207" font-size="13" fill="#1f2328">14.6 M</text>
-<text x="132" y="241" font-size="13" fill="#1f2328" text-anchor="end">pg-boss</text>
-<rect x="140" y="228" width="76.8" height="18" fill="#2a78d6"/>
-<rect x="218.7633895238095" y="228" width="14.4" height="18" fill="#eb6834"/>
-<path d="M235.14625128571427,228H528.0A4,4 0 0 1 532.0,232V242A4,4 0 0 1 528.0,246H235.14625128571427Z" fill="#1baf7a"/>
-<text x="538.0" y="241" font-size="13" fill="#1f2328">27.4 M</text>
-<text x="132" y="275" font-size="13" fill="#1f2328" text-anchor="end">pg-boss, tuned</text>
-<rect x="140" y="262" width="75.6" height="18" fill="#2a78d6"/>
-<rect x="217.60905754333334" y="262" width="14.6" height="18" fill="#eb6834"/>
-<path d="M234.16298082333333,262H523.4A4,4 0 0 1 527.4,266V276A4,4 0 0 1 523.4,280H234.16298082333333Z" fill="#1baf7a"/>
-<text x="533.4" y="275" font-size="13" fill="#1f2328">27.0 M</text>
+<rect x="140" y="160" width="30.8" height="18" fill="#2a78d6"/>
+<rect x="172.84643790222222" y="160" width="25.1" height="18" fill="#eb6834"/>
+<path d="M199.94869127777778,160H344.6A4,4 0 0 1 348.6,164V174A4,4 0 0 1 344.6,178H199.94869127777778Z" fill="#1baf7a"/>
+<text x="354.6" y="173" font-size="13" fill="#1f2328">14.6 M</text>
+<text x="132" y="207" font-size="13" fill="#1f2328" text-anchor="end">pg-boss</text>
+<rect x="140" y="194" width="75.6" height="18" fill="#2a78d6"/>
+<rect x="217.60905754333334" y="194" width="14.6" height="18" fill="#eb6834"/>
+<path d="M234.16298082333333,194H523.4A4,4 0 0 1 527.4,198V208A4,4 0 0 1 523.4,212H234.16298082333333Z" fill="#1baf7a"/>
+<text x="533.4" y="207" font-size="13" fill="#1f2328">27.0 M</text>
 </svg>
