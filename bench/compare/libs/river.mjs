@@ -12,6 +12,7 @@ const { version } = JSON.parse(readFileSync(new URL('../node_modules/riverqueue/
 export const adapter = {
     version,
     transactional: true,
+    databases: ['postgres'],
     // A periodic job's scheduled_at is its occurrence; completed jobs stay for 24 hours
     scheduledJobs: async url => ({
         jobs: (await queryRows(url, `SELECT args->>'s' AS key, scheduled_at FROM river_job WHERE args ? 's'`))

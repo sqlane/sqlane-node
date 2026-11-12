@@ -155,6 +155,13 @@ if (role === 'setup') {
     writeFileSync(join(String(args.out), 'ready'), '');
 
     if (backlog) {
+        // run.mjs stops a drain that takes too long: what ran by then
+        process.once('SIGUSR2', () => {
+            write({ completed, drainMs: null, stoppedAfterMs: Date.now() - startedAt });
+            // oxlint-disable-next-line unicorn/no-process-exit -- the run is over
+            process.exit(0);
+        });
+
         // The drain: until the backlog is done (the handler counts)
         // oxlint-disable-next-line no-unmodified-loop-condition -- the handlers change completed
         while (completed < backlog) {

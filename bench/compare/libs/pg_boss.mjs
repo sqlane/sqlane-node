@@ -18,6 +18,7 @@ const isoOf = slot => new Date(`${slot.replace(' ', 'T')}Z`).toISOString();
 export const adapter = {
     version,
     transactional: true,
+    databases: ['postgres'],
     // Its jobs do not carry the slot. The cron pass files each occurrence as a job of its send-it queue, with the slot
     // in the data; that job's handler sends the job. Completed jobs stay for days
     scheduledJobs: async (url) => {
