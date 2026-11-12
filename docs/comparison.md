@@ -134,13 +134,24 @@ Cron is not one guarantee:
 - pg-boss stores the schedules in the database. Each instance's cron pass takes the cron time with a compare-and-set,
   then adds each run with a singleton key. A missed run is skipped by default, or run once (`scheduleMissedPolicies`).
 - Graphile Worker's crontab can backfill the runs missed while no worker ran (`backfillPeriod`).
-- BullMQ's job schedulers create the next job when the previous one starts.
-- Sidequest schedules with node-cron in the process that registers the job.
+- BullMQ's job schedulers create the next job when the previous one starts; its id, the scheduler and the slot, makes
+  a slot one job.
+- Sidequest schedules with node-cron in each process that registers the job, not in the database: each process
+  enqueues each run. Registering the schedule in one process avoids both the duplicates and the lost runs, without
+  failover. With `unique({ period: 'minute' })`, which Sidequest's recurring-jobs page recommends when several
+  instances schedule, `schedule()` computes the job and its unique key once, at registration (`Object.freeze`). The
+  key holds the registration minute, so every later run collides with the first job's row and is rejected, even
+  after that job completed ([performance](comparison-performance.md#schedules)).
+- Boring Node Queue stores the schedules. A worker claims a due one with a row lock and sets its next run from the
+  claim time: a missed run is skipped.
+- Izi Queue's CronPlugin: the leader evaluates each minute, and each insert is unique on the entry and the minute. A
+  late tick catches up to 5 minutes (`maxCatchUpMinutes`).
 - River's leader inserts the periodic jobs of its configuration; `runOnStart` runs one at start.
 
 Sources: [sqlane](api.md#schedule), [pg-boss](https://pgboss.io/api/scheduling),
 [Graphile Worker](https://worker.graphile.org/docs/cron), [BullMQ](https://docs.bullmq.io/guide/job-schedulers),
-[Sidequest](https://docs.sidequestjs.com/guide/jobs/recurring), [River](https://riverqueue.com/docs/periodic-jobs).
+[Sidequest](https://docs.sidequestjs.com/guide/jobs/recurring), [River](https://riverqueue.com/docs/periodic-jobs),
+[Boring Node Queue](https://github.com/boringnode/queue), [Izi Queue](https://github.com/IagoCavalcante/izi-queue#cron--periodic-jobs).
 
 ## Versions and reproduce
 
