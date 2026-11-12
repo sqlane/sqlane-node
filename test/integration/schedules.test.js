@@ -538,8 +538,11 @@ describe('the fire of the store', () => {
             alternating(ids, round, late, onTime),
         )));
         const won = results.flatMap(result => result.decided.filter(({ outcome }) => outcome === 'enqueued'));
+        const jobs = await readJobs(p);
 
-        expect(new Set(won.map(({ id }) => id)).size).toBe(won.length);
+        // A schedule can win both slots (late, then on time): one winner per slot, not per schedule
+        expect(new Set(won.map(({ id, slot }) => `${id} ${slot}`)).size).toBe(won.length);
+        expect(jobs.map(({ id }) => id).toSorted()).toStrictEqual(won.map(({ jobId }) => jobId).toSorted());
         expect((await readSchedules(p)).every(row => row.lastSlotMs >= late)).toBe(true);
     });
 
