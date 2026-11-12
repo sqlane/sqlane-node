@@ -25,16 +25,25 @@ const THEMES = {
     },
 };
 
-/** @type {{ id: string, label: string }[]} One bar per library */
+/**
+ * @type {{ id: string, label: string }[]} One bar per library, on PostgreSQL. `*`: the library enqueues after the
+ *     COMMIT, not atomically.
+ */
 const LIBS = [
     { id: 'sqlane', label: 'sqlane' },
     { id: 'graphile-worker', label: 'Graphile Worker' },
     { id: 'river', label: 'River' },
     { id: 'pg-boss', label: 'pg-boss' },
+    { id: 'izi-queue', label: 'Izi Queue' },
+    { id: 'boring-node-queue', label: 'Boring Node Queue' },
+    { id: 'bullmq', label: 'BullMQ*' },
+    { id: 'sidequest', label: 'Sidequest*' },
 ];
+/** The libraries of the schedules */
+const CRON_LIBS = LIBS.slice(0, 4);
 
 const W = 720;
-const LABEL_W = 132;
+const LABEL_W = 150;
 const X0 = LABEL_W + 8;
 const X1 = W - 150;
 const ROW = 34;
@@ -45,10 +54,13 @@ const FONT = `font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvet
 /**
  * @param {string} library
  * @param {string} workload
+ * @param {boolean} [timing] the run of phase B, one library at a time, for times
  * @returns {any} the PostgreSQL run of the library with 1000 job names
  */
-function run(library, workload) {
-    const matches = (/** @type {any} */ r) => r.library === library && r.workload === workload;
+function run(library, workload, timing = false) {
+    const matches = (/** @type {any} */ r) => (
+        r.library === library && r.workload === workload && Boolean(r.timing) === timing
+    );
     const found = results.perf.find((/** @type {any} */ r) => matches(r) && r.dialect === 'postgres' && r.names === 1000);
     if (!found) throw new Error(`no ${workload} run of ${library}`);
     return found;
@@ -175,7 +187,7 @@ const fixed = (/** @type {number} */ n) => (n >= 100 ? n.toFixed(0) : n.toFixed(
 const charts = {
     'perf-cpu-per-job': {
         title: 'CPU instructions per job, steady load',
-        subtitle: 'PostgreSQL 17, 1000 job names, 20 jobs/s in transactions. Lower is better.',
+        subtitle: 'PostgreSQL 17, 1000 job names, 20 jobs/s with an INSERT each. *: after the COMMIT. Lower is better.',
         legend: ['Worker', 'Producer', 'Database'],
         unit: 'M instr.',
         rows: LIBS.map(({ id, label }) => {
@@ -186,16 +198,16 @@ const charts = {
     },
     'perf-latency': {
         title: 'From enqueue to handler start, median',
-        subtitle: 'PostgreSQL 17, steady load, with each library’s LISTEN/NOTIFY wake. Lower is better.',
+        subtitle: 'PostgreSQL 17, steady load, one library at a time. Lower is better.',
         unit: 'ms',
         rows: LIBS.map(({ id, label }) => {
-            const r = run(id, 'steady');
+            const r = run(id, 'steady', true);
             return { label, parts: [r.latencyP50Ms], value: `${r.latencyP50Ms} ms · p99 ${r.latencyP99Ms} ms` };
         }),
     },
     'perf-idle': {
         title: 'Database cost while idle, 1000 job names',
-        subtitle: 'PostgreSQL 17, no jobs, a poll every 5 s. Database instructions per second. Lower is better.',
+        subtitle: 'PostgreSQL 17, no jobs. Database instructions per second. Lower is better.',
         unit: 'M/s',
         rows: LIBS.map(({ id, label }) => {
             const r = run(id, 'idle');
@@ -205,14 +217,17 @@ const charts = {
     },
     'perf-cron': {
         title: 'CPU instructions per fired job of a schedule, 3 workers',
-        subtitle: 'PostgreSQL 17, 1000 schedules due every minute, 3 worker processes, median of 3 runs. Lower is better.',
+        subtitle: 'PostgreSQL 17, 1000 schedules due every minute, 3 worker processes, median of the runs. Lower is better.',
         legend: ['Workers', 'Database'],
         unit: 'M instr.',
-        rows: LIBS.map(({ id, label }) => {
+        rows: CRON_LIBS.map(({ id, label }) => {
             const r = fireRun(id, 3);
             // The CPU window holds one slot of each schedule per minute
             const slots = (r.schedules * r.seconds) / 60;
-            const parts = [r.worker, r.db].map(p => millions(p.instructions) / slots);
+            // pg-boss with 3 workers: the median of 6 runs (`pooled`), since its runs varied
+            const parts = r.pooled
+                ? [r.pooled.workerPerSlot, r.pooled.dbPerSlot].map(millions)
+                : [r.worker, r.db].map(p => millions(p.instructions) / slots);
             return { label, parts, value: `${fixed(sum(parts))} M` };
         }),
     },

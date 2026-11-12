@@ -5,8 +5,9 @@ The harness behind [docs/comparison.md](../../docs/comparison.md) (features) and
 documents report what they did.
 
 ```sh
-pnpm bench:compare                                # checks and performance of jobs, about 13 minutes
+pnpm bench:compare                                # checks and performance of jobs, about 10.5 minutes
 pnpm bench:compare --only checks                  # the feature checks, about 1.5 minutes
+pnpm bench:compare --only perf                    # the jobs, about 9 minutes
 pnpm bench:compare --only perf --libs sqlane,river
 pnpm bench:compare --only cron                    # the schedules, about 9 minutes
 ```
@@ -14,8 +15,9 @@ pnpm bench:compare --only cron                    # the schedules, about 9 minut
 `--only` and `--libs` select runs: the other rows of `results.json` stay. Each command stays under 15 minutes.
 
 Requirements: macOS, Node.js 24 or later, and the servers from Homebrew: `postgresql@17`, `mysql@8.4`,
-`mariadb@11.8` (`--pg-bin`, `--mysql-bin`, `--mariadb-bin` for others). The run starts private servers on ports 55442,
-53317 and 53318, with data in a temporary directory, and stops them at the end. It writes `results.json` here and
+`mariadb@11.8`, `redis` (`--pg-bin`, `--mysql-bin`, `--mariadb-bin`, `--redis-bin` for others). The run starts
+private servers on ports from 55442 (PostgreSQL), 53317 (MySQL and MariaDB) and 56380 (Redis), with data in a
+temporary directory, and stops them at the end. It writes `results.json` here and
 prints Markdown tables.
 
 The libraries are installed apart from sqlane, from this directory's `package.json` and lockfile: the script installs
@@ -71,16 +73,26 @@ setting, given in the note) or **No** (with the reason, or what happened instead
 
 ## Performance
 
-Only the libraries that enqueue in the caller's transaction: sqlane, pg-boss, Graphile Worker and River. The same
-guarantee, so the same workload. PostgreSQL for all, plus sqlane on MySQL and MariaDB.
+sqlane, pg-boss, Graphile Worker, River, Izi Queue and Boring Node Queue enqueue in the caller's transaction; BullMQ
+and Sidequest enqueue after the `COMMIT`. Each library on each database that its adapter lists: sqlane and Boring
+Node Queue on PostgreSQL, MySQL and MariaDB; Sidequest and Izi Queue on PostgreSQL and MySQL; BullMQ on Redis and on
+PostgreSQL; the others on PostgreSQL.
+
+Oxen Queue: not compared (it pins mysql2 3.16.3, which has a known high-severity flaw).
 
 - **Setup.** 1000 job names, as each library models them: sqlane handlers, pg-boss queues (a `work()` each), Graphile
-  Worker tasks, River kinds in one queue. A worker process with 8 slots, empty handlers, a poll of 5 s, and each
-  library's wakes (LISTEN/NOTIFY; on MySQL and MariaDB, a UDP hint stands in for Redis, as in `bench:cpu`).
+  Worker tasks, River kinds in one queue, BullMQ job names in one queue, Sidequest job classes (`sidequest_jobs.mjs`),
+  Boring Node Queue job classes (`Locator.register`), Izi Queue workers. A worker process with 8 slots, empty
+  handlers, and each library's wakes: LISTEN/NOTIFY with a poll of 5 s as a fallback where the library has them; on
+  MySQL and MariaDB, sqlane's hint goes over UDP, standing in for Redis, as in `bench:cpu`. A library that only polls
+  keeps its default poll.
 - **Settings.** Each adapter uses the settings that its library's documentation offers for throughput, and says in a
   comment which, why and the default. pg-boss: `batchSize` of the 8 slots and `burstWhenBatchFull`, so a full fetch
   fetches again at once instead of after the next poll (defaults 1 and off). River: `fetchCooldown` of 1 ms, its
-  minimum (default 100 ms), with the same 8 `maxWorkers`. A new library is one adapter in `libs/`.
+  minimum (default 100 ms), with the same 8 `maxWorkers`. The others: their defaults. A new library is one adapter in
+  `libs/`.
+- **Redis.** BullMQ's Redis runs with the append-only file synced every second (`appendfsync everysec`) and no
+  snapshots. Its database is Redis plus the PostgreSQL of the business table.
 - **Steady load.** A producer process enqueues 20 jobs/s, each in a transaction with an `INSERT` into a business
   table. 9 of 10 jobs go to 10 hot names. 5 s warm-up, 15 s window. A library whose enqueue cannot take the caller's
   transaction (`transactional: false` in its adapter) enqueues after the `COMMIT`, on its own connection: not atomic,
@@ -91,9 +103,10 @@ guarantee, so the same workload. PostgreSQL for all, plus sqlane on MySQL and Ma
 - **Two phases.** A lane per library and database that its adapter lists (`databases`), each with a server of its
   own. Phase A, for instructions: all the lanes at once, one workload at a time, their windows started together
   (steady, idle with 1 and with 1000 names, drain). Steady and idle instructions barely depend on the load of the
-  machine; drain instructions do, so the drains come from phase B. Phase B, for times, on the PostgreSQL lanes: one
-  lane at a time, the drains (their backlogs prepared in parallel), then the steady load, for the latency and the CPU
-  time. Its rows have `timing: true`; it also checks phase A's instructions on those lanes.
+  machine; drain instructions do, so the drains come from phase B. Phase B,
+  for times, on the PostgreSQL and Redis lanes: one lane at a time, the drains (their backlogs prepared in parallel),
+  then the steady load, for the latency and the CPU time. Its rows have
+  `timing: true`; it also checks phase A's instructions on those lanes.
 - **Counters.** Instructions retired, cycles and CPU time of each process (`bench/cpu/proc_usage.py`), the database
   with all its processes. Compare instructions: see [CPU cost per job](../../docs/cpu-cost.md#the-three-numbers). On
   PostgreSQL, `pg_stat_statements` counts the statements of the window, and `pg_stat_activity` the connections.

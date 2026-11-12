@@ -1,17 +1,22 @@
-// BullMQ on its PostgreSQL backend: a queue and a worker per job name.
+// BullMQ: one queue for all the job names, as BullMQ models them (a job has a name), and one worker. On Redis (a
+// redis:// URL, with ioredis) or on its PostgreSQL backend.
+//
+// Settings: its defaults, with the worker's `concurrency` of the run. A worker blocks on Redis for the next job, so it
+// needs no poll; jobs stay after they complete (`removeOnComplete`, default: kept).
 import { readFileSync } from 'node:fs';
 import { createPostgresBackend, Queue, Worker } from 'bullmq';
 import { UnsupportedError } from './common.mjs';
 
 const { version } = JSON.parse(readFileSync(new URL('../node_modules/bullmq/package.json', import.meta.url), 'utf8'));
+const QUEUE = 'bench';
 
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
     // No API takes the caller's transaction: the performance runs enqueue after the COMMIT
     transactional: false,
-    databases: [],
-    async open({ url, names, handler, concurrency = 4, stall = false }) {
+    databases: ['redis', 'postgres'],
+    async open({ url, names, handler, concurrency = 4, stall = false, role }) {
         /** @type {string[]} */
         const notes = [];
 
@@ -25,30 +30,40 @@ export const adapter = {
             }
         }
 
-        // A config, not a pool: BullMQ then sets the search_path of its schema, and migrates
-        const connection = { connection: { connectionString: url, max: 5, migrate: true } };
-        const queues = new Map(Object.keys(names).map(
-            name => [name, new Queue(name, connection, createPostgresBackend)],
-        ));
-        const workers = Object.keys(names).map(name => new Worker(
-            name,
-            (job, _token, signal) => handler(name, job.data, signal),
-            {
-                ...connection,
-                concurrency,
-                autorun: false,
-                ...stall && { lockDuration: 2000, stalledInterval: 1000 },
-            },
-            createPostgresBackend,
-        ));
+        const redis = url.startsWith('redis:');
+        const { hostname, port } = new URL(url);
+        // Redis: ioredis needs no retry limit per request for a worker. PostgreSQL: a config, not a pool: BullMQ then
+        // sets the search_path of its schema, and migrates
+        const options = redis
+            ? { connection: { host: hostname, port: Number(port), maxRetriesPerRequest: null } }
+            // No idle timeout: a closed connection takes its CPU counters with it (see docs/cpu-cost.md, pitfall 5)
+            : { connection: { connectionString: url, max: 5, idleTimeoutMillis: 0, migrate: true } };
+        const queue = redis ? new Queue(QUEUE, options) : new Queue(QUEUE, options, createPostgresBackend);
+        /** @type {import('bullmq').Processor} */
+        const processor = (job, _token, signal) => handler(job.name, job.data, signal);
+        const workerOptions = {
+            ...options,
+            concurrency,
+            autorun: false,
+            ...stall && { lockDuration: 2000, stalledInterval: 1000 },
+        };
+        /** @type {Worker<any, any, string, any, any, any> | null} A producer and the setup only add jobs */
+        let worker = null;
 
-        for (const worker of workers) {
-            worker.on('error', () => {});
+        if (role !== 'producer' && role !== 'setup') {
+            worker = redis
+                ? new Worker(QUEUE, processor, workerOptions)
+                : new Worker(QUEUE, processor, workerOptions, createPostgresBackend);
         }
+
+        worker?.on('error', () => {});
 
         if (stall) {
             notes.push('`lockDuration: 2 s`, `stalledInterval: 1 s` (default: 30 s each)');
         }
+
+        // The queue exists once it is ready: the setup migrates the PostgreSQL backend
+        await queue.waitUntilReady();
 
         return {
             notes,
@@ -57,12 +72,6 @@ export const adapter = {
 
                 if (client && !notes.includes('enqueue on its own connection: no API takes the caller\'s')) {
                     notes.push('enqueue on its own connection: no API takes the caller\'s');
-                }
-
-                const queue = queues.get(name);
-
-                if (!queue) {
-                    throw new Error(`no queue ${name}`);
                 }
 
                 await queue.add(name, payload, {
@@ -74,14 +83,12 @@ export const adapter = {
                 });
             },
             start: async () => {
-                for (const worker of workers) {
-                    // Resolves when the worker stops
-                    void worker.run();
-                }
+                // Resolves when the worker stops
+                void worker?.run();
             },
             stop: async () => {
-                await Promise.all(workers.map(worker => worker.close(true)));
-                await Promise.all([...queues.values()].map(queue => queue.close()));
+                await worker?.close(true);
+                await queue.close();
             },
         };
     },

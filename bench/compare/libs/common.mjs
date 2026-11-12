@@ -56,6 +56,9 @@ export const scheduleKeys = count => Array.from({ length: count }, (_, index) =>
  * @property {() => Promise<void>} stop
  * @property {string[]} notes How the adapter maps an option to the library: the check reports them.
  * @property {string[]} [limits] The workarounds or limits of that mapping: a check that passes with them is partial.
+ * @property {(work: (client: any, query: (sql: string, values: any[]) => Promise<unknown>) => Promise<void>) =>
+ *     Promise<void>} [transaction] A business transaction of the library's own client (Knex), for a library whose
+ *     enqueue takes that client, not a pg Client or a mysql2 connection. `query` takes `?` placeholders.
  */
 
 /**
@@ -73,7 +76,8 @@ export const scheduleKeys = count => Array.from({ length: count }, (_, index) =>
  * @property {string} version
  * @property {boolean} transactional Its enqueue runs in the caller's open transaction (`client`). Without it, the
  *     performance runs enqueue after the COMMIT, on the library's own connection: not atomic.
- * @property {('postgres' | 'mysql' | 'mariadb')[]} databases The servers of its performance runs: a lane each.
+ * @property {('postgres' | 'mysql' | 'mariadb' | 'redis')[]} databases The servers of its performance runs: a lane
+ *     each. Redis: with a PostgreSQL for the business table.
  * @property {(options: OpenOptions) => Promise<Queue>} open Migrates its tables. Throws UnsupportedError for an
  *     option it cannot honor.
  * @property {(url: string) => Promise<ScheduledJobs>} [scheduledJobs] For the performance runs of the schedules.

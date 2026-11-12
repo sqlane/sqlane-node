@@ -1,8 +1,8 @@
 // The comparison of docs/comparison.md and docs/comparison-performance.md: the feature checks, the performance
 // workloads of jobs, and those of schedules, on database servers of this host (macOS, Homebrew).
 //
-//   pnpm bench:compare                    # checks and perf, about 13 minutes
-//   pnpm bench:compare --only checks      # or: perf (the jobs, about 12 minutes), cron (the schedules, about 9)
+//   pnpm bench:compare                    # checks and perf, about 10.5 minutes
+//   pnpm bench:compare --only checks      # or: perf (the jobs, about 9 minutes), cron (the schedules, about 9)
 //   pnpm bench:compare --only cron --libs sqlane,river
 //
 // Options: --pg-bin, --mysql-bin, --mariadb-bin (the directories of the server binaries). Writes results.json next to
@@ -27,16 +27,22 @@ const { values: args } = parseArgs({
         'pg-bin': { type: 'string', default: '/opt/homebrew/opt/postgresql@17/bin' },
         'mysql-bin': { type: 'string', default: '/opt/homebrew/opt/mysql@8.4/bin' },
         'mariadb-bin': { type: 'string', default: '/opt/homebrew/opt/mariadb@11.8/bin' },
+        'redis-bin': { type: 'string', default: '/opt/homebrew/bin' },
     },
 });
 const PG_BIN = args['pg-bin'];
 const MYSQL_BIN = args['mysql-bin'];
 const MARIADB_BIN = args['mariadb-bin'];
+const REDIS_BIN = args['redis-bin'];
 /**
  * The libraries of the performance runs. Each adapter uses the settings that its library's documentation offers for
  * throughput (libs/common.mjs); a library whose enqueue cannot take the caller's transaction enqueues after the COMMIT.
  */
-const PERF_LIBRARIES = ['sqlane', 'pg-boss', 'graphile-worker', 'river'];
+const PERF_LIBRARIES = [
+    'sqlane', 'pg-boss', 'graphile-worker', 'river', 'bullmq', 'sidequest', 'boring-node-queue', 'izi-queue',
+];
+/** The schedules: the libraries whose adapters run schedules */
+const CRON_LIBRARIES = new Set(['sqlane', 'pg-boss', 'graphile-worker', 'river']);
 const ALL_PARTS = ['checks', 'perf', 'cron'];
 /** The schedules are a part of their own, outside the default: each run stays under 15 minutes */
 const PARTS = new Set(args.only ? [args.only] : ['checks', 'perf']);
@@ -86,6 +92,7 @@ const CRON_PORT = 55_450;
 /** The first ports of the servers of the performance lanes: one per library and database */
 const PERF_PG_PORT = 55_500;
 const PERF_MYSQL_PORT = 53_320;
+const PERF_REDIS_PORT = 56_380;
 /** The workloads of a lane, one after the other */
 const JOB_WORKLOADS = /** @type {const} */ ([['steady', NAMES], ['idle', 1], ['idle', NAMES], ['drain', NAMES]]);
 const tmp = mkdtempSync(join(tmpdir(), 'sqlane-compare-'));
@@ -265,6 +272,40 @@ GRANT ALL ON *.* TO 'bench'@'127.0.0.1';
 }
 
 /**
+ * Starts Redis for BullMQ: a private port, data in the temporary directory, the append-only file synced every second
+ * (its documented durable setting; no snapshots).
+ * @param {number} port
+ * @returns {Promise<{ url: string, pid: number }>}
+ */
+async function startRedis(port) {
+    const data = join(tmp, `redis-${port}`);
+
+    execFileSync('mkdir', ['-p', data]);
+
+    const server = spawn(join(REDIS_BIN, 'redis-server'), [
+        '--port', String(port), '--bind', '127.0.0.1', '--dir', data, '--save', '', '--appendonly', 'yes',
+        '--appendfsync', 'everysec', '--protected-mode', 'yes', '--logfile', join(data, 'redis.log'),
+    ], { stdio: 'ignore' });
+
+    cleanups.push(() => server.kill('SIGKILL'));
+
+    for (let tries = 0; ; tries++) {
+        try {
+            execFileSync(join(REDIS_BIN, 'redis-cli'), ['-p', String(port), 'PING'], { stdio: 'ignore' });
+            break;
+        } catch (error) {
+            if (tries > 60) {
+                throw error;
+            }
+
+            await sleep(250);
+        }
+    }
+
+    return { url: `redis://127.0.0.1:${port}`, pid: /** @type {number} */ (server.pid) };
+}
+
+/**
  * @param {string} adminUrl
  * @param {string} database
  * @returns {Promise<string>} The URL of a new, empty database of the server.
@@ -393,7 +434,8 @@ function delta(before, after, role) {
 }
 
 /**
- * @typedef {{ url: string, pid: number }} Server A database server.
+ * @typedef {{ url: string, pid: number, business?: { url: string, pid: number } }} Server A database server. Redis:
+ *     its PostgreSQL for the business table in `business`.
  */
 
 /**
@@ -427,11 +469,20 @@ async function prepareWorkload({
     // A name, and an output directory, per database server too: a stale `ready` would start a window early
     const size = cron ? `${schedules}x${processes}${spec === YEARLY_CRON ? '_yearly' : ''}` : names;
     const database = `perf_${library}_${dialect ?? 'postgres'}_${workload}_${size}${phase}`.replaceAll(/[-:]/gu, '_');
-    const url = await freshDatabase(server.url, database);
+    // Redis: the queue there, the business table in PostgreSQL
+    const sql = server.business ?? server;
+    const businessUrl = await freshDatabase(sql.url, database);
+
+    if (server.business) {
+        execFileSync(join(REDIS_BIN, 'redis-cli'), ['-u', server.url, 'FLUSHALL'], { stdio: 'ignore' });
+    }
+
+    const url = server.business ? server.url : businessUrl;
     const out = join(tmp, database);
     const backlog = workload === 'drain' ? BACKLOG : 0;
     const common = [
-        join(HERE, 'perf.mjs'), '--library', library, '--url', url, '--names', String(names), '--out', tmp,
+        join(HERE, 'perf.mjs'), '--library', library, '--url', url, '--business-url', businessUrl,
+        '--names', String(names), '--out', tmp,
         '--warmup', String(warmupS), '--measure', String(measureS), '--rate', String(RATE), '--backlog', String(backlog),
         ...dialect ? ['--dialect', dialect] : [],
         ...cron ? ['--schedules', String(schedules), '--cron', String(spec)] : [],
@@ -444,7 +495,7 @@ async function prepareWorkload({
     }
 
     return {
-        library, workload, names, dialect, url, out, common, db: `${server.pid}+`, server, database, schedules, processes,
+        library, workload, names, dialect, url, out, common, db: `${sql.pid}+`, server, database, schedules, processes,
         spec, barrier, warmupS, measureS,
     };
 }
@@ -470,9 +521,11 @@ async function measure(run) {
  * @returns {Promise<void>}
  */
 async function finishWorkload({ server, database }) {
-    if (!server.url.startsWith('mysql:')) {
+    const sql = server.business ?? server;
+
+    if (!sql.url.startsWith('mysql:')) {
         // No autovacuum of its tables in the next runs
-        await adminQuery(server.url, `DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+        await adminQuery(sql.url, `DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
     }
 }
 
@@ -507,12 +560,29 @@ async function untilFile(file, child) {
 async function measureWorkload({
     library, workload, names, dialect, out, common, db, server, database, barrier, warmupS, measureS,
 }) {
-    // pg_stat_statements: PostgreSQL only
-    const statements = !server.url.startsWith('mysql:');
-    const servers = { db };
+    const sql = server.business ?? server;
+    // pg_stat_statements: PostgreSQL only, and not the queue of a library on Redis
+    const statements = !server.business && !sql.url.startsWith('mysql:');
+    // The database of a library on Redis: Redis and the PostgreSQL of the business table
+    const servers = { db, ...server.business && { redis: String(server.pid) } };
+    /**
+     * @param {Record<string, any>} before
+     * @param {Record<string, any>} after
+     * @returns {{ instructions: number, cycles: number, cpuSeconds: number }}
+     */
+    const dbDelta = (before, after) => {
+        const relational = delta(before, after, 'db');
+        const redis = server.business ? delta(before, after, 'redis') : { instructions: 0, cycles: 0, cpuSeconds: 0 };
 
-    if (statements) {
-        await adminQuery(server.url, 'CHECKPOINT');
+        return {
+            instructions: relational.instructions + redis.instructions,
+            cycles: relational.cycles + redis.cycles,
+            cpuSeconds: relational.cpuSeconds + redis.cpuSeconds,
+        };
+    };
+
+    if (!sql.url.startsWith('mysql:')) {
+        await adminQuery(sql.url, 'CHECKPOINT');
     }
 
     if (workload === 'drain') {
@@ -543,7 +613,7 @@ async function measureWorkload({
 
         return {
             library, workload, names, dialect: dialect ?? 'postgres', ...result,
-            worker: after.worker, db: delta(before, after, 'db'),
+            worker: after.worker, db: dbDelta(before, after),
         };
     }
 
@@ -565,14 +635,14 @@ async function measureWorkload({
     const startedAt = Date.now();
 
     if (statements) {
-        await postgresStats(server.url, database, { reset: true });
+        await postgresStats(sql.url, database, { reset: true });
     }
 
     await sleep((measureS * 1000) - (Date.now() - startedAt));
 
     const after = await countersAsync(pids);
     const seconds = (Date.now() - startedAt) / 1000;
-    const stats = statements ? await postgresStats(server.url, database) : null;
+    const stats = statements ? await postgresStats(sql.url, database) : null;
 
     await Promise.all([exited(worker), producer && exited(producer)]);
 
@@ -586,7 +656,7 @@ async function measureWorkload({
         ...stats,
         worker: delta(before, after, 'worker'),
         ...producer && { producer: delta(before, after, 'producer') },
-        db: delta(before, after, 'db'),
+        db: dbDelta(before, after),
     };
 }
 
@@ -950,13 +1020,13 @@ function tables(runs) {
  * The performance of jobs: a lane per library and database that its adapter lists, each with a server of its own.
  * Phase A, for instructions: the lanes in parallel, one workload at a time, the windows started together (steady,
  * idle with 1 and 1000 names, drain); instructions do not depend on the load of the machine (see docs/cpu-cost.md).
- * Phase B, for times, on PostgreSQL: one lane at a time, the drains, then the steady load, for the drain
+ * Phase B, for times, on PostgreSQL and Redis: one lane at a time, the drains, then the steady load, for the drain
  * times, the latencies and the CPU time. Its rows have `timing: true`.
  * @param {string[]} libraries
  * @returns {Promise<Record<string, any>[]>}
  */
 async function runJobs(libraries) {
-    /** @type {{ library: string, database: 'postgres' | 'mysql' | 'mariadb' }[]} */
+    /** @type {{ library: string, database: 'postgres' | 'mysql' | 'mariadb' | 'redis' }[]} */
     const lanes = [];
 
     for (const library of libraries) {
@@ -977,6 +1047,12 @@ async function runJobs(libraries) {
     const servers = await Promise.all(lanes.map(async ({ library, database }, index) => {
         if (database === 'postgres') {
             return startPostgres({ port: PERF_PG_PORT + index, template });
+        }
+
+        if (database === 'redis') {
+            const business = await startPostgres({ port: PERF_PG_PORT + index, template });
+
+            return { ...await startRedis(PERF_REDIS_PORT + index), business };
         }
 
         return startMysqlFamily(database, { port: PERF_MYSQL_PORT + index, name: `${database}-${library}` });
@@ -1026,7 +1102,7 @@ async function runJobs(libraries) {
     process.stderr.write(`jobs, phase A: ${Math.round((Date.now() - startedAt) / 1000)} s\n`);
     startedAt = Date.now();
 
-    const timed = lanes.flatMap(({ database }, index) => (database === 'postgres' ? [index] : []));
+    const timed = lanes.flatMap(({ database }, index) => (database === 'postgres' || database === 'redis' ? [index] : []));
     // The backlogs in parallel, then the drains one at a time
     const drains = await Promise.all(timed.map(index => prepare(index, 'drain', NAMES, '_b')));
 
@@ -1197,7 +1273,7 @@ try {
     }
 
     if (PARTS.has('cron')) {
-        const runs = await runSchedules(libraries);
+        const runs = await runSchedules(libraries.filter(library => CRON_LIBRARIES.has(library)));
         /** @type {Record<string, any>[]} */
         const previous = results.perf ?? [];
         const kept = previous.filter(row => (
