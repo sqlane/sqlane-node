@@ -12,6 +12,8 @@ const { version } = JSON.parse(readFileSync(new URL('../node_modules/sidequest/p
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
+    // No API takes the caller's transaction: the performance runs enqueue after the COMMIT
+    transactional: false,
     async open({ url, names, handler, concurrency = 4, stall = false }) {
         /** @type {string[]} */
         const notes = ['engine in this process, `runner: "inline"`'];

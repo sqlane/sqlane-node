@@ -406,11 +406,16 @@ async function runWorkload({
 
     try {
         const run = { library, workload, names, dialect, url, out, common, db, server, database };
+        const { adapter } = /** @type {{ adapter: import('./libs/common.mjs').Adapter }} */ (
+            await import(`./libs/${library.replaceAll('-', '_')}.mjs`)
+        );
 
         return {
             ...cron
                 ? await measureSchedules({ ...run, schedules, processes, spec, barrier })
                 : await measureWorkload(run),
+            // Without it, the producer enqueues after the COMMIT: not atomic
+            transactional: adapter.transactional,
         };
     } finally {
         if (postgres) {
@@ -809,7 +814,9 @@ function tables(runs) {
         const cpu = sum(roles.map(role => row[role]?.cpuSeconds ?? 0)) / row.completed * 1000;
         const total = millions(sum(instructions));
 
-        lines.push(`| ${row.library} | ${row.dialect} | ${row.completed} | ${instructions.map(millions).join(' / ')} = **${total}** | ${cpu.toFixed(1)} | ${row.latencyP50Ms} / ${row.latencyP99Ms} |`);
+        const library = row.transactional === false ? `${row.library} (enqueue after commit, not atomic)` : row.library;
+
+        lines.push(`| ${library} | ${row.dialect} | ${row.completed} | ${instructions.map(millions).join(' / ')} = **${total}** | ${cpu.toFixed(1)} | ${row.latencyP50Ms} / ${row.latencyP99Ms} |`);
     }
 
     lines.push('\nIdle: no jobs. Per second of the window.\n');

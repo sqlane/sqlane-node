@@ -50,6 +50,7 @@ const { version } = JSON.parse(readFileSync(new URL('../../../package.json', imp
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
+    transactional: true,
     // The id of a slot's job: `<name>:schedule:<key>:<ISO>`
     scheduledJobs: async url => ({
         jobs: (await queryRows(url, String.raw`
