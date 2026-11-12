@@ -1,4 +1,7 @@
-// Sidequest: its engine in this process, the inline runner, the PostgreSQL backend.
+// Sidequest: its engine in this process, the inline runner, its PostgreSQL or MySQL backend. A job class per job name
+// (sidequest_jobs.mjs).
+//
+// Settings: its defaults: a poll every 100 ms (`jobPollingInterval`), its only wake; `maxConcurrentJobs` of the run.
 import { readFileSync } from 'node:fs';
 import { Sidequest } from 'sidequest';
 import { UnsupportedError } from './common.mjs';
@@ -14,7 +17,7 @@ export const adapter = {
     version,
     // No API takes the caller's transaction: the performance runs enqueue after the COMMIT
     transactional: false,
-    databases: [],
+    databases: ['postgres', 'mysql'],
     async open({ url, names, handler, concurrency = 4, stall = false }) {
         /** @type {string[]} */
         const notes = ['engine in this process, `runner: "inline"`'];
@@ -31,9 +34,10 @@ export const adapter = {
 
         jobs.setHandler(handler);
 
-        /** @type {import('sidequest').SidequestConfig<'@sidequest/postgres-backend'>} */
+        const driver = url.startsWith('mysql:') ? '@sidequest/mysql-backend' : '@sidequest/postgres-backend';
+        /** @type {import('sidequest').SidequestConfig<any>} */
         const config = {
-            backend: { driver: '@sidequest/postgres-backend', config: url },
+            backend: { driver, config: url },
             queues: [
                 { name: 'default', concurrency },
                 // Sidequest has priorities of queues, not of jobs

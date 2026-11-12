@@ -1,20 +1,24 @@
 // Runnable feature checks for docs/comparison.md: each queue library runs the same small scenarios on PostgreSQL, and
 // the result of each is what the library did, not what its documentation says.
 //
-//   node checks.mjs <postgres admin url> [library ...]     # all libraries: see LIBRARIES
+//   node checks.mjs <postgres admin url> [--mysql <mysql admin url>] [library ...]   # all libraries: see LIBRARIES
 //
-// Each library runs in a database of its own per check; the libraries run in parallel. Prints a JSON report and a
+// Each library runs in a database of its own per check, on PostgreSQL, or on MySQL for a library that runs on MySQL
+// only; the libraries run in parallel. Prints a JSON report and a
 // Markdown table. See README.md.
 /* oxlint-disable no-await-in-loop -- each check runs one step after the other */
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { createConnection } from 'mysql2/promise';
 import { Client } from 'pg';
 import { UnsupportedError } from './libs/common.mjs';
 
 const HERE = import.meta.dirname;
-export const LIBRARIES = ['sqlane', 'pg-boss', 'graphile-worker', 'river', 'bullmq', 'sidequest'];
+export const LIBRARIES = [
+    'sqlane', 'pg-boss', 'graphile-worker', 'river', 'bullmq', 'sidequest', 'boring-node-queue', 'izi-queue',
+];
 
 /**
  * @typedef {{ result: 'yes' | 'partial' | 'no', note: string }} Outcome
@@ -146,17 +150,32 @@ const CHECKS = {
                 names: { order_created: {} },
                 handler: async (_name, payload) => { ran.push(payload.order); },
             });
-            const client = new Client({ connectionString: url });
+            const client = await businessClient(url);
 
-            await client.connect();
             await client.query('CREATE TABLE orders (id integer PRIMARY KEY)');
 
             try {
                 for (const [order, end] of /** @type {[number, string][]} */ ([[1, 'ROLLBACK'], [2, 'COMMIT']])) {
-                    await client.query('BEGIN');
-                    await client.query('INSERT INTO orders (id) VALUES ($1)', [order]);
-                    await queue.enqueue('order_created', { order }, { client });
-                    await client.query(end);
+                    if (queue.transaction) {
+                        // The library's own client (Knex): a rollback is a throw
+                        await queue.transaction(async (tx, query) => {
+                            await query('INSERT INTO orders (id) VALUES (?)', [order]);
+                            await queue.enqueue('order_created', { order }, { client: tx });
+
+                            if (end === 'ROLLBACK') {
+                                throw new Error('rollback');
+                            }
+                        }).catch((/** @type {unknown} */ error) => {
+                            if (!(error instanceof Error) || error.message !== 'rollback') {
+                                throw error;
+                            }
+                        });
+                    } else {
+                        await client.query('BEGIN');
+                        await client.query(client.mysql ? 'INSERT INTO orders (id) VALUES (?)' : 'INSERT INTO orders (id) VALUES ($1)', [order]);
+                        await queue.enqueue('order_created', { order }, { client: client.connection });
+                        await client.query(end);
+                    }
                 }
 
                 await queue.start();
@@ -394,17 +413,50 @@ const CHECKS = {
 };
 
 /**
+ * A connection for the business table of the transaction check: pg, or mysql2 for a MySQL URL. The MySQL path serves a
+ * library that runs on MySQL only (`--mysql`); none does now.
+ * @param {string} url
+ * @returns {Promise<{ connection: any, mysql: boolean, query: (sql: string, values?: any[]) => Promise<unknown>,
+ *     end: () => Promise<void> }>}
+ */
+async function businessClient(url) {
+    if (url.startsWith('mysql:')) {
+        const connection = await createConnection({ uri: url });
+
+        return {
+            connection, mysql: true, query: (sql, values) => connection.query(sql, values), end: () => connection.end(),
+        };
+    }
+
+    const connection = new Client({ connectionString: url });
+
+    await connection.connect();
+
+    return {
+        connection, mysql: false, query: (sql, values) => connection.query(sql, values), end: () => connection.end(),
+    };
+}
+
+/**
  * @param {string} adminUrl
  * @param {string} database
  * @returns {Promise<string>} The URL of a new, empty database.
  */
 async function freshDatabase(adminUrl, database) {
-    const admin = new Client({ connectionString: adminUrl });
+    if (adminUrl.startsWith('mysql:')) {
+        const admin = await createConnection({ uri: adminUrl });
 
-    await admin.connect();
-    await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
-    await admin.query(`CREATE DATABASE ${database}`);
-    await admin.end();
+        await admin.query(`DROP DATABASE IF EXISTS ${database}`);
+        await admin.query(`CREATE DATABASE ${database}`);
+        await admin.end();
+    } else {
+        const admin = new Client({ connectionString: adminUrl });
+
+        await admin.connect();
+        await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+        await admin.query(`CREATE DATABASE ${database}`);
+        await admin.end();
+    }
 
     const url = new URL(adminUrl);
 
@@ -414,12 +466,18 @@ async function freshDatabase(adminUrl, database) {
 }
 
 /**
- * @param {string} adminUrl
+ * @param {{ postgres: string, mysql?: string }} adminUrls
  * @param {string} library
  * @returns {Promise<{ library: string, version: string, checks: Record<string, Outcome & { ms: number }> }>}
  */
-async function runLibrary(adminUrl, library) {
+async function runLibrary(adminUrls, library) {
     const { adapter } = await import(`./libs/${library.replaceAll('-', '_')}.mjs`);
+    const mysqlOnly = !adapter.databases.includes('postgres');
+    const adminUrl = mysqlOnly ? adminUrls.mysql : adminUrls.postgres;
+
+    if (!adminUrl) {
+        throw new Error(`${library}: runs on MySQL only, give --mysql`);
+    }
     /** @type {Record<string, Outcome & { ms: number }>} */
     const checks = {};
 
@@ -440,9 +498,11 @@ async function runLibrary(adminUrl, library) {
 }
 
 if (process.argv[1] === import.meta.filename) {
-    const [adminUrl, ...only] = process.argv.slice(2);
+    const [postgres, ...rest] = process.argv.slice(2);
+    const mysql = rest[0] === '--mysql' ? rest[1] : undefined;
+    const only = mysql ? rest.slice(2) : rest;
     const libraries = only.length ? only : LIBRARIES;
-    const reports = await Promise.all(libraries.map(library => runLibrary(adminUrl, library)));
+    const reports = await Promise.all(libraries.map(library => runLibrary({ postgres, mysql }, library)));
     const mark = { yes: 'Yes', partial: 'Partial', no: 'No' };
 
     writeFileSync(join(HERE, 'checks.json'), `${JSON.stringify(reports, null, 4)}\n`);

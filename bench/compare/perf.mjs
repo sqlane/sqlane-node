@@ -18,23 +18,26 @@ import { Pool } from 'pg';
 
 const { values: args } = parseArgs({
     options: {
-        role: { type: 'string' },
-        library: { type: 'string' },
-        url: { type: 'string' },
-        dialect: { type: 'string', default: 'mysql' },
-        names: { type: 'string', default: '1000' },
-        rate: { type: 'string', default: '20' },
-        backlog: { type: 'string', default: '0' },
-        warmup: { type: 'string', default: '5' },
-        measure: { type: 'string', default: '15' },
-        out: { type: 'string', default: '.' },
-        schedules: { type: 'string', default: '0' },
-        cron: { type: 'string', default: '* * * * *' },
-        index: { type: 'string', default: '0' },
+        'role': { type: 'string' },
+        'library': { type: 'string' },
+        'url': { type: 'string' },
+        // The database of the business table: the queue's, unless the queue is on Redis
+        'business-url': { type: 'string' },
+        'dialect': { type: 'string', default: 'mysql' },
+        'names': { type: 'string', default: '1000' },
+        'rate': { type: 'string', default: '20' },
+        'backlog': { type: 'string', default: '0' },
+        'warmup': { type: 'string', default: '5' },
+        'measure': { type: 'string', default: '15' },
+        'out': { type: 'string', default: '.' },
+        'schedules': { type: 'string', default: '0' },
+        'cron': { type: 'string', default: '* * * * *' },
+        'index': { type: 'string', default: '0' },
     },
 });
 const url = String(args.url);
-const mysql = url.startsWith('mysql:');
+const businessUrl = args['business-url'] ?? url;
+const mysql = businessUrl.startsWith('mysql:');
 const role = /** @type {'setup' | 'worker' | 'producer'} */ (args.role);
 const names = Array.from({ length: Number(args.names) }, (_, index) => `job_${String(index).padStart(4, '0')}`);
 const { adapter } = await import(`./libs/${String(args.library).replaceAll('-', '_')}.mjs`);
@@ -112,12 +115,12 @@ if (role === 'setup') {
 
     // A business table for the producer's transactions
     if (mysql) {
-        const pool = createPool({ uri: url });
+        const pool = createPool({ uri: businessUrl });
 
         await pool.query('CREATE TABLE IF NOT EXISTS orders (id BIGINT PRIMARY KEY)');
         await pool.end();
     } else {
-        const pool = new Pool({ connectionString: url });
+        const pool = new Pool({ connectionString: businessUrl });
 
         await pool.query('CREATE TABLE IF NOT EXISTS orders (id bigint PRIMARY KEY)');
         await pool.end();
@@ -190,8 +193,8 @@ if (role === 'setup') {
     // The producer: each job in a transaction with an INSERT into orders, at a steady rate
     const rate = Number(args.rate);
     const endAt = Date.now() + ((Number(args.warmup) + Number(args.measure)) * 1000);
-    const pgPool = mysql ? null : new Pool({ connectionString: url, max: 2 });
-    const mysqlPool = mysql ? createPool({ uri: url, connectionLimit: 2 }) : null;
+    const pgPool = mysql ? null : new Pool({ connectionString: businessUrl, max: 2 });
+    const mysqlPool = mysql ? createPool({ uri: businessUrl, connectionLimit: 2 }) : null;
     let index = Number(process.pid) * 1_000_000;
 
     for (let next = Date.now(); Date.now() < endAt; next += 1000 / rate) {
@@ -209,7 +212,16 @@ if (role === 'setup') {
             ? queue.enqueue(name, { index: id, t: Date.now() }, { client })
             : undefined);
 
-        if (pgPool) {
+        if (queue.transaction) {
+            // The library's own client: a Knex transaction
+            /** @type {(client: any, query: (sql: string, values: any[]) => Promise<unknown>) => Promise<void>} */
+            const work = async (client, query) => {
+                await query('INSERT INTO orders (id) VALUES (?)', [id]);
+                await enqueueIn(client);
+            };
+
+            await queue.transaction(work);
+        } else if (pgPool) {
             const client = await pgPool.connect();
 
             try {

@@ -1,50 +1,50 @@
 {
-    "date": "2026-11-12T14:09:16.913Z",
+    "date": "2026-11-12T17:08:01.364Z",
     "node": "v26.13.0",
     "checks": [
         {
             "library": "sqlane",
-            "version": "2.0.1",
+            "version": "4.0.1",
             "checks": {
                 "transaction": {
                     "result": "yes",
                     "note": "the rolled-back job never ran, the committed one ran",
-                    "ms": 4108
+                    "ms": 4094
                 },
                 "delay": {
                     "result": "yes",
                     "note": "delay 2 s: started after 2.0 s",
-                    "ms": 2042
+                    "ms": 2061
                 },
                 "retry": {
                     "result": "yes",
                     "note": "backoff 2 s: second attempt after 2.0 s",
-                    "ms": 2040
+                    "ms": 2048
                 },
                 "timeout": {
                     "result": "yes",
                     "note": "timeout 1 s: signal aborted after 1.0 s",
-                    "ms": 1056
+                    "ms": 1043
                 },
                 "stall": {
                     "result": "yes",
-                    "note": "ran again 33.7 s after the kill; test-only option: lease 3 s (default and minimum public: 4 min)",
-                    "ms": 33909
+                    "note": "ran again 33.6 s after the kill; test-only option: lease 3 s (default and minimum public: 4 min)",
+                    "ms": 33762
                 },
                 "exclusion": {
                     "result": "yes",
                     "note": "no overlap, the others ran in parallel",
-                    "ms": 1277
+                    "ms": 1278
                 },
                 "exclusionMany": {
                     "result": "yes",
                     "note": "no overlap, the others ran in parallel",
-                    "ms": 1251
+                    "ms": 1247
                 },
                 "priority": {
                     "result": "no",
                     "note": "no priority option",
-                    "ms": 18
+                    "ms": 17
                 }
             }
         },
@@ -55,42 +55,42 @@
                 "transaction": {
                     "result": "yes",
                     "note": "the rolled-back job never ran, the committed one ran",
-                    "ms": 4183
+                    "ms": 4188
                 },
                 "delay": {
                     "result": "yes",
                     "note": "delay 2 s: started after 2.0 s",
-                    "ms": 2101
+                    "ms": 2119
                 },
                 "retry": {
                     "result": "yes",
                     "note": "backoff 2 s: second attempt after 2.0 s",
-                    "ms": 2119
+                    "ms": 2126
                 },
                 "timeout": {
                     "result": "yes",
                     "note": "timeout 1 s: signal aborted after 1.0 s",
-                    "ms": 1096
+                    "ms": 1083
                 },
                 "stall": {
                     "result": "yes",
                     "note": "ran again 2.5 s after the kill; expireInSeconds: 2, monitor and maintenance every 1 s",
-                    "ms": 2737
+                    "ms": 2718
                 },
                 "exclusion": {
                     "result": "partial",
                     "note": "no overlap, the others ran in parallel; both job names in one queue, the handler dispatches by name; `groupConcurrency: 1`",
-                    "ms": 1313
+                    "ms": 1310
                 },
                 "exclusionMany": {
                     "result": "no",
                     "note": "jobs that share a resource overlapped 1 times; both job names in one queue, the handler dispatches by name; `groupConcurrency: 1`; a job has one group: the first of its resources",
-                    "ms": 701
+                    "ms": 676
                 },
                 "priority": {
                     "result": "yes",
                     "note": "enqueued last, ran first",
-                    "ms": 1100
+                    "ms": 1104
                 }
             }
         },
@@ -101,42 +101,42 @@
                 "transaction": {
                     "result": "yes",
                     "note": "the rolled-back job never ran, the committed one ran",
-                    "ms": 4220
+                    "ms": 4218
                 },
                 "delay": {
                     "result": "yes",
                     "note": "delay 2 s: started after 2.0 s",
-                    "ms": 2090
+                    "ms": 2106
                 },
                 "retry": {
                     "result": "partial",
                     "note": "backoff 2 s: second attempt after 3.0 s; the backoff is not configurable: e^attempts seconds",
-                    "ms": 3105
+                    "ms": 3097
                 },
                 "timeout": {
                     "result": "no",
                     "note": "no job timeout",
-                    "ms": 57
+                    "ms": 54
                 },
                 "stall": {
                     "result": "no",
                     "note": "not within 70 s; a job locked by a dead worker is unlocked after 4 hours, not configurable",
-                    "ms": 70202
+                    "ms": 70182
                 },
                 "exclusion": {
                     "result": "yes",
                     "note": "no overlap, the others ran in parallel; `queue_name`: one named queue per resource, its jobs run one at a time across task identifiers",
-                    "ms": 1281
+                    "ms": 1273
                 },
                 "exclusionMany": {
                     "result": "no",
                     "note": "jobs that share a resource overlapped 1 times; `queue_name`: one named queue per resource, its jobs run one at a time across task identifiers; a job has one `queue_name`: the first of its resources",
-                    "ms": 1190
+                    "ms": 669
                 },
                 "priority": {
                     "result": "yes",
                     "note": "enqueued last, ran first",
-                    "ms": 82
+                    "ms": 77
                 }
             }
         },
@@ -147,27 +147,27 @@
                 "transaction": {
                     "result": "yes",
                     "note": "the rolled-back job never ran, the committed one ran",
-                    "ms": 4321
+                    "ms": 4180
                 },
                 "delay": {
                     "result": "yes",
                     "note": "delay 2 s: started after 2.1 s",
-                    "ms": 2193
+                    "ms": 2198
                 },
                 "retry": {
                     "result": "yes",
-                    "note": "backoff 2 s: second attempt after 2.2 s",
-                    "ms": 2347
+                    "note": "backoff 2 s: second attempt after 2.0 s",
+                    "ms": 2082
                 },
                 "timeout": {
                     "result": "yes",
                     "note": "timeout 1 s: signal aborted after 1.0 s",
-                    "ms": 1154
+                    "ms": 1055
                 },
                 "stall": {
                     "result": "yes",
                     "note": "ran again 17.9 s after the kill; job timeout 2 s, `rescueAfter: 3 s`, rescuer every 1 s (default: rescue after 1 hour)",
-                    "ms": 18093
+                    "ms": 18094
                 },
                 "exclusion": {
                     "result": "no",
@@ -182,7 +182,7 @@
                 "priority": {
                     "result": "yes",
                     "note": "enqueued last, ran first",
-                    "ms": 389
+                    "ms": 88
                 }
             }
         },
@@ -193,17 +193,17 @@
                 "transaction": {
                     "result": "no",
                     "note": "jobs that ran: [1,2] (order 1 was rolled back); enqueue on its own connection: no API takes the caller's",
-                    "ms": 206
+                    "ms": 199
                 },
                 "delay": {
                     "result": "yes",
                     "note": "delay 2 s: started after 2.0 s",
-                    "ms": 2036
+                    "ms": 2077
                 },
                 "retry": {
                     "result": "yes",
                     "note": "backoff 2 s: second attempt after 2.0 s",
-                    "ms": 2089
+                    "ms": 2083
                 },
                 "timeout": {
                     "result": "no",
@@ -213,7 +213,7 @@
                 "stall": {
                     "result": "yes",
                     "note": "ran again 2.0 s after the kill; `lockDuration: 2 s`, `stalledInterval: 1 s` (default: 30 s each)",
-                    "ms": 2223
+                    "ms": 2253
                 },
                 "exclusion": {
                     "result": "no",
@@ -228,7 +228,7 @@
                 "priority": {
                     "result": "yes",
                     "note": "enqueued last, ran first",
-                    "ms": 92
+                    "ms": 97
                 }
             }
         },
@@ -239,27 +239,27 @@
                 "transaction": {
                     "result": "no",
                     "note": "jobs that ran: [1,2] (order 1 was rolled back); engine in this process, `runner: \"inline\"`; enqueue on its own connection: no API takes the caller's",
-                    "ms": 267
+                    "ms": 138
                 },
                 "delay": {
                     "result": "yes",
                     "note": "delay 2 s: started after 2.0 s",
-                    "ms": 2096
+                    "ms": 2097
                 },
                 "retry": {
                     "result": "yes",
-                    "note": "backoff 2 s: second attempt after 2.0 s; engine in this process, `runner: \"inline\"`",
-                    "ms": 2189
+                    "note": "backoff 2 s: second attempt after 2.1 s; engine in this process, `runner: \"inline\"`",
+                    "ms": 2251
                 },
                 "timeout": {
                     "result": "yes",
                     "note": "timeout 1 s: signal aborted after 1.0 s",
-                    "ms": 1169
+                    "ms": 1165
                 },
                 "stall": {
                     "result": "yes",
-                    "note": "ran again 27.2 s after the kill; engine in this process, `runner: \"inline\"`; `releaseStaleJobsIntervalMin: 1` (its minimum: a cron of minutes), `releaseStaleJobsMaxStaleMs: 2000` (default: every 60 min, stale after 10 min)",
-                    "ms": 27452
+                    "note": "ran again 16.1 s after the kill; engine in this process, `runner: \"inline\"`; `releaseStaleJobsIntervalMin: 1` (its minimum: a cron of minutes), `releaseStaleJobsMaxStaleMs: 2000` (default: every 60 min, stale after 10 min)",
+                    "ms": 16367
                 },
                 "exclusion": {
                     "result": "no",
@@ -274,430 +274,104 @@
                 "priority": {
                     "result": "partial",
                     "note": "enqueued last, ran first; a queue per priority: Sidequest has priorities of queues, not of jobs",
-                    "ms": 372
+                    "ms": 291
+                }
+            }
+        },
+        {
+            "library": "boring-node-queue",
+            "version": "0.9.1",
+            "checks": {
+                "transaction": {
+                    "result": "yes",
+                    "note": "the rolled-back job never ran, the committed one ran",
+                    "ms": 4094
+                },
+                "delay": {
+                    "result": "yes",
+                    "note": "delay 2 s: started after 2.0 s",
+                    "ms": 2058
+                },
+                "retry": {
+                    "result": "yes",
+                    "note": "backoff 2 s: second attempt after 2.0 s",
+                    "ms": 2068
+                },
+                "timeout": {
+                    "result": "yes",
+                    "note": "timeout 1 s: signal aborted after 1.0 s",
+                    "ms": 1036
+                },
+                "stall": {
+                    "result": "yes",
+                    "note": "ran again 2.0 s after the kill; `stalledThreshold: 2 s`, `stalledInterval: 1 s` (default: 30 s each)",
+                    "ms": 2188
+                },
+                "exclusion": {
+                    "result": "no",
+                    "note": "no exclusion of jobs by resource (job groups are for monitoring)",
+                    "ms": 0
+                },
+                "exclusionMany": {
+                    "result": "no",
+                    "note": "no exclusion of jobs by resource (job groups are for monitoring)",
+                    "ms": 0
+                },
+                "priority": {
+                    "result": "yes",
+                    "note": "enqueued last, ran first",
+                    "ms": 44
+                }
+            }
+        },
+        {
+            "library": "izi-queue",
+            "version": "0.10.0",
+            "checks": {
+                "transaction": {
+                    "result": "yes",
+                    "note": "the rolled-back job never ran, the committed one ran",
+                    "ms": 4154
+                },
+                "delay": {
+                    "result": "yes",
+                    "note": "delay 2 s: started after 2.0 s",
+                    "ms": 2072
+                },
+                "retry": {
+                    "result": "partial",
+                    "note": "backoff 2 s: second attempt after 1.0 s",
+                    "ms": 1043
+                },
+                "timeout": {
+                    "result": "yes",
+                    "note": "timeout 1 s: signal aborted after 1.0 s",
+                    "ms": 1051
+                },
+                "stall": {
+                    "result": "yes",
+                    "note": "ran again 60.1 s after the kill; `heartbeatInterval: 1 s`, Lifeline every 1 s, `rescueAfter: 10 s` (its minimum; a node is dead after 60 s at least)",
+                    "ms": 60375
+                },
+                "exclusion": {
+                    "result": "no",
+                    "note": "no exclusion of jobs by resource",
+                    "ms": 0
+                },
+                "exclusionMany": {
+                    "result": "no",
+                    "note": "no exclusion of jobs by resource",
+                    "ms": 0
+                },
+                "priority": {
+                    "result": "yes",
+                    "note": "enqueued last, ran first",
+                    "ms": 483
                 }
             }
         }
     ],
     "perf": [
-        {
-            "library": "sqlane",
-            "workload": "steady",
-            "names": 1000,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 300,
-            "latencyP50Ms": 3,
-            "latencyP99Ms": 7,
-            "statements": 1809,
-            "connections": 5,
-            "worker": {
-                "instructions": 382332021,
-                "cycles": 593520110,
-                "cpuSeconds": 0.33999999999999997
-            },
-            "producer": {
-                "instructions": 329740087,
-                "cycles": 866174483,
-                "cpuSeconds": 0.51
-            },
-            "db": {
-                "instructions": 676442342,
-                "cycles": 1071580054,
-                "cpuSeconds": 0.62
-            }
-        },
-        {
-            "library": "sqlane",
-            "workload": "idle",
-            "names": 1,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 0,
-            "latencyP50Ms": null,
-            "latencyP99Ms": null,
-            "statements": 3,
-            "connections": 2,
-            "worker": {
-                "instructions": 6091969,
-                "cycles": 13502124,
-                "cpuSeconds": 0
-            },
-            "db": {
-                "instructions": 1129933,
-                "cycles": 3275495,
-                "cpuSeconds": 0.01
-            }
-        },
-        {
-            "library": "sqlane",
-            "workload": "idle",
-            "names": 1000,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 0,
-            "latencyP50Ms": null,
-            "latencyP99Ms": null,
-            "statements": 3,
-            "connections": 2,
-            "worker": {
-                "instructions": 8061602,
-                "cycles": 17542338,
-                "cpuSeconds": 0.010000000000000009
-            },
-            "db": {
-                "instructions": 957538,
-                "cycles": 4258047,
-                "cpuSeconds": 0.01
-            }
-        },
-        {
-            "library": "sqlane",
-            "workload": "drain",
-            "names": 1000,
-            "dialect": "postgres",
-            "completed": 10000,
-            "drainMs": 1668,
-            "worker": {
-                "instructions": 5034850227,
-                "cycles": 2288807402,
-                "cpuSeconds": 0.74,
-                "byCommand": {
-                    "node": [5034850227, 2288807402, 0.74]
-                }
-            },
-            "db": {
-                "instructions": 6964605430,
-                "cycles": 2489422836,
-                "cpuSeconds": 0.8
-            }
-        },
-        {
-            "library": "pg-boss",
-            "workload": "steady",
-            "names": 1000,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 300,
-            "latencyP50Ms": 5,
-            "latencyP99Ms": 36,
-            "statements": 5096,
-            "connections": 10,
-            "worker": {
-                "instructions": 1624375623,
-                "cycles": 1064078948,
-                "cpuSeconds": 0.5900000000000001
-            },
-            "producer": {
-                "instructions": 346477464,
-                "cycles": 955073359,
-                "cpuSeconds": 0.71
-            },
-            "db": {
-                "instructions": 6136670092,
-                "cycles": 3613608429,
-                "cpuSeconds": 2.0600000000000005
-            }
-        },
-        {
-            "library": "pg-boss",
-            "workload": "idle",
-            "names": 1,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 0,
-            "latencyP50Ms": null,
-            "latencyP99Ms": null,
-            "statements": 38,
-            "connections": 6,
-            "worker": {
-                "instructions": 44409303,
-                "cycles": 69635302,
-                "cpuSeconds": 0.06
-            },
-            "db": {
-                "instructions": 56299325,
-                "cycles": 50085457,
-                "cpuSeconds": 0.03
-            }
-        },
-        {
-            "library": "pg-boss",
-            "workload": "idle",
-            "names": 1000,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 0,
-            "latencyP50Ms": null,
-            "latencyP99Ms": null,
-            "statements": 3044,
-            "connections": 6,
-            "worker": {
-                "instructions": 1101496797,
-                "cycles": 604690138,
-                "cpuSeconds": 0.31000000000000005
-            },
-            "db": {
-                "instructions": 4002164316,
-                "cycles": 1678569121,
-                "cpuSeconds": 0.76
-            }
-        },
-        {
-            "library": "pg-boss",
-            "workload": "drain",
-            "names": 1000,
-            "dialect": "postgres",
-            "completed": 10000,
-            "drainMs": 410,
-            "worker": {
-                "instructions": 4304887114,
-                "cycles": 2007106422,
-                "cpuSeconds": 0.65,
-                "byCommand": {
-                    "node": [4304887114, 2007106422, 0.65]
-                }
-            },
-            "db": {
-                "instructions": 10727480585,
-                "cycles": 4081460337,
-                "cpuSeconds": 1.35
-            }
-        },
-        {
-            "library": "graphile-worker",
-            "workload": "steady",
-            "names": 1000,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 301,
-            "latencyP50Ms": 4,
-            "latencyP99Ms": 8,
-            "statements": 2122,
-            "connections": 7,
-            "worker": {
-                "instructions": 1651411764,
-                "cycles": 602402318,
-                "cpuSeconds": 0.4799999999999999
-            },
-            "producer": {
-                "instructions": 279607036,
-                "cycles": 718927866,
-                "cpuSeconds": 0.5700000000000001
-            },
-            "db": {
-                "instructions": 1338219436,
-                "cycles": 1580871074,
-                "cpuSeconds": 1.12
-            }
-        },
-        {
-            "library": "graphile-worker",
-            "workload": "idle",
-            "names": 1,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 0,
-            "latencyP50Ms": null,
-            "latencyP99Ms": null,
-            "statements": 24,
-            "connections": 5,
-            "worker": {
-                "instructions": 26185336,
-                "cycles": 31641354,
-                "cpuSeconds": 0.01999999999999999
-            },
-            "db": {
-                "instructions": 13052268,
-                "cycles": 19386395,
-                "cpuSeconds": 0.02
-            }
-        },
-        {
-            "library": "graphile-worker",
-            "workload": "idle",
-            "names": 1000,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 0,
-            "latencyP50Ms": null,
-            "latencyP99Ms": null,
-            "statements": 24,
-            "connections": 5,
-            "worker": {
-                "instructions": 72690544,
-                "cycles": 42324604,
-                "cpuSeconds": 0.03
-            },
-            "db": {
-                "instructions": 29571193,
-                "cycles": 22597839,
-                "cpuSeconds": 0.02
-            }
-        },
-        {
-            "library": "graphile-worker",
-            "workload": "drain",
-            "names": 1000,
-            "dialect": "postgres",
-            "completed": 10000,
-            "drainMs": 1826,
-            "worker": {
-                "instructions": 26261653792,
-                "cycles": 6547580795,
-                "cpuSeconds": 2.11,
-                "byCommand": {
-                    "node": [26261653792, 6547580795, 2.11]
-                }
-            },
-            "db": {
-                "instructions": 33328287867,
-                "cycles": 9647181775,
-                "cpuSeconds": 3.17
-            }
-        },
-        {
-            "library": "sqlane",
-            "workload": "steady",
-            "names": 1000,
-            "dialect": "mysql",
-            "seconds": 15,
-            "completed": 300,
-            "latencyP50Ms": 9,
-            "latencyP99Ms": 37,
-            "worker": {
-                "instructions": 952391497,
-                "cycles": 1281489598,
-                "cpuSeconds": 0.8800000000000001
-            },
-            "producer": {
-                "instructions": 487352082,
-                "cycles": 1244538658,
-                "cpuSeconds": 0.8900000000000001
-            },
-            "db": {
-                "instructions": 2916007066,
-                "cycles": 3201588135,
-                "cpuSeconds": 2.2600000000000002
-            }
-        },
-        {
-            "library": "sqlane",
-            "workload": "steady",
-            "names": 1000,
-            "dialect": "mariadb",
-            "seconds": 15,
-            "completed": 300,
-            "latencyP50Ms": 36,
-            "latencyP99Ms": 45,
-            "worker": {
-                "instructions": 980910482,
-                "cycles": 1797869763,
-                "cpuSeconds": 1.2000000000000002
-            },
-            "producer": {
-                "instructions": 494441251,
-                "cycles": 1340796338,
-                "cpuSeconds": 0.8600000000000001
-            },
-            "db": {
-                "instructions": 1693183857,
-                "cycles": 2739164081,
-                "cpuSeconds": 1.7600000000000002
-            }
-        },
-        {
-            "library": "river",
-            "workload": "steady",
-            "names": 1000,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 300,
-            "latencyP50Ms": 5,
-            "latencyP99Ms": 10,
-            "statements": 2003,
-            "connections": 7,
-            "worker": {
-                "instructions": 687483584,
-                "cycles": 760043412,
-                "cpuSeconds": 0.54
-            },
-            "producer": {
-                "instructions": 567256466,
-                "cycles": 919762644,
-                "cpuSeconds": 0.62
-            },
-            "db": {
-                "instructions": 3110984711,
-                "cycles": 1948825574,
-                "cpuSeconds": 1.37
-            }
-        },
-        {
-            "library": "river",
-            "workload": "idle",
-            "names": 1,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 0,
-            "latencyP50Ms": null,
-            "latencyP99Ms": null,
-            "statements": 32,
-            "connections": 5,
-            "worker": {
-                "instructions": 55902773,
-                "cycles": 114346406,
-                "cpuSeconds": 0.07999999999999999
-            },
-            "db": {
-                "instructions": 26796500,
-                "cycles": 39863169,
-                "cpuSeconds": 0.030000000000000002
-            }
-        },
-        {
-            "library": "river",
-            "workload": "idle",
-            "names": 1000,
-            "dialect": "postgres",
-            "seconds": 15,
-            "completed": 0,
-            "latencyP50Ms": null,
-            "latencyP99Ms": null,
-            "statements": 32,
-            "connections": 5,
-            "worker": {
-                "instructions": 56893540,
-                "cycles": 125688110,
-                "cpuSeconds": 0.08000000000000002
-            },
-            "db": {
-                "instructions": 24442436,
-                "cycles": 41067873,
-                "cpuSeconds": 0.039999999999999994
-            }
-        },
-        {
-            "library": "river",
-            "workload": "drain",
-            "names": 1000,
-            "dialect": "postgres",
-            "completed": 10000,
-            "drainMs": 2313,
-            "worker": {
-                "instructions": 8255258325,
-                "cycles": 3150686549,
-                "cpuSeconds": 1.04,
-                "byCommand": {
-                    "node": [8255258325, 3150686549, 1.04]
-                }
-            },
-            "db": {
-                "instructions": 8049607260,
-                "cycles": 2848448666,
-                "cpuSeconds": 0.9299999999999999
-            }
-        },
         {
             "library": "sqlane",
             "workload": "cron-idle",
@@ -1256,7 +930,16 @@
                     "worker": 3074587665,
                     "db": 9706986166
                 }
-            ]
+            ],
+            "pooled": {
+                "note": "The median of the 6 runs of this row and of cronRerun, since they varied: per slot, in instructions.",
+                "runs": 6,
+                "workerPerSlot": 2973612.2934999997,
+                "dbPerSlot": 8982826.074,
+                "totalPerSlot": 11956438.3675,
+                "min": 10437433.993,
+                "max": 17113518.86
+            }
         },
         {
             "library": "graphile-worker",
@@ -1809,11 +1492,1905 @@
                     "db": 2337361878
                 }
             ]
+        },
+        {
+            "library": "sqlane",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.19,
+            "completed": 300,
+            "latencyP50Ms": 1,
+            "latencyP99Ms": 14,
+            "keptUp": true,
+            "statements": 1821,
+            "connections": 5,
+            "worker": {
+                "instructions": 327223857,
+                "cycles": 472543824,
+                "cpuSeconds": 0.17
+            },
+            "producer": {
+                "instructions": 328616675,
+                "cycles": 463364293,
+                "cpuSeconds": 0.16000000000000003
+            },
+            "db": {
+                "instructions": 697721895,
+                "cycles": 640538852,
+                "cpuSeconds": 0.21999999999999995
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "mysql",
+            "seconds": 15.227,
+            "completed": 300,
+            "latencyP50Ms": 10,
+            "latencyP99Ms": 53,
+            "keptUp": true,
+            "worker": {
+                "instructions": 941682322,
+                "cycles": 1200167643,
+                "cpuSeconds": 0.42000000000000004
+            },
+            "producer": {
+                "instructions": 470776252,
+                "cycles": 749811636,
+                "cpuSeconds": 0.26000000000000006
+            },
+            "db": {
+                "instructions": 2915234219,
+                "cycles": 2832369112,
+                "cpuSeconds": 0.9800000000000001
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "mariadb",
+            "seconds": 15.244,
+            "completed": 300,
+            "latencyP50Ms": 30,
+            "latencyP99Ms": 70,
+            "keptUp": true,
+            "worker": {
+                "instructions": 964410073,
+                "cycles": 1304779718,
+                "cpuSeconds": 0.45000000000000007
+            },
+            "producer": {
+                "instructions": 475092846,
+                "cycles": 775721940,
+                "cpuSeconds": 0.2700000000000001
+            },
+            "db": {
+                "instructions": 1706236547,
+                "cycles": 1971526478,
+                "cpuSeconds": 0.6799999999999999
+            },
+            "transactional": true
+        },
+        {
+            "library": "pg-boss",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.24,
+            "completed": 300,
+            "latencyP50Ms": 2,
+            "latencyP99Ms": 28,
+            "keptUp": true,
+            "statements": 5132,
+            "connections": 10,
+            "worker": {
+                "instructions": 1564056378,
+                "cycles": 1238860314,
+                "cpuSeconds": 0.42000000000000004
+            },
+            "producer": {
+                "instructions": 345211023,
+                "cycles": 535574502,
+                "cpuSeconds": 0.18
+            },
+            "db": {
+                "instructions": 6522066618,
+                "cycles": 3284164115,
+                "cpuSeconds": 1.1
+            },
+            "transactional": true
+        },
+        {
+            "library": "graphile-worker",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.226,
+            "completed": 300,
+            "latencyP50Ms": 1,
+            "latencyP99Ms": 8,
+            "keptUp": true,
+            "statements": 2135,
+            "connections": 7,
+            "worker": {
+                "instructions": 1657904701,
+                "cycles": 707564957,
+                "cpuSeconds": 0.24
+            },
+            "producer": {
+                "instructions": 325033896,
+                "cycles": 402291489,
+                "cpuSeconds": 0.13999999999999999
+            },
+            "db": {
+                "instructions": 1355399146,
+                "cycles": 978163295,
+                "cpuSeconds": 0.32000000000000006
+            },
+            "transactional": true
+        },
+        {
+            "library": "river",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.222,
+            "completed": 300,
+            "latencyP50Ms": 3,
+            "latencyP99Ms": 21,
+            "keptUp": true,
+            "statements": 2024,
+            "connections": 7,
+            "worker": {
+                "instructions": 715278874,
+                "cycles": 871725198,
+                "cpuSeconds": 0.29
+            },
+            "producer": {
+                "instructions": 573449247,
+                "cycles": 684402809,
+                "cpuSeconds": 0.24000000000000005
+            },
+            "db": {
+                "instructions": 3239991491,
+                "cycles": 1795635198,
+                "cpuSeconds": 0.6100000000000001
+            },
+            "transactional": true
+        },
+        {
+            "library": "bullmq",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "redis",
+            "seconds": 15.237,
+            "completed": 300,
+            "latencyP50Ms": 2,
+            "latencyP99Ms": 13,
+            "keptUp": true,
+            "worker": {
+                "instructions": 706454012,
+                "cycles": 692259647,
+                "cpuSeconds": 0.24000000000000005
+            },
+            "producer": {
+                "instructions": 317402129,
+                "cycles": 458330833,
+                "cpuSeconds": 0.15999999999999998
+            },
+            "db": {
+                "instructions": 681940019,
+                "cycles": 640570692,
+                "cpuSeconds": 0.22000000000000003
+            },
+            "transactional": false
+        },
+        {
+            "library": "bullmq",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.229,
+            "completed": 300,
+            "latencyP50Ms": 1,
+            "latencyP99Ms": 13,
+            "keptUp": true,
+            "statements": 3344,
+            "connections": 7,
+            "worker": {
+                "instructions": 673966165,
+                "cycles": 717749204,
+                "cpuSeconds": 0.23999999999999994
+            },
+            "producer": {
+                "instructions": 301558100,
+                "cycles": 446983093,
+                "cpuSeconds": 0.15000000000000002
+            },
+            "db": {
+                "instructions": 2539328568,
+                "cycles": 1854408836,
+                "cpuSeconds": 0.6199999999999999
+            },
+            "transactional": false
+        },
+        {
+            "library": "sidequest",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.208,
+            "completed": 300,
+            "latencyP50Ms": 55,
+            "latencyP99Ms": 110,
+            "keptUp": true,
+            "statements": 3921,
+            "connections": 9,
+            "worker": {
+                "instructions": 2618724361,
+                "cycles": 1713370030,
+                "cpuSeconds": 0.58
+            },
+            "producer": {
+                "instructions": 881225626,
+                "cycles": 1085922437,
+                "cpuSeconds": 0.37
+            },
+            "db": {
+                "instructions": 1951279898,
+                "cycles": 1336905229,
+                "cpuSeconds": 0.47000000000000014
+            },
+            "transactional": false
+        },
+        {
+            "library": "sidequest",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "mysql",
+            "seconds": 15.205,
+            "completed": 301,
+            "latencyP50Ms": 62,
+            "latencyP99Ms": 126,
+            "keptUp": true,
+            "worker": {
+                "instructions": 3176336403,
+                "cycles": 2193515606,
+                "cpuSeconds": 0.74
+            },
+            "producer": {
+                "instructions": 1262981925,
+                "cycles": 1348368744,
+                "cpuSeconds": 0.45999999999999996
+            },
+            "db": {
+                "instructions": 3316599565,
+                "cycles": 2975192006,
+                "cpuSeconds": 1.0099999999999998
+            },
+            "transactional": false
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.236,
+            "completed": 290,
+            "latencyP50Ms": 1003,
+            "latencyP99Ms": 1986,
+            "keptUp": true,
+            "statements": 4790,
+            "connections": 6,
+            "worker": {
+                "instructions": 1523670346,
+                "cycles": 1008189107,
+                "cpuSeconds": 0.32999999999999996
+            },
+            "producer": {
+                "instructions": 633370840,
+                "cycles": 684781250,
+                "cpuSeconds": 0.22999999999999993
+            },
+            "db": {
+                "instructions": 1240027419,
+                "cycles": 910262977,
+                "cpuSeconds": 0.29000000000000004
+            },
+            "transactional": true
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "mysql",
+            "seconds": 15.235,
+            "completed": 303,
+            "latencyP50Ms": 999,
+            "latencyP99Ms": 1980,
+            "keptUp": true,
+            "worker": {
+                "instructions": 1770098463,
+                "cycles": 1294887521,
+                "cpuSeconds": 0.43
+            },
+            "producer": {
+                "instructions": 630068238,
+                "cycles": 677442164,
+                "cpuSeconds": 0.23999999999999994
+            },
+            "db": {
+                "instructions": 2212839523,
+                "cycles": 2081004165,
+                "cpuSeconds": 0.71
+            },
+            "transactional": true
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "mariadb",
+            "seconds": 15.2,
+            "completed": 308,
+            "latencyP50Ms": 854,
+            "latencyP99Ms": 1985,
+            "keptUp": true,
+            "worker": {
+                "instructions": 1661007230,
+                "cycles": 1438470102,
+                "cpuSeconds": 0.49
+            },
+            "producer": {
+                "instructions": 628900748,
+                "cycles": 701610997,
+                "cpuSeconds": 0.23999999999999994
+            },
+            "db": {
+                "instructions": 1307321927,
+                "cycles": 1410539147,
+                "cpuSeconds": 0.48000000000000004
+            },
+            "transactional": true
+        },
+        {
+            "library": "izi-queue",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.188,
+            "completed": 300,
+            "latencyP50Ms": 2,
+            "latencyP99Ms": 19,
+            "keptUp": true,
+            "statements": 2436,
+            "connections": 6,
+            "worker": {
+                "instructions": 479275249,
+                "cycles": 501864341,
+                "cpuSeconds": 0.17
+            },
+            "producer": {
+                "instructions": 479356614,
+                "cycles": 553054553,
+                "cpuSeconds": 0.18999999999999997
+            },
+            "db": {
+                "instructions": 1340708814,
+                "cycles": 1002889311,
+                "cpuSeconds": 0.35000000000000003
+            },
+            "transactional": true
+        },
+        {
+            "library": "izi-queue",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "mysql",
+            "seconds": 15.218,
+            "completed": 301,
+            "latencyP50Ms": 60,
+            "latencyP99Ms": 114,
+            "keptUp": true,
+            "worker": {
+                "instructions": 601815519,
+                "cycles": 576715256,
+                "cpuSeconds": 0.19999999999999996
+            },
+            "producer": {
+                "instructions": 341514694,
+                "cycles": 507250783,
+                "cpuSeconds": 0.19
+            },
+            "db": {
+                "instructions": 1807934231,
+                "cycles": 1913853952,
+                "cpuSeconds": 0.6599999999999999
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15.162,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 8,
+            "connections": 2,
+            "worker": {
+                "instructions": 8507142,
+                "cycles": 15213670,
+                "cpuSeconds": 0.01999999999999999
+            },
+            "db": {
+                "instructions": 7317501,
+                "cycles": 9621209,
+                "cpuSeconds": 0.01
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "mysql",
+            "seconds": 15.197,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 19960349,
+                "cycles": 20195044,
+                "cpuSeconds": 0.010000000000000009
+            },
+            "db": {
+                "instructions": 52431190,
+                "cycles": 81446765,
+                "cpuSeconds": 0.05999999999999983
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "mariadb",
+            "seconds": 15.207,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 12424938,
+                "cycles": 16112776,
+                "cpuSeconds": 0.010000000000000009
+            },
+            "db": {
+                "instructions": 1733084,
+                "cycles": 6102631,
+                "cpuSeconds": 0.010000000000000009
+            },
+            "transactional": true
+        },
+        {
+            "library": "pg-boss",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15.191,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 50,
+            "connections": 6,
+            "worker": {
+                "instructions": 48875096,
+                "cycles": 76839418,
+                "cpuSeconds": 0.06
+            },
+            "db": {
+                "instructions": 76223678,
+                "cycles": 66273687,
+                "cpuSeconds": 0.05
+            },
+            "transactional": true
+        },
+        {
+            "library": "graphile-worker",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15.16,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 24,
+            "connections": 5,
+            "worker": {
+                "instructions": 23016199,
+                "cycles": 24756301,
+                "cpuSeconds": 0.01999999999999999
+            },
+            "db": {
+                "instructions": 11977058,
+                "cycles": 17762852,
+                "cpuSeconds": 0.02
+            },
+            "transactional": true
+        },
+        {
+            "library": "river",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15.188,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 32,
+            "connections": 5,
+            "worker": {
+                "instructions": 56423367,
+                "cycles": 90649831,
+                "cpuSeconds": 0.06999999999999998
+            },
+            "db": {
+                "instructions": 33605284,
+                "cycles": 34995706,
+                "cpuSeconds": 0.01999999999999999
+            },
+            "transactional": true
+        },
+        {
+            "library": "bullmq",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "redis",
+            "seconds": 15.186,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 5750462,
+                "cycles": 11862452,
+                "cpuSeconds": 0.010000000000000009
+            },
+            "db": {
+                "instructions": 14096695,
+                "cycles": 55198879,
+                "cpuSeconds": 0.02999999999999997
+            },
+            "transactional": false
+        },
+        {
+            "library": "bullmq",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15.205,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 12,
+            "connections": 4,
+            "worker": {
+                "instructions": 11170234,
+                "cycles": 14212205,
+                "cpuSeconds": 0.010000000000000009
+            },
+            "db": {
+                "instructions": 12779713,
+                "cycles": 11878675,
+                "cpuSeconds": 0
+            },
+            "transactional": false
+        },
+        {
+            "library": "sidequest",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15.216,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 145,
+            "connections": 3,
+            "worker": {
+                "instructions": 92575232,
+                "cycles": 321770750,
+                "cpuSeconds": 0.25000000000000006
+            },
+            "db": {
+                "instructions": 30318779,
+                "cycles": 99297372,
+                "cpuSeconds": 0.07
+            },
+            "transactional": false
+        },
+        {
+            "library": "sidequest",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "mysql",
+            "seconds": 15.193,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 106319566,
+                "cycles": 336764081,
+                "cpuSeconds": 0.25999999999999995
+            },
+            "db": {
+                "instructions": 64984474,
+                "cycles": 202557987,
+                "cpuSeconds": 0.13999999999999968
+            },
+            "transactional": false
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15.199,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 72,
+            "connections": 1,
+            "worker": {
+                "instructions": 51447711,
+                "cycles": 55476931,
+                "cpuSeconds": 0.05000000000000002
+            },
+            "db": {
+                "instructions": 16037128,
+                "cycles": 15444265,
+                "cpuSeconds": 0.01
+            },
+            "transactional": true
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "mysql",
+            "seconds": 15.168,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 69775421,
+                "cycles": 84998941,
+                "cpuSeconds": 0.06
+            },
+            "db": {
+                "instructions": 72900999,
+                "cycles": 117680011,
+                "cpuSeconds": 0.10000000000000009
+            },
+            "transactional": true
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "mariadb",
+            "seconds": 15.18,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 69119896,
+                "cycles": 77634199,
+                "cpuSeconds": 0.06
+            },
+            "db": {
+                "instructions": 13695626,
+                "cycles": 23365150,
+                "cpuSeconds": 0.020000000000000018
+            },
+            "transactional": true
+        },
+        {
+            "library": "izi-queue",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "postgres",
+            "seconds": 15.179,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 163,
+            "connections": 3,
+            "worker": {
+                "instructions": 115680316,
+                "cycles": 258993725,
+                "cpuSeconds": 0.19
+            },
+            "db": {
+                "instructions": 212213610,
+                "cycles": 274884444,
+                "cpuSeconds": 0.19
+            },
+            "transactional": true
+        },
+        {
+            "library": "izi-queue",
+            "workload": "idle",
+            "names": 1,
+            "dialect": "mysql",
+            "seconds": 15.202,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 222177356,
+                "cycles": 319529773,
+                "cpuSeconds": 0.23999999999999996
+            },
+            "db": {
+                "instructions": 285562603,
+                "cycles": 487428324,
+                "cpuSeconds": 0.3800000000000001
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.234,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 3,
+            "connections": 2,
+            "worker": {
+                "instructions": 8649918,
+                "cycles": 14456586,
+                "cpuSeconds": 0.009999999999999981
+            },
+            "db": {
+                "instructions": 1052741,
+                "cycles": 1295813,
+                "cpuSeconds": 0
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "mysql",
+            "seconds": 15.245,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 99733442,
+                "cycles": 73559622,
+                "cpuSeconds": 0.03
+            },
+            "db": {
+                "instructions": 57924442,
+                "cycles": 86438355,
+                "cpuSeconds": 0.04999999999999982
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "mariadb",
+            "seconds": 15.242,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 25083583,
+                "cycles": 28928683,
+                "cpuSeconds": 0.009999999999999981
+            },
+            "db": {
+                "instructions": 3305129,
+                "cycles": 8034923,
+                "cpuSeconds": 0.010000000000000009
+            },
+            "transactional": true
+        },
+        {
+            "library": "pg-boss",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.256,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 3056,
+            "connections": 6,
+            "worker": {
+                "instructions": 1107833279,
+                "cycles": 616998531,
+                "cpuSeconds": 0.25999999999999995
+            },
+            "db": {
+                "instructions": 4089828062,
+                "cycles": 1697736972,
+                "cpuSeconds": 0.6399999999999999
+            },
+            "transactional": true
+        },
+        {
+            "library": "graphile-worker",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.203,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 24,
+            "connections": 5,
+            "worker": {
+                "instructions": 78501079,
+                "cycles": 39661528,
+                "cpuSeconds": 0.020000000000000018
+            },
+            "db": {
+                "instructions": 27139368,
+                "cycles": 15008885,
+                "cpuSeconds": 0
+            },
+            "transactional": true
+        },
+        {
+            "library": "river",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.239,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 32,
+            "connections": 5,
+            "worker": {
+                "instructions": 56261456,
+                "cycles": 71486945,
+                "cpuSeconds": 0.05000000000000002
+            },
+            "db": {
+                "instructions": 26254163,
+                "cycles": 22636012,
+                "cpuSeconds": 0.019999999999999997
+            },
+            "transactional": true
+        },
+        {
+            "library": "bullmq",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "redis",
+            "seconds": 15.243,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 6033900,
+                "cycles": 7967805,
+                "cpuSeconds": 0.009999999999999981
+            },
+            "db": {
+                "instructions": 18220912,
+                "cycles": 48490206,
+                "cpuSeconds": 0.019999999999999962
+            },
+            "transactional": false
+        },
+        {
+            "library": "bullmq",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.265,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 12,
+            "connections": 4,
+            "worker": {
+                "instructions": 12050906,
+                "cycles": 13346102,
+                "cpuSeconds": 0
+            },
+            "db": {
+                "instructions": 14268647,
+                "cycles": 11656331,
+                "cpuSeconds": 0
+            },
+            "transactional": false
+        },
+        {
+            "library": "sidequest",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.237,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 148,
+            "connections": 3,
+            "worker": {
+                "instructions": 93333541,
+                "cycles": 250008817,
+                "cpuSeconds": 0.15000000000000008
+            },
+            "db": {
+                "instructions": 30824356,
+                "cycles": 79978007,
+                "cpuSeconds": 0.05
+            },
+            "transactional": false
+        },
+        {
+            "library": "sidequest",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "mysql",
+            "seconds": 15.234,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 109496515,
+                "cycles": 268638625,
+                "cpuSeconds": 0.15999999999999998
+            },
+            "db": {
+                "instructions": 82262824,
+                "cycles": 169340638,
+                "cpuSeconds": 0.10000000000000009
+            },
+            "transactional": false
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.229,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 72,
+            "connections": 1,
+            "worker": {
+                "instructions": 52353812,
+                "cycles": 51641347,
+                "cpuSeconds": 0.030000000000000027
+            },
+            "db": {
+                "instructions": 16200063,
+                "cycles": 14052011,
+                "cpuSeconds": 0.01
+            },
+            "transactional": true
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "mysql",
+            "seconds": 15.247,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 72325232,
+                "cycles": 82976652,
+                "cpuSeconds": 0.03999999999999998
+            },
+            "db": {
+                "instructions": 89422687,
+                "cycles": 135122845,
+                "cpuSeconds": 0.09000000000000008
+            },
+            "transactional": true
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "mariadb",
+            "seconds": 15.22,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 73673885,
+                "cycles": 82197477,
+                "cpuSeconds": 0.04999999999999999
+            },
+            "db": {
+                "instructions": 13517645,
+                "cycles": 21960365,
+                "cpuSeconds": 0.020000000000000018
+            },
+            "transactional": true
+        },
+        {
+            "library": "izi-queue",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.251,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "statements": 167,
+            "connections": 2,
+            "worker": {
+                "instructions": 116540654,
+                "cycles": 258209921,
+                "cpuSeconds": 0.16000000000000003
+            },
+            "db": {
+                "instructions": 200853503,
+                "cycles": 230244111,
+                "cpuSeconds": 0.14
+            },
+            "transactional": true
+        },
+        {
+            "library": "izi-queue",
+            "workload": "idle",
+            "names": 1000,
+            "dialect": "mysql",
+            "seconds": 15.269,
+            "completed": 0,
+            "latencyP50Ms": null,
+            "latencyP99Ms": null,
+            "worker": {
+                "instructions": 249246900,
+                "cycles": 334640450,
+                "cpuSeconds": 0.19
+            },
+            "db": {
+                "instructions": 303470589,
+                "cycles": 499457844,
+                "cpuSeconds": 0.3099999999999996
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 5483,
+            "worker": {
+                "instructions": 5680091733,
+                "cycles": 3633662910,
+                "cpuSeconds": 1.3,
+                "byCommand": {
+                    "node": [5680091733, 3633662910, 1.3]
+                }
+            },
+            "db": {
+                "instructions": 7513370537,
+                "cycles": 3637069524,
+                "cpuSeconds": 1.28
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "mysql",
+            "completed": 10000,
+            "drainMs": 24448,
+            "worker": {
+                "instructions": 11821366173,
+                "cycles": 7709232741,
+                "cpuSeconds": 2.68,
+                "byCommand": {
+                    "node": [11821366173, 7709232741, 2.68]
+                }
+            },
+            "db": {
+                "instructions": 39199014273,
+                "cycles": 19258392708,
+                "cpuSeconds": 6.6
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "mariadb",
+            "completed": 10000,
+            "drainMs": 29973,
+            "worker": {
+                "instructions": 11615175450,
+                "cycles": 7744279607,
+                "cpuSeconds": 2.68,
+                "byCommand": {
+                    "node": [11615175450, 7744279607, 2.68]
+                }
+            },
+            "db": {
+                "instructions": 29360780642,
+                "cycles": 13025115820,
+                "cpuSeconds": 4.400000000000001
+            },
+            "transactional": true
+        },
+        {
+            "library": "pg-boss",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 2310,
+            "worker": {
+                "instructions": 4364896206,
+                "cycles": 2872623068,
+                "cpuSeconds": 1.01,
+                "byCommand": {
+                    "node": [4364896206, 2872623068, 1.01]
+                }
+            },
+            "db": {
+                "instructions": 10393706082,
+                "cycles": 5396691717,
+                "cpuSeconds": 1.87
+            },
+            "transactional": true
+        },
+        {
+            "library": "graphile-worker",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 7784,
+            "worker": {
+                "instructions": 26897408034,
+                "cycles": 9402046019,
+                "cpuSeconds": 3.39,
+                "byCommand": {
+                    "node": [26897408034, 9402046019, 3.39]
+                }
+            },
+            "db": {
+                "instructions": 15113981456,
+                "cycles": 8727966605,
+                "cpuSeconds": 3.07
+            },
+            "transactional": true
+        },
+        {
+            "library": "river",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 8311,
+            "worker": {
+                "instructions": 8370059330,
+                "cycles": 5054347440,
+                "cpuSeconds": 1.78,
+                "byCommand": {
+                    "node": [8370059330, 5054347440, 1.78]
+                }
+            },
+            "db": {
+                "instructions": 52649510393,
+                "cycles": 14047028947,
+                "cpuSeconds": 4.85
+            },
+            "transactional": true
+        },
+        {
+            "library": "bullmq",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "redis",
+            "completed": 10000,
+            "drainMs": 5785,
+            "worker": {
+                "instructions": 6080365933,
+                "cycles": 3416499154,
+                "cpuSeconds": 1.23,
+                "byCommand": {
+                    "node": [6080365933, 3416499154, 1.23]
+                }
+            },
+            "db": {
+                "instructions": 5064138768,
+                "cycles": 2515862215,
+                "cpuSeconds": 0.8900000000000001
+            },
+            "transactional": false
+        },
+        {
+            "library": "bullmq",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 4786,
+            "worker": {
+                "instructions": 6106708976,
+                "cycles": 4160342333,
+                "cpuSeconds": 1.52,
+                "byCommand": {
+                    "node": [6106708976, 4160342333, 1.52]
+                }
+            },
+            "db": {
+                "instructions": 23870095040,
+                "cycles": 13266649342,
+                "cpuSeconds": 4.7
+            },
+            "transactional": false
+        },
+        {
+            "library": "sidequest",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 20467,
+            "worker": {
+                "instructions": 57151397808,
+                "cycles": 27112312379,
+                "cpuSeconds": 9.21,
+                "byCommand": {
+                    "node": [57151397808, 27112312379, 9.21]
+                }
+            },
+            "db": {
+                "instructions": 95275181430,
+                "cycles": 35167249307,
+                "cpuSeconds": 12.059999999999999
+            },
+            "transactional": false
+        },
+        {
+            "library": "sidequest",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "mysql",
+            "completed": 2040,
+            "drainMs": null,
+            "stoppedAfterMs": 59216,
+            "worker": {
+                "instructions": 18791142731,
+                "cycles": 10754962777,
+                "cpuSeconds": 3.61,
+                "byCommand": {
+                    "node": [18791142731, 10754962777, 3.61]
+                }
+            },
+            "db": {
+                "instructions": 61031045168,
+                "cycles": 18848268441,
+                "cpuSeconds": 6.28
+            },
+            "transactional": false
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 19984,
+            "worker": {
+                "instructions": 38874394404,
+                "cycles": 26843951275,
+                "cpuSeconds": 9.21,
+                "byCommand": {
+                    "node": [38874394404, 26843951275, 9.21]
+                }
+            },
+            "db": {
+                "instructions": 32418129971,
+                "cycles": 19897288035,
+                "cpuSeconds": 6.74
+            },
+            "transactional": true
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "mysql",
+            "completed": 8964,
+            "drainMs": null,
+            "stoppedAfterMs": 59670,
+            "worker": {
+                "instructions": 37027762134,
+                "cycles": 29658705715,
+                "cpuSeconds": 10.03,
+                "byCommand": {
+                    "node": [37027762134, 29658705715, 10.03]
+                }
+            },
+            "db": {
+                "instructions": 52229603873,
+                "cycles": 41727787354,
+                "cpuSeconds": 14.08
+            },
+            "transactional": true
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "mariadb",
+            "completed": 4742,
+            "drainMs": null,
+            "stoppedAfterMs": 59686,
+            "worker": {
+                "instructions": 22981193734,
+                "cycles": 20250924912,
+                "cpuSeconds": 6.88,
+                "byCommand": {
+                    "node": [22981193734, 20250924912, 6.88]
+                }
+            },
+            "db": {
+                "instructions": 19425384406,
+                "cycles": 17561828881,
+                "cpuSeconds": 5.94
+            },
+            "transactional": true
+        },
+        {
+            "library": "izi-queue",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 4552,
+            "drainMs": null,
+            "stoppedAfterMs": 59797,
+            "worker": {
+                "instructions": 5150530575,
+                "cycles": 3873703650,
+                "cpuSeconds": 1.32,
+                "byCommand": {
+                    "node": [5150530575, 3873703650, 1.32]
+                }
+            },
+            "db": {
+                "instructions": 30172299488,
+                "cycles": 10638054535,
+                "cpuSeconds": 3.56
+            },
+            "transactional": true
+        },
+        {
+            "library": "izi-queue",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "mysql",
+            "completed": 3776,
+            "drainMs": null,
+            "stoppedAfterMs": 59777,
+            "worker": {
+                "instructions": 5509222918,
+                "cycles": 4925215429,
+                "cpuSeconds": 1.68,
+                "byCommand": {
+                    "node": [5509222918, 4925215429, 1.68]
+                }
+            },
+            "db": {
+                "instructions": 91790841857,
+                "cycles": 27161668097,
+                "cpuSeconds": 9.079999999999998
+            },
+            "transactional": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 1356,
+            "worker": {
+                "instructions": 5258637985,
+                "cycles": 2037478164,
+                "cpuSeconds": 0.66,
+                "byCommand": {
+                    "node": [5258637985, 2037478164, 0.66]
+                }
+            },
+            "db": {
+                "instructions": 6961024925,
+                "cycles": 2078382809,
+                "cpuSeconds": 0.67
+            },
+            "transactional": true,
+            "timing": true
+        },
+        {
+            "library": "pg-boss",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 397,
+            "worker": {
+                "instructions": 4404728208,
+                "cycles": 2037820332,
+                "cpuSeconds": 0.67,
+                "byCommand": {
+                    "node": [4404728208, 2037820332, 0.67]
+                }
+            },
+            "db": {
+                "instructions": 10990856358,
+                "cycles": 4206701160,
+                "cpuSeconds": 1.3900000000000001
+            },
+            "transactional": true,
+            "timing": true
+        },
+        {
+            "library": "graphile-worker",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 1866,
+            "worker": {
+                "instructions": 26257620089,
+                "cycles": 6633627485,
+                "cpuSeconds": 2.15,
+                "byCommand": {
+                    "node": [26257620089, 6633627485, 2.15]
+                }
+            },
+            "db": {
+                "instructions": 33320403834,
+                "cycles": 9990422953,
+                "cpuSeconds": 3.29
+            },
+            "transactional": true,
+            "timing": true
+        },
+        {
+            "library": "river",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 2188,
+            "worker": {
+                "instructions": 8227764611,
+                "cycles": 3187702188,
+                "cpuSeconds": 1.05,
+                "byCommand": {
+                    "node": [8227764611, 3187702188, 1.05]
+                }
+            },
+            "db": {
+                "instructions": 8104076619,
+                "cycles": 2929609868,
+                "cpuSeconds": 0.95
+            },
+            "transactional": true,
+            "timing": true
+        },
+        {
+            "library": "bullmq",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "redis",
+            "completed": 10000,
+            "drainMs": 488,
+            "worker": {
+                "instructions": 5902161043,
+                "cycles": 1935212069,
+                "cpuSeconds": 0.63,
+                "byCommand": {
+                    "node": [5902161043, 1935212069, 0.63]
+                }
+            },
+            "db": {
+                "instructions": 4949025637,
+                "cycles": 1330423397,
+                "cpuSeconds": 0.4299999999999997
+            },
+            "transactional": false,
+            "timing": true
+        },
+        {
+            "library": "bullmq",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 1021,
+            "worker": {
+                "instructions": 6077403334,
+                "cycles": 2852614963,
+                "cpuSeconds": 0.94,
+                "byCommand": {
+                    "node": [6077403334, 2852614963, 0.94]
+                }
+            },
+            "db": {
+                "instructions": 23746396365,
+                "cycles": 9756027761,
+                "cpuSeconds": 3.22
+            },
+            "transactional": false,
+            "timing": true
+        },
+        {
+            "library": "sidequest",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 9909,
+            "worker": {
+                "instructions": 56858477102,
+                "cycles": 21513699602,
+                "cpuSeconds": 6.93,
+                "byCommand": {
+                    "node": [56858477102, 21513699602, 6.93]
+                }
+            },
+            "db": {
+                "instructions": 88131872857,
+                "cycles": 28493833171,
+                "cpuSeconds": 9.23
+            },
+            "transactional": false,
+            "timing": true
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 10000,
+            "drainMs": 8205,
+            "worker": {
+                "instructions": 37893444651,
+                "cycles": 16942617050,
+                "cpuSeconds": 5.57,
+                "byCommand": {
+                    "node": [37893444651, 16942617050, 5.57]
+                }
+            },
+            "db": {
+                "instructions": 30740001742,
+                "cycles": 12975184926,
+                "cpuSeconds": 4.27
+            },
+            "transactional": true,
+            "timing": true
+        },
+        {
+            "library": "izi-queue",
+            "workload": "drain",
+            "names": 1000,
+            "dialect": "postgres",
+            "completed": 4296,
+            "drainMs": null,
+            "stoppedAfterMs": 60096,
+            "worker": {
+                "instructions": 4876641257,
+                "cycles": 3262264783,
+                "cpuSeconds": 2.08,
+                "byCommand": {
+                    "node": [4876641257, 3262264783, 2.08]
+                }
+            },
+            "db": {
+                "instructions": 28624391220,
+                "cycles": 10755930405,
+                "cpuSeconds": 7.28
+            },
+            "transactional": true,
+            "timing": true
+        },
+        {
+            "library": "sqlane",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.119,
+            "completed": 300,
+            "latencyP50Ms": 3,
+            "latencyP99Ms": 6,
+            "keptUp": true,
+            "statements": 1809,
+            "connections": 4,
+            "worker": {
+                "instructions": 323000460,
+                "cycles": 461948991,
+                "cpuSeconds": 0.31000000000000005
+            },
+            "producer": {
+                "instructions": 332230744,
+                "cycles": 690469869,
+                "cpuSeconds": 0.49999999999999994
+            },
+            "db": {
+                "instructions": 659078150,
+                "cycles": 968999122,
+                "cpuSeconds": 0.6599999999999999
+            },
+            "transactional": true,
+            "timing": true
+        },
+        {
+            "library": "pg-boss",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.078,
+            "completed": 300,
+            "latencyP50Ms": 4,
+            "latencyP99Ms": 38,
+            "keptUp": true,
+            "statements": 5115,
+            "connections": 10,
+            "worker": {
+                "instructions": 1587618346,
+                "cycles": 1060718237,
+                "cpuSeconds": 0.53
+            },
+            "producer": {
+                "instructions": 337849341,
+                "cycles": 653958680,
+                "cpuSeconds": 0.41000000000000003
+            },
+            "db": {
+                "instructions": 6299618314,
+                "cycles": 3312470816,
+                "cpuSeconds": 1.6300000000000001
+            },
+            "transactional": true,
+            "timing": true
+        },
+        {
+            "library": "graphile-worker",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.105,
+            "completed": 300,
+            "latencyP50Ms": 4,
+            "latencyP99Ms": 7,
+            "keptUp": true,
+            "statements": 2121,
+            "connections": 7,
+            "worker": {
+                "instructions": 1649614626,
+                "cycles": 621568198,
+                "cpuSeconds": 0.48000000000000004
+            },
+            "producer": {
+                "instructions": 330018044,
+                "cycles": 589255973,
+                "cpuSeconds": 0.48000000000000004
+            },
+            "db": {
+                "instructions": 1341864260,
+                "cycles": 1288912280,
+                "cpuSeconds": 0.9999999999999999
+            },
+            "transactional": true,
+            "timing": true
+        },
+        {
+            "library": "river",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.12,
+            "completed": 300,
+            "latencyP50Ms": 5,
+            "latencyP99Ms": 9,
+            "keptUp": true,
+            "statements": 2014,
+            "connections": 7,
+            "worker": {
+                "instructions": 698282667,
+                "cycles": 648858572,
+                "cpuSeconds": 0.49
+            },
+            "producer": {
+                "instructions": 568784685,
+                "cycles": 855245531,
+                "cpuSeconds": 0.6300000000000001
+            },
+            "db": {
+                "instructions": 3168771218,
+                "cycles": 1954579052,
+                "cpuSeconds": 1.4400000000000002
+            },
+            "transactional": true,
+            "timing": true
+        },
+        {
+            "library": "bullmq",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "redis",
+            "seconds": 15.113,
+            "completed": 300,
+            "latencyP50Ms": 2,
+            "latencyP99Ms": 6,
+            "keptUp": true,
+            "worker": {
+                "instructions": 697173550,
+                "cycles": 664205545,
+                "cpuSeconds": 0.48
+            },
+            "producer": {
+                "instructions": 324629193,
+                "cycles": 711540691,
+                "cpuSeconds": 0.5399999999999999
+            },
+            "db": {
+                "instructions": 643053575,
+                "cycles": 942463369,
+                "cpuSeconds": 0.6999999999999996
+            },
+            "transactional": false,
+            "timing": true
+        },
+        {
+            "library": "bullmq",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.098,
+            "completed": 300,
+            "latencyP50Ms": 3,
+            "latencyP99Ms": 6,
+            "keptUp": true,
+            "statements": 3311,
+            "connections": 7,
+            "worker": {
+                "instructions": 662109894,
+                "cycles": 552741787,
+                "cpuSeconds": 0.41000000000000003
+            },
+            "producer": {
+                "instructions": 308801479,
+                "cycles": 675691792,
+                "cpuSeconds": 0.5
+            },
+            "db": {
+                "instructions": 3432967785,
+                "cycles": 2231569084,
+                "cpuSeconds": 1.66
+            },
+            "transactional": false,
+            "timing": true
+        },
+        {
+            "library": "sidequest",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.105,
+            "completed": 298,
+            "latencyP50Ms": 53,
+            "latencyP99Ms": 109,
+            "keptUp": true,
+            "statements": 3893,
+            "connections": 9,
+            "worker": {
+                "instructions": 2621239588,
+                "cycles": 1685562088,
+                "cpuSeconds": 1.2000000000000002
+            },
+            "producer": {
+                "instructions": 871104809,
+                "cycles": 1160074471,
+                "cpuSeconds": 0.8099999999999999
+            },
+            "db": {
+                "instructions": 1856609188,
+                "cycles": 1468732066,
+                "cpuSeconds": 1.0500000000000003
+            },
+            "transactional": false,
+            "timing": true
+        },
+        {
+            "library": "boring-node-queue",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.116,
+            "completed": 290,
+            "latencyP50Ms": 1002,
+            "latencyP99Ms": 1986,
+            "keptUp": true,
+            "statements": 4805,
+            "connections": 6,
+            "worker": {
+                "instructions": 1564755273,
+                "cycles": 869739011,
+                "cpuSeconds": 0.4
+            },
+            "producer": {
+                "instructions": 635550972,
+                "cycles": 965241164,
+                "cpuSeconds": 0.68
+            },
+            "db": {
+                "instructions": 1220956573,
+                "cycles": 1002459729,
+                "cpuSeconds": 0.5700000000000001
+            },
+            "transactional": true,
+            "timing": true
+        },
+        {
+            "library": "izi-queue",
+            "workload": "steady",
+            "names": 1000,
+            "dialect": "postgres",
+            "seconds": 15.108,
+            "completed": 300,
+            "latencyP50Ms": 4,
+            "latencyP99Ms": 9,
+            "keptUp": true,
+            "statements": 2428,
+            "connections": 6,
+            "worker": {
+                "instructions": 539103283,
+                "cycles": 476102111,
+                "cpuSeconds": 0.32999999999999996
+            },
+            "producer": {
+                "instructions": 415029725,
+                "cycles": 723239036,
+                "cpuSeconds": 0.5399999999999999
+            },
+            "db": {
+                "instructions": 1284189121,
+                "cycles": 1319626763,
+                "cpuSeconds": 0.9199999999999999
+            },
+            "transactional": true,
+            "timing": true
         }
     ],
     "dates": {
-        "checks": "2026-11-11T16:07:11.359Z",
-        "perf": "2026-11-11T16:07:11.359Z",
+        "checks": "2026-11-12T17:01:38.248Z",
+        "perf": "2026-11-12T17:08:01.364Z",
         "cron": "2026-11-12T14:09:16.913Z"
     },
     "defaults": {
@@ -2039,6 +3616,1143 @@
                         "slots": ["2026-11-12T14:16:00.000Z", "2026-11-12T14:17:00.000Z"],
                         "worker": 2510439170,
                         "db": 2757562782
+                    }
+                ]
+            }
+        ]
+    },
+    "cronRerun": {
+        "note": "A rerun of pnpm bench:compare --only cron on 12 November 2026 at 16:30 UTC, after the parallel jobs change, to time it; the cron rows of perf are from 14:09 UTC, which docs/comparison-performance.md reports.",
+        "perf": [
+            {
+                "library": "sqlane",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1,
+                "processes": 1,
+                "cron": "0 4 * * *",
+                "seconds": 120,
+                "statements": 44,
+                "connections": 2,
+                "worker": {
+                    "instructions": 37096700,
+                    "cycles": 85480257,
+                    "cpuSeconds": 0.06
+                },
+                "db": {
+                    "instructions": 18446254,
+                    "cycles": 28091445,
+                    "cpuSeconds": 0.019999999999999997
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 44,
+                        "connections": 2,
+                        "worker": 43476251,
+                        "db": 20034266
+                    },
+                    {
+                        "statements": 44,
+                        "connections": 2,
+                        "worker": 37096700,
+                        "db": 17305349
+                    },
+                    {
+                        "statements": 44,
+                        "connections": 2,
+                        "worker": 36047658,
+                        "db": 18446254
+                    }
+                ]
+            },
+            {
+                "library": "sqlane",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "0 4 * * *",
+                "seconds": 120,
+                "statements": 44,
+                "connections": 2,
+                "worker": {
+                    "instructions": 140719383,
+                    "cycles": 136240186,
+                    "cpuSeconds": 0.08999999999999997
+                },
+                "db": {
+                    "instructions": 19425337,
+                    "cycles": 28252649,
+                    "cpuSeconds": 0.019999999999999997
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 44,
+                        "connections": 2,
+                        "worker": 154249900,
+                        "db": 19851722
+                    },
+                    {
+                        "statements": 44,
+                        "connections": 2,
+                        "worker": 139595981,
+                        "db": 15409932
+                    },
+                    {
+                        "statements": 47,
+                        "connections": 2,
+                        "worker": 140719383,
+                        "db": 19425337
+                    }
+                ]
+            },
+            {
+                "library": "sqlane",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "0 0 1 1 *",
+                "seconds": 120,
+                "statements": 44,
+                "connections": 2,
+                "worker": {
+                    "instructions": 138175460,
+                    "cycles": 146293687,
+                    "cpuSeconds": 0.09000000000000002
+                },
+                "db": {
+                    "instructions": 18764275,
+                    "cycles": 29424898,
+                    "cpuSeconds": 0.01
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 39,
+                        "connections": 2,
+                        "worker": 141039152,
+                        "db": 14881476
+                    },
+                    {
+                        "statements": 47,
+                        "connections": 2,
+                        "worker": 135183234,
+                        "db": 19083711
+                    },
+                    {
+                        "statements": 44,
+                        "connections": 2,
+                        "worker": 138175460,
+                        "db": 18764275
+                    }
+                ]
+            },
+            {
+                "library": "sqlane",
+                "workload": "cron-fire",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "* * * * *",
+                "seconds": 60,
+                "statements": 326,
+                "connections": 3,
+                "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                "expected": 2000,
+                "decided": 2000,
+                "duplicates": 0,
+                "started": 2000,
+                "startedInWindow": 1000,
+                "lagP50Ms": 283,
+                "lagP99Ms": 450,
+                "lagMaxMs": 459,
+                "worker": {
+                    "instructions": 514025898,
+                    "cycles": 398906604,
+                    "cpuSeconds": 0.18000000000000005
+                },
+                "db": {
+                    "instructions": 1101606731,
+                    "cycles": 448936769,
+                    "cpuSeconds": 0.17
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 329,
+                        "connections": 3,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 286,
+                        "lagP99Ms": 744,
+                        "lagMaxMs": 746,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                        "worker": 514025898,
+                        "db": 1101606731
+                    },
+                    {
+                        "statements": 325,
+                        "connections": 3,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 278,
+                        "lagP99Ms": 431,
+                        "lagMaxMs": 440,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:28:00.000Z", "2026-11-12T16:29:00.000Z"],
+                        "worker": 513420000,
+                        "db": 1108407546
+                    },
+                    {
+                        "statements": 326,
+                        "connections": 3,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 283,
+                        "lagP99Ms": 450,
+                        "lagMaxMs": 459,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:31:00.000Z", "2026-11-12T16:32:00.000Z"],
+                        "worker": 516562845,
+                        "db": 1088735633
+                    }
+                ]
+            },
+            {
+                "library": "sqlane",
+                "workload": "cron-fire",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 3,
+                "cron": "* * * * *",
+                "seconds": 60,
+                "statements": 447,
+                "connections": 9,
+                "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                "expected": 2000,
+                "decided": 2000,
+                "duplicates": 0,
+                "started": 2000,
+                "startedInWindow": 1000,
+                "lagP50Ms": 186,
+                "lagP99Ms": 276,
+                "lagMaxMs": 279,
+                "worker": {
+                    "instructions": 1072248258,
+                    "cycles": 847955125,
+                    "cpuSeconds": 0.43000000000000005
+                },
+                "db": {
+                    "instructions": 914127063,
+                    "cycles": 521939368,
+                    "cpuSeconds": 0.21999999999999997
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 457,
+                        "connections": 9,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 172,
+                        "lagP99Ms": 447,
+                        "lagMaxMs": 452,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                        "worker": 1061135090,
+                        "db": 900769007
+                    },
+                    {
+                        "statements": 447,
+                        "connections": 9,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 186,
+                        "lagP99Ms": 276,
+                        "lagMaxMs": 279,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:28:00.000Z", "2026-11-12T16:29:00.000Z"],
+                        "worker": 1095165018,
+                        "db": 1195193211
+                    },
+                    {
+                        "statements": 444,
+                        "connections": 9,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 193,
+                        "lagP99Ms": 247,
+                        "lagMaxMs": 251,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:31:00.000Z", "2026-11-12T16:32:00.000Z"],
+                        "worker": 1072248258,
+                        "db": 914127063
+                    }
+                ]
+            },
+            {
+                "library": "pg-boss",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1,
+                "processes": 1,
+                "cron": "0 4 * * *",
+                "seconds": 120,
+                "statements": 515,
+                "connections": 6,
+                "worker": {
+                    "instructions": 558537040,
+                    "cycles": 822484134,
+                    "cpuSeconds": 0.53
+                },
+                "db": {
+                    "instructions": 798850986,
+                    "cycles": 669757881,
+                    "cpuSeconds": 0.42
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 515,
+                        "connections": 6,
+                        "worker": 558275593,
+                        "db": 793517167
+                    },
+                    {
+                        "statements": 515,
+                        "connections": 6,
+                        "worker": 559561481,
+                        "db": 806467843
+                    },
+                    {
+                        "statements": 515,
+                        "connections": 6,
+                        "worker": 558537040,
+                        "db": 798850986
+                    }
+                ]
+            },
+            {
+                "library": "pg-boss",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "0 4 * * *",
+                "seconds": 120,
+                "statements": 514,
+                "connections": 6,
+                "worker": {
+                    "instructions": 3020912150,
+                    "cycles": 1490740726,
+                    "cpuSeconds": 0.8499999999999999
+                },
+                "db": {
+                    "instructions": 848162599,
+                    "cycles": 641492933,
+                    "cpuSeconds": 0.38999999999999996
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 515,
+                        "connections": 6,
+                        "worker": 3020912150,
+                        "db": 848162599
+                    },
+                    {
+                        "statements": 514,
+                        "connections": 6,
+                        "worker": 3031015034,
+                        "db": 861353960
+                    },
+                    {
+                        "statements": 514,
+                        "connections": 6,
+                        "worker": 3010730954,
+                        "db": 844258554
+                    }
+                ]
+            },
+            {
+                "library": "pg-boss",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "0 0 1 1 *",
+                "seconds": 120,
+                "statements": 510,
+                "connections": 6,
+                "worker": {
+                    "instructions": 22364010772,
+                    "cycles": 4955707378,
+                    "cpuSeconds": 1.88
+                },
+                "db": {
+                    "instructions": 848158860,
+                    "cycles": 664239457,
+                    "cpuSeconds": 0.41000000000000003
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 515,
+                        "connections": 6,
+                        "worker": 20976373103,
+                        "db": 850298727
+                    },
+                    {
+                        "statements": 510,
+                        "connections": 6,
+                        "worker": 22364010772,
+                        "db": 830689489
+                    },
+                    {
+                        "statements": 510,
+                        "connections": 6,
+                        "worker": 22377381694,
+                        "db": 848158860
+                    }
+                ]
+            },
+            {
+                "library": "pg-boss",
+                "workload": "cron-fire",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "* * * * *",
+                "seconds": 60,
+                "statements": 3756,
+                "connections": 6,
+                "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                "expected": 2000,
+                "decided": 2000,
+                "duplicates": 0,
+                "started": 2000,
+                "startedInWindow": 1050,
+                "forwardedInWindow": 1050,
+                "lagP50Ms": 23261,
+                "lagP99Ms": 33168,
+                "lagMaxMs": 33168,
+                "worker": {
+                    "instructions": 2296783232,
+                    "cycles": 1196534861,
+                    "cpuSeconds": 0.5800000000000001
+                },
+                "db": {
+                    "instructions": 6316564251,
+                    "cycles": 2650852602,
+                    "cpuSeconds": 1.3800000000000001
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 3834,
+                        "connections": 6,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1050,
+                        "forwardedInWindow": 1050,
+                        "lagP50Ms": 39415,
+                        "lagP99Ms": 49378,
+                        "lagMaxMs": 49379,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                        "worker": 2078775841,
+                        "db": 6316564251
+                    },
+                    {
+                        "statements": 3756,
+                        "connections": 7,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1050,
+                        "forwardedInWindow": 1050,
+                        "lagP50Ms": 23243,
+                        "lagP99Ms": 33168,
+                        "lagMaxMs": 33168,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:28:00.000Z", "2026-11-12T16:29:00.000Z"],
+                        "worker": 2320426745,
+                        "db": 6868249859
+                    },
+                    {
+                        "statements": 3707,
+                        "connections": 6,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "forwardedInWindow": 1000,
+                        "lagP50Ms": 23261,
+                        "lagP99Ms": 32375,
+                        "lagMaxMs": 32376,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:31:00.000Z", "2026-11-12T16:32:00.000Z"],
+                        "worker": 2296783232,
+                        "db": 6098242956
+                    }
+                ]
+            },
+            {
+                "library": "pg-boss",
+                "workload": "cron-fire",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 3,
+                "cron": "* * * * *",
+                "seconds": 60,
+                "statements": 4899,
+                "connections": 18,
+                "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                "expected": 2000,
+                "decided": 2000,
+                "duplicates": 0,
+                "started": 2000,
+                "startedInWindow": 1000,
+                "forwardedInWindow": 1000,
+                "lagP50Ms": 16242,
+                "lagP99Ms": 19337,
+                "lagMaxMs": 19344,
+                "worker": {
+                    "instructions": 2675922729,
+                    "cycles": 2050713315,
+                    "cpuSeconds": 1.08
+                },
+                "db": {
+                    "instructions": 8101740935,
+                    "cycles": 4009738599,
+                    "cpuSeconds": 1.8900000000000001
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 4899,
+                        "connections": 18,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1150,
+                        "forwardedInWindow": 1150,
+                        "lagP50Ms": 32372,
+                        "lagP99Ms": 36308,
+                        "lagMaxMs": 36312,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                        "worker": 2872636922,
+                        "db": 8258665982
+                    },
+                    {
+                        "statements": 4965,
+                        "connections": 18,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "forwardedInWindow": 1000,
+                        "lagP50Ms": 16202,
+                        "lagP99Ms": 19238,
+                        "lagMaxMs": 19245,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:28:00.000Z", "2026-11-12T16:29:00.000Z"],
+                        "worker": 2675922729,
+                        "db": 8101740935
+                    },
+                    {
+                        "statements": 4715,
+                        "connections": 18,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "forwardedInWindow": 1000,
+                        "lagP50Ms": 16242,
+                        "lagP99Ms": 19337,
+                        "lagMaxMs": 19344,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:31:00.000Z", "2026-11-12T16:32:00.000Z"],
+                        "worker": 2616634304,
+                        "db": 7820799689
+                    }
+                ]
+            },
+            {
+                "library": "graphile-worker",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1,
+                "processes": 1,
+                "cron": "0 4 * * *",
+                "seconds": 120,
+                "statements": 192,
+                "connections": 5,
+                "worker": {
+                    "instructions": 146104653,
+                    "cycles": 201280442,
+                    "cpuSeconds": 0.12999999999999998
+                },
+                "db": {
+                    "instructions": 74676794,
+                    "cycles": 115111185,
+                    "cpuSeconds": 0.06999999999999999
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 192,
+                        "connections": 5,
+                        "worker": 145885668,
+                        "db": 68536349
+                    },
+                    {
+                        "statements": 192,
+                        "connections": 5,
+                        "worker": 146104653,
+                        "db": 74676794
+                    },
+                    {
+                        "statements": 192,
+                        "connections": 5,
+                        "worker": 150260871,
+                        "db": 78577975
+                    }
+                ]
+            },
+            {
+                "library": "graphile-worker",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "0 4 * * *",
+                "seconds": 120,
+                "statements": 193,
+                "connections": 5,
+                "worker": {
+                    "instructions": 221066011,
+                    "cycles": 176786437,
+                    "cpuSeconds": 0.10999999999999999
+                },
+                "db": {
+                    "instructions": 74742963,
+                    "cycles": 77844072,
+                    "cpuSeconds": 0.04
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 193,
+                        "connections": 5,
+                        "worker": 234203310,
+                        "db": 67826481
+                    },
+                    {
+                        "statements": 193,
+                        "connections": 5,
+                        "worker": 221066011,
+                        "db": 75119748
+                    },
+                    {
+                        "statements": 193,
+                        "connections": 5,
+                        "worker": 218178027,
+                        "db": 74742963
+                    }
+                ]
+            },
+            {
+                "library": "graphile-worker",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "0 0 1 1 *",
+                "seconds": 120,
+                "statements": 193,
+                "connections": 5,
+                "worker": {
+                    "instructions": 231932310,
+                    "cycles": 210302178,
+                    "cpuSeconds": 0.12000000000000002
+                },
+                "db": {
+                    "instructions": 76792206,
+                    "cycles": 82188167,
+                    "cpuSeconds": 0.05
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 192,
+                        "connections": 5,
+                        "worker": 239954552,
+                        "db": 67817059
+                    },
+                    {
+                        "statements": 193,
+                        "connections": 5,
+                        "worker": 228414121,
+                        "db": 80395275
+                    },
+                    {
+                        "statements": 193,
+                        "connections": 5,
+                        "worker": 231932310,
+                        "db": 76792206
+                    }
+                ]
+            },
+            {
+                "library": "graphile-worker",
+                "workload": "cron-fire",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "* * * * *",
+                "seconds": 60,
+                "statements": 2097,
+                "connections": 5,
+                "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                "expected": 2000,
+                "decided": 2000,
+                "duplicates": 0,
+                "started": 2000,
+                "startedInWindow": 1000,
+                "lagP50Ms": 601,
+                "lagP99Ms": 702,
+                "lagMaxMs": 704,
+                "worker": {
+                    "instructions": 783402383,
+                    "cycles": 544569812,
+                    "cpuSeconds": 0.20000000000000007
+                },
+                "db": {
+                    "instructions": 6516294796,
+                    "cycles": 1974840397,
+                    "cpuSeconds": 0.68
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 2097,
+                        "connections": 5,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 601,
+                        "lagP99Ms": 771,
+                        "lagMaxMs": 773,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                        "worker": 776650852,
+                        "db": 5519817736
+                    },
+                    {
+                        "statements": 2097,
+                        "connections": 5,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 620,
+                        "lagP99Ms": 702,
+                        "lagMaxMs": 704,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:28:00.000Z", "2026-11-12T16:29:00.000Z"],
+                        "worker": 786397481,
+                        "db": 6516294796
+                    },
+                    {
+                        "statements": 2097,
+                        "connections": 5,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 601,
+                        "lagP99Ms": 676,
+                        "lagMaxMs": 678,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:31:00.000Z", "2026-11-12T16:32:00.000Z"],
+                        "worker": 783402383,
+                        "db": 6601402219
+                    }
+                ]
+            },
+            {
+                "library": "graphile-worker",
+                "workload": "cron-fire",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 3,
+                "cron": "* * * * *",
+                "seconds": 60,
+                "statements": 2291,
+                "connections": 15,
+                "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                "expected": 2000,
+                "decided": 2000,
+                "duplicates": 0,
+                "started": 2000,
+                "startedInWindow": 1000,
+                "lagP50Ms": 507,
+                "lagP99Ms": 627,
+                "lagMaxMs": 629,
+                "worker": {
+                    "instructions": 1188230683,
+                    "cycles": 976491213,
+                    "cpuSeconds": 0.45000000000000007
+                },
+                "db": {
+                    "instructions": 7264051087,
+                    "cycles": 2368032200,
+                    "cpuSeconds": 0.9000000000000001
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 2291,
+                        "connections": 15,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 507,
+                        "lagP99Ms": 677,
+                        "lagMaxMs": 681,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                        "worker": 1150849495,
+                        "db": 7400486661
+                    },
+                    {
+                        "statements": 2291,
+                        "connections": 15,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 512,
+                        "lagP99Ms": 627,
+                        "lagMaxMs": 629,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:28:00.000Z", "2026-11-12T16:29:00.000Z"],
+                        "worker": 1244339635,
+                        "db": 7182756666
+                    },
+                    {
+                        "statements": 2291,
+                        "connections": 15,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 489,
+                        "lagP99Ms": 572,
+                        "lagMaxMs": 578,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:31:00.000Z", "2026-11-12T16:32:00.000Z"],
+                        "worker": 1188230683,
+                        "db": 7264051087
+                    }
+                ]
+            },
+            {
+                "library": "river",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1,
+                "processes": 1,
+                "cron": "0 4 * * *",
+                "seconds": 120,
+                "statements": 290,
+                "connections": 5,
+                "worker": {
+                    "instructions": 551503390,
+                    "cycles": 768300235,
+                    "cpuSeconds": 0.5
+                },
+                "db": {
+                    "instructions": 186640209,
+                    "cycles": 225314548,
+                    "cpuSeconds": 0.14
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 291,
+                        "connections": 5,
+                        "worker": 555716035,
+                        "db": 202430273
+                    },
+                    {
+                        "statements": 290,
+                        "connections": 5,
+                        "worker": 551503390,
+                        "db": 186640209
+                    },
+                    {
+                        "statements": 290,
+                        "connections": 5,
+                        "worker": 548957644,
+                        "db": 182294746
+                    }
+                ]
+            },
+            {
+                "library": "river",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "0 4 * * *",
+                "seconds": 120,
+                "statements": 290,
+                "connections": 5,
+                "worker": {
+                    "instructions": 844275351,
+                    "cycles": 954206766,
+                    "cpuSeconds": 0.6599999999999999
+                },
+                "db": {
+                    "instructions": 189595111,
+                    "cycles": 229479274,
+                    "cpuSeconds": 0.13999999999999999
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 291,
+                        "connections": 5,
+                        "worker": 850114513,
+                        "db": 200527899
+                    },
+                    {
+                        "statements": 290,
+                        "connections": 5,
+                        "worker": 844275351,
+                        "db": 189595111
+                    },
+                    {
+                        "statements": 290,
+                        "connections": 5,
+                        "worker": 842874192,
+                        "db": 182552119
+                    }
+                ]
+            },
+            {
+                "library": "river",
+                "workload": "cron-idle",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "0 0 1 1 *",
+                "seconds": 120,
+                "statements": 290,
+                "connections": 5,
+                "worker": {
+                    "instructions": 884466216,
+                    "cycles": 949273343,
+                    "cpuSeconds": 0.61
+                },
+                "db": {
+                    "instructions": 191855469,
+                    "cycles": 238279207,
+                    "cpuSeconds": 0.14
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 291,
+                        "connections": 5,
+                        "worker": 884466216,
+                        "db": 190105346
+                    },
+                    {
+                        "statements": 290,
+                        "connections": 5,
+                        "worker": 889880405,
+                        "db": 193666930
+                    },
+                    {
+                        "statements": 290,
+                        "connections": 5,
+                        "worker": 882601907,
+                        "db": 191855469
+                    }
+                ]
+            },
+            {
+                "library": "river",
+                "workload": "cron-fire",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 1,
+                "cron": "* * * * *",
+                "seconds": 60,
+                "statements": 285,
+                "connections": 5,
+                "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                "expected": 2000,
+                "decided": 2000,
+                "duplicates": 0,
+                "started": 2000,
+                "startedInWindow": 1000,
+                "lagP50Ms": 597,
+                "lagP99Ms": 696,
+                "lagMaxMs": 698,
+                "worker": {
+                    "instructions": 2394042146,
+                    "cycles": 1208223171,
+                    "cpuSeconds": 0.56
+                },
+                "db": {
+                    "instructions": 2100992985,
+                    "cycles": 740432939,
+                    "cpuSeconds": 0.28
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 285,
+                        "connections": 5,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 621,
+                        "lagP99Ms": 744,
+                        "lagMaxMs": 747,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                        "worker": 2357783555,
+                        "db": 2084929992
+                    },
+                    {
+                        "statements": 285,
+                        "connections": 5,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 597,
+                        "lagP99Ms": 692,
+                        "lagMaxMs": 693,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:28:00.000Z", "2026-11-12T16:29:00.000Z"],
+                        "worker": 2508246018,
+                        "db": 2100992985
+                    },
+                    {
+                        "statements": 285,
+                        "connections": 5,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 588,
+                        "lagP99Ms": 696,
+                        "lagMaxMs": 698,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:31:00.000Z", "2026-11-12T16:32:00.000Z"],
+                        "worker": 2394042146,
+                        "db": 2114550079
+                    }
+                ]
+            },
+            {
+                "library": "river",
+                "workload": "cron-fire",
+                "names": 1,
+                "dialect": "postgres",
+                "schedules": 1000,
+                "processes": 3,
+                "cron": "* * * * *",
+                "seconds": 60,
+                "statements": 435,
+                "connections": 13,
+                "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                "expected": 2000,
+                "decided": 2000,
+                "duplicates": 0,
+                "started": 2000,
+                "startedInWindow": 1000,
+                "lagP50Ms": 431,
+                "lagP99Ms": 551,
+                "lagMaxMs": 556,
+                "worker": {
+                    "instructions": 3110889625,
+                    "cycles": 2069279637,
+                    "cpuSeconds": 1.12
+                },
+                "db": {
+                    "instructions": 2260662111,
+                    "cycles": 951283842,
+                    "cpuSeconds": 0.43
+                },
+                "transactional": true,
+                "samples": [
+                    {
+                        "statements": 438,
+                        "connections": 13,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 431,
+                        "lagP99Ms": 583,
+                        "lagMaxMs": 600,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:25:00.000Z", "2026-11-12T16:26:00.000Z"],
+                        "worker": 3084084734,
+                        "db": 2236548603
+                    },
+                    {
+                        "statements": 435,
+                        "connections": 13,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 450,
+                        "lagP99Ms": 515,
+                        "lagMaxMs": 517,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:28:00.000Z", "2026-11-12T16:29:00.000Z"],
+                        "worker": 3110889625,
+                        "db": 2269812193
+                    },
+                    {
+                        "statements": 435,
+                        "connections": 13,
+                        "decided": 2000,
+                        "started": 2000,
+                        "startedInWindow": 1000,
+                        "lagP50Ms": 428,
+                        "lagP99Ms": 551,
+                        "lagMaxMs": 556,
+                        "duplicates": 0,
+                        "slots": ["2026-11-12T16:31:00.000Z", "2026-11-12T16:32:00.000Z"],
+                        "worker": 3152058101,
+                        "db": 2260662111
                     }
                 ]
             }
