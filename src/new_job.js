@@ -3,6 +3,7 @@ import { parseDuration } from './duration.js';
 import { InvalidOptionsError } from './errors.js';
 import { normalizeMutexKeys } from './mutex_keys.js';
 import { serializePayload } from './payload.js';
+import { isSlotKey, isSlotTime, MAX_KEY_LENGTH, SLOT_PREFIX, slotJobIdOf } from './schedule.js';
 import {
     checkFailureJob,
     checkJobFields,
@@ -12,7 +13,7 @@ import {
 } from './validate.js';
 
 const ENQUEUE_OPTION_NAMES = [
-    'jobId', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureJob', 'mutexKeys',
+    'jobId', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureJob', 'mutexKeys', 'slot',
 ];
 const MAX_JOB_ID_LENGTH = 120;
 /** Sorted by creation order in this process, also within one millisecond */
@@ -56,6 +57,33 @@ function checkJobId(jobId, where) {
             + `ends: ${JSON.stringify(jobId)}`,
         );
     }
+
+    if (jobId.startsWith(SLOT_PREFIX)) {
+        throw new InvalidOptionsError(
+            `${where}: the "jobId" prefix "${SLOT_PREFIX}" is reserved for the slots of schedules: use the option "slot"`,
+        );
+    }
+}
+
+/**
+ * @param {unknown} slot
+ * @param {string} where
+ * @returns {string} The `jobId` of the slot.
+ */
+function slotJobIdFrom(slot, where) {
+    const { at, key } = checkObject(slot, ['at', 'key'], '"slot"', { where, ErrorClass: InvalidOptionsError });
+
+    if (!(at instanceof Date) || !isSlotTime(at.getTime())) {
+        throw new InvalidOptionsError(`${where}: "slot.at" must be a valid Date in the years 1970 to 9999`);
+    }
+
+    if (key !== undefined && !isSlotKey(key)) {
+        throw new InvalidOptionsError(
+            `${where}: "slot.key" must have 1 to ${MAX_KEY_LENGTH} printable ASCII characters, without spaces at the ends`,
+        );
+    }
+
+    return slotJobIdOf(/** @type {string | undefined} */ (key), at.getTime());
 }
 
 /**
@@ -102,8 +130,18 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
     checkObject(options, ENQUEUE_OPTION_NAMES, 'options', scope);
     checkJobFields(options, scope);
 
-    if (options.jobId !== undefined) {
-        checkJobId(options.jobId, where);
+    let { jobId } = options;
+
+    if (jobId !== undefined) {
+        checkJobId(jobId, where);
+    }
+
+    if (options.slot !== undefined) {
+        if (jobId !== undefined) {
+            throw new InvalidOptionsError(`${where}: "slot" or "jobId", not both`);
+        }
+
+        jobId = slotJobIdFrom(options.slot, where);
     }
 
     const failureJob = options.failureJob ?? definition?.failureJob;
@@ -113,8 +151,8 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
     const retention = { ...definition?.retention, ...options.retention };
 
     return {
-        id: options.jobId === undefined ? ulid() : `${name}:${options.jobId}`,
-        hasJobId: options.jobId !== undefined,
+        id: jobId === undefined ? ulid() : `${name}:${jobId}`,
+        hasJobId: jobId !== undefined,
         name,
         payloadJson,
         mutexKeys: normalizeMutexKeys(rawKeys, where),

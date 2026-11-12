@@ -80,6 +80,23 @@ export function mariadbMigrations(p) {
                 ON DUPLICATE KEY UPDATE job_id = job_id`,
             ],
         },
+        {
+            // The cursor of each schedule: its last decided slot. Needed only with schedules. The id is the same on
+            // every dialect: it skips 0003, which only PostgreSQL has.
+            id: '0004_schedules',
+            statements: [
+                `CREATE TABLE IF NOT EXISTS ${p}schedules (
+                    id VARCHAR(255) ${ASCII} NOT NULL,
+                    job_name VARCHAR(128) ${ASCII} NOT NULL,
+                    spec VARCHAR(512) ${ASCII} NOT NULL,
+                    last_slot_at DATETIME(3) NOT NULL,
+                    last_job_id VARCHAR(255) ${ASCII} NULL,
+                    created_at DATETIME(3) NOT NULL,
+                    updated_at DATETIME(3) NOT NULL,
+                    PRIMARY KEY (id)
+                ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_bin`,
+            ],
+        },
     ];
 }
 

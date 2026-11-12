@@ -117,10 +117,51 @@ test.each([
     ['a payload that is not JSON', { payload: undefined }, InvalidOptionsError],
     ['a payload above the limit', { maxPayloadBytes: 10 }, PayloadTooLargeError],
     ['a bad mutex key', { options: { mutexKeys: [' a'] } }, InvalidMutexKeyError],
+    ['a jobId with the reserved prefix', { options: { jobId: 'schedule:2026' } }, InvalidOptionsError],
+    ['slot with jobId', { options: { slot: { at: new Date() }, jobId: 'r1' } }, InvalidOptionsError],
+    ['a slot without at', { options: { slot: {} } }, InvalidOptionsError],
+    ['a slot at an invalid Date', { options: { slot: { at: new Date('nope') } } }, InvalidOptionsError],
+    ['a slot before 1970', { options: { slot: { at: new Date('1969-12-31T23:59:59Z') } } }, InvalidOptionsError],
+    ['a slot after 9999', { options: { slot: { at: new Date('+010000-01-01T00:00:00Z') } } }, InvalidOptionsError],
+    ['a slot with a bad key', { options: { slot: { at: new Date(), key: 'a ' } } }, InvalidOptionsError],
+    ['a slot with an unknown option', { options: { slot: { at: new Date(), id: 'x' } } }, InvalidOptionsError],
 ])('rejects %s', (_, params, ErrorClass) => {
     expect(() => build(/** @type {any} */ (params))).toThrow(ErrorClass);
 });
 
 test('accepts a jobId of 120 characters', () => {
     expect(build({ options: { jobId: 'x'.repeat(120) } }).id).toBe(`build_report:${'x'.repeat(120)}`);
+});
+
+test('accepts a jobId with schedule: after its start', () => {
+    expect(build({ options: { jobId: 'x:schedule:1' } }).id).toBe('build_report:x:schedule:1');
+});
+
+describe('a slot run by hand', () => {
+    const at = new Date('2026-11-11T02:00:00.000Z');
+
+    test('gets the jobId of the slot, due now', () => {
+        expect(build({ options: { slot: { at } } })).toMatchObject({
+            id: 'build_report:schedule:2026-11-11T02:00:00.000Z',
+            hasJobId: true,
+            delayMs: 0,
+            runAt: null,
+        });
+    });
+
+    test('with a key', () => {
+        expect(build({ options: { slot: { at, key: 'tenant:42' } } }).id)
+            .toBe('build_report:schedule:tenant:42:2026-11-11T02:00:00.000Z');
+    });
+
+    test('with a delay or a runAt', () => {
+        expect(build({ options: { slot: { at }, delay: '1m' } })).toMatchObject({ delayMs: 60_000 });
+        expect(build({ options: { slot: { at }, runAt: at } })).toMatchObject({ runAt: at });
+    });
+
+    test('the years 1970 and 9999', () => {
+        expect(build({ options: { slot: { at: new Date(0) } } }).id).toBe('build_report:schedule:1970-01-01T00:00:00.000Z');
+        expect(build({ options: { slot: { at: new Date('9999-12-31T23:59:59.999Z') } } }).id)
+            .toBe('build_report:schedule:9999-12-31T23:59:59.999Z');
+    });
 });

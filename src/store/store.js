@@ -1,9 +1,12 @@
 // The store: the SQL of one dialect, bound to an adapter and a table prefix.
 import * as mariadbFinal from './mariadb_final.js';
+import * as mariadbSchedules from './mariadb_schedules.js';
 import * as mariadbWorker from './mariadb_worker.js';
 import * as mysqlFinal from './mysql_final.js';
+import * as mysqlSchedules from './mysql_schedules.js';
 import * as mysqlWorker from './mysql_worker.js';
 import * as postgresFinal from './postgres_final.js';
+import * as postgresSchedules from './postgres_schedules.js';
 import * as postgresWorker from './postgres_worker.js';
 
 /**
@@ -145,6 +148,17 @@ import * as postgresWorker from './postgres_worker.js';
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
  * @property {(names: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
  * @property {() => Promise<import('../types.js').JobStats[]>} getStats
+ * @property {(schedules: { id: string, name: string, spec: string }[], now: () => number)
+ *     => Promise<ScheduleRead>} registerSchedules Inserts the missing rows (2 statements per 500), then reads them.
+ * @property {(ids: string[] | null, now: () => number) => Promise<ScheduleRead>} readSchedules A plain read, no
+ *     lock; null: every row.
+ * @property {(params: import('./fire_slots.js').FireParams) => Promise<import('./fire_slots.js').FireResult>}
+ *     fireSlots In a queue transaction of its own.
+ */
+
+/**
+ * @typedef {{ clock: import('./fire_slots.js').ClockSample, rows: import('./fire_slots.js').ScheduleRow[] }}
+ *     ScheduleRead
  */
 
 /**
@@ -153,10 +167,10 @@ import * as postgresWorker from './postgres_worker.js';
  * @returns {Store}
  */
 export function createStore(adapter, tablePrefix) {
-    const { sql, final } = {
-        mysql: { sql: mysqlWorker, final: mysqlFinal },
-        mariadb: { sql: mariadbWorker, final: mariadbFinal },
-        postgres: { sql: postgresWorker, final: postgresFinal },
+    const { sql, final, schedules } = {
+        mysql: { sql: mysqlWorker, final: mysqlFinal, schedules: mysqlSchedules },
+        mariadb: { sql: mariadbWorker, final: mariadbFinal, schedules: mariadbSchedules },
+        postgres: { sql: postgresWorker, final: postgresFinal, schedules: postgresSchedules },
     }[adapter.dialect];
     /**
      * @template T
@@ -195,5 +209,8 @@ export function createStore(adapter, tablePrefix) {
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
         makeDue: names => inQueue(executor => final.makeDue(executor, p, names)),
         getStats: () => final.getStats(adapter.queue, p),
+        registerSchedules: (entries, now) => schedules.registerSchedules(adapter.queue, p, entries, now),
+        readSchedules: (ids, now) => schedules.readSchedules(adapter.queue, p, ids, now),
+        fireSlots: params => inQueue(executor => schedules.fireSlots(executor, p, params)),
     };
 }

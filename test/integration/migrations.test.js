@@ -17,8 +17,8 @@ const LOCK_SQL = {
 
 /** The migrations of the dialect, in order */
 const ALL_MIGRATIONS = inject('databaseDialect') === 'postgres'
-    ? ['0001_initial', '0002_pending_order', '0003_job_keys']
-    : ['0001_initial', '0002_job_keys'];
+    ? ['0001_initial', '0002_pending_order', '0003_job_keys', '0004_schedules']
+    : ['0001_initial', '0002_job_keys', '0004_schedules'];
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
@@ -79,9 +79,26 @@ test('applies the migrations once', async () => {
 
     await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
     await expect(listTables(tablePrefix)).resolves.toStrictEqual(
-        ['job_keys', 'jobs', 'migrations', 'mutexes', 'payloads'].map(table => `${tablePrefix}${table}`).toSorted(),
+        ['job_keys', 'jobs', 'migrations', 'mutexes', 'payloads', 'schedules']
+            .map(table => `${tablePrefix}${table}`).toSorted(),
     );
     await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [] });
+});
+
+test('a database of 3.x applies only 0004_schedules, and keeps its jobs', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+
+    await sqlane.migrate();
+    // As 3.x left it: without the table of the schedules and its record
+    await database.query(`DROP TABLE ${tablePrefix}schedules`);
+    await database.query(`DELETE FROM ${tablePrefix}migrations WHERE id = '0004_schedules'`);
+    await sqlane.enqueue(testAdapter.pool, 'nightly_report', {});
+
+    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: ['0004_schedules'] });
+    await expect(database.query(`SELECT job_name FROM ${tablePrefix}jobs`))
+        .resolves.toStrictEqual([{ job_name: 'nightly_report' }]);
+    await expect(database.query(`SELECT id FROM ${tablePrefix}schedules`)).resolves.toStrictEqual([]);
 });
 
 test('concurrent migrations apply each version once', async () => {

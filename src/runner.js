@@ -19,6 +19,7 @@ import {
 } from './errors.js';
 import { ANY_NAME, KEY_PREFIX } from './hint_channel.js';
 import { buildNewJob } from './new_job.js';
+import { scheduledAtOf } from './schedule.js';
 import { isTransientDbError } from './transient_error.js';
 
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
@@ -101,6 +102,8 @@ const MAX_COMPLETE_BATCH = 100;
  * @property {(names: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.
  * @property {() => boolean} isClosed
  * @property {() => boolean} isStarted
+ * @property {() => boolean} isIdle Neither started, draining nor closed.
+ * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
  * @property {(name: string) => boolean} canStartNow This process handles the name and has a free slot for it.
  */
 
@@ -145,6 +148,7 @@ function contextOf(job) {
             maxAttempts: claimed.maxAttempts,
             enqueuedAt: claimed.enqueuedAt,
             mutexKeys: claimed.mutexKeys,
+            scheduledAt: scheduledAtOf(claimed.id),
         },
         signal: job.controller.signal,
     };
@@ -1642,6 +1646,8 @@ export function createRunner({
         onCommitted,
         isClosed: () => state === 'closing' || state === 'closed',
         isStarted: () => state === 'started',
+        isIdle: () => state === 'idle',
+        emit,
         canStartNow: (name) => {
             const entry = registry.getEntry(name);
 

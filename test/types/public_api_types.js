@@ -180,6 +180,81 @@ export async function publicApiTypes() {
     // @ts-expect-error wake() takes no name
     sqlane.wake('build_report');
 
+    // schedule: a cron in a zone, or an interval; jitter on both
+    sqlane.schedule(job, { cron: '0 3 * * *', timezone: 'Europe/Berlin', missed: 'skip', overlap: 'skip', jitter: '5m' });
+    sqlane.schedule('build_report', { every: '15m', key: 'tenant-42', payload: { tenantId: 42 }, jitter: '1m' });
+    // @ts-expect-error cron or every, not both
+    sqlane.schedule(job, { cron: '* * * * *', every: '1m' });
+    // @ts-expect-error a timezone is only for cron
+    sqlane.schedule(job, { every: '1m', timezone: 'UTC' });
+    // @ts-expect-error cron or every is required
+    sqlane.schedule(job, { key: 'a' });
+    // @ts-expect-error an unknown missed value
+    sqlane.schedule(job, { every: '1m', missed: 'all' });
+    // @ts-expect-error a payload is JSON
+    sqlane.schedule(job, { every: '1m', payload: { at: new Date() } });
+    sqlane.schedule(syncOrder, { every: '1h', payload: { orderId: 1 } });
+    // @ts-expect-error a declared payload is required
+    sqlane.schedule(syncOrder, { every: '1m' });
+    // @ts-expect-error a declared payload is checked
+    sqlane.schedule(syncOrder, { every: '1m', payload: { orderId: '1' } });
+
+    // Options built apart, in a variable of the exported type
+    /** @type {import('@sqlane/core').ScheduleOptions<{ orderId: number, note?: string }>} */
+    const perOrder = { every: '1h', key: 'order-1', payload: { orderId: 1 } };
+
+    sqlane.schedule(syncOrder, perOrder);
+    /** @type {import('@sqlane/core').ScheduleOptions} */
+    const untyped = { cron: '0 3 * * *', payload: { any: 'json' } };
+
+    sqlane.schedule('sync_order', untyped);
+    /** @type {import('@sqlane/core').ScheduleOptions<{ orderId: number }>} */
+    // @ts-expect-error with a payload type, the payload is required
+    const withoutPayload = { every: '1h' };
+
+    void withoutPayload;
+    /** @type {import('@sqlane/core').ScheduleOptions<{ orderId: string }>} */
+    const otherPayload = { every: '1h', payload: { orderId: '1' } };
+
+    // @ts-expect-error the payload type of the options is not the one of the definition
+    sqlane.schedule(syncOrder, otherPayload);
+
+    const [schedule] = await sqlane.getSchedules();
+
+    expectTypeOf(schedule.nextAt).toEqualTypeOf(/** @type {Date | null} */ (null));
+    expectTypeOf(schedule.nextRunAt).toEqualTypeOf(/** @type {Date | null} */ (null));
+    expectTypeOf(schedule.lastJobId).toEqualTypeOf(/** @type {string | null} */ (null));
+
+    // The slot of a job of a schedule
+    sqlane.handle(job, ({ job: info }) => {
+        expectTypeOf(info.scheduledAt).toEqualTypeOf(/** @type {Date | null} */ (null));
+    });
+    /** @type {import('@sqlane/core').JobInfo} */
+    // @ts-expect-error scheduledAt is required in a context built by hand
+    const builtByHand = { id: 'a', name: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), mutexKeys: [] };
+
+    void builtByHand;
+
+    // enqueue: a slot run by hand
+    await sqlane.enqueue(connection, job, {}, { slot: { at: new Date(), key: 'tenant-42' } });
+    await sqlane.enqueue(connection, job, {}, { slot: { at: new Date() }, delay: '1m' });
+    // @ts-expect-error slot or jobId, not both
+    await sqlane.enqueue(connection, job, {}, { slot: { at: new Date() }, jobId: 'x' });
+    // @ts-expect-error slot.at is a Date
+    await sqlane.enqueue(connection, job, {}, { slot: { at: '2026-01-01' } });
+
+    // The event of a slot
+    createSqlane({
+        adapter: mysql2Adapter(mysqlPool),
+        onEvent: (event) => {
+            if (event.type === 'schedule_fired') {
+                expectTypeOf(event.scheduledAt).toEqualTypeOf(new Date());
+                expectTypeOf(event.jobId).toEqualTypeOf(/** @type {string | null} */ (null));
+                expectTypeOf(event.late).toBeBoolean();
+            }
+        },
+    });
+
     // close, drain
     await sqlane.close({ deadline: '30s', mode: 'release', exitsBy: '1m' });
     // @ts-expect-error an unknown close mode

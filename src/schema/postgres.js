@@ -81,6 +81,21 @@ export function postgresMigrations(p) {
                 ON CONFLICT DO NOTHING`,
             ],
         },
+        {
+            // The cursor of each schedule: its last decided slot. Needed only with schedules.
+            id: '0004_schedules',
+            statements: [
+                `CREATE TABLE IF NOT EXISTS ${p}schedules (
+                    id varchar(255) COLLATE "C" NOT NULL PRIMARY KEY,
+                    job_name varchar(128) COLLATE "C" NOT NULL,
+                    spec varchar(512) COLLATE "C" NOT NULL,
+                    last_slot_at timestamptz(3) NOT NULL,
+                    last_job_id varchar(255) COLLATE "C",
+                    created_at timestamptz(3) NOT NULL,
+                    updated_at timestamptz(3) NOT NULL
+                )`,
+            ],
+        },
     ];
 }
 
