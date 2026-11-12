@@ -3,6 +3,7 @@ import * as typeorm1 from 'typeorm';
 import * as typeorm03 from 'typeorm-0.3';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
+import { checkSchedules } from './helpers/schedule_checks.js';
 import { typeOrmAdapter } from '../../src/adapters/typeorm.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 
@@ -116,6 +117,12 @@ describe.each([
 
         return { sqlane, p, events };
     }
+
+    test('schedules: start() without the table asks for migrate(); a slot adds its job', async () => {
+        const { sqlane, p } = await freshSqlane();
+
+        await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+    });
 
     test('enqueue with the EntityManager of a transaction: the job commits with it, and rolls back with it', async () => {
         const { sqlane, p } = await freshSqlane();

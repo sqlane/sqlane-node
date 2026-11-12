@@ -3,9 +3,26 @@ const TRANSIENT_CODES = new Set(['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT', '40
 const TRANSIENT_ERRNOS = new Set([1205, 1213]);
 /** The kind of an error of a Prisma driver adapter */
 const TRANSIENT_KINDS = new Set(['TransactionWriteConflict']);
+/** PostgreSQL: undefined table. MySQL, MariaDB: no such table. Prisma: the table does not exist. */
+const MISSING_TABLE_CODES = new Set(['42P01', 'ER_NO_SUCH_TABLE', 'P2021']);
+const MISSING_TABLE_ERRNOS = new Set([1146]);
+const MISSING_TABLE_KINDS = new Set(['TableDoesNotExist']);
+/**
+ * The database cannot be reached: sockets, PostgreSQL connection errors and shutdowns, too many connections, Prisma
+ * connection errors and pool timeouts.
+ */
+const CONNECTION_CODES = new Set([
+    'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EHOSTUNREACH', 'PROTOCOL_CONNECTION_LOST',
+    'ER_CON_COUNT_ERROR', '57P01', '57P02', '57P03', 'P1001', 'P1017', 'P2024',
+]);
+const CONNECTION_ERRNOS = new Set([1040]);
+/** The pool acquire timeouts: knex, generic-pool, Sequelize */
+const CONNECTION_NAMES = new Set(['KnexTimeoutError', 'TimeoutError', 'ConnectionAcquireTimeoutError']);
+const CONNECTION_KINDS = new Set(['DatabaseNotReachable', 'ConnectionClosed', 'SocketTimeout']);
 
 /**
  * @typedef {object} ErrorFields
+ * @property {unknown} [name]
  * @property {unknown} [code]
  * @property {unknown} [errno]
  * @property {unknown} [originalCode] Prisma: the code of the database.
@@ -72,4 +89,30 @@ export function isTransientDbError(error) {
         errnos: TRANSIENT_ERRNOS,
         kinds: TRANSIENT_KINDS,
     }));
+}
+
+/**
+ * A table is missing: `migrate()` has not run.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isMissingTableError(error) {
+    return someError(error, fields => matches(fields, {
+        codes: MISSING_TABLE_CODES,
+        errnos: MISSING_TABLE_ERRNOS,
+        kinds: MISSING_TABLE_KINDS,
+    }));
+}
+
+/**
+ * The database cannot be reached, or the pool gives no connection: other work fails the same way.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isConnectionError(error) {
+    return someError(error, fields => matches(fields, {
+        codes: CONNECTION_CODES,
+        errnos: CONNECTION_ERRNOS,
+        kinds: CONNECTION_KINDS,
+    }) || CONNECTION_NAMES.has(String(fields.name)) || String(fields.code).startsWith('08'));
 }

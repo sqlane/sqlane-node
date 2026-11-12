@@ -92,6 +92,14 @@ export type Runner = {
     isClosed: () => boolean;
     isStarted: () => boolean;
     /**
+     * Neither started, draining nor closed.
+     */
+    isIdle: () => boolean;
+    /**
+     * Calls `onEvent`; logs what it throws.
+     */
+    emit: (event: import('./types.js').SqlaneEvent) => void;
+    /**
      * This process handles the name and has a free slot for it.
      */
     canStartNow: (name: string) => boolean;

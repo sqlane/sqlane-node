@@ -4,6 +4,7 @@ import { PrismaMariaDb } from '@prisma/adapter-mariadb';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { afterAll, afterEach, beforeAll, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
+import { checkSchedules } from './helpers/schedule_checks.js';
 import { prismaAdapter } from '../../src/adapters/prisma.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 
@@ -118,6 +119,12 @@ async function waitFor(condition) {
         await sleep(10);
     }
 }
+
+test('schedules: start() without the table asks for migrate(); a slot adds its job', async () => {
+    const { sqlane, p } = await freshSqlane();
+
+    await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+});
 
 test('migrate() through Prisma: the tables, once', async () => {
     const { sqlane } = await freshSqlane();

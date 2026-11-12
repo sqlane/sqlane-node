@@ -96,9 +96,14 @@
  */
 
 /**
+ * A slot of a schedule, run by hand: the job gets the `jobId` that the scheduler gives the slot.
+ * @typedef {object} SlotOptions
+ * @property {Date} at The slot, in the years 1970 to 9999.
+ * @property {string} [key] The `key` of the schedule.
+ */
+
+/**
  * @typedef {object} EnqueueBaseOptions
- * @property {string} [jobId] 1–120 printable ASCII characters. Dedupe: a job with this id is added once while its row
- *     exists.
  * @property {number} [maxAttempts]
  * @property {number} [maxStalls]
  * @property {Retention} [retention]
@@ -107,9 +112,23 @@
  */
 
 /**
- * The options of an enqueue: `delay` or `runAt`, not both.
- * @typedef {EnqueueBaseOptions & ({ delay?: Duration, runAt?: never } | { runAt: Date, delay?: never })}
- *     EnqueueOptions
+ * @typedef {object} EnqueueJobIdOption
+ * @property {string} [jobId] 1–120 printable ASCII characters, not starting with `schedule:`. Dedupe: a job with this
+ *     id is added once while its row exists.
+ * @property {never} [slot]
+ */
+
+/**
+ * @typedef {object} EnqueueSlotOption
+ * @property {SlotOptions} slot Runs a slot of a schedule by hand: the job gets the `jobId` of the slot.
+ * @property {never} [jobId]
+ */
+
+/**
+ * The options of an enqueue: `delay` or `runAt`, not both; `jobId` or `slot`, not both.
+ * @typedef {EnqueueBaseOptions
+ *     & ({ delay?: Duration, runAt?: never } | { runAt: Date, delay?: never })
+ *     & (EnqueueJobIdOption | EnqueueSlotOption)} EnqueueOptions
  */
 
 /**
@@ -133,6 +152,7 @@
  * @property {number} maxAttempts
  * @property {Date} enqueuedAt
  * @property {readonly string[]} mutexKeys
+ * @property {Date | null} scheduledAt The slot of a job of a schedule (also when it runs late); else null.
  */
 
 /**
@@ -212,7 +232,65 @@
  *     | { type: 'released' }
  *     | { type: 'lease_lost' }
  *     | { type: 'failure_job_not_added', failureJob: string, error: unknown }
- * )) | { type: 'error', operation: string, error: unknown }} SqlaneEvent
+ * )) | ScheduleFiredEvent | { type: 'error', operation: string, error: unknown }} SqlaneEvent
+ */
+
+/**
+ * A slot of a schedule was decided: once in the cluster, by the process that moved the cursor.
+ * @typedef {object} ScheduleFiredEvent
+ * @property {'schedule_fired'} type
+ * @property {string} scheduleId
+ * @property {string} jobName
+ * @property {Date} scheduledAt The slot.
+ * @property {boolean} late A catch-up of a missed slot.
+ * @property {string | null} jobId The job of the slot. Null: `overlap: 'skip'` skipped the slot.
+ */
+
+/**
+ * When a schedule adds its jobs: a cron in a time zone, or a fixed interval. Not both.
+ * @typedef {{ cron: string, timezone?: string, every?: never }
+ *     | { every: Duration, cron?: never, timezone?: never }} ScheduleTiming
+ */
+
+/**
+ * @typedef {object} ScheduleBaseOptions
+ * @property {string} [key] Tells several schedules of one job name apart: 1–64 printable ASCII characters.
+ * @property {'once' | 'skip'} [missed] A slot that no process enqueued within 1 minute. Default: `'once'`: the
+ *     latest missed slot runs once, within the catch-up reach.
+ * @property {'allow' | 'skip'} [overlap] Default: `'allow'`. `'skip'`: a slot adds no job while the previous job of
+ *     the schedule is pending or running.
+ * @property {Duration} [jitter] Up to `'1d'`; below `every`. Each slot runs at a fixed offset after it, below the
+ *     jitter and below the next slot: the runs of many schedules spread out.
+ */
+
+/**
+ * The options of `schedule()`. With a payload type, `payload` is required: a variable of this type passes to
+ * `schedule()` with a definition of that payload type.
+ * @template [P=any] The payload of each job. Default: `{}`.
+ * @typedef {ScheduleBaseOptions & ScheduleTiming & (IsAny<P> extends true ? { payload?: P } : { payload: P })}
+ *     ScheduleOptions
+ */
+
+/**
+ * The payload of a schedule, with `ScheduleOptions`: required and checked when the definition declares one, else any
+ * JSON.
+ * @template J
+ * @template P
+ * @typedef {[DeclaredPayload<J>] extends [never] ? { payload?: P & NoInfer<Jsonable<P>> }
+ *     : { payload: NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>> }} SchedulePayload
+ */
+
+/**
+ * @typedef {object} ScheduleInfo
+ * @property {string} id `<job name>` or `<job name>:<key>`.
+ * @property {string} name The job name.
+ * @property {string} spec The stored spec, e.g. `cron 0 3 * * * Europe/Berlin` or `every 900000`.
+ * @property {boolean} registered `schedule()` was called in this process.
+ * @property {Date | null} nextAt Registered: the next slot. Null: not registered, or no next slot.
+ * @property {Date | null} nextRunAt When the job of the next slot will be due: `nextAt` plus its jitter. Null when
+ *     `nextAt` is.
+ * @property {Date | null} lastSlotAt The cursor: the last decided slot.
+ * @property {string | null} lastJobId The job of the last enqueued slot.
  */
 
 /**
@@ -334,9 +412,14 @@
  * @property {<J extends JobDefinition | string>(
  *     job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions<L>,
  * ) => void} handle
- * @property {() => Promise<void>} start
+ * @property {<J extends JobDefinition | string, P>(
+ *     job: J, options: ScheduleBaseOptions & ScheduleTiming & SchedulePayload<J, P>,
+ * ) => void} schedule Adds a job at each slot of a cron or an interval, in every started process that calls it.
+ *     Before `start()`.
+ * @property {() => Promise<ScheduleInfo[]>} getSchedules The schedules of the table and of this process.
+ * @property {() => Promise<void>} start Starts the runner and the schedules. Idempotent.
  * @property {(options?: DrainOptions) => Promise<DrainResult>} drain For tests: runs the due jobs of the handled
- *     names until none is left, without `start()`.
+ *     names until none is left, without `start()`. It does not fire schedules.
  * @property {(options?: CloseOptions) => Promise<void>} close
  * @property {(options?: MigrateOptions) => Promise<{ applied: string[] }>} migrate Applies the missing migrations:
  *     their ids.

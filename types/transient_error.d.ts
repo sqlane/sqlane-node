@@ -1,4 +1,5 @@
 export type ErrorFields = {
+    name?: unknown;
     code?: unknown;
     errno?: unknown;
     /**
@@ -38,3 +39,15 @@ export type ErrorFields = {
  * @returns {boolean}
  */
 export declare function isTransientDbError(error: unknown): boolean;
+/**
+ * A table is missing: `migrate()` has not run.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export declare function isMissingTableError(error: unknown): boolean;
+/**
+ * The database cannot be reached, or the pool gives no connection: other work fails the same way.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export declare function isConnectionError(error: unknown): boolean;

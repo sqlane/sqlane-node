@@ -2,6 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { Sequelize } from 'sequelize';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
+import { checkSchedules } from './helpers/schedule_checks.js';
 import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane, defineJob } from '../../src/index.js';
@@ -109,6 +110,12 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
     async function statuses(p) {
         return (await database.query(`SELECT status FROM ${p}jobs ORDER BY id`)).map(row => String(row.status));
     }
+
+    test('schedules: start() without the table asks for migrate(); a slot adds its job', async () => {
+        const { sqlane, p } = await freshSqlane();
+
+        await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+    });
 
     test('enqueue in a transaction: the job commits with it, and rolls back with it', async () => {
         const { sqlane, p } = await freshSqlane();

@@ -74,4 +74,11 @@ export { getMigrations } from './migrations.js';
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').Migration} Migration */
 /** @typedef {import('./types.js').Retention} Retention */
+/** @typedef {import('./types.js').ScheduleFiredEvent} ScheduleFiredEvent */
+/** @typedef {import('./types.js').ScheduleInfo} ScheduleInfo */
+/**
+ * @typedef {import('./types.js').ScheduleOptions<P>} ScheduleOptions
+ * @template [P=any]
+ */
+/** @typedef {import('./types.js').SlotOptions} SlotOptions */
 /** @typedef {import('./types.js').SqlaneEvent} SqlaneEvent */

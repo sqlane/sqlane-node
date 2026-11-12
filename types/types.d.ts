@@ -67,12 +67,17 @@ export type DeclaredPayload<J> = J extends JobDefinition<infer P> ? (IsAny<P> ex
 export type EnqueuePayload<J, P> = [DeclaredPayload<J>] extends [never] ? P & NoInfer<Jsonable<P>> : NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>>;
 export type EnqueueManyItem<J, P> = [DeclaredPayload<J>] extends [never] ? EnqueueItem<P> & NoInfer<EnqueueItem<Jsonable<P>>> : EnqueueItem<NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>>>;
 export type HandlerPayload<J> = [DeclaredPayload<J>] extends [never] ? any : DeclaredPayload<J>;
-export type EnqueueBaseOptions = {
+export type SlotOptions = {
     /**
-     * 1–120 printable ASCII characters. Dedupe: a job with this id is added once while its row
-     * exists.
+     * The slot, in the years 1970 to 9999.
      */
-    jobId?: string;
+    at: Date;
+    /**
+     * The `key` of the schedule.
+     */
+    key?: string;
+};
+export type EnqueueBaseOptions = {
     maxAttempts?: number;
     maxStalls?: number;
     retention?: Retention;
@@ -82,13 +87,28 @@ export type EnqueueBaseOptions = {
      */
     mutexKeys?: readonly string[];
 };
+export type EnqueueJobIdOption = {
+    /**
+     * 1–120 printable ASCII characters, not starting with `schedule:`. Dedupe: a job with this
+     * id is added once while its row exists.
+     */
+    jobId?: string;
+    slot?: never;
+};
+export type EnqueueSlotOption = {
+    /**
+     * Runs a slot of a schedule by hand: the job gets the `jobId` of the slot.
+     */
+    slot: SlotOptions;
+    jobId?: never;
+};
 export type EnqueueOptions = EnqueueBaseOptions & ({
     delay?: Duration;
     runAt?: never;
 } | {
     runAt: Date;
     delay?: never;
-});
+}) & (EnqueueJobIdOption | EnqueueSlotOption);
 export type EnqueueResult = {
     /**
      * `<job_name>:<jobId>`, or a new ULID without a `jobId`.
@@ -113,6 +133,10 @@ export type JobInfo = {
     maxAttempts: number;
     enqueuedAt: Date;
     mutexKeys: readonly string[];
+    /**
+     * The slot of a job of a schedule (also when it runs late); else null.
+     */
+    scheduledAt: Date | null;
 };
 export type HandlerContext<P = any> = {
     /**
@@ -194,10 +218,102 @@ export type SqlaneEvent = (JobEventBase & ({
     type: 'failure_job_not_added';
     failureJob: string;
     error: unknown;
-})) | {
+})) | ScheduleFiredEvent | {
     type: 'error';
     operation: string;
     error: unknown;
+};
+export type ScheduleFiredEvent = {
+    type: 'schedule_fired';
+    scheduleId: string;
+    jobName: string;
+    /**
+     * The slot.
+     */
+    scheduledAt: Date;
+    /**
+     * A catch-up of a missed slot.
+     */
+    late: boolean;
+    /**
+     * The job of the slot. Null: `overlap: 'skip'` skipped the slot.
+     */
+    jobId: string | null;
+};
+export type ScheduleTiming = {
+    cron: string;
+    timezone?: string;
+    every?: never;
+} | {
+    every: Duration;
+    cron?: never;
+    timezone?: never;
+};
+export type ScheduleBaseOptions = {
+    /**
+     * Tells several schedules of one job name apart: 1–64 printable ASCII characters.
+     */
+    key?: string;
+    /**
+     * A slot that no process enqueued within 1 minute. Default: `'once'`: the
+     * latest missed slot runs once, within the catch-up reach.
+     */
+    missed?: 'once' | 'skip';
+    /**
+     * Default: `'allow'`. `'skip'`: a slot adds no job while the previous job of
+     * the schedule is pending or running.
+     */
+    overlap?: 'allow' | 'skip';
+    /**
+     * Up to `'1d'`; below `every`. Each slot runs at a fixed offset after it, below the
+     * jitter and below the next slot: the runs of many schedules spread out.
+     */
+    jitter?: Duration;
+};
+export type ScheduleOptions<P = any> = ScheduleBaseOptions & ScheduleTiming & (IsAny<P> extends true ? {
+    payload?: P;
+} : {
+    payload: P;
+});
+export type SchedulePayload<J, P> = [DeclaredPayload<J>] extends [never] ? {
+    payload?: P & NoInfer<Jsonable<P>>;
+} : {
+    payload: NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>>;
+};
+export type ScheduleInfo = {
+    /**
+     * `<job name>` or `<job name>:<key>`.
+     */
+    id: string;
+    /**
+     * The job name.
+     */
+    name: string;
+    /**
+     * The stored spec, e.g. `cron 0 3 * * * Europe/Berlin` or `every 900000`.
+     */
+    spec: string;
+    /**
+     * `schedule()` was called in this process.
+     */
+    registered: boolean;
+    /**
+     * Registered: the next slot. Null: not registered, or no next slot.
+     */
+    nextAt: Date | null;
+    /**
+     * When the job of the next slot will be due: `nextAt` plus its jitter. Null when
+     * `nextAt` is.
+     */
+    nextRunAt: Date | null;
+    /**
+     * The cursor: the last decided slot.
+     */
+    lastSlotAt: Date | null;
+    /**
+     * The job of the last enqueued slot.
+     */
+    lastJobId: string | null;
 };
 export type Dialect = 'mysql' | 'mariadb' | 'postgres';
 export type Adapter<C> = {
@@ -391,10 +507,22 @@ export type Sqlane<C, L extends string> = {
      */
     enqueueMany: <J extends JobDefinition | string, P>(connection: C, job: J, items: readonly EnqueueManyItem<J, P>[]) => Promise<EnqueueResult[]>;
     handle: <J extends JobDefinition | string>(job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions<L>) => void;
+    /**
+     * Adds a job at each slot of a cron or an interval, in every started process that calls it.
+     * Before `start()`.
+     */
+    schedule: <J extends JobDefinition | string, P>(job: J, options: ScheduleBaseOptions & ScheduleTiming & SchedulePayload<J, P>) => void;
+    /**
+     * The schedules of the table and of this process.
+     */
+    getSchedules: () => Promise<ScheduleInfo[]>;
+    /**
+     * Starts the runner and the schedules. Idempotent.
+     */
     start: () => Promise<void>;
     /**
      * For tests: runs the due jobs of the handled
-     * names until none is left, without `start()`.
+     * names until none is left, without `start()`. It does not fire schedules.
      */
     drain: (options?: DrainOptions) => Promise<DrainResult>;
     close: (options?: CloseOptions) => Promise<void>;
@@ -499,9 +627,13 @@ export type Migration = {
  * @typedef {[DeclaredPayload<J>] extends [never] ? any : DeclaredPayload<J>} HandlerPayload
  */
 /**
+ * A slot of a schedule, run by hand: the job gets the `jobId` that the scheduler gives the slot.
+ * @typedef {object} SlotOptions
+ * @property {Date} at The slot, in the years 1970 to 9999.
+ * @property {string} [key] The `key` of the schedule.
+ */
+/**
  * @typedef {object} EnqueueBaseOptions
- * @property {string} [jobId] 1–120 printable ASCII characters. Dedupe: a job with this id is added once while its row
- *     exists.
  * @property {number} [maxAttempts]
  * @property {number} [maxStalls]
  * @property {Retention} [retention]
@@ -509,9 +641,21 @@ export type Migration = {
  * @property {readonly string[]} [mutexKeys] Replace the keys of the definition; `[]` clears them.
  */
 /**
- * The options of an enqueue: `delay` or `runAt`, not both.
- * @typedef {EnqueueBaseOptions & ({ delay?: Duration, runAt?: never } | { runAt: Date, delay?: never })}
- *     EnqueueOptions
+ * @typedef {object} EnqueueJobIdOption
+ * @property {string} [jobId] 1–120 printable ASCII characters, not starting with `schedule:`. Dedupe: a job with this
+ *     id is added once while its row exists.
+ * @property {never} [slot]
+ */
+/**
+ * @typedef {object} EnqueueSlotOption
+ * @property {SlotOptions} slot Runs a slot of a schedule by hand: the job gets the `jobId` of the slot.
+ * @property {never} [jobId]
+ */
+/**
+ * The options of an enqueue: `delay` or `runAt`, not both; `jobId` or `slot`, not both.
+ * @typedef {EnqueueBaseOptions
+ *     & ({ delay?: Duration, runAt?: never } | { runAt: Date, delay?: never })
+ *     & (EnqueueJobIdOption | EnqueueSlotOption)} EnqueueOptions
  */
 /**
  * @typedef {object} EnqueueResult
@@ -532,6 +676,7 @@ export type Migration = {
  * @property {number} maxAttempts
  * @property {Date} enqueuedAt
  * @property {readonly string[]} mutexKeys
+ * @property {Date | null} scheduledAt The slot of a job of a schedule (also when it runs late); else null.
  */
 /**
  * @template [P=any]
@@ -601,7 +746,59 @@ export type Migration = {
  *     | { type: 'released' }
  *     | { type: 'lease_lost' }
  *     | { type: 'failure_job_not_added', failureJob: string, error: unknown }
- * )) | { type: 'error', operation: string, error: unknown }} SqlaneEvent
+ * )) | ScheduleFiredEvent | { type: 'error', operation: string, error: unknown }} SqlaneEvent
+ */
+/**
+ * A slot of a schedule was decided: once in the cluster, by the process that moved the cursor.
+ * @typedef {object} ScheduleFiredEvent
+ * @property {'schedule_fired'} type
+ * @property {string} scheduleId
+ * @property {string} jobName
+ * @property {Date} scheduledAt The slot.
+ * @property {boolean} late A catch-up of a missed slot.
+ * @property {string | null} jobId The job of the slot. Null: `overlap: 'skip'` skipped the slot.
+ */
+/**
+ * When a schedule adds its jobs: a cron in a time zone, or a fixed interval. Not both.
+ * @typedef {{ cron: string, timezone?: string, every?: never }
+ *     | { every: Duration, cron?: never, timezone?: never }} ScheduleTiming
+ */
+/**
+ * @typedef {object} ScheduleBaseOptions
+ * @property {string} [key] Tells several schedules of one job name apart: 1–64 printable ASCII characters.
+ * @property {'once' | 'skip'} [missed] A slot that no process enqueued within 1 minute. Default: `'once'`: the
+ *     latest missed slot runs once, within the catch-up reach.
+ * @property {'allow' | 'skip'} [overlap] Default: `'allow'`. `'skip'`: a slot adds no job while the previous job of
+ *     the schedule is pending or running.
+ * @property {Duration} [jitter] Up to `'1d'`; below `every`. Each slot runs at a fixed offset after it, below the
+ *     jitter and below the next slot: the runs of many schedules spread out.
+ */
+/**
+ * The options of `schedule()`. With a payload type, `payload` is required: a variable of this type passes to
+ * `schedule()` with a definition of that payload type.
+ * @template [P=any] The payload of each job. Default: `{}`.
+ * @typedef {ScheduleBaseOptions & ScheduleTiming & (IsAny<P> extends true ? { payload?: P } : { payload: P })}
+ *     ScheduleOptions
+ */
+/**
+ * The payload of a schedule, with `ScheduleOptions`: required and checked when the definition declares one, else any
+ * JSON.
+ * @template J
+ * @template P
+ * @typedef {[DeclaredPayload<J>] extends [never] ? { payload?: P & NoInfer<Jsonable<P>> }
+ *     : { payload: NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>> }} SchedulePayload
+ */
+/**
+ * @typedef {object} ScheduleInfo
+ * @property {string} id `<job name>` or `<job name>:<key>`.
+ * @property {string} name The job name.
+ * @property {string} spec The stored spec, e.g. `cron 0 3 * * * Europe/Berlin` or `every 900000`.
+ * @property {boolean} registered `schedule()` was called in this process.
+ * @property {Date | null} nextAt Registered: the next slot. Null: not registered, or no next slot.
+ * @property {Date | null} nextRunAt When the job of the next slot will be due: `nextAt` plus its jitter. Null when
+ *     `nextAt` is.
+ * @property {Date | null} lastSlotAt The cursor: the last decided slot.
+ * @property {string | null} lastJobId The job of the last enqueued slot.
  */
 /**
  * The SQL dialect: the database family.
@@ -712,9 +909,14 @@ export type Migration = {
  * @property {<J extends JobDefinition | string>(
  *     job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions<L>,
  * ) => void} handle
- * @property {() => Promise<void>} start
+ * @property {<J extends JobDefinition | string, P>(
+ *     job: J, options: ScheduleBaseOptions & ScheduleTiming & SchedulePayload<J, P>,
+ * ) => void} schedule Adds a job at each slot of a cron or an interval, in every started process that calls it.
+ *     Before `start()`.
+ * @property {() => Promise<ScheduleInfo[]>} getSchedules The schedules of the table and of this process.
+ * @property {() => Promise<void>} start Starts the runner and the schedules. Idempotent.
  * @property {(options?: DrainOptions) => Promise<DrainResult>} drain For tests: runs the due jobs of the handled
- *     names until none is left, without `start()`.
+ *     names until none is left, without `start()`. It does not fire schedules.
  * @property {(options?: CloseOptions) => Promise<void>} close
  * @property {(options?: MigrateOptions) => Promise<{ applied: string[] }>} migrate Applies the missing migrations:
  *     their ids.

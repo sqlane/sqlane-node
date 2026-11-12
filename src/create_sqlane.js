@@ -6,7 +6,10 @@ import { runMigrations } from './migrations.js';
 import { DEFAULT_MAX_PAYLOAD_BYTES } from './payload.js';
 import { createRegistry } from './registry.js';
 import { createRunner } from './runner.js';
+import { checkSchedule } from './schedule.js';
+import { createScheduler } from './scheduler.js';
 import { createStore } from './store/store.js';
+import { isMissingTableError } from './transient_error.js';
 import { checkDuration, checkInteger, checkObject, checkTablePrefix, isPlainObject } from './validate.js';
 
 const OPTION_NAMES = [
@@ -203,6 +206,62 @@ export function createSqlane(options) {
         }
     };
 
+    const scheduler = createScheduler({
+        store,
+        defaults,
+        maxPayloadBytes,
+        findDefinition: registry.findDefinition,
+        unknownJobs,
+        notifyChannel,
+        onCreated: name => wakeFor(name, true),
+        emit: runner.emit,
+        logger: options.logger,
+        timings: /** @type {{ schedules?: object }} */ (testTimings ?? {}).schedules,
+    });
+    /** @type {Promise<void> | null} */
+    let startPromise = null;
+    /** @type {Promise<void> | null} */
+    let closePromise = null;
+
+    /**
+     * Registers the schedules, then starts the runner and the scheduler. Nothing runs before the runner starts: a
+     * rejected start leaves no half-started instance.
+     * @returns {Promise<void>}
+     */
+    async function startOnce() {
+        scheduler.prepare();
+
+        /** @type {import('./store/store.js').ScheduleRead | null} */
+        let read = null;
+
+        if (scheduler.size() > 0) {
+            try {
+                read = await scheduler.register();
+            } catch (error) {
+                if (isMissingTableError(error)) {
+                    throw new ConfigError(`start(): the table ${tablePrefix}schedules is missing: run migrate()`, {
+                        cause: error,
+                    });
+                }
+
+                // The database is down: start anyway, the registration retries
+                scheduler.reportFailure(error);
+            }
+        }
+
+        // close() ran during the registration
+        if (runner.isClosed()) {
+            return;
+        }
+
+        await runner.start();
+
+        // close() ran during runner.start()
+        if (!runner.isClosed()) {
+            scheduler.start(read);
+        }
+    }
+
     return {
         enqueue: async (connection, job, payload, enqueueOptions) => {
             const result = await enqueuer.enqueue(connection, job, payload, enqueueOptions);
@@ -233,9 +292,53 @@ export function createSqlane(options) {
 
             registry.handle(job, handler, handleOptions);
         },
-        start: runner.start,
+        schedule: (job, scheduleOptions) => {
+            if (runner.isClosed()) {
+                throw new ClosedError('schedule() after close()');
+            }
+
+            if (!runner.isIdle() || startPromise) {
+                throw new ConfigError('schedule() after start(): add all the schedules before start()');
+            }
+
+            const entry = checkSchedule(job, scheduleOptions);
+
+            entry.definition = isPlainObject(job) ? /** @type {import('./types.js').JobDefinition} */ (job) : null;
+            scheduler.add(entry);
+        },
+        getSchedules: () => scheduler.list(),
+        start: async () => {
+            if (runner.isClosed()) {
+                throw new ClosedError('start() after close()');
+            }
+
+            if (!startPromise && !runner.isIdle()) {
+                return runner.start();
+            }
+
+            startPromise ??= (async () => {
+                try {
+                    await startOnce();
+                } catch (error) {
+                    startPromise = null;
+                    throw error;
+                }
+            })();
+
+            return startPromise;
+        },
         drain: runner.drain,
-        close: runner.close,
+        // The runner closes at once: handle() and start() then throw, and the deadline counts from the call. The
+        // scheduler stops in parallel, and a pending registration of start() ends first.
+        close: (closeOptions) => {
+            closePromise ??= (async () => {
+                const runnerClosed = runner.close(closeOptions);
+
+                await Promise.all([scheduler.stop(), startPromise?.catch(() => {}), runnerClosed]);
+            })();
+
+            return closePromise;
+        },
         migrate: async migrateOptions => ({
             applied: await runMigrations(adapter, tablePrefix, migrateOptions),
         }),

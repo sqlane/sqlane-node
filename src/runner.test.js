@@ -1040,3 +1040,55 @@ test('dispatch: many due names take turns, a claim requests at most 4 names per 
         await runner.close({ deadline: 0 });
     }
 });
+
+test('the handler gets the slot of a job of a schedule as job.scheduledAt; null for other jobs', async () => {
+    const registry = createRegistry({
+        jobsByName: new Map(),
+        lanes: undefined,
+        concurrency: 2,
+        defaultTimeoutMs: null,
+    });
+    const ids = { report: 'report:schedule:tenant:42:2026-11-11T02:00:00.000Z', ping: 'ping:my-id' };
+    const { store } = storeOfDueNames(['report', 'ping']);
+    const claimDue = store.claimDue;
+    /** @type {Record<string, Date | null>} */
+    const seen = {};
+
+    store.claimDue = async (params) => {
+        const result = await claimDue(params);
+
+        for (const job of result.jobs) {
+            job.id = ids[/** @type {'report' | 'ping'} */ (job.name)];
+        }
+
+        return result;
+    };
+
+    for (const name of ['report', 'ping']) {
+        registry.handle(name, ({ job }) => {
+            seen[job.name] = job.scheduledAt;
+        });
+    }
+
+    const runner = createRunner({
+        store,
+        registry,
+        concurrency: 2,
+        defaults: resolveDefaults(),
+        cleanup: false,
+        logger: undefined,
+        onEvent: undefined,
+        hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+        hintsAfterCommit: false,
+        timings: { pollIntervalMs: 60_000 },
+    });
+
+    try {
+        await runner.start();
+        await waitFor(() => Object.keys(seen).length === 2, 3000);
+
+        expect(seen).toStrictEqual({ report: new Date('2026-11-11T02:00:00.000Z'), ping: null });
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
+});

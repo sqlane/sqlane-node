@@ -3,6 +3,7 @@ import knexLib from 'knex';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { createSqlane, defineJob } from '../../src/index.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { checkSchedules } from './helpers/schedule_checks.js';
 import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { knexAdapter } from '../../src/adapters/knex.js';
 
@@ -100,6 +101,12 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
     async function statuses(p) {
         return (await database.query(`SELECT status FROM ${p}jobs ORDER BY id`)).map(row => String(row.status));
     }
+
+    test('schedules: start() without the table asks for migrate(); a slot adds its job', async () => {
+        const { sqlane, p } = await freshSqlane();
+
+        await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+    });
 
     test('enqueue in a knex transaction: the job commits with it, and rolls back with it', async () => {
         const { sqlane, p } = await freshSqlane();

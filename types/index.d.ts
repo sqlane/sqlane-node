@@ -29,6 +29,10 @@ export type Logger = import('./types.js').Logger;
 export type MigrateOptions = import('./types.js').MigrateOptions;
 export type Migration = import('./types.js').Migration;
 export type Retention = import('./types.js').Retention;
+export type ScheduleFiredEvent = import('./types.js').ScheduleFiredEvent;
+export type ScheduleInfo = import('./types.js').ScheduleInfo;
+export type ScheduleOptions<P = any> = import('./types.js').ScheduleOptions<P>;
+export type SlotOptions = import('./types.js').SlotOptions;
 export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /**
  * @typedef {import('./types.js').Adapter<C>} Adapter
@@ -83,4 +87,11 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').Migration} Migration */
 /** @typedef {import('./types.js').Retention} Retention */
+/** @typedef {import('./types.js').ScheduleFiredEvent} ScheduleFiredEvent */
+/** @typedef {import('./types.js').ScheduleInfo} ScheduleInfo */
+/**
+ * @typedef {import('./types.js').ScheduleOptions<P>} ScheduleOptions
+ * @template [P=any]
+ */
+/** @typedef {import('./types.js').SlotOptions} SlotOptions */
 /** @typedef {import('./types.js').SqlaneEvent} SqlaneEvent */

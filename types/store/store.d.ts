@@ -198,6 +198,27 @@ export type Store = {
      */
     makeDue: (names: string[]) => Promise<void>;
     getStats: () => Promise<import('../types.js').JobStats[]>;
+    /**
+     * Inserts the missing rows (2 statements per 500), then reads them.
+     */
+    registerSchedules: (schedules: {
+        id: string;
+        name: string;
+        spec: string;
+    }[], now: () => number) => Promise<ScheduleRead>;
+    /**
+     * A plain read, no
+     * lock; null: every row.
+     */
+    readSchedules: (ids: string[] | null, now: () => number) => Promise<ScheduleRead>;
+    /**
+     * In a queue transaction of its own.
+     */
+    fireSlots: (params: import('./fire_slots.js').FireParams) => Promise<import('./fire_slots.js').FireResult>;
+};
+export type ScheduleRead = {
+    clock: import('./fire_slots.js').ClockSample;
+    rows: import('./fire_slots.js').ScheduleRow[];
 };
 /**
  * @typedef {object} ProbeRow
@@ -324,6 +345,16 @@ export type Store = {
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
  * @property {(names: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
  * @property {() => Promise<import('../types.js').JobStats[]>} getStats
+ * @property {(schedules: { id: string, name: string, spec: string }[], now: () => number)
+ *     => Promise<ScheduleRead>} registerSchedules Inserts the missing rows (2 statements per 500), then reads them.
+ * @property {(ids: string[] | null, now: () => number) => Promise<ScheduleRead>} readSchedules A plain read, no
+ *     lock; null: every row.
+ * @property {(params: import('./fire_slots.js').FireParams) => Promise<import('./fire_slots.js').FireResult>}
+ *     fireSlots In a queue transaction of its own.
+ */
+/**
+ * @typedef {{ clock: import('./fire_slots.js').ClockSample, rows: import('./fire_slots.js').ScheduleRow[] }}
+ *     ScheduleRead
  */
 /**
  * @param {import('../types.js').Adapter<any>} adapter
