@@ -71,6 +71,8 @@ export const scheduleKeys = count => Array.from({ length: count }, (_, index) =>
 /**
  * @typedef {object} Adapter
  * @property {string} version
+ * @property {boolean} transactional Its enqueue runs in the caller's open transaction (`client`). Without it, the
+ *     performance runs enqueue after the COMMIT, on the library's own connection: not atomic.
  * @property {(options: OpenOptions) => Promise<Queue>} open Migrates its tables. Throws UnsupportedError for an
  *     option it cannot honor.
  * @property {(url: string) => Promise<ScheduledJobs>} [scheduledJobs] For the performance runs of the schedules.

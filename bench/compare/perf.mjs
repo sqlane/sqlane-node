@@ -192,6 +192,15 @@ if (role === 'setup') {
         index++;
 
         const name = nameOf(index);
+        const id = index;
+        /**
+         * Enqueues in the business transaction, when the library can.
+         * @param {any} client
+         * @returns {Promise<void> | undefined}
+         */
+        const enqueueIn = client => (adapter.transactional
+            ? queue.enqueue(name, { index: id, t: Date.now() }, { client })
+            : undefined);
 
         if (pgPool) {
             const client = await pgPool.connect();
@@ -199,7 +208,7 @@ if (role === 'setup') {
             try {
                 await client.query('BEGIN');
                 await client.query('INSERT INTO orders (id) VALUES ($1)', [index]);
-                await queue.enqueue(name, { index, t: Date.now() }, { client });
+                await enqueueIn(client);
                 await client.query('COMMIT');
             } finally {
                 client.release();
@@ -210,11 +219,17 @@ if (role === 'setup') {
             try {
                 await connection.beginTransaction();
                 await connection.query('INSERT INTO orders (id) VALUES (?)', [index]);
-                await queue.enqueue(name, { index, t: Date.now() }, { client: connection });
+                await enqueueIn(connection);
                 await connection.commit();
             } finally {
                 connection.release();
             }
+        }
+
+        // A library without transactional enqueue: after the COMMIT, on its own connection. A crash between the two
+        // loses the job: not atomic
+        if (!adapter.transactional) {
+            await queue.enqueue(name, { index: id, t: Date.now() });
         }
     }
 

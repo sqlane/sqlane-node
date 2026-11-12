@@ -82,7 +82,9 @@ guarantee, so the same workload. PostgreSQL for all, plus sqlane on MySQL and Ma
   fetches again at once instead of after the next poll (defaults 1 and off). River: `fetchCooldown` of 1 ms, its
   minimum (default 100 ms), with the same 8 `maxWorkers`. A new library is one adapter in `libs/`.
 - **Steady load.** A producer process enqueues 20 jobs/s, each in a transaction with an `INSERT` into a business
-  table. 9 of 10 jobs go to 10 hot names. 5 s warm-up, 15 s window.
+  table. 9 of 10 jobs go to 10 hot names. 5 s warm-up, 15 s window. A library whose enqueue cannot take the caller's
+  transaction (`transactional: false` in its adapter) enqueues after the `COMMIT`, on its own connection: not atomic,
+  and its rows say so.
 - **Idle.** 1 and 1000 job names, no jobs.
 - **Drain.** 10,000 due jobs over the names, enqueued before the worker starts. The time until the worker has run
   them all.
