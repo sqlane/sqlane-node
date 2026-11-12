@@ -6,37 +6,37 @@ latency and idle cost, see [performance](comparison-performance.md).
 
 ## Pick by requirement
 
-| You need                                                                        | Consider                                    |
-| ------------------------------------------------------------------------------- | ------------------------------------------- |
-| Jobs that commit or roll back with your data, on MySQL or MariaDB               | sqlane                                      |
-| The same on PostgreSQL                                                          | sqlane, pg-boss, Graphile Worker, River     |
-| Jobs that must not overlap when they touch the same resources, across job names | sqlane                                      |
-| Cron with a catch-up of missed runs                                             | Graphile Worker, pg-boss                    |
-| Priorities                                                                      | pg-boss, Graphile Worker, BullMQ, River     |
-| A dashboard                                                                     | pg-boss, BullMQ, Sidequest, River           |
-| Redis, workflows of parent and child jobs, a large ecosystem                    | BullMQ                                      |
-| SQLite or MongoDB                                                               | Sidequest (SQLite, MongoDB), River (SQLite) |
+| You need                                                                        | Consider                                                     |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Jobs that commit or roll back with your data, on MySQL or MariaDB               | sqlane                                                       |
+| The same on PostgreSQL                                                          | sqlane, pg-boss, Graphile Worker, River                      |
+| Jobs that must not overlap when they touch the same resources, across job names | sqlane                                                       |
+| Cron with a catch-up of missed runs                                             | sqlane (the latest run), Graphile Worker (each run), pg-boss |
+| Priorities                                                                      | pg-boss, Graphile Worker, BullMQ, River                      |
+| A dashboard                                                                     | pg-boss, BullMQ, Sidequest, River                            |
+| Redis, workflows of parent and child jobs, a large ecosystem                    | BullMQ                                                       |
+| SQLite or MongoDB                                                               | Sidequest (SQLite, MongoDB), River (SQLite)                  |
 
 ## Capabilities
 
 ✅ works as described · 🟠 works with a workaround or a fixed setting · ❌ no such option, or the scenario failed
 
-| Capability                               | sqlane     | pg-boss      | Graphile Worker  | BullMQ           | Sidequest       | River   |
-| ---------------------------------------- | ---------- | ------------ | ---------------- | ---------------- | --------------- | ------- |
-| 🔬 Enqueue in the caller's transaction   | ✅         | ✅           | ✅               | ❌               | ❌              | ✅      |
-| 🔬 Delayed job                           | ✅         | ✅           | ✅               | ✅               | ✅              | ✅      |
-| 🔬 Retry after a configured backoff      | ✅         | ✅           | 🟠 fixed backoff | ✅               | ✅              | ✅      |
-| 🔬 Timeout that aborts the handler       | ✅         | ✅           | ❌               | ❌               | ✅              | ✅      |
-| 🔬 Job of a killed worker runs again     | ✅         | ✅           | ❌ after 4 h     | ✅               | ✅              | ✅      |
-| 🔬 Exclusion by a resource, across names | ✅         | 🟠 one queue | ✅ `queue_name`  | ❌ Pro only      | ❌              | ❌      |
-| 🔬 Exclusion by several resources        | ✅         | ❌           | ❌               | ❌               | ❌              | ❌      |
-| 🔬 Priority                              | ❌         | ✅           | ✅               | ✅               | 🟠 per queue    | ✅      |
-| Cron                                     | ❌ roadmap | ✅           | ✅               | ✅               | ✅              | ✅      |
-| Dashboard                                | ❌         | ✅           | ❌               | ✅               | ✅              | ✅      |
-| PostgreSQL                               | ✅         | ✅           | ✅               | ✅               | ✅              | ✅      |
-| MySQL and MariaDB                        | ✅         | ❌           | ❌               | ❌               | 🟠 MySQL only   | ❌      |
-| Other storage                            | —          | —            | —                | Redis-compatible | SQLite, MongoDB | SQLite  |
-| License                                  | MIT        | MIT          | MIT              | MIT              | LGPL-3.0        | MPL-2.0 |
+| Capability                               | sqlane | pg-boss      | Graphile Worker  | BullMQ           | Sidequest       | River   |
+| ---------------------------------------- | ------ | ------------ | ---------------- | ---------------- | --------------- | ------- |
+| 🔬 Enqueue in the caller's transaction   | ✅     | ✅           | ✅               | ❌               | ❌              | ✅      |
+| 🔬 Delayed job                           | ✅     | ✅           | ✅               | ✅               | ✅              | ✅      |
+| 🔬 Retry after a configured backoff      | ✅     | ✅           | 🟠 fixed backoff | ✅               | ✅              | ✅      |
+| 🔬 Timeout that aborts the handler       | ✅     | ✅           | ❌               | ❌               | ✅              | ✅      |
+| 🔬 Job of a killed worker runs again     | ✅     | ✅           | ❌ after 4 h     | ✅               | ✅              | ✅      |
+| 🔬 Exclusion by a resource, across names | ✅     | 🟠 one queue | ✅ `queue_name`  | ❌ Pro only      | ❌              | ❌      |
+| 🔬 Exclusion by several resources        | ✅     | ❌           | ❌               | ❌               | ❌              | ❌      |
+| 🔬 Priority                              | ❌     | ✅           | ✅               | ✅               | 🟠 per queue    | ✅      |
+| Cron                                     | ✅     | ✅           | ✅               | ✅               | ✅              | ✅      |
+| Dashboard                                | ❌     | ✅           | ❌               | ✅               | ✅              | ✅      |
+| PostgreSQL                               | ✅     | ✅           | ✅               | ✅               | ✅              | ✅      |
+| MySQL and MariaDB                        | ✅     | ❌           | ❌               | ❌               | 🟠 MySQL only   | ❌      |
+| Other storage                            | —      | —            | —                | Redis-compatible | SQLite, MongoDB | SQLite  |
+| License                                  | MIT    | MIT          | MIT              | MIT              | LGPL-3.0        | MPL-2.0 |
 
 Notes:
 
@@ -54,7 +54,7 @@ Notes:
 
 ## When not to use sqlane
 
-- You need **priorities, cron or a dashboard** today. Cron is on the [roadmap](../README.md#roadmap).
+- You need **priorities or a dashboard** today.
 - You need a **configurable recovery time** after a crash: the lease of a running job is 4 minutes, and the job of a
   crashed worker waits for it.
 - You need **strict FIFO per mutex key** across every job name: it looks at the jobs of the names that a process
@@ -116,13 +116,17 @@ handlers get a `timeout` and an abort signal for that.
 
 Cron is not one guarantee:
 
-- pg-boss stores the schedules in the database; a missed run is skipped or run once (`scheduleMissedPolicies`).
+- sqlane: schedules in code. Every worker tries each slot, and a cursor row per schedule, locked in the enqueue
+  transaction, lets one of them add the job, with no leader. A missed run is skipped or runs once (`missed`, default
+  `once`; pg-boss, River and Graphile Worker skip by default). Time zones with fixed DST rules, with optional jitter.
+- pg-boss stores the schedules in the database. Each instance's cron pass takes the cron time with a compare-and-set,
+  then adds each run with a singleton key. A missed run is skipped by default, or run once (`scheduleMissedPolicies`).
 - Graphile Worker's crontab can backfill the runs missed while no worker ran (`backfillPeriod`).
 - BullMQ's job schedulers create the next job when the previous one starts.
 - Sidequest schedules with node-cron in the process that registers the job.
 - River's leader inserts the periodic jobs of its configuration; `runOnStart` runs one at start.
 
-sqlane has no cron yet: see the [roadmap](../README.md#roadmap). Sources: [pg-boss](https://pgboss.io/api/scheduling),
+Sources: [sqlane](api.md#schedule), [pg-boss](https://pgboss.io/api/scheduling),
 [Graphile Worker](https://worker.graphile.org/docs/cron), [BullMQ](https://docs.bullmq.io/guide/job-schedulers),
 [Sidequest](https://docs.sidequestjs.com/guide/jobs/recurring), [River](https://riverqueue.com/docs/periodic-jobs).
 
