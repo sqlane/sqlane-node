@@ -42,7 +42,9 @@ const PERF_LIBRARIES = [
     'sqlane', 'pg-boss', 'graphile-worker', 'river', 'bullmq', 'sidequest', 'boring-node-queue', 'izi-queue',
 ];
 /** The schedules: the libraries whose adapters run schedules */
-const CRON_LIBRARIES = new Set(['sqlane', 'pg-boss', 'graphile-worker', 'river']);
+const CRON_LIBRARIES = new Set([
+    'sqlane', 'pg-boss', 'graphile-worker', 'river', 'bullmq', 'sidequest', 'boring-node-queue', 'izi-queue',
+]);
 const ALL_PARTS = ['checks', 'perf', 'cron'];
 /** The schedules are a part of their own, outside the default: each run stays under 15 minutes */
 const PARTS = new Set(args.only ? [args.only] : ['checks', 'perf']);
@@ -87,8 +89,14 @@ const CRON_FIRE_S = 60;
  */
 const CRON_LATE_S = 70;
 const MINUTE_MS = 60_000;
-/** The first port of the servers of the schedule runs: one per library; each run counts the backends of its database */
+/**
+ * The first ports of the servers of the schedule runs. PostgreSQL: one per library, each run counts the backends of its
+ * database; then the one of the business tables of the runs on Redis. Redis and MySQL: one per run, the server's
+ * process is the run's database
+ */
 const CRON_PORT = 55_450;
+const CRON_REDIS_PORT = 56_450;
+const CRON_MYSQL_PORT = 53_450;
 /** The first ports of the servers of the performance lanes: one per library and database */
 const PERF_PG_PORT = 55_500;
 const PERF_MYSQL_PORT = 53_320;
@@ -714,8 +722,12 @@ function barrierOf(count) {
  * @returns {Promise<Record<string, any>>}
  */
 async function measureSchedules({
-    library, workload, names, url, out, common, server, database, schedules, processes, spec, barrier,
+    library, workload, names, dialect, url, out, common, server, database, schedules, processes, spec, barrier,
 }) {
+    // PostgreSQL: a server per library, so the backends of the run's database; Redis, MySQL: a server per run
+    const shared = !server.business && !server.url.startsWith('mysql:');
+    /** @returns {Promise<Record<string, string>>} The processes of the database. */
+    const databasePids = async () => (shared ? backends(server.url, database) : { db: String(server.pid) });
     const workers = Array.from({ length: processes }, (_, index) => start(process.execPath, [
         ...common, '--role', 'worker', '--index', String(index),
     ], { log: join(out, `worker-${index}.log`) }));
@@ -735,14 +747,18 @@ async function measureSchedules({
 
     await sleepUntil(windowStart);
 
-    const before = await countersAsync({ ...pids, ...await backends(server.url, database) });
+    const before = await countersAsync({ ...pids, ...await databasePids() });
 
-    await postgresStats(server.url, database, { reset: true, scoped: true });
+    if (shared) {
+        await postgresStats(server.url, database, { reset: true, scoped: true });
+    }
+
     await sleepUntil(windowEnd);
 
-    const ended = await backends(server.url, database);
+    const ended = await databasePids();
     const after = await countersAsync({ ...pids, ...ended });
-    const stats = await postgresStats(server.url, database);
+    // Statements and connections: PostgreSQL only
+    const stats = shared ? await postgresStats(server.url, database) : {};
     const slots = [firstSlot, firstSlot + MINUTE_MS];
 
     if (fire) {
@@ -771,11 +787,11 @@ async function measureSchedules({
     const stored = fire && adapter.scheduledJobs ? await adapter.scheduledJobs(url) : null;
 
     return {
-        library, workload, names, dialect: 'postgres', schedules, processes, cron: spec, seconds, ...stats,
+        library, workload, names, dialect: dialect ?? 'postgres', schedules, processes, cron: spec, seconds, ...stats,
         ...stored && slotCounts({
             scheduled: reports.flatMap(report => report.scheduled), stored, schedules, slots, windowStart, windowEnd,
         }),
-        worker, db: backendDelta(before, after, Object.keys(ended)),
+        worker, db: shared ? backendDelta(before, after, Object.keys(ended)) : delta(before, after, 'db'),
     };
 }
 
@@ -991,16 +1007,19 @@ function tables(runs) {
     }
 
     lines.push(`\nSchedules, idle: no slot due, 1 job name, 1 worker. Per second; median of ${CRON_REPEATS} runs.\n`);
-    lines.push('| Library | Schedules | Cron | Database instructions (M) | Worker instructions (M) | SQL statements | Connections |');
-    lines.push('| --- | --- | --- | --- | --- | --- | --- |');
+    lines.push('| Library | Database | Schedules | Cron | Database instructions (M) | Worker instructions (M) | SQL statements | Connections |');
+    lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
 
     for (const row of runs.filter(entry => entry.workload === 'cron-idle')) {
-        lines.push(`| ${row.library} | ${row.schedules} | \`${row.cron}\` | ${millions(row.db.instructions / row.seconds)} | ${millions(row.worker.instructions / row.seconds)} | ${(row.statements / row.seconds).toFixed(1)} | ${row.connections} |`);
+        // Statements and connections: PostgreSQL only
+        const statements = row.statements === undefined ? '—' : (row.statements / row.seconds).toFixed(1);
+
+        lines.push(`| ${row.library} | ${row.dialect} | ${row.schedules} | \`${row.cron}\` | ${millions(row.db.instructions / row.seconds)} | ${millions(row.worker.instructions / row.seconds)} | ${statements} | ${row.connections ?? '—'} |`);
     }
 
     lines.push(`\nSchedules, firing: ${SCHEDULES} schedules of \`${FIRE_CRON}\`. CPU per due slot over one minute (range of the runs); jobs and lag of 2 slots. Median of ${CRON_REPEATS} runs.\n`);
-    lines.push('| Library | Processes | Instructions per slot (M), median workers / median db = their sum (range of the totals) | Statements | Started per minute | Decided / started / expected | Duplicates | Lag p50 / p99 ms |');
-    lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
+    lines.push('| Library | Database | Processes | Instructions per slot (M), median workers / median db = their sum (range of the totals) | Statements | Started per minute | Decided / started / expected | Duplicates | Lag p50 / p99 ms |');
+    lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
 
     for (const row of runs.filter(entry => entry.workload === 'cron-fire')) {
         // The slots due in the CPU window: the schedules fire once a minute
@@ -1010,7 +1029,9 @@ function tables(runs) {
         const totals = (row.samples ?? []).map((/** @type {any} */ sample) => (sample.worker + sample.db) / slots);
         const range = totals.length ? ` (${millions(Math.min(...totals))}–${millions(Math.max(...totals))})` : '';
 
-        lines.push(`| ${row.library} | ${row.processes} | ${millions(worker)} / ${millions(db)} = **${millions(worker + db)}**${range} | ${(row.statements / slots).toFixed(2)} | ${row.startedInWindow}${row.forwardedInWindow === undefined ? '' : ` (forwarded ${row.forwardedInWindow})`} | ${row.decided} / ${row.started} / ${row.expected} | ${row.duplicates} | ${row.lagP50Ms} / ${row.lagP99Ms} |`);
+        const statements = row.statements === undefined ? '—' : (row.statements / slots).toFixed(2);
+
+        lines.push(`| ${row.library}${row.transactional === false ? ' (not transactional)' : ''} | ${row.dialect} | ${row.processes} | ${millions(worker)} / ${millions(db)} = **${millions(worker + db)}**${range} | ${statements} | ${row.startedInWindow}${row.forwardedInWindow === undefined ? '' : ` (forwarded ${row.forwardedInWindow})`} | ${row.decided} / ${row.started} / ${row.expected} | ${row.duplicates} | ${row.lagP50Ms} / ${row.lagP99Ms} |`);
     }
 
     return lines.join('\n');
@@ -1134,45 +1155,83 @@ async function runJobs(libraries) {
 }
 
 /**
- * The schedule runs, all in parallel, each with a database of its own on a server of its library: instructions do not
- * depend on the load of the machine (see docs/cpu-cost.md), and the runs wait for the same minutes. CRON_REPEATS
- * times; a row has the median of each number, and each run in `samples`.
+ * The schedule runs, all in parallel, each with a database of its own: instructions do not depend on the load of the
+ * machine (see docs/cpu-cost.md), and the runs wait for the same minutes. A lane per library and database that its
+ * adapter lists, but MariaDB. PostgreSQL: a server per lane, for all its runs (macOS allows few PostgreSQL servers at
+ * once: 32 shared memory segments, kern.sysv.shmmni). Redis and MySQL: a server per run; on MySQL, the runs that fire
+ * only. CRON_REPEATS times; a row has the median of each number, and each run in `samples`.
  * @param {string[]} libraries
  * @returns {Promise<Record<string, any>[]>}
  */
 async function runSchedules(libraries) {
     // Idle: a daily cron 12 hours away, which never fires in the window; and a yearly one
     const daily = `0 ${(new Date().getUTCHours() + 12) % 24} * * *`;
-    const plan = libraries.flatMap(library => [
-        { library, workload: 'cron-idle', names: 1, schedules: 1, cron: daily },
-        { library, workload: 'cron-idle', names: 1, schedules: SCHEDULES, cron: daily },
-        { library, workload: 'cron-idle', names: 1, schedules: SCHEDULES, cron: YEARLY_CRON },
-        { library, workload: 'cron-fire', names: 1, schedules: SCHEDULES, processes: 1, cron: FIRE_CRON },
-        { library, workload: 'cron-fire', names: 1, schedules: SCHEDULES, processes: 3, cron: FIRE_CRON },
-    ]);
+    const idle = [
+        { workload: 'cron-idle', names: 1, schedules: 1, cron: daily },
+        { workload: 'cron-idle', names: 1, schedules: SCHEDULES, cron: daily },
+        { workload: 'cron-idle', names: 1, schedules: SCHEDULES, cron: YEARLY_CRON },
+    ];
+    const firing = [
+        { workload: 'cron-fire', names: 1, schedules: SCHEDULES, processes: 1, cron: FIRE_CRON },
+        { workload: 'cron-fire', names: 1, schedules: SCHEDULES, processes: 3, cron: FIRE_CRON },
+    ];
+    /** @type {{ library: string, database: 'postgres' | 'mysql' | 'mariadb' | 'redis' }[]} */
+    const lanes = [];
+
+    for (const library of libraries) {
+        const { adapter } = /** @type {{ adapter: import('./libs/common.mjs').Adapter }} */ (
+            await import(`./libs/${library.replaceAll('-', '_')}.mjs`)
+        );
+
+        const databases = adapter.databases.filter(database => database !== 'mariadb');
+
+        lanes.push(...databases.map(database => ({ library, database })));
+    }
+
     const template = join(tmp, 'pg-template');
 
     if (!existsSync(template)) {
         execFileSync(join(PG_BIN, 'initdb'), ['-D', template, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
     }
 
-    // A server per library: macOS allows few servers at once (32 shared memory segments, kern.sysv.shmmni)
-    const servers = await Promise.all(libraries.map((_, index) => (
+    const postgresLanes = lanes.filter(lane => lane.database === 'postgres');
+    const postgres = await Promise.all(postgresLanes.map((_, index) => (
         startPostgres({ port: CRON_PORT + index, template })
     )));
+    const business = lanes.some(lane => lane.database === 'redis')
+        ? await startPostgres({ port: CRON_PORT + postgresLanes.length, template })
+        : null;
+    const steps = lanes.flatMap(lane => (lane.database === 'mysql' ? firing : [...idle, ...firing]).map(step => ({
+        lane, step,
+    })));
+    /** @type {Server[]} */
+    const servers = await Promise.all(steps.map(async ({ lane: { library, database } }, index) => {
+        if (database === 'postgres') {
+            return postgres[postgresLanes.findIndex(lane => lane.library === library)];
+        }
+
+        if (database === 'redis') {
+            return { ...await startRedis(CRON_REDIS_PORT + index), business: /** @type {Server} */ (business) };
+        }
+
+        return startMysqlFamily('mysql', { port: CRON_MYSQL_PORT + index, name: `mysql-${library}-${index}` });
+    }));
     /** @type {Record<string, any>[][]} the runs of each step */
-    const samples = plan.map(() => []);
+    const samples = steps.map(() => []);
 
     for (let repeat = 1; repeat <= CRON_REPEATS; repeat++) {
-        const barrier = barrierOf(plan.length);
+        const barrier = barrierOf(steps.length);
 
-        process.stderr.write(`schedules ${repeat}/${CRON_REPEATS}: ${plan.length} runs in parallel\n`);
+        process.stderr.write(`schedules ${repeat}/${CRON_REPEATS}: ${steps.length} runs in parallel\n`);
 
-        const settled = await Promise.allSettled(plan.map(async (step) => {
+        const settled = await Promise.allSettled(steps.map(async ({ lane: { library, database }, step }, index) => {
             const own = barrier();
 
             try {
-                return await runWorkload({ ...step, server: servers[libraries.indexOf(step.library)], start: own });
+                return await runWorkload({
+                    library, ...step, ...database !== 'postgres' && { dialect: database }, server: servers[index],
+                    start: own,
+                });
             } finally {
                 own.leave();
             }

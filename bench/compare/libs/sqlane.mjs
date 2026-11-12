@@ -54,10 +54,9 @@ export const adapter = {
     databases: ['postgres', 'mysql', 'mariadb'],
     // The id of a slot's job: `<name>:schedule:<key>:<ISO>`
     scheduledJobs: async url => ({
-        jobs: (await queryRows(url, String.raw`
-            SELECT split_part(id, ':', 3) AS key, substring(id FROM '^[^:]*:schedule:[^:]*:(.*)$') AS slot
-            FROM sqlane_jobs WHERE id LIKE '%:schedule:%'
-        `)).map(row => [row.key, row.slot]),
+        jobs: (await queryRows(url, 'SELECT id FROM sqlane_jobs WHERE id LIKE \'%:schedule:%\''))
+            .map(row => /** @type {RegExpExecArray} */ (/^[^:]*:schedule:([^:]*):(.*)$/u.exec(row.id)))
+            .map(([, key, slot]) => [key, slot]),
     }),
     async open({
         url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, dialect = 'mysql', role, schedules,

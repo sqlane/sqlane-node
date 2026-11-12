@@ -39,8 +39,6 @@ const LIBS = [
     { id: 'bullmq', label: 'BullMQ*' },
     { id: 'sidequest', label: 'Sidequest*' },
 ];
-/** The libraries of the schedules */
-const CRON_LIBS = LIBS.slice(0, 4);
 
 const W = 720;
 const LABEL_W = 150;
@@ -69,11 +67,11 @@ function run(library, workload, timing = false) {
 /**
  * @param {string} library
  * @param {number} processes
- * @returns {any} the run of 1000 firing schedules of the library with that many worker processes
+ * @returns {any} the PostgreSQL run of 1000 firing schedules of the library with that many worker processes
  */
 function fireRun(library, processes) {
     const found = results.perf.find((/** @type {any} */ r) => (
-        r.library === library && r.workload === 'cron-fire' && r.processes === processes
+        r.library === library && r.workload === 'cron-fire' && r.processes === processes && r.dialect === 'postgres'
     ));
     if (!found) throw new Error(`no cron-fire run of ${library}`);
     return found;
@@ -217,14 +215,14 @@ const charts = {
     },
     'perf-cron': {
         title: 'CPU instructions per fired job of a schedule, 3 workers',
-        subtitle: 'PostgreSQL 17, 1000 schedules due every minute, 3 worker processes, median of the runs. Lower is better.',
+        subtitle: 'PostgreSQL 17, 1000 schedules due every minute, 3 workers. *: not transactional. Lower is better.',
         legend: ['Workers', 'Database'],
         unit: 'M instr.',
-        rows: CRON_LIBS.map(({ id, label }) => {
+        rows: LIBS.map(({ id, label }) => {
             const r = fireRun(id, 3);
             // The CPU window holds one slot of each schedule per minute
             const slots = (r.schedules * r.seconds) / 60;
-            // pg-boss with 3 workers: the median of 6 runs (`pooled`), since its runs varied
+            // pg-boss with 3 workers: the median of its runs of the day (`pooled`), since they varied
             const parts = r.pooled
                 ? [r.pooled.workerPerSlot, r.pooled.dbPerSlot].map(millions)
                 : [r.worker, r.db].map(p => millions(p.instructions) / slots);

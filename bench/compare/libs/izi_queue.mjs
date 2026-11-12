@@ -5,11 +5,17 @@
 // once per poll, so with the default it starts at most `concurrency` jobs a second when they queue up; as River's
 // `fetchCooldown`. On PostgreSQL an insert also NOTIFYs the workers, but only from a started IziQueue: the producer
 // starts one without queues, as an app that inserts would.
+//
+// Schedules: its CronPlugin in each worker, with a crontab entry per schedule. Only the leader (a lease in
+// `izi_peers`) evaluates a minute, and each insert is unique on (entry, minute) over every state. Its `interval: 1 s`
+// (default 60 s), a public option: the plugin evaluates a minute at its first tick in it, up to 60 s late by default.
 import { readFileSync } from 'node:fs';
-import { createMySQLAdapter, createPostgresAdapter, defineWorker, IziQueue, LifelinePlugin, WorkerResults } from 'izi-queue';
+import {
+    createMySQLAdapter, createPostgresAdapter, CronPlugin, defineWorker, IziQueue, LifelinePlugin, WorkerResults,
+} from 'izi-queue';
 import { createPool } from 'mysql2/promise';
 import { Pool } from 'pg';
-import { UnsupportedError } from './common.mjs';
+import { queryRows, scheduleKeys, UnsupportedError } from './common.mjs';
 
 /** Its logs go nowhere: the checks report the outcome */
 const SILENT = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
@@ -23,7 +29,14 @@ export const adapter = {
     version,
     transactional: true,
     databases: ['postgres', 'mysql'],
-    async open({ url, names, handler, concurrency = 4, stall = false, role }) {
+    // A cron job carries its minute in `meta.cronMinute`
+    scheduledJobs: async url => ({
+        jobs: (await queryRows(url, 'SELECT args, meta FROM izi_jobs WHERE worker = \'job_0000\''))
+            .map(row => [row.args, row.meta].map(value => (typeof value === 'string' ? JSON.parse(value) : value)))
+            .filter(([, meta]) => meta.cron)
+            .map(([args, meta]) => [args.s, new Date(Date.parse(meta.cronMinute)).toISOString()]),
+    }),
+    async open({ url, names, handler, concurrency = 4, stall = false, role, schedules }) {
         /** @type {string[]} */
         const notes = [];
 
@@ -38,6 +51,15 @@ export const adapter = {
 
         pgPool?.on('error', () => {});
 
+        // The crontab in each worker: the leader evaluates it
+        const [worker] = Object.keys(names);
+        const crontab = schedules && role === 'worker'
+            ? scheduleKeys(schedules.count).map(key => ({ expression: schedules.cron, worker, args: { s: key } }))
+            : [];
+        const plugins = [
+            ...stall ? [new LifelinePlugin({ interval: 1000, rescueAfter: 10 })] : [],
+            ...crontab.length ? [new CronPlugin({ interval: 1000, crontab })] : [],
+        ];
         const queue = new IziQueue({
             database: mysqlPool
                 ? createMySQLAdapter(mysqlPool, SILENT)
@@ -47,7 +69,8 @@ export const adapter = {
             queues: role === 'producer' ? {} : { default: concurrency },
             pollInterval: 100,
             // A dead node is presumed after 4 missed heartbeats, 60 s at least
-            ...stall && { heartbeatInterval: 1000, plugins: [new LifelinePlugin({ interval: 1000, rescueAfter: 10 })] },
+            ...stall && { heartbeatInterval: 1000 },
+            plugins,
         });
 
         if (stall) {
@@ -58,7 +81,10 @@ export const adapter = {
             const { backoffMs } = spec;
 
             queue.register(defineWorker(name, async (job, context) => {
-                await handler(name, job.args, context?.signal);
+                // A cron job: its slot is its minute
+                const slot = job.meta?.cron ? Date.parse(/** @type {string} */ (job.meta.cronMinute)) : undefined;
+
+                await handler(name, job.args, context?.signal, slot);
 
                 return WorkerResults.ok();
             }, {

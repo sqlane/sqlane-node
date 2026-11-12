@@ -1,10 +1,16 @@
+/* oxlint-disable no-await-in-loop -- the schedules are registered one after the other */
 // Sidequest: its engine in this process, the inline runner, its PostgreSQL or MySQL backend. A job class per job name
 // (sidequest_jobs.mjs).
 //
 // Settings: its defaults: a poll every 100 ms (`jobPollingInterval`), its only wake; `maxConcurrentJobs` of the run.
+//
+// Schedules: `schedule()`, node-cron in the process that registers them, not stored: each such process enqueues each
+// slot. Worker 0 registers them, the documentation's "restrict scheduling to a single node" (no failover); all the
+// workers run the jobs. Its other option, `unique({ period: 'minute' })`, fails with `schedule()`: the job and its
+// unique key are computed once, at registration, so every later run collides with the first job's row.
 import { readFileSync } from 'node:fs';
 import { Sidequest } from 'sidequest';
-import { UnsupportedError } from './common.mjs';
+import { queryRows, scheduleKeys, UnsupportedError } from './common.mjs';
 import * as jobs from './sidequest_jobs.mjs';
 
 /** @type {Map<string, any>} The job classes, by job name */
@@ -18,7 +24,17 @@ export const adapter = {
     // No API takes the caller's transaction: the performance runs enqueue after the COMMIT
     transactional: false,
     databases: ['postgres', 'mysql'],
-    async open({ url, names, handler, concurrency = 4, stall = false }) {
+    // A slot of a schedule: the minute of the job's insert
+    scheduledJobs: async url => ({
+        jobs: (await queryRows(url, 'SELECT args, inserted_at FROM sidequest_jobs WHERE class = \'job_0000\''))
+            .map((row) => {
+                const [payload] = typeof row.args === 'string' ? JSON.parse(row.args) : row.args;
+                const slot = Math.floor(new Date(row.inserted_at).getTime() / 60_000) * 60_000;
+
+                return [payload.s, new Date(slot).toISOString()];
+            }),
+    }),
+    async open({ url, names, handler, concurrency = 4, stall = false, role, schedules }) {
         /** @type {string[]} */
         const notes = ['engine in this process, `runner: "inline"`'];
         /** @type {string[]} */
@@ -57,6 +73,15 @@ export const adapter = {
 
         // Configures and migrates; start() begins the processing
         await Sidequest.configure(config);
+
+        // Schedules in worker 0, in memory
+        if (schedules && role === 'worker' && !schedules.index) {
+            const [name] = Object.keys(names);
+
+            for (const key of scheduleKeys(schedules.count)) {
+                await Sidequest.build(JOB_CLASSES.get(name)).queue('default').schedule(schedules.cron, { s: key });
+            }
+        }
 
         return {
             notes,
