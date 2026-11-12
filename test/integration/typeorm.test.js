@@ -6,6 +6,7 @@ import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
 import { typeOrmAdapter } from '../../src/adapters/typeorm.js';
 import { createSqlane, defineJob } from '../../src/index.js';
+import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any, never>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -122,6 +123,10 @@ describe.each([
         const { sqlane, p } = await freshSqlane();
 
         await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+    });
+
+    test('the queue transaction is READ COMMITTED', async () => {
+        await expect(readsAcrossCommit(typeOrmAdapter(queueDataSource), database)).resolves.toStrictEqual([0, 1]);
     });
 
     test('enqueue with the EntityManager of a transaction: the job commits with it, and rolls back with it', async () => {

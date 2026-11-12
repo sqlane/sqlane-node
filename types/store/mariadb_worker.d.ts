@@ -57,7 +57,7 @@ export declare function claim(executor: Executor, p: string, { candidateIds, loc
 /**
  * Finds, claims and reads the due jobs of names without mutex keys. Call it in a queue transaction. One statement
  * locks the oldest due jobs of each name that no other claim holds (SKIP LOCKED), with their payloads; the ones that
- * fit the free slots (`fitSlots`) are claimed.
+ * fit the free slots (`fitSlots`) are claimed. A second read gets the payloads that the statement did not see.
  * @param {Executor} executor
  * @param {string} p
  * @param {import('./store.js').ClaimDueParams} params

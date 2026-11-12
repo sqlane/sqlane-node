@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from '
 import { connectTestDatabase } from '../support/test_database.js';
 import { kyselyAdapter } from '../../src/adapters/kysely.js';
 import { createSqlane, defineJob } from '../../src/index.js';
+import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/adapters/kysely.js').KyselyConnection} KyselyConnection */
 /** @typedef {import('../../src/types.js').Sqlane<KyselyConnection, never>} Sqlane */
@@ -128,6 +129,11 @@ describe.each([
 
         return { sqlane, p, events };
     }
+
+    test('the queue transaction is READ COMMITTED', async () => {
+        await expect(readsAcrossCommit(kyselyAdapter(queueDb, { dialect: inject('databaseDialect') }), database))
+            .resolves.toStrictEqual([0, 1]);
+    });
 
     test('enqueue in a transaction: the job commits with it, and rolls back with it', async () => {
         const { sqlane, p } = await freshSqlane();

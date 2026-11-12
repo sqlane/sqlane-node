@@ -6,6 +6,7 @@ import { checkSchedules } from './helpers/schedule_checks.js';
 import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane, defineJob } from '../../src/index.js';
+import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/adapters/sequelize.js').SequelizeConnection} SequelizeConnection */
 /** @typedef {import('../../src/types.js').Sqlane<SequelizeConnection, never>} Sqlane */
@@ -38,6 +39,8 @@ const SEQUELIZE_DIALECTS = /** @type {const} */ ({
 })[inject('databaseDialect')];
 
 describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) => {
+    // The mariadb dialect of Sequelize tells MariaDB; its mysql dialect needs the option
+    const adapterOptions = sequelizeDialect === 'mariadb' ? undefined : mysqlFamilyOptions();
     /** @type {import('../support/test_database.js').TestDatabaseConnection} */
     let database;
     /** @type {Sequelize} The app's Sequelize */
@@ -115,6 +118,11 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         const { sqlane, p } = await freshSqlane();
 
         await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+    });
+
+    test('the queue transaction is READ COMMITTED', async () => {
+        await expect(readsAcrossCommit(sequelizeAdapter(/** @type {any} */ (queueSequelize), adapterOptions), database))
+            .resolves.toStrictEqual([0, 1]);
     });
 
     test('enqueue in a transaction: the job commits with it, and rolls back with it', async () => {

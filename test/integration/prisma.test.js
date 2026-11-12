@@ -7,6 +7,7 @@ import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
 import { prismaAdapter } from '../../src/adapters/prisma.js';
 import { createSqlane, defineJob } from '../../src/index.js';
+import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/adapters/prisma.js').PrismaClientLike} PrismaClientLike */
 /** @typedef {import('../../src/types.js').Sqlane<PrismaClientLike, never>} Sqlane */
@@ -130,6 +131,10 @@ test('migrate() through Prisma: the tables, once', async () => {
     const { sqlane } = await freshSqlane();
 
     await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [] });
+});
+
+test('the queue transaction is READ COMMITTED', async () => {
+    await expect(readsAcrossCommit(prismaAdapter(queuePrisma, { dialect }), database)).resolves.toStrictEqual([0, 1]);
 });
 
 test('enqueue in an interactive transaction: the job commits with it, and rolls back with it', async () => {
