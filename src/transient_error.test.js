@@ -21,6 +21,10 @@ test.each([
         meta: { driverAdapterError: { cause: { originalCode: '40001' } } },
     }],
     ['a write conflict of Prisma', { code: 'P2034' }],
+    ['a MySQL deadlock wrapped by Sequelize', { name: 'SequelizeDatabaseError', original: { errno: 1213 } }],
+    ['a PostgreSQL deadlock wrapped by Sequelize', { name: 'SequelizeDatabaseError', parent: { code: '40P01' } }],
+    ['a deadlock wrapped by TypeORM', { name: 'QueryFailedError', driverError: { code: 'ER_LOCK_DEADLOCK' } }],
+    ['a deadlock of a Prisma raw query', { code: 'P2010', meta: { code: '40P01' } }],
 ])('%s is transient', (_, error) => {
     expect(isTransientDbError(error)).toBe(true);
 });
