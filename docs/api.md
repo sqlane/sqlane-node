@@ -17,6 +17,8 @@ explains how sqlane works and why.
 - [`enqueue`](#enqueue)
 - [`enqueueMany`](#enqueuemany)
 - [`handle`](#handle)
+- [`schedule`](#schedule)
+- [`getSchedules`](#getschedules)
 - [`start`](#start)
 - [`drain`](#drain)
 - [`close`](#close)
@@ -45,6 +47,8 @@ explains how sqlane works and why.
 | Failure job    | A job that sqlane adds when another job fails for good. It lets you react to the failure, for example by sending an alert.                                                       |
 | Adapter        | The object that connects sqlane to your database driver or ORM.                                                                                                                  |
 | Hint           | A message that tells other processes that jobs of a name are ready. Hints only make jobs start sooner. If a hint is lost, the job still runs at the next poll.                   |
+| Schedule       | A cron or an interval that adds a job of a name at each of its times. You add it with `schedule()`.                                                                              |
+| Slot           | One time of a schedule. Each slot adds at most one job, whose id is `<job name>:schedule:[<key>:]<ISO time>`.                                                                    |
 
 ## Durations
 
@@ -215,30 +219,32 @@ well-formed UTF-16, and a NUL character (`\u0000`), because PostgreSQL refuses i
 JSON gives it back, so a `Date` would arrive as a string. The TypeScript types reject a `Date`, a `Map`, a `Set`, a
 function, a `bigint` and a class instance with methods.
 
-| Option        | Type                                          | Default                        | Description                                                                                                                                                                      |
-| ------------- | --------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `jobId`       | `string`                                      | None                           | An id that prevents duplicates. It has 1 to 120 printable ASCII characters, without spaces at the ends. While a job with this id and name exists, a second enqueue adds nothing. |
-| `delay`       | `Duration`                                    | `0`                            | The wait before the job becomes due. You cannot combine it with `runAt`.                                                                                                         |
-| `runAt`       | `Date`                                        | None                           | The time at which the job becomes due. You cannot combine it with `delay`.                                                                                                       |
-| `maxAttempts` | integer, at least 1                           | From the definition            | Overrides `maxAttempts` for this job.                                                                                                                                            |
-| `maxStalls`   | integer, at least 0                           | From the definition            | Overrides `maxStalls` for this job.                                                                                                                                              |
-| `retention`   | `{ completed?: Duration, failed?: Duration }` | From the definition            | Overrides the retention for this job, field by field.                                                                                                                            |
-| `failureJob`  | `string` or `JobDefinition`                   | From the definition            | Overrides the failure job for this job.                                                                                                                                          |
-| `mutexKeys`   | `readonly string[]`                           | From the definition's function | Replaces the keys that the definition computes. An empty array removes all keys.                                                                                                 |
+| Option        | Type                                          | Default                        | Description                                                                                                                                                                                                                                                                 |
+| ------------- | --------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jobId`       | `string`                                      | None                           | An id that prevents duplicates. It has 1 to 120 printable ASCII characters, without spaces at the ends. While a job with this id and name exists, a second enqueue adds nothing. It cannot start with `schedule:`, which is reserved for the slots of schedules.            |
+| `slot`        | `{ at: Date, key?: string }`                  | None                           | Runs a slot of a [schedule](#schedule) by hand: the job gets the id that the scheduler gives the slot. `at` is in the years 1970 to 9999, and `key` is the key of the schedule. You cannot combine it with `jobId`. The job is due now, unless you give `delay` or `runAt`. |
+| `delay`       | `Duration`                                    | `0`                            | The wait before the job becomes due. You cannot combine it with `runAt`.                                                                                                                                                                                                    |
+| `runAt`       | `Date`                                        | None                           | The time at which the job becomes due. You cannot combine it with `delay`.                                                                                                                                                                                                  |
+| `maxAttempts` | integer, at least 1                           | From the definition            | Overrides `maxAttempts` for this job.                                                                                                                                                                                                                                       |
+| `maxStalls`   | integer, at least 0                           | From the definition            | Overrides `maxStalls` for this job.                                                                                                                                                                                                                                         |
+| `retention`   | `{ completed?: Duration, failed?: Duration }` | From the definition            | Overrides the retention for this job, field by field.                                                                                                                                                                                                                       |
+| `failureJob`  | `string` or `JobDefinition`                   | From the definition            | Overrides the failure job for this job.                                                                                                                                                                                                                                     |
+| `mutexKeys`   | `readonly string[]`                           | From the definition's function | Replaces the keys that the definition computes. An empty array removes all keys.                                                                                                                                                                                            |
 
 A job can have at most 10 mutex keys. Each key has 1 to 255 printable ASCII characters, without spaces at the ends.
 sqlane removes duplicate keys before it counts them. Keys are global, so jobs of different names can share a key.
 
 `enqueue` resolves to an `EnqueueResult`:
 
-| Field     | Type      | Description                                                                                     |
-| --------- | --------- | ----------------------------------------------------------------------------------------------- |
-| `id`      | `string`  | The job id. It is `<job name>:<jobId>` when you give a `jobId`, and a new ULID when you do not. |
-| `created` | `boolean` | It is `false` when a job with this `jobId` exists already. In that case sqlane added nothing.   |
+| Field     | Type      | Description                                                                                                                                        |
+| --------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`      | `string`  | The job id. It is `<job name>:<jobId>` when you give a `jobId`, `<job name>:schedule:[<key>:]<ISO time>` with `slot`, and a new ULID with neither. |
+| `created` | `boolean` | It is `false` when a job with this `jobId` (or of this `slot`) exists already. In that case sqlane added nothing.                                  |
 
 `enqueue` checks everything before it writes, and it rejects with these errors:
 
-- `InvalidOptionsError` for a bad job, a bad option, `delay` together with `runAt`, or a payload that is not JSON.
+- `InvalidOptionsError` for a bad job, a bad option, `delay` together with `runAt`, `slot` together with `jobId`, a
+  `jobId` that starts with `schedule:`, or a payload that is not JSON.
 - `PayloadTooLargeError` if the payload is larger than `maxPayloadBytes`.
 - `InvalidMutexKeyError` if a mutex key breaks the rules above.
 - `UnknownJobError` for an unknown name when `unknownJobs` is `'reject'`.
@@ -316,14 +322,15 @@ The handler receives one object with three fields:
 
 The `job` object has these fields:
 
-| Field         | Type                | Description                                     |
-| ------------- | ------------------- | ----------------------------------------------- |
-| `id`          | `string`            | The job id.                                     |
-| `name`        | `string`            | The job name.                                   |
-| `attempt`     | `number`            | The current attempt. It is 1 for the first run. |
-| `maxAttempts` | `number`            | The highest number of attempts for this job.    |
-| `enqueuedAt`  | `Date`              | The time of the enqueue.                        |
-| `mutexKeys`   | `readonly string[]` | The mutex keys of the job, sorted.              |
+| Field         | Type                | Description                                                                                  |
+| ------------- | ------------------- | -------------------------------------------------------------------------------------------- |
+| `id`          | `string`            | The job id.                                                                                  |
+| `name`        | `string`            | The job name.                                                                                |
+| `attempt`     | `number`            | The current attempt. It is 1 for the first run.                                              |
+| `maxAttempts` | `number`            | The highest number of attempts for this job.                                                 |
+| `enqueuedAt`  | `Date`              | The time of the enqueue.                                                                     |
+| `mutexKeys`   | `readonly string[]` | The mutex keys of the job, sorted.                                                           |
+| `scheduledAt` | `Date` or `null`    | The slot of a job of a [schedule](#schedule), also when it runs late. `null` for other jobs. |
 
 The `signal.reason` tells you why the signal aborted:
 
@@ -351,6 +358,201 @@ sqlane.handle(buildReport, async ({ payload, job, signal }) => {
 }, { lane: 'heavy', timeout: '5m' });
 ```
 
+## `schedule`
+
+`schedule` adds a job at each time of a cron in a time zone, or at a fixed interval.
+
+```ts
+sqlane.schedule(job: JobDefinition | string, options: ScheduleOptions): void
+```
+
+Each time of a schedule is a **slot**. At each slot, every started process that has the schedule tries to add the
+job. A row per schedule in the table `sqlane_schedules` lets one of them add it. So each slot adds at most one job in
+the whole cluster, with no leader. A scheduled job is an ordinary job: its definition gives its retries, backoff,
+timeout, mutex keys, failure job and retention.
+
+| Option     | Type                  | Default   | Description                                                                                                                                                                                      |
+| ---------- | --------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cron`     | `string`              | None      | A cron expression with 5 fields (see below). Set either `cron` or `every`.                                                                                                                       |
+| `timezone` | `string`              | `'UTC'`   | An IANA time zone, such as `'Europe/Berlin'`, in any case: `'europe/berlin'` is the same zone. Only with `cron`.                                                                                 |
+| `every`    | `Duration`            | None      | A fixed interval from `'1s'` to `'1d'`, counted from 1970-01-01 00:00 UTC. An interval over 1 hour must divide 1 day: `'2h'`, `'3h'`, `'4h'`, `'6h'`, `'8h'`, `'12h'` or `'1d'`.                 |
+| `key`      | `string`              | None      | Tells several schedules of one job name apart. It has 1 to 64 printable ASCII characters, without spaces at the ends.                                                                            |
+| `payload`  | `P`                   | `{}`      | The payload of each job. It is fixed: the handler gets the slot from `job.scheduledAt`. When the definition declares a payload type, `payload` is required and checked.                          |
+| `missed`   | `'once'` or `'skip'`  | `'once'`  | What happens to a slot that no process enqueued within 1 minute, for example during a downtime. `'once'` runs the latest missed slot once, within the catch-up reach (below). `'skip'` drops it. |
+| `overlap`  | `'allow'` or `'skip'` | `'allow'` | With `'skip'`, a slot adds no job while the previous job of this schedule is pending or running, including its retries.                                                                          |
+| `jitter`   | `Duration`            | None      | Spreads the runs of many schedules. Each slot runs at a fixed offset after its time, below `jitter` and below the next slot. At most `'1d'`, and below `every`.                                  |
+
+Call `schedule()` in your worker code, before `start()`, as with `handle()`. Every started process that called
+`schedule()` runs the schedule. The process does not need to handle the job name, so a dedicated scheduler process
+works. A process that never calls `start()`, such as a web process, never adds scheduled jobs.
+
+```js
+export const nightlyReport = defineJob({ name: 'nightly_report', timeout: '10m' });
+
+sqlane.handle(nightlyReport, async ({ job, signal }) => {
+    await buildReport({ day: job.scheduledAt, signal }); // the slot, also when the run is late
+});
+sqlane.schedule(nightlyReport, { cron: '0 3 * * *', timezone: 'Europe/Berlin' });
+sqlane.schedule(syncTenant, { every: '15m', key: 'tenant-42', payload: { tenantId: 42 }, overlap: 'skip' });
+await sqlane.start();
+```
+
+The **schedule id** is the job name, or `<job name>:<key>` with a key. An id names one schedule in the whole cluster:
+two services must not use one id for two different schedules.
+
+`schedule` throws a `ConfigError` for bad options, for a second schedule with the same id, and for a cron that never
+fires within 50 years. It throws a `ConfigError` after `start()`, and a `ClosedError` after `close()`.
+
+`start()` checks each schedule further: an unknown name with `unknownJobs: 'reject'`, a payload that is not JSON or is
+above `maxPayloadBytes`, and bad mutex keys of the definition throw a `ConfigError`. So a bad payload fails at deploy
+time, not at 03:00. With schedules, `start()` also needs the table of migration `0004_schedules`: run `migrate()`.
+
+### Cron syntax
+
+A cron has 5 fields: `minute hour day-of-month month day-of-week`. Spaces or tabs separate them.
+
+| Field        | Values              |
+| ------------ | ------------------- |
+| Minute       | 0–59                |
+| Hour         | 0–23                |
+| Day of month | 1–31                |
+| Month        | 1–12 or `JAN`–`DEC` |
+| Day of week  | 0–7 or `SUN`–`SAT`  |
+
+- Each item of a comma list is `*`, `n`, `a-b`, `*/s`, `a-b/s` or `a/s`. `a/s` runs from `a` to the end of the field.
+  Names ignore case and work in ranges.
+- Both 0 and 7 mean Sunday. In the day of week, `*` and `a/s` count over 0–6: `1/2` is Mon, Wed and Fri.
+- If both day fields are restricted, which means that neither starts with `*`, a day matches when either field
+  matches. Otherwise both must match.
+- The macros `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight` and `@hourly` work.
+- There is no seconds field: use `every` for less than a minute. `L`, `W`, `#`, `?`, `H`, a year field and `@reboot`
+  throw a `ConfigError`.
+
+**Differences from other cron libraries:**
+
+- `*/2` in a day field counts as `*` for the day rule above, as in Vixie cron. River treats it as restricted.
+- The steps of the day of week run over 0–6.
+- The DST rules below.
+- There is no seconds field.
+
+### Time zones and DST
+
+A cron matches wall-clock times in its zone. A spec whose hour field has all 24 hours (`*`, `0-23` or `*/1`) is an
+**every-hour** spec. It counts elapsed time. Any other spec is an appointment.
+
+| Case                                              | An appointment                                                        | An every-hour spec                                        |
+| ------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------- |
+| Spring forward: Berlin 02:00–02:59 does not exist | A matching time in the gap runs once, when the gap ends (03:00 CEST). | The gap is skipped. The next match comes within the hour. |
+| Fall back: Berlin 02:00–02:59 happens twice       | A matching time runs at its first occurrence only.                    | It runs at both occurrences.                              |
+
+So `30 2 * * *` runs exactly once every day of the year. `*/15 0-22 * * *` is not every-hour, so on the fall-back night
+its 02:xx times run once. `every` counts in UTC, so DST does not affect it.
+
+### `every`
+
+`every` counts from the Unix epoch in UTC, so all processes compute the same slots, and a restart keeps them. An
+interval over 1 hour must divide 1 day, so it lands on the same UTC times each day: `'6h'` runs at 00, 06, 12 and 18
+UTC, and `'1d'` at midnight UTC. For weekly runs, use a cron such as `0 0 * * 1`. An interval up to 1 hour that does
+not divide 1 hour, such as `'7m'`, does not start at a fixed minute of the hour.
+
+### Missed slots and the catch-up reach
+
+A slot is on time while the database time minus the slot is at most 1 minute. With `missed: 'once'`, a later start runs
+the **latest** missed slot once, as a job that is due now (after its [jitter](#jitter) offset, if any). It runs only if
+the schedule's last decided slot is at most one period plus 1 day older than that slot. That is the catch-up reach.
+After a longer absence, the schedule starts fresh.
+
+| Example                                                              | Catch-up            |
+| -------------------------------------------------------------------- | ------------------- |
+| A daily job's slot is missed by a 2-minute full restart.             | Yes                 |
+| A weekly job's slot is missed, and the restart comes 20 hours later. | Yes                 |
+| A daily job's process is down for 3 days.                            | No: it starts fresh |
+| A schedule is removed from code, then added back 2 months later.     | No: it starts fresh |
+| A job that runs every minute is down for 3 hours.                    | Yes, once           |
+
+A process that stalls runs only the latest due slot, never a burst. A slot before the first start of a schedule never
+runs.
+
+### Overlap
+
+| Need                                             | How                                                                                                                                                                                    |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runs may overlap                                 | The default, `overlap: 'allow'`.                                                                                                                                                       |
+| Skip a slot while the previous run is not done   | `overlap: 'skip'`. "Not done" means that the last job of the schedule is pending or running, retries included.                                                                         |
+| Queue the slot and run it after the previous one | A constant mutex key in the definition, such as `mutexKeys: () => ['nightly_report']`, with a `timeout`. The runs wait in line. They pile up if every run is slower than the interval. |
+
+### Jitter
+
+`jitter` spreads the runs of many schedules. Each slot runs at a fixed offset after its time, below `jitter` and below
+the time of the next slot, so a slot's jitter never pushes it past the next slot. The offset is in whole seconds when
+that limit is at least 1 second. It comes from the schedule id and the slot, so every process agrees. The job's
+`scheduledAt` stays the slot, and its `runAt` is the slot plus the offset. A late catch-up keeps its offset as a delay.
+A manual run with `slot` has no jitter. A change of `jitter` alone keeps the catch-up.
+
+### Deploys and removed schedules
+
+- Each slot adds at most one job, whatever the spec. During a rolling deploy, old and new processes both run their
+  on-time slots until the old ones stop. For a clean break, change `key`: that makes a new schedule.
+- A late catch-up needs the stored spec to equal the spec of the process. So moving `0 3 * * *` to `0 5 * * *` does
+  not run the 05:00 slot of today at once. The specs are normalized, so `MON-FRI` and `1-5` are the same spec.
+- A change of `payload`, `overlap` or `missed` applies from the next slot.
+- A schedule that you remove from code stops. Its row stays, and sqlane never deletes it. `getSchedules()` lists it
+  with `registered: false`. Delete it with `DELETE FROM sqlane_schedules WHERE id = '…'`.
+
+### The clock
+
+Each process computes its slots, but the **database clock** decides them. If the clock of a process differs from the
+database clock by more than 5 seconds, sqlane logs a warning, at most once per 10 minutes. A process with a wrong
+clock still adds each job at its slot by the database time.
+
+### The `schedule:` prefix and a manual run
+
+The job id of a slot is `<job name>:schedule:[<key>:]<ISO time>`, for example
+`nightly_report:schedule:2026-11-11T02:00:00.000Z`. The `jobId` prefix `schedule:` is reserved: `enqueue` rejects it.
+
+To run a slot by hand, use the `slot` option of [`enqueue`](#enqueue). It builds the same job id as the scheduler,
+so the scheduler adds no second job for that slot.
+
+```js
+await sqlane.enqueue(db, nightlyReport, {}, { slot: { at: new Date('2026-11-11T02:00:00.000Z') } });
+```
+
+sqlane does not check that `at` is a slot of a schedule. The manual run does not move the schedule. While the job of
+the slot exists, within its retention, the enqueue returns `created: false` and runs nothing.
+
+### Guarantees
+
+- Each slot adds **at most one job, ever**. The cursor row of the schedule only moves forward, and it outlives the
+  retention of the job.
+- A slot adds a job if a started process with the schedule is up within 1 minute after it, or, with `missed: 'once'`,
+  at the next start within the catch-up reach. One exception: if a fire of a slot rolls back, and a later slot of the
+  schedule is decided first, the earlier slot is skipped.
+- The job itself runs at least once, as any job does.
+
+## `getSchedules`
+
+`getSchedules` lists the schedules of the table and of this process.
+
+```ts
+sqlane.getSchedules(): Promise<ScheduleInfo[]>
+```
+
+| Field        | Type               | Description                                                                    |
+| ------------ | ------------------ | ------------------------------------------------------------------------------ |
+| `id`         | `string`           | `<job name>` or `<job name>:<key>`.                                            |
+| `name`       | `string`           | The job name.                                                                  |
+| `spec`       | `string`           | The stored spec, for example `cron 0 3 * * * Europe/Berlin` or `every 900000`. |
+| `registered` | `boolean`          | `schedule()` was called in this process.                                       |
+| `nextAt`     | `Date` or `null`   | The next slot. It is `null` for a schedule that this process does not have.    |
+| `nextRunAt`  | `Date` or `null`   | The time the job of the next slot will be due: `nextAt` plus its jitter.       |
+| `lastSlotAt` | `Date` or `null`   | The last decided slot. It is `null` before the first one.                      |
+| `lastJobId`  | `string` or `null` | The job that the last enqueued slot added.                                     |
+
+It reads the whole table, sorted by id, and adds the registered schedules that have no row yet. Rows with
+`registered: false` belong to another service, or to schedules removed from code. After a deploy that changes a spec,
+`spec` shows the old one until the first slot of the new spec. It works before `start()`. Without schedules and without
+the table, it resolves to `[]`.
+
 ## `start`
 
 `start` starts the worker of this process.
@@ -360,7 +562,13 @@ sqlane.start(): Promise<void>
 ```
 
 After `start()`, the process claims and runs the due jobs of the names it handles. It also renews leases, recovers
-stalled jobs and, if `cleanup` is on, deletes expired jobs. A second call does nothing.
+stalled jobs and, if `cleanup` is on, deletes expired jobs. It starts the [schedules](#schedule) of this process. A
+second call does nothing, and concurrent calls share one start.
+
+With schedules, `start` registers them first. It rejects with a `ConfigError` for a bad schedule (see
+[`schedule`](#schedule)), and if the table of the schedules is missing: run `migrate()`. If the database is down,
+`start` resolves anyway, emits an `error` event, and registers the schedules when the database is back. A rejected
+`start` can be called again.
 
 `start` rejects with a `ConfigError` if a handled definition has a `failureJob` that is neither in `jobs` nor handled.
 It also rejects with one if a failure job has a `failureJob` of its own. It checks all the handlers together, so the
@@ -375,7 +583,7 @@ sqlane.drain(options?: DrainOptions): Promise<DrainResult>
 ```
 
 `drain` only runs the names that this instance handles, and only the jobs that are due. It does not wait for jobs of
-other names.
+other names. It does not fire schedules: in tests, enqueue a slot with the `slot` option.
 
 | Option           | Type       | Default | Description                                                                               |
 | ---------------- | ---------- | ------- | ----------------------------------------------------------------------------------------- |
@@ -419,9 +627,9 @@ Set `exitsBy` lower if your process exits sooner, so released jobs can run again
 because of its options, so a shutdown always releases its jobs. Instead, each invalid option logs a warning, and sqlane
 uses its default. This includes an unknown option, and an `exitsBy` that is earlier than the deadline.
 
-`close` resolves when the handlers have settled or the deadline has passed, and the releases are written. A second
-call returns the same promise. `close` ends only what sqlane opened, such as the LISTEN connection and the hint
-subscription. It never ends your pools.
+`close` resolves when the handlers have settled or the deadline has passed, and the releases are written. With
+schedules, it also waits for a fire or a registration in flight. A second call returns the same promise. `close` ends
+only what sqlane opened, such as the LISTEN connection and the hint subscription. It never ends your pools.
 
 ```js
 process.once('SIGTERM', () => sqlane.close({ deadline: '30s', exitsBy: '35s' }));
@@ -513,22 +721,22 @@ nothing.
 All the errors of sqlane extend `SqlaneError`. Each error has a stable `code` that you can check. All the classes are
 exported from `@sqlane/core`.
 
-| Class                       | `code`                   | When                                                                                                                                                        |
-| --------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ConfigError`               | `CONFIG`                 | The options of `createSqlane`, `defineJob`, `handle()`, an adapter or `getMigrations` are bad. `start()` and `drain()` also throw it for a bad failure job. |
-| `InvalidOptionsError`       | `INVALID_OPTIONS`        | The arguments of `enqueue` or `enqueueMany` are bad, for example a bad name or `jobId`, `delay` with `runAt`, or a payload that is not JSON.                |
-| `PayloadTooLargeError`      | `PAYLOAD_TOO_LARGE`      | The payload is larger than `maxPayloadBytes`.                                                                                                               |
-| `InvalidMutexKeyError`      | `INVALID_MUTEX_KEY`      | A job has more than 10 mutex keys, or a key breaks the rules.                                                                                               |
-| `UnknownJobError`           | `UNKNOWN_JOB`            | `enqueue` got an unknown job name, and `unknownJobs` is `'reject'`.                                                                                         |
-| `ClosedError`               | `CLOSED`                 | `start`, `handle` or `drain` was called after `close()`.                                                                                                    |
-| `DrainTimeoutError`         | `DRAIN_TIMEOUT`          | `drain()` did not finish within its `timeout`.                                                                                                              |
-| `JobTimeoutError`           | `JOB_TIMEOUT`            | The handler's `signal` aborted because the timeout passed. It is also the error of the attempt.                                                             |
-| `ShutdownError`             | `SHUTDOWN`               | The handler's `signal` aborted because `close()` reached its deadline.                                                                                      |
-| `LeaseLostError`            | `LEASE_LOST`             | The handler's `signal` aborted because the process could not renew the lease until 30 s before it ends, for example because the database is unreachable.    |
-| `MissingPayloadError`       | `MISSING_PAYLOAD`        | sqlane did not find the payload of a job. The job fails for good with this error.                                                                           |
-| `MigrationLockTimeoutError` | `MIGRATION_LOCK_TIMEOUT` | `migrate()` did not get the migration lock within its `lockTimeout`.                                                                                        |
-| `FatalJobError`             | `FATAL_JOB`              | A handler threw it to fail the job at once. See below.                                                                                                      |
-| `RetryJobError`             | `RETRY_JOB`              | A handler threw it to retry the job after a given delay. See below.                                                                                         |
+| Class                       | `code`                   | When                                                                                                                                                                                                                                                   |
+| --------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ConfigError`               | `CONFIG`                 | The options of `createSqlane`, `defineJob`, `handle()`, `schedule()`, an adapter or `getMigrations` are bad. `start()` and `drain()` also throw it for a bad failure job. `start()` throws it for a bad schedule, or a missing table of the schedules. |
+| `InvalidOptionsError`       | `INVALID_OPTIONS`        | The arguments of `enqueue` or `enqueueMany` are bad, for example a bad name or `jobId`, a `jobId` with the reserved prefix `schedule:`, `slot` with `jobId`, `delay` with `runAt`, or a payload that is not JSON.                                      |
+| `PayloadTooLargeError`      | `PAYLOAD_TOO_LARGE`      | The payload is larger than `maxPayloadBytes`.                                                                                                                                                                                                          |
+| `InvalidMutexKeyError`      | `INVALID_MUTEX_KEY`      | A job has more than 10 mutex keys, or a key breaks the rules.                                                                                                                                                                                          |
+| `UnknownJobError`           | `UNKNOWN_JOB`            | `enqueue` got an unknown job name, and `unknownJobs` is `'reject'`.                                                                                                                                                                                    |
+| `ClosedError`               | `CLOSED`                 | `start`, `handle`, `schedule` or `drain` was called after `close()`.                                                                                                                                                                                   |
+| `DrainTimeoutError`         | `DRAIN_TIMEOUT`          | `drain()` did not finish within its `timeout`.                                                                                                                                                                                                         |
+| `JobTimeoutError`           | `JOB_TIMEOUT`            | The handler's `signal` aborted because the timeout passed. It is also the error of the attempt.                                                                                                                                                        |
+| `ShutdownError`             | `SHUTDOWN`               | The handler's `signal` aborted because `close()` reached its deadline.                                                                                                                                                                                 |
+| `LeaseLostError`            | `LEASE_LOST`             | The handler's `signal` aborted because the process could not renew the lease until 30 s before it ends, for example because the database is unreachable.                                                                                               |
+| `MissingPayloadError`       | `MISSING_PAYLOAD`        | sqlane did not find the payload of a job. The job fails for good with this error.                                                                                                                                                                      |
+| `MigrationLockTimeoutError` | `MIGRATION_LOCK_TIMEOUT` | `migrate()` did not get the migration lock within its `lockTimeout`.                                                                                                                                                                                   |
+| `FatalJobError`             | `FATAL_JOB`              | A handler threw it to fail the job at once. See below.                                                                                                                                                                                                 |
+| `RetryJobError`             | `RETRY_JOB`              | A handler threw it to retry the job after a given delay. See below.                                                                                                                                                                                    |
 
 ```js
 import { SqlaneError } from '@sqlane/core';
@@ -585,7 +793,7 @@ as a string.
 The `onEvent` option of `createSqlane` receives an event object for each step of the job lifecycle. Use the events to
 feed your metrics. The `type` field tells the kind of event.
 
-Every event except `error` has these fields:
+Every event except `error` and `schedule_fired` has these fields:
 
 | Field     | Type     | Description                                                                                                 |
 | --------- | -------- | ----------------------------------------------------------------------------------------------------------- |
@@ -593,20 +801,23 @@ Every event except `error` has these fields:
 | `jobName` | `string` | The job name.                                                                                               |
 | `attempt` | `number` | The attempt, starting at 1. When stall recovery emits the event, it is the attempt of the run that stalled. |
 
-| `type`                  | Extra fields                     | When                                                                                                                                                                        |
-| ----------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `claimed`               | None                             | This process claimed the job and starts its handler.                                                                                                                        |
-| `completed`             | `durationMs`                     | The job completed.                                                                                                                                                          |
-| `retried`               | `durationMs`, `delayMs`, `error` | The attempt failed, and the job will run again after `delayMs`.                                                                                                             |
-| `failed`                | `durationMs`, `error`            | The job failed for good. Stall recovery also emits it when a job stalls too often. `durationMs` is then the time from the start of the run that stalled until its recovery. |
-| `timed_out`             | `durationMs`                     | The handler ran longer than its timeout, and its `signal` aborted.                                                                                                          |
-| `stalled`               | None                             | Stall recovery found a job whose lease had ended, and put it back in the queue.                                                                                             |
-| `released`              | None                             | `close()` released an unfinished job in `'release'` mode.                                                                                                                   |
-| `lease_lost`            | None                             | This process could not renew the lease of the job until 30 s before it ends, and aborted its `signal`.                                                                      |
-| `failure_job_not_added` | `failureJob`, `error`            | The job failed for good, but the database refused to add its failure job.                                                                                                   |
-| `error`                 | `operation`, `error`             | An internal operation failed, for example a poll or a hint. `operation` names it. sqlane also logs it.                                                                      |
+| `type`                  | Extra fields                                            | When                                                                                                                                                                                                                                             |
+| ----------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `claimed`               | None                                                    | This process claimed the job and starts its handler.                                                                                                                                                                                             |
+| `completed`             | `durationMs`                                            | The job completed.                                                                                                                                                                                                                               |
+| `retried`               | `durationMs`, `delayMs`, `error`                        | The attempt failed, and the job will run again after `delayMs`.                                                                                                                                                                                  |
+| `failed`                | `durationMs`, `error`                                   | The job failed for good. Stall recovery also emits it when a job stalls too often. `durationMs` is then the time from the start of the run that stalled until its recovery.                                                                      |
+| `timed_out`             | `durationMs`                                            | The handler ran longer than its timeout, and its `signal` aborted.                                                                                                                                                                               |
+| `stalled`               | None                                                    | Stall recovery found a job whose lease had ended, and put it back in the queue.                                                                                                                                                                  |
+| `released`              | None                                                    | `close()` released an unfinished job in `'release'` mode.                                                                                                                                                                                        |
+| `lease_lost`            | None                                                    | This process could not renew the lease of the job until 30 s before it ends, and aborted its `signal`.                                                                                                                                           |
+| `failure_job_not_added` | `failureJob`, `error`                                   | The job failed for good, but the database refused to add its failure job.                                                                                                                                                                        |
+| `error`                 | `operation`, `error`                                    | An internal operation failed, for example a poll or a hint. `operation` names it. sqlane also logs it.                                                                                                                                           |
+| `schedule_fired`        | `scheduleId`, `jobName`, `scheduledAt`, `late`, `jobId` | A slot of a [schedule](#schedule) was decided. Only the process that decided it emits it, so the cluster gets one event per slot. `late` is true for a catch-up. `jobId` is `null` when `overlap: 'skip'` skipped the slot. It has no `attempt`. |
 
 `durationMs` is the run time of the handler in milliseconds. `error` is the thrown value, of type `unknown`.
+
+New event types may be added in minor versions. Handle unknown types in a `default` branch.
 
 ```js
 const sqlane = createSqlane({

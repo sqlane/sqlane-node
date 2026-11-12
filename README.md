@@ -88,7 +88,7 @@ documentation ([comparison](https://github.com/sqlane/sqlane-node/blob/main/docs
 | Timeout that aborts the handler        | ✅     | ✅      | ❌              | ❌     | ✅            | ✅    |
 | Priority                               | ❌     | ✅      | ✅              | ✅     | 🟠 per queue  | ✅    |
 | MySQL and MariaDB                      | ✅     | ❌      | ❌              | ❌     | 🟠 MySQL only | ❌    |
-| Cron                                   | ❌     | ✅      | ✅              | ✅     | ✅            | ✅    |
+| Cron                                   | ✅     | ✅      | ✅              | ✅     | ✅            | ✅    |
 | Dashboard                              | ❌     | ✅      | ❌              | ✅     | ✅            | ✅    |
 
 Next to the queues that also enqueue in your transaction, on PostgreSQL with 1000 job names
@@ -104,8 +104,8 @@ Next to the queues that also enqueue in your transaction, on PostgreSQL with 100
 - **1000 idle job names cost what 1 costs.** pg-boss polls each queue: 1000 idle queues take about a quarter of a
   database core.
 
-Choose pg-boss or Graphile Worker for built-in cron, BullMQ for workflows and its broader ecosystem, or an
-established queue when a long production history is your main requirement. Scheduling is on the [roadmap](#roadmap).
+Choose BullMQ for workflows and its broader ecosystem, or an established queue when a long production history is your
+main requirement.
 
 ## Features
 
@@ -113,6 +113,7 @@ established queue when a long production history is your main requirement. Sched
 - **Mutex keys.** Jobs that share a key, such as `order:42`, never run at the same time in the whole cluster, as long as handlers stop when sqlane aborts their `signal`. A job can have up to 10 keys, and the keys work across job names. ([defineJob](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#definejob), [limits](https://github.com/sqlane/sqlane-node/blob/main/README.md#guarantees-and-limits))
 - **Retries with backoff.** A failed job runs again after an exponential or fixed wait. A handler can also ask for a given delay, or fail the job at once. ([backoff](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#backoff), [handler errors](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#errors-that-handlers-throw))
 - **Delayed and unique jobs.** A job can wait for a `delay` or start at a `runAt` time. A `jobId` blocks a duplicate enqueue while the first job's row exists. By default, the row exists until about 1 hour after the job completes. The `retention` option changes this time. ([enqueue options](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue))
+- **Cron and repeatable jobs.** `schedule()` adds a job at each time of a cron in your time zone, or at a fixed interval. Each time adds at most one job in the whole cluster, with no leader, and a time missed during a short downtime runs once. ([schedule](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedule))
 - **Failure jobs.** When a job fails for good, sqlane adds a job of another name, so you can react, for example with an alert. ([failure jobs](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#failedjobpayload))
 - **Concurrency limits.** You can limit the number of handlers that run at the same time in each process. The limit can apply to all handlers, to one job name, or to a lane that several job names share. ([handle](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#handle))
 - **Typed payloads.** In TypeScript or JSDoc, `enqueue`, the handler and `mutexKeys` share one payload type. ([typed payloads](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#typed-payloads))
@@ -222,9 +223,8 @@ mariadb driver (through Knex and Sequelize) is for MariaDB, and pg and postgres.
   aborts the `signal`, sqlane keeps the job's keys for a limited time while the handler finishes. A handler that
   ignores its `signal` for longer can overlap with the next job of the same key. For this reason, a job with mutex keys
   needs a timeout.
-- **Not included.** sqlane has no cron, no priorities, no strict order across processes, no dashboard, no workflows,
-  and no cluster-wide concurrency limit per job name. Built-in scheduling is on the [roadmap](#roadmap). Instead
-  of a dashboard, use `getStats()`, or query the tables with SQL, as the [data model](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#data)
+- **Not included.** sqlane has no priorities, no strict order across processes, no dashboard, no workflows, and no
+  cluster-wide concurrency limit per job name. Instead of a dashboard, use `getStats()`, or query the tables with SQL, as the [data model](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#data)
   describes. There is no API to run a failed job again.
 
 The [design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#guarantees) explains each guarantee and
@@ -242,10 +242,6 @@ The [benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks
 scenario, and the [performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison-performance.md)
 measures sqlane next to pg-boss, Graphile Worker and River.
 
-## Roadmap
-
-- **Scheduling.** Built-in cron and recurring jobs.
-
 ## Documentation
 
 - The [API reference](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md) describes every function and option.
@@ -261,7 +257,9 @@ measures sqlane next to pg-boss, Graphile Worker and River.
 ## Versioning
 
 sqlane follows [semantic versioning](https://semver.org). The
-[changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists the changes of each version.
+[changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists the changes of each version. New
+[event](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#events) types may come in minor versions, so handle
+unknown types in a `default` branch.
 
 ## Support and contributing
 

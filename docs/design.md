@@ -28,7 +28,6 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 ## Non-goals
 
 - Exactly-once execution. Handlers must be idempotent.
-- Cron and recurring jobs. Use a scheduler that enqueues jobs.
 - A dashboard. `getStats()` gives the counts per job name, and the tables are plain SQL (see [Data](#data)).
 - Priorities, or a strict order across processes.
 - A cluster-wide concurrency limit per job name (mutex keys cover the per-entity case).
@@ -49,6 +48,8 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 | **Failure job**    | A job that sqlane adds when another job fails for good.                                     |
 | **Adapter**        | Wraps a driver: the dialect, the queue's pool, and the raw connections given to `enqueue`.  |
 | **Hint**           | A message "jobs of this name are ready" between processes. Only an optimization.            |
+| **Schedule**       | A cron in a time zone, or a fixed interval, that adds a job at each of its times.           |
+| **Slot**           | One time of a schedule. It adds at most one job.                                            |
 
 ## API
 
@@ -82,9 +83,10 @@ reasons behind the shape of the API.
 
 ## Data
 
-Each table prefix (default `sqlane_`) has four tables: the three tables below and `sqlane_migrations`. The names of
+Each table prefix (default `sqlane_`) has six tables: the five tables below and `sqlane_migrations`. The names of
 the tables and columns use snake_case. All times come from the database clock (`UTC_TIMESTAMP(3)` on MySQL,
-`clock_timestamp()` on PostgreSQL), so clock skew between processes does not matter.
+`clock_timestamp()` on PostgreSQL), so clock skew between processes does not matter. Schedules compute their slots in
+the process, but they decide each slot with the database clock ([Schedules](#schedules)).
 
 In the tables below, `ts(3)` means `DATETIME(3)` with UTC values on MySQL, and `timestamptz(3)` on PostgreSQL. The
 MySQL type does not depend on the session time zone, and it has no 2038 limit. sqlane sends a `runAt: Date` as a UTC
@@ -94,24 +96,24 @@ not depend on the `timezone` or `dateStrings` settings of the pool.
 
 ### `sqlane_jobs`
 
-| Column                                                                | Type               | Notes                                                                                         |
-| --------------------------------------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
-| `id`                                                                  | varchar(255), PK   | `<job_name>:<job_id>`, or a new ULID without `jobId`.                                         |
-| `job_name`                                                            | varchar(128)       |                                                                                               |
-| `status`                                                              | varchar(16)        | `pending`, `running`, `completed`, `failed`.                                                  |
-| `run_at`                                                              | ts(3)              | Due time.                                                                                     |
-| `attempts`, `max_attempts`                                            | int                |                                                                                               |
-| `stalls`, `max_stalls`                                                | int                |                                                                                               |
-| `mutex_keys`                                                          | json / text[] null | Frozen at enqueue, sorted. Written with the job row.                                          |
-| `enqueue_token`                                                       | char(26)           | Per enqueue call: tells created rows from duplicates.                                         |
-| `lock_token`                                                          | char(26) null      | Set by the claim. Every final write checks it.                                                |
-| `locked_by`                                                           | varchar(255) null  | `<host>:<pid>:<ULID>`.                                                                        |
-| `locked_until`                                                        | ts(3) null         | The lease.                                                                                    |
-| `timed_out_at`                                                        | ts(3) null         | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`. |
-| `last_error`                                                          | json null          |                                                                                               |
-| `completed_retention_ms`, `failed_retention_ms`                       | bigint             | Frozen at enqueue.                                                                            |
-| `failure_job`                                                         | varchar(128) null  | Frozen at enqueue.                                                                            |
-| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)              |                                                                                               |
+| Column                                                                | Type               | Notes                                                                                                               |
+| --------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `id`                                                                  | varchar(255), PK   | `<job_name>:<job_id>`, or a new ULID without `jobId`. `<job_name>:schedule:[<key>:]<ISO>` for a slot of a schedule. |
+| `job_name`                                                            | varchar(128)       |                                                                                                                     |
+| `status`                                                              | varchar(16)        | `pending`, `running`, `completed`, `failed`.                                                                        |
+| `run_at`                                                              | ts(3)              | Due time.                                                                                                           |
+| `attempts`, `max_attempts`                                            | int                |                                                                                                                     |
+| `stalls`, `max_stalls`                                                | int                |                                                                                                                     |
+| `mutex_keys`                                                          | json / text[] null | Frozen at enqueue, sorted. Written with the job row.                                                                |
+| `enqueue_token`                                                       | char(26)           | Per enqueue call: tells created rows from duplicates.                                                               |
+| `lock_token`                                                          | char(26) null      | Set by the claim. Every final write checks it.                                                                      |
+| `locked_by`                                                           | varchar(255) null  | `<host>:<pid>:<ULID>`.                                                                                              |
+| `locked_until`                                                        | ts(3) null         | The lease.                                                                                                          |
+| `timed_out_at`                                                        | ts(3) null         | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`.                       |
+| `last_error`                                                          | json null          |                                                                                                                     |
+| `completed_retention_ms`, `failed_retention_ms`                       | bigint             | Frozen at enqueue.                                                                                                  |
+| `failure_job`                                                         | varchar(128) null  | Frozen at enqueue.                                                                                                  |
+| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)              |                                                                                                                     |
 
 `id`, `job_name`, the mutex keys and `mutex_key` (below) are case-sensitive: `ascii_bin` on MySQL, `COLLATE "C"` on PostgreSQL.
 
@@ -140,6 +142,21 @@ the same statement or transaction. So the oldest due job of a key is the first r
 `mutex_key` (PK), `job_id`, `lock_token`, `held_until` (null: held by a running job), `created_at`. One row per key
 that a job holds, or that lingers after a release on close or a stall.
 
+### `sqlane_schedules`
+
+| Column                     | Type              | Notes                                                                                         |
+| -------------------------- | ----------------- | --------------------------------------------------------------------------------------------- |
+| `id`                       | varchar(255), PK  | `<job_name>` or `<job_name>:<key>`. ASCII and case-sensitive.                                 |
+| `job_name`                 | varchar(128)      |                                                                                               |
+| `spec`                     | varchar(512)      | The normalized spec: `cron <fields> <timezone>` or `every <ms>`. A late catch-up compares it. |
+| `last_slot_at`             | ts(3)             | The cursor: the last decided slot. It only moves forward. Slots at or before it never run.    |
+| `last_job_id`              | varchar(255) null | The job of the last enqueued slot. `overlap: 'skip'` reads it.                                |
+| `created_at`, `updated_at` | ts(3)             |                                                                                               |
+
+One small row per schedule, and no secondary index: each access is by primary key, or reads the whole table
+(`getSchedules`). An app without schedules never touches it. sqlane never deletes a row: services that share the table
+each know only their own schedules.
+
 ### Migrations
 
 sqlane ships its schema as versioned SQL for each dialect. You can apply it in two ways.
@@ -158,6 +175,11 @@ sqlane ships its schema as versioned SQL for each dialect. You can apply it in t
       transaction of its own. sqlane calls `pg_advisory_xact_lock` in a `FROM` clause, because the function returns
       `void`, and Prisma cannot read this type.
 - `getMigrations({ dialect, tablePrefix })` returns the SQL, for the app's own migration tool.
+
+The migration ids are matched, never counted. MySQL and MariaDB have `0001_initial`, `0002_job_keys` and
+`0004_schedules`. PostgreSQL has `0001_initial`, `0002_pending_order`, `0003_job_keys` and `0004_schedules`. The
+schedules migration has the same id on every dialect. It is needed only with schedules: `start()` throws a
+`ConfigError` that asks for `migrate()` when a process has schedules and the table is missing.
 
 ## Job states
 
@@ -450,10 +472,73 @@ and the hint subscription. It never ends the app's pool.
 - Returns counts: `completed`, `retried` (failed attempts that were retried), `failed` (jobs that failed for good).
   On timeout it rejects with `DrainTimeoutError`.
 
+### Schedules
+
+`schedule(job, options)` adds a schedule in code, before `start()`, like `handle()`. A schedule produces **slots**:
+the instants of a 5-field cron in an IANA time zone, or of a fixed `every` interval counted from the Unix epoch.
+
+**The timer.** Each started process keeps one timer for the earliest slot of all its schedules. It sleeps at most 1
+minute, which covers wall-clock jumps and the `setTimeout` limit. While no slot is due, a schedule costs no query,
+whatever the number of schedules. With no schedules, `start()` runs no new statement and arms no timer.
+
+**The fire.** At a slot, every process that has the schedule opens one short queue transaction for up to 100 due
+slots:
+
+1. It locks the schedule rows in id order with `SELECT … FOR UPDATE SKIP LOCKED` (`FORCE INDEX (PRIMARY)` on MySQL and
+   MariaDB). The same statement reads the database clock.
+2. It decides each slot in JS, with that database time: a slot wins if it is after the row's cursor (`last_slot_at`)
+   and it is on time (the database time minus the slot is at most 1 minute), or it is a late catch-up. A slot more
+   than 1 s ahead of the database time is deferred.
+3. With `overlap: 'skip'`, it reads the status of the last job of each winner.
+4. It inserts the jobs of all winners, of all names, in one statement on PostgreSQL, with one NOTIFY per name. On
+   MySQL and MariaDB, it uses the enqueue insert. On-time jobs get `runAt` = their due time (the slot, plus the
+   jitter), late ones are due now (plus the jitter's offset).
+5. It moves the cursors of the winners in one `UPDATE`.
+
+A row that another process holds is skipped, never waited for: it is **busy**. About 1 s later, the process reads the
+cursor with one plain `SELECT`. If the cursor moved, the slot is taken. If not, the holder rolled back or still holds
+the row, and the process fires again, with a backoff of up to 60 s. A row that stays locked longer than 1 minute logs
+a warning. A missing row (after a manual `DELETE`) is inserted again by an on-time slot only.
+
+**Why at most one job per slot.** A slot is decided only while the transaction holds the row lock, and the lock pass
+reads the latest committed row. The cursor and the jobs commit together, so a crash leaves neither. The cursor
+outlives the job's retention, so the dedupe is permanent. The deterministic job id `<name>:schedule:[<key>:]<ISO>` is
+a second guard, and it makes a manual run with the `slot` enqueue option dedupe with the scheduler.
+
+**The clock.** The decisions use the database time of the fire transaction, so the clock of a process changes only when
+it tries, never what it writes. The process estimates its skew from the statements that it runs anyway: it keeps the
+sample with the smallest round trip of the last 10 minutes, and only round trips up to 50 ms count. While none counts, a
+slower sample stands in, once per 10 minutes. A step of the process clock (NTP), seen against a monotonic clock, drops
+the older samples. A backward step moves the estimate by the step. A forward jump is a step or a suspend (the monotonic
+clock stops in a sleep or a VM pause), so the estimate stays, and the next fire corrects it. It logs a warning above
+5 s. The cursor of a new row is the plain database time, so slots before the first registration never run.
+
+**Missed slots.** Each tick adds at most one job per schedule: the latest due slot. A stall never makes a burst. With
+`missed: 'once'`, a late slot runs if the stored spec equals the spec of the process and the cursor is at most one
+period plus 1 day older than the slot (the catch-up reach).
+
+**DST.** A spec with all 24 hours counts elapsed time: it skips a skipped hour and fires at both passes of a repeated
+hour. Any other spec is an appointment: a time in a gap fires once at the end of the gap, and a repeated time fires at
+its first pass. The search works on wall-clock times from `Intl.DateTimeFormat`, and it is checked against a
+brute-force oracle around every transition of 2026 in 10 zones.
+
+**Jitter.** With `jitter`, the scheduler fires each slot at `slot + offset`, where the offset is clamped below the next
+slot, so the jobs never wait as future pending rows and the slots stay in order. The offset is a hash of the schedule
+id and the slot, so every process agrees. The slot stays the identity: the cursor, the job id and `scheduledAt`.
+
+**Errors.** A transient error retries the chunk once. A connection error fails the whole chunk and the rest of the
+tick, with one error log per outage. Any other error splits the chunk in halves, down to the bad schedule, so one bad
+schedule does not block the others. A bad schedule logs one error until a slot of it succeeds. Failed slots back off
+from 5 s to 60 s.
+
+**Why no leader, and no chained pending job.** A leader adds a moving part, and the row lock already picks one
+process per slot. A future pending job per schedule (as BullMQ does) would make every probe read one index entry per
+scheduled name, and it breaks when that job is deleted or a deploy changes the spec.
+
 ### Cleanup
 
-Cleanup is built in, so you need no cron. Every 5 minutes, each process deletes the completed and failed jobs whose
-retention has ended. It deletes them in batches of 1000 with SKIP LOCKED, so the processes share the work.
+Cleanup is built in, so you need no external cron job. Every 5 minutes, each process deletes the completed and failed
+jobs whose retention has ended. It deletes them in batches of 1000 with SKIP LOCKED, so the processes share the work.
 `cleanup: false` turns it off.
 
 ### Connections
@@ -482,16 +567,18 @@ copies of the MySQL files, changed where MariaDB differs. A change of the MySQL 
 
 The table lists each guarantee and the mechanism that keeps it.
 
-| Guarantee                                                                                                                        | Mechanism                                                                    |
-| -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| A job exists only if the caller's transaction commits.                                                                           | The INSERT runs in the caller's transaction, so a connection must be in one. |
-| A job does not start before its data is visible.                                                                                 | Other connections see only committed rows.                                   |
-| A committed job runs at least once.                                                                                              | Leases, stall recovery, and the release on close.                            |
-| Only the current owner saves the result of a job.                                                                                | The claim uses SKIP LOCKED, and every write checks the `lock_token`.         |
-| A job with a `jobId` is added once while its row exists.                                                                         | The primary key is `<job_name>:<job_id>`.                                    |
-| Two jobs with a common mutex key do not run at the same time, unless a handler ignores its `signal` past the lease or `exitsBy`. | The primary key of `sqlane_mutexes`, the claim, and the linger of keys.      |
-| A job that fails for good adds its failure job, if the database accepts it.                                                      | The INSERT of the failure job runs in the transaction of the fail.           |
-| A lost hint does not lose a job.                                                                                                 | Hints only wake processes, and the database keeps the jobs.                  |
+| Guarantee                                                                                                                                                                                      | Mechanism                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A job exists only if the caller's transaction commits.                                                                                                                                         | The INSERT runs in the caller's transaction, so a connection must be in one.                                                                                  |
+| A job does not start before its data is visible.                                                                                                                                               | Other connections see only committed rows.                                                                                                                    |
+| A committed job runs at least once.                                                                                                                                                            | Leases, stall recovery, and the release on close.                                                                                                             |
+| Only the current owner saves the result of a job.                                                                                                                                              | The claim uses SKIP LOCKED, and every write checks the `lock_token`.                                                                                          |
+| A job with a `jobId` is added once while its row exists.                                                                                                                                       | The primary key is `<job_name>:<job_id>`.                                                                                                                     |
+| Two jobs with a common mutex key do not run at the same time, unless a handler ignores its `signal` past the lease or `exitsBy`.                                                               | The primary key of `sqlane_mutexes`, the claim, and the linger of keys.                                                                                       |
+| A job that fails for good adds its failure job, if the database accepts it.                                                                                                                    | The INSERT of the failure job runs in the transaction of the fail.                                                                                            |
+| A lost hint does not lose a job.                                                                                                                                                               | Hints only wake processes, and the database keeps the jobs.                                                                                                   |
+| Each slot of a schedule adds at most one job, ever.                                                                                                                                            | The cursor in `sqlane_schedules`, locked and moved in the transaction of the enqueue.                                                                         |
+| A slot adds a job if a started process with the schedule is up within 1 minute after it, or, with `missed: 'once'`, at the next start within the catch-up reach (the latest missed slot only). | The timer of each process, the lock pass and the cursor. If a fire rolls back and a later slot of the schedule is decided first, the earlier slot is skipped. |
 
 ## Observability
 
@@ -499,7 +586,10 @@ The table lists each guarantee and the mechanism that keeps it.
   logger. Without a logger, it writes no logs.
 - **Events.** `onEvent(event)` receives the events of the job lifecycle. The event is a typed union, and its `type` is
   one of `claimed`, `completed`, `retried`, `failed`, `timed_out`, `stalled`, `released`, `lease_lost`,
-  `failure_job_not_added` and `error`. The app maps the events to its metrics.
+  `failure_job_not_added`, `schedule_fired` and `error`. The app maps the events to its metrics. `schedule_fired` comes
+  once per decided slot in the cluster, from the process that decided it. New event types may come in minor versions.
+- **Schedules.** `getSchedules()` gives the next slot, the last slot and the last job of each schedule, from the
+  table and from this process.
 - **Gauges.** For each job name, `getStats()` returns the number of pending, due, running, stuck and failed jobs, and
   the age of the oldest due job. A stuck job is a `running` job with a `timed_out_at` time: it timed out, and its
   handler has not settled yet. These numbers support alerts such as "the queue is stuck". OpenTelemetry support may
@@ -545,6 +635,9 @@ The source files in `src/` have snake_case names. These are the main ones:
 - `enqueue.js` implements `enqueue` and `enqueueMany`.
 - `hint_channel.js` sends and receives the hints.
 - `migrations.js` implements `migrate()` and `getMigrations()`.
+- `cron.js` parses cron expressions and finds their slots, `time_zone.js` reads wall-clock times from `Intl`,
+  `schedule.js` checks the options of a schedule and computes its slots, and `scheduler.js` runs the timer and the
+  fires of the schedules.
 - `errors.js` defines the error classes.
 - `store/` holds the SQL of each dialect behind one store interface.
 - `schema/` holds the schema of each dialect, as versioned migrations.
@@ -560,7 +653,10 @@ Small helper modules, such as `backoff.js`, `duration.js`, `mutex_keys.js` and `
 - **Type tests** in `test/types/` and the examples in `examples/` are type-checked in CI, so the public API cannot
   change by accident. The quickstart in `examples/quickstart` runs in CI against the packed package.
 - **Integration tests** in `test/integration/` give most of the value. The same suite runs against MySQL 8.4,
-  MariaDB 10.11 and 11.8, and PostgreSQL 15 and 18 in Docker. It covers enqueue, claims, final writes, the runner, migrations, hints, stats and
-  each adapter.
+  MariaDB 10.11 and 11.8, and PostgreSQL 15 and 18 in Docker. It covers enqueue, claims, final writes, the runner, migrations, hints, stats,
+  schedules and each adapter.
+- **DST oracle tests** check the cron search against a brute-force oracle, minute by minute, around every DST
+  transition of 2026 in 10 zones, from random starts and along chains of slots. They also bound the work of each
+  search.
 - **Benchmarks** (`pnpm bench`) do not run in CI. They measure the cost of the probe with 1000 idle names, the latency
   from enqueue to start, and the throughput. The [benchmarks](benchmarks.md) page has the results.
