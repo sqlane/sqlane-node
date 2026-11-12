@@ -1,9 +1,13 @@
 // One process of the performance comparison (see run.mjs): `--role setup`, `worker` or `producer`.
 //
 //   node perf.mjs --role worker --library sqlane --url <url> --names 1000 --out <dir> [--warmup 5 --measure 15]
+//       [--schedules 1000 --cron '* * * * *' --index 0]
 //
 // The worker and the producer write their numbers to `<out>/<role>.json`. The worker runs empty handlers; the
 // producer enqueues `--rate` jobs per second, each in a transaction with a business INSERT.
+//
+// With `--schedules`, the worker (one of several: `--index`) runs the schedules of the first job name, notes the
+// slot and the start of each scheduled job, and on SIGUSR2 writes them to `<out>/worker-<index>.json` and exits.
 /* oxlint-disable no-await-in-loop -- a fixture, and a producer: one step after the other */
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,6 +28,9 @@ const { values: args } = parseArgs({
         warmup: { type: 'string', default: '5' },
         measure: { type: 'string', default: '15' },
         out: { type: 'string', default: '.' },
+        schedules: { type: 'string', default: '0' },
+        cron: { type: 'string', default: '* * * * *' },
+        index: { type: 'string', default: '0' },
     },
 });
 const url = String(args.url);
@@ -70,6 +77,9 @@ let completed = 0;
 /** @type {number[]} The time from enqueue to handler start of the jobs of the window */
 const latencies = [];
 let inWindow = false;
+const scheduleCount = Number(args.schedules);
+/** @type {[key: string, slotMs: number | null, startMs: number][]} The scheduled jobs that this worker started */
+const scheduled = [];
 const queue = await adapter.open({
     url,
     dialect: args.dialect,
@@ -77,7 +87,18 @@ const queue = await adapter.open({
     concurrency: CONCURRENCY,
     pollIntervalMs: POLL_INTERVAL_MS,
     role,
-    handler: async (/** @type {string} */ _name, /** @type {{ t?: number }} */ payload) => {
+    ...scheduleCount && { schedules: { count: scheduleCount, cron: String(args.cron) } },
+    /**
+     * @param {string} _name
+     * @param {{ t?: number, s?: string }} payload
+     * @param {AbortSignal} [_signal]
+     * @param {number} [slotMs]
+     */
+    handler: async (_name, payload, _signal, slotMs) => {
+        if (payload.s) {
+            scheduled.push([payload.s, slotMs ?? null, Date.now()]);
+        }
+
         if (inWindow && payload.t) {
             latencies.push(Date.now() - payload.t);
         }
@@ -109,6 +130,19 @@ if (role === 'setup') {
         )));
     }
 
+    await queue.stop();
+} else if (role === 'worker' && scheduleCount) {
+    const index = String(args.index);
+    const done = new Promise((resolve) => {
+        process.once('SIGUSR2', resolve);
+    });
+
+    await queue.start();
+    writeFileSync(join(String(args.out), `ready-${index}`), '');
+    // run.mjs reads the counters of the window, waits for the late jobs, then signals
+    await done;
+
+    writeFileSync(join(String(args.out), `worker-${index}.json`), JSON.stringify({ scheduled }));
     await queue.stop();
 } else if (role === 'worker') {
     const warmupMs = Number(args.warmup) * 1000;

@@ -1,22 +1,23 @@
-// The comparison of docs/comparison.md and docs/comparison-performance.md: the feature checks, then the performance
-// workloads, on database servers of this host (macOS, Homebrew). About 13 minutes.
+// The comparison of docs/comparison.md and docs/comparison-performance.md: the feature checks, the performance
+// workloads of jobs, and those of schedules, on database servers of this host (macOS, Homebrew).
 //
-//   pnpm bench:compare                    # all
-//   pnpm bench:compare --only checks      # or: perf
-//   pnpm bench:compare --only perf --libs sqlane,river
+//   pnpm bench:compare                    # checks and perf, about 13 minutes
+//   pnpm bench:compare --only checks      # or: perf (the jobs, about 12 minutes), cron (the schedules, about 9)
+//   pnpm bench:compare --only cron --libs sqlane,river
 //
 // Options: --pg-bin, --mysql-bin, --mariadb-bin (the directories of the server binaries). Writes results.json next to
 // this file and prints Markdown tables. See README.md.
 /* oxlint-disable no-await-in-loop -- the runs go one after the other: they share the machine */
-import { execFileSync, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { parseArgs } from 'node:util';
+import { parseArgs, promisify } from 'node:util';
 import { createConnection } from 'mysql2/promise';
 import { Client } from 'pg';
 
+const execFileAsync = promisify(execFile);
 const HERE = import.meta.dirname;
 const PROC_USAGE = join(HERE, '../cpu/proc_usage.py');
 const { values: args } = parseArgs({
@@ -36,8 +37,9 @@ const MARIADB_BIN = args['mariadb-bin'];
  * uses the settings that its library's documentation offers for throughput (libs/common.mjs).
  */
 const PERF_LIBRARIES = ['sqlane', 'pg-boss', 'graphile-worker', 'river'];
-const ALL_PARTS = ['checks', 'perf'];
-const PARTS = new Set(args.only ? [args.only] : ALL_PARTS);
+const ALL_PARTS = ['checks', 'perf', 'cron'];
+/** The schedules are a part of their own, outside the default: each run stays under 15 minutes */
+const PARTS = new Set(args.only ? [args.only] : ['checks', 'perf']);
 
 if (!ALL_PARTS.includes(args.only ?? 'checks')) {
     throw new Error(`--only ${args.only}: one of ${ALL_PARTS.join(', ')}`);
@@ -55,6 +57,30 @@ const MEASURE_S = 15;
 const NAMES = 1000;
 const RATE = 20;
 const BACKLOG = 10_000;
+const SCHEDULES = 1000;
+/** A sparse cron, which pg-boss's cron parser evaluates far slower than a daily one: a separate idle run */
+const YEARLY_CRON = '0 0 1 1 *';
+const FIRE_CRON = '* * * * *';
+/** The schedule runs repeat: the tables give the median, results.json each run */
+const CRON_REPEATS = 3;
+/**
+ * The window of the idle schedules: twice the longest check of a library (sqlane's longest timer sleep and Graphile
+ * Worker's minute timer, 60 s; pg-boss's cron pass, 30 s; River's election, 5 s), so each check counts a whole number
+ * of times. The schedule runs go in parallel: it ends with the firing ones
+ */
+const CRON_IDLE_S = 120;
+/** The schedule runs start together: the first slot comes at least this long after the last worker is ready */
+const CRON_WARMUP_S = 10;
+/** The CPU window of the firing schedules: one period, from 30 s after the first slot to 30 s after the second */
+const CRON_FIRE_S = 60;
+/**
+ * After the second slot, the time that the slots' jobs have to start: pg-boss files an occurrence up to 30 s late,
+ * then 3 workers forward 1000 in about 33 s
+ */
+const CRON_LATE_S = 70;
+const MINUTE_MS = 60_000;
+/** The first port of the servers of the schedule runs: one per library; each run counts the backends of its database */
+const CRON_PORT = 55_450;
 const tmp = mkdtempSync(join(tmpdir(), 'sqlane-compare-'));
 /** @type {(() => void)[]} */
 const cleanups = [];
@@ -105,20 +131,41 @@ function counters(processes) {
 }
 
 /**
+ * As counters(), without blocking the runs that go in parallel.
+ * @param {Record<string, string>} processes
+ * @returns {Promise<Record<string, any>>}
+ */
+async function countersAsync(processes) {
+    const { stdout } = await execFileAsync('python3', [
+        PROC_USAGE, ...Object.entries(processes).map(([label, pid]) => `${label}=${pid}`),
+    ], { encoding: 'utf8' });
+
+    return JSON.parse(stdout);
+}
+
+/**
  * Starts PostgreSQL with pg_stat_statements.
+ * @param {{ port?: number, template?: string, connections?: number }} [options] template: a data directory to clone
+ *     instead of initdb.
  * @returns {Promise<{ url: string, pid: number }>}
  */
-async function startPostgres() {
-    const data = join(tmp, 'pg');
+async function startPostgres({ port = 55_442, template, connections = 500 } = {}) {
+    const data = join(tmp, `pg-${port}`);
 
-    execFileSync(join(PG_BIN, 'initdb'), ['-D', data, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
-    execFileSync(join(PG_BIN, 'pg_ctl'), ['-D', data, '-l', join(tmp, 'pg.log'), '-w', 'start', '-o', [
-        '-p 55442 -c listen_addresses=127.0.0.1 -c unix_socket_directories=\'\' -c max_connections=500',
+    if (template) {
+        // A clone on APFS: instant
+        await execFileAsync('cp', ['-c', '-R', template, data]);
+    } else {
+        execFileSync(join(PG_BIN, 'initdb'), ['-D', data, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
+    }
+
+    await execFileAsync(join(PG_BIN, 'pg_ctl'), ['-D', data, '-l', join(tmp, `pg-${port}.log`), '-w', 'start', '-o', [
+        `-p ${port} -c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c max_connections=${connections}`,
         '-c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=top',
-    ].join(' ')], { stdio: 'ignore' });
+    ].join(' ')]);
     cleanups.push(() => execFileSync(join(PG_BIN, 'pg_ctl'), ['-D', data, '-m', 'immediate', 'stop'], { stdio: 'ignore' }));
 
-    const url = 'postgresql://postgres@127.0.0.1:55442/postgres';
+    const url = `postgresql://postgres@127.0.0.1:${port}/postgres`;
     const admin = new Client({ connectionString: url });
 
     await admin.connect();
@@ -209,10 +256,10 @@ async function freshDatabase(adminUrl, database) {
  * The statements of a PostgreSQL database since the last reset, and its connections.
  * @param {string} adminUrl
  * @param {string} database
- * @param {{ reset?: boolean }} [options]
+ * @param {{ reset?: boolean, scoped?: boolean }} [options] scoped: reset the statements of this database only.
  * @returns {Promise<{ statements: number, connections: number }>}
  */
-async function postgresStats(adminUrl, database, { reset = false } = {}) {
+async function postgresStats(adminUrl, database, { reset = false, scoped = false } = {}) {
     const admin = new Client({ connectionString: adminUrl });
 
     await admin.connect();
@@ -223,13 +270,58 @@ async function postgresStats(adminUrl, database, { reset = false } = {}) {
                (SELECT count(*)::integer FROM pg_stat_activity WHERE datname = $1) AS connections
     `, [database]);
 
-    if (reset) {
+    if (reset && scoped) {
+        // Only this database's: other runs share the server
+        await admin.query(`
+            SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = $1), 0)
+        `, [database]);
+    } else if (reset) {
         await admin.query('SELECT pg_stat_statements_reset()');
     }
 
     await admin.end();
 
     return { statements: Number(stats.statements), connections: stats.connections };
+}
+
+/**
+ * @param {string} adminUrl
+ * @param {string} database
+ * @returns {Promise<Record<string, string>>} The backends of the connections to the database: label: pid.
+ */
+async function backends(adminUrl, database) {
+    const admin = new Client({ connectionString: adminUrl });
+
+    await admin.connect();
+
+    const { rows } = await admin.query('SELECT pid FROM pg_stat_activity WHERE datname = $1', [database]);
+
+    await admin.end();
+
+    return Object.fromEntries(rows.map(row => [`backend${row.pid}`, String(row.pid)]));
+}
+
+/**
+ * The instructions of a database's backends in a window. A backend that started in it counts from zero; one that
+ * ended in it is lost, as with a whole server (the pools keep their connections).
+ * @param {Record<string, any>} before
+ * @param {Record<string, any>} after
+ * @param {string[]} labels the backends at the end
+ * @returns {{ instructions: number, cycles: number, cpuSeconds: number }}
+ */
+function backendDelta(before, after, labels) {
+    const zero = { instructions: 0, cycles: 0, cpuSeconds: 0 };
+    const deltas = labels.filter(label => after[label]?.instructions > 0).map(label => ({
+        instructions: after[label].instructions - (before[label] ?? zero).instructions,
+        cycles: after[label].cycles - (before[label] ?? zero).cycles,
+        cpuSeconds: after[label].cpuSeconds - (before[label] ?? zero).cpuSeconds,
+    }));
+
+    return {
+        instructions: sum(deltas.map(entry => entry.instructions)),
+        cycles: sum(deltas.map(entry => entry.cycles)),
+        cpuSeconds: sum(deltas.map(entry => entry.cpuSeconds)),
+    };
 }
 
 /**
@@ -262,13 +354,18 @@ function delta(before, after, role) {
 
 /**
  * One workload of one library.
- * @param {{ library: string, workload: 'steady' | 'idle' | 'drain', names: number,
- *     server: { url: string, pid: number }, dialect?: string }} run
+ * @param {{ library: string, workload: string, names: number, server: { url: string, pid: number },
+ *     dialect?: string, schedules?: number, processes?: number, cron?: string, start?: Barrier }} run cron: the
+ *     schedules' cron; start: the schedule runs start their windows together.
  * @returns {Promise<Record<string, any>>}
  */
-async function runWorkload({ library, workload, names, server, dialect }) {
+async function runWorkload({
+    library, workload, names, server, dialect, schedules = 0, processes = 1, cron: spec, start: barrier,
+}) {
+    const cron = workload.startsWith('cron-');
     // A name, and an output directory, per database server too: a stale `ready` would start a window early
-    const database = `perf_${library}_${dialect ?? 'postgres'}_${workload}_${names}`.replaceAll(/[-:]/gu, '_');
+    const size = cron ? `${schedules}x${processes}${spec === YEARLY_CRON ? '_yearly' : ''}` : names;
+    const database = `perf_${library}_${dialect ?? 'postgres'}_${workload}_${size}`.replaceAll(/[-:]/gu, '_');
     const url = await freshDatabase(server.url, database);
     const out = join(tmp, database);
     const backlog = workload === 'drain' ? BACKLOG : 0;
@@ -276,6 +373,7 @@ async function runWorkload({ library, workload, names, server, dialect }) {
         join(HERE, 'perf.mjs'), '--library', library, '--url', url, '--names', String(names), '--out', tmp,
         '--warmup', String(WARMUP_S), '--measure', String(MEASURE_S), '--rate', String(RATE), '--backlog', String(backlog),
         ...dialect ? ['--dialect', dialect] : [],
+        ...cron ? ['--schedules', String(schedules), '--cron', String(spec)] : [],
     ].map(arg => (arg === tmp ? out : arg));
     const postgres = !server.url.startsWith('mysql:');
 
@@ -288,7 +386,13 @@ async function runWorkload({ library, workload, names, server, dialect }) {
     const db = `${server.pid}+`;
 
     try {
-        return await measureWorkload({ library, workload, names, dialect, url, out, common, db, server, database });
+        const run = { library, workload, names, dialect, url, out, common, db, server, database };
+
+        return {
+            ...cron
+                ? await measureSchedules({ ...run, schedules, processes, spec, barrier })
+                : await measureWorkload(run),
+        };
     } finally {
         if (postgres) {
             // No autovacuum of its tables in the next runs
@@ -387,6 +491,250 @@ async function measureWorkload({ library, workload, names, dialect, out, common,
 }
 
 /**
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
+const sleepUntil = ms => sleep(Math.max(0, ms - Date.now()));
+
+/**
+ * @typedef {{ arrive: () => Promise<number>, leave: () => void }} Barrier Each run arrives once its workers are ready,
+ *     or leaves when it fails before. arrive() resolves to the time when the last one arrived.
+ */
+
+/**
+ * @param {number} count
+ * @returns {() => Barrier} a barrier for each of count runs
+ */
+function barrierOf(count) {
+    let waiting = count;
+    /** @type {PromiseWithResolvers<number>} */
+    const { promise: all, resolve: release } = Promise.withResolvers();
+
+    return () => {
+        let done = false;
+        const leave = () => {
+            if (!done) {
+                done = true;
+                waiting--;
+
+                if (waiting === 0) {
+                    release(Date.now());
+                }
+            }
+        };
+
+        return {
+            arrive: () => {
+                leave();
+
+                return all;
+            },
+            leave,
+        };
+    };
+}
+
+/**
+ * The schedules: `processes` workers with the schedules of one job name, in a database of its own. The runs start
+ * together. cron-idle: a window of CRON_IDLE_S. cron-fire: the first slot comes CRON_WARMUP_S or more after the start;
+ * the CPU window is one period, from 30 s after the first slot to 30 s after the second; the jobs of both slots get
+ * CRON_LATE_S after the second to start. Each worker notes the scheduled jobs that it started; after they stop, the
+ * library's tables give the jobs that it stored.
+ * @param {Record<string, any>} run
+ * @returns {Promise<Record<string, any>>}
+ */
+async function measureSchedules({
+    library, workload, names, url, out, common, server, database, schedules, processes, spec, barrier,
+}) {
+    const workers = Array.from({ length: processes }, (_, index) => start(process.execPath, [
+        ...common, '--role', 'worker', '--index', String(index),
+    ], { log: join(out, `worker-${index}.log`) }));
+
+    for (const [index, worker] of workers.entries()) {
+        await untilFile(join(out, `ready-${index}`), worker);
+    }
+
+    const ready = await barrier.arrive();
+    // The database: the backends of its connections, since the libraries' runs share a server
+    const pids = Object.fromEntries(workers.map((worker, index) => [`worker${index}`, String(worker.pid)]));
+    const fire = workload === 'cron-fire';
+    const firstSlot = Math.ceil((ready + (CRON_WARMUP_S * 1000)) / MINUTE_MS) * MINUTE_MS;
+    const windowStart = fire ? firstSlot + 30_000 : ready + (CRON_WARMUP_S * 1000);
+    const seconds = fire ? CRON_FIRE_S : CRON_IDLE_S;
+    const windowEnd = windowStart + (seconds * 1000);
+
+    await sleepUntil(windowStart);
+
+    const before = await countersAsync({ ...pids, ...await backends(server.url, database) });
+
+    await postgresStats(server.url, database, { reset: true, scoped: true });
+    await sleepUntil(windowEnd);
+
+    const ended = await backends(server.url, database);
+    const after = await countersAsync({ ...pids, ...ended });
+    const stats = await postgresStats(server.url, database);
+    const slots = [firstSlot, firstSlot + MINUTE_MS];
+
+    if (fire) {
+        await sleepUntil(slots[1] + (CRON_LATE_S * 1000));
+    }
+
+    for (const worker of workers) {
+        worker.kill('SIGUSR2');
+    }
+
+    await Promise.all(workers.map(worker => exited(worker)));
+
+    const reports = workers.map((_, index) => (
+        /** @type {{ scheduled: [string, number | null, number][] }} */
+        (readJson(join(out, `worker-${index}.json`)) ?? { scheduled: [] })
+    ));
+    const roles = workers.map((_, index) => delta(before, after, `worker${index}`));
+    const worker = {
+        instructions: sum(roles.map(role => role.instructions)),
+        cycles: sum(roles.map(role => role.cycles)),
+        cpuSeconds: sum(roles.map(role => role.cpuSeconds)),
+    };
+    const { adapter } = /** @type {{ adapter: import('./libs/common.mjs').Adapter }} */ (
+        await import(`./libs/${library.replaceAll('-', '_')}.mjs`)
+    );
+    const stored = fire && adapter.scheduledJobs ? await adapter.scheduledJobs(url) : null;
+
+    return {
+        library, workload, names, dialect: 'postgres', schedules, processes, cron: spec, seconds, ...stats,
+        ...stored && slotCounts({
+            scheduled: reports.flatMap(report => report.scheduled), stored, schedules, slots, windowStart, windowEnd,
+        }),
+        worker, db: backendDelta(before, after, Object.keys(ended)),
+    };
+}
+
+/**
+ * @param {number} ms
+ * @returns {string}
+ */
+const iso = ms => new Date(ms).toISOString();
+
+/**
+ * @param {(number | null | undefined)[]} values
+ * @returns {number | null} The median of the numbers among them.
+ */
+function median(values) {
+    const numbers = /** @type {number[]} */ (values.filter(value => typeof value === 'number'));
+
+    return numbers.length ? percentile(numbers, 0.5) : null;
+}
+
+/**
+ * Counts the scheduled jobs of the slots: those that the library stored or ran, the duplicates, those that started,
+ * and their lag from the slot to the handler start.
+ * @param {{ scheduled: [string, number | null, number][], stored: import('./libs/common.mjs').ScheduledJobs,
+ *     schedules: number, slots: number[], windowStart: number, windowEnd: number }} run scheduled: key, slot and
+ *     start of each job that a handler started.
+ * @returns {Record<string, any>}
+ */
+function slotCounts({ scheduled, stored, schedules, slots, windowStart, windowEnd }) {
+    /** @type {Map<string, number>} jobs per key and slot */
+    const counts = new Map();
+    const add = (/** @type {string} */ key, /** @type {string} */ slot) => {
+        counts.set(`${key} ${slot}`, (counts.get(`${key} ${slot}`) ?? 0) + 1);
+    };
+    let duplicates = 0;
+
+    if (stored.forwarded && stored.filed) {
+        // pg-boss: its jobs do not carry the slot. Each key's jobs pair, in order, with the slots whose forwarding job
+        // ran: the send-it queue and the job's queue are both first in, first out
+        const forwarded = stored.forwarded;
+        /** @type {Map<string, [string, number | null, number][]>} */
+        const byKey = new Map();
+
+        for (const entry of scheduled.toSorted((a, b) => a[2] - b[2])) {
+            const list = byKey.get(entry[0]) ?? [];
+
+            list.push(entry);
+            byKey.set(entry[0], list);
+        }
+
+        for (const [key, entries] of byKey) {
+            for (const [index, entry] of entries.entries()) {
+                const slot = forwarded[key]?.[index];
+
+                entry[1] = slot ? Date.parse(slot) : null;
+            }
+        }
+
+        // A slot filed twice, or more jobs of a key than forwarding jobs that ran
+        for (const list of Object.values(stored.filed)) {
+            duplicates += list.length - new Set(list).size;
+        }
+
+        /** @type {Map<string, number>} */
+        const jobsPerKey = new Map();
+
+        for (const [key] of stored.jobs) {
+            jobsPerKey.set(key, (jobsPerKey.get(key) ?? 0) + 1);
+        }
+
+        for (const [key, count] of jobsPerKey) {
+            duplicates += Math.max(0, count - (forwarded[key]?.length ?? 0));
+        }
+
+        for (const [key, list] of Object.entries(stored.filed)) {
+            for (const slot of new Set(list)) {
+                add(key, slot);
+            }
+        }
+    } else {
+        // The jobs in the library's tables; Graphile Worker deletes a completed job, so its handler saw it
+        for (const [key, slot] of stored.jobs) {
+            add(key, String(slot));
+        }
+
+        if (stored.deletesCompleted) {
+            for (const [key, slot] of scheduled) {
+                add(key, iso(/** @type {number} */ (slot)));
+            }
+        }
+
+        duplicates = sum([...counts.values()].map(count => count - 1));
+    }
+
+    const inSlots = scheduled.filter(([, slot]) => slot !== null && slots.includes(slot));
+    const lags = inSlots.map(([, slot, startedAt]) => startedAt - /** @type {number} */ (slot));
+
+    return {
+        slots: slots.map(iso),
+        // Each schedule should add 1 job for each slot
+        expected: schedules * slots.length,
+        // The slots that the library decided: a job stored or run (pg-boss: an occurrence filed)
+        decided: sum(slots.map(slot => [...counts.keys()].filter(id => id.endsWith(` ${iso(slot)}`)).length)),
+        // Over all the slots of the run, also those before and after the two
+        duplicates,
+        started: inSlots.length,
+        // The scheduled jobs that started in the CPU window, of any slot: 1000 when the library keeps up
+        startedInWindow: scheduled.filter(entry => entry[2] >= windowStart && entry[2] < windowEnd).length,
+        // pg-boss: the occurrences that it forwarded as jobs in the CPU window
+        ...stored.forwardedAt && {
+            forwardedInWindow: stored.forwardedAt.filter(time => time >= windowStart && time < windowEnd).length,
+        },
+        lagP50Ms: percentile(lags, 0.5),
+        lagP99Ms: percentile(lags, 0.99),
+        lagMaxMs: lags.length ? Math.max(...lags) : null,
+    };
+}
+
+/**
+ * @param {number[]} values
+ * @param {number} fraction
+ * @returns {number | null}
+ */
+function percentile(values, fraction) {
+    const sorted = values.toSorted((a, b) => a - b);
+
+    return sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))] : null;
+}
+
+/**
  * @param {string} file
  * @returns {Record<string, any> | null}
  */
@@ -464,12 +812,136 @@ function tables(runs) {
         lines.push(`| ${row.library} | ${(row.drainMs / 1000).toFixed(1)} | ${millions(worker)} / ${millions(db)} = **${millions(worker + db)}** |`);
     }
 
+    lines.push(`\nSchedules, idle: no slot due, 1 job name, 1 worker. Per second; median of ${CRON_REPEATS} runs.\n`);
+    lines.push('| Library | Schedules | Cron | Database instructions (M) | Worker instructions (M) | SQL statements | Connections |');
+    lines.push('| --- | --- | --- | --- | --- | --- | --- |');
+
+    for (const row of runs.filter(entry => entry.workload === 'cron-idle')) {
+        lines.push(`| ${row.library} | ${row.schedules} | \`${row.cron}\` | ${millions(row.db.instructions / row.seconds)} | ${millions(row.worker.instructions / row.seconds)} | ${(row.statements / row.seconds).toFixed(1)} | ${row.connections} |`);
+    }
+
+    lines.push(`\nSchedules, firing: ${SCHEDULES} schedules of \`${FIRE_CRON}\`. CPU per due slot over one minute (range of the runs); jobs and lag of 2 slots. Median of ${CRON_REPEATS} runs.\n`);
+    lines.push('| Library | Processes | Instructions per slot (M), median workers / median db = their sum (range of the totals) | Statements | Started per minute | Decided / started / expected | Duplicates | Lag p50 / p99 ms |');
+    lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
+
+    for (const row of runs.filter(entry => entry.workload === 'cron-fire')) {
+        // The slots due in the CPU window: the schedules fire once a minute
+        const slots = row.schedules * row.seconds / 60;
+        const worker = row.worker.instructions / slots;
+        const db = row.db.instructions / slots;
+        const totals = (row.samples ?? []).map((/** @type {any} */ sample) => (sample.worker + sample.db) / slots);
+        const range = totals.length ? ` (${millions(Math.min(...totals))}–${millions(Math.max(...totals))})` : '';
+
+        lines.push(`| ${row.library} | ${row.processes} | ${millions(worker)} / ${millions(db)} = **${millions(worker + db)}**${range} | ${(row.statements / slots).toFixed(2)} | ${row.startedInWindow}${row.forwardedInWindow === undefined ? '' : ` (forwarded ${row.forwardedInWindow})`} | ${row.decided} / ${row.started} / ${row.expected} | ${row.duplicates} | ${row.lagP50Ms} / ${row.lagP99Ms} |`);
+    }
+
     return lines.join('\n');
 }
 
+/**
+ * The schedule runs, all in parallel, each with a database of its own on a server of its library: instructions do not
+ * depend on the load of the machine (see docs/cpu-cost.md), and the runs wait for the same minutes. CRON_REPEATS
+ * times; a row has the median of each number, and each run in `samples`.
+ * @param {string[]} libraries
+ * @returns {Promise<Record<string, any>[]>}
+ */
+async function runSchedules(libraries) {
+    // Idle: a daily cron 12 hours away, which never fires in the window; and a yearly one
+    const daily = `0 ${(new Date().getUTCHours() + 12) % 24} * * *`;
+    const plan = libraries.flatMap(library => [
+        { library, workload: 'cron-idle', names: 1, schedules: 1, cron: daily },
+        { library, workload: 'cron-idle', names: 1, schedules: SCHEDULES, cron: daily },
+        { library, workload: 'cron-idle', names: 1, schedules: SCHEDULES, cron: YEARLY_CRON },
+        { library, workload: 'cron-fire', names: 1, schedules: SCHEDULES, processes: 1, cron: FIRE_CRON },
+        { library, workload: 'cron-fire', names: 1, schedules: SCHEDULES, processes: 3, cron: FIRE_CRON },
+    ]);
+    const template = join(tmp, 'pg-template');
+
+    execFileSync(join(PG_BIN, 'initdb'), ['-D', template, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
+
+    // A server per library: macOS allows few servers at once (32 shared memory segments, kern.sysv.shmmni)
+    const servers = await Promise.all(libraries.map((_, index) => (
+        startPostgres({ port: CRON_PORT + index, template })
+    )));
+    /** @type {Record<string, any>[][]} the runs of each step */
+    const samples = plan.map(() => []);
+
+    for (let repeat = 1; repeat <= CRON_REPEATS; repeat++) {
+        const barrier = barrierOf(plan.length);
+
+        process.stderr.write(`schedules ${repeat}/${CRON_REPEATS}: ${plan.length} runs in parallel\n`);
+
+        const settled = await Promise.allSettled(plan.map(async (step) => {
+            const own = barrier();
+
+            try {
+                return await runWorkload({ ...step, server: servers[libraries.indexOf(step.library)], start: own });
+            } finally {
+                own.leave();
+            }
+        }));
+        const failed = settled.find(result => result.status === 'rejected');
+
+        if (failed) {
+            throw failed.reason;
+        }
+
+        for (const [index, result] of settled.entries()) {
+            samples[index].push(result.status === 'fulfilled' ? result.value : {});
+        }
+    }
+
+    return samples.map(medianRow);
+}
+
+/** The numbers of a schedule row that its median takes */
+const MEDIAN_FIELDS = [
+    'statements', 'connections', 'decided', 'started', 'startedInWindow', 'forwardedInWindow', 'lagP50Ms', 'lagP99Ms',
+    'lagMaxMs',
+];
+
+/**
+ * @param {Record<string, any>[]} rows the runs of one step
+ * @returns {Record<string, any>} the median of each number, the most duplicates, and each run in `samples`
+ */
+function medianRow(rows) {
+    /**
+     * @param {'worker' | 'db'} role
+     * @returns {{ instructions: number | null, cycles: number | null, cpuSeconds: number | null }}
+     */
+    const counter = role => ({
+        instructions: median(rows.map(row => row[role].instructions)),
+        cycles: median(rows.map(row => row[role].cycles)),
+        cpuSeconds: median(rows.map(row => row[role].cpuSeconds)),
+    });
+    const row = { ...rows[0] };
+
+    for (const field of MEDIAN_FIELDS) {
+        if (field in row) {
+            row[field] = median(rows.map(entry => entry[field]));
+        }
+    }
+
+    if ('duplicates' in row) {
+        row.duplicates = Math.max(...rows.map(entry => entry.duplicates));
+    }
+
+    row.worker = counter('worker');
+    row.db = counter('db');
+    row.samples = rows.map(entry => ({
+        ...Object.fromEntries([...MEDIAN_FIELDS, 'duplicates', 'slots'].filter(field => field in entry)
+            .map(field => [field, entry[field]])),
+        worker: entry.worker.instructions,
+        db: entry.db.instructions,
+    }));
+
+    return row;
+}
+
 try {
-    const postgres = await startPostgres();
-    // A run of one part keeps the other part's results. The date of each part, and of the last run
+    // The checks and the jobs share a server; the schedules start servers of their own
+    const postgres = PARTS.has('checks') || PARTS.has('perf') ? await startPostgres() : null;
+    // A run of one part keeps the other parts' results. The date of each part, and of the last run
     const saved = readJson(join(HERE, 'results.json')) ?? {};
     const date = new Date().toISOString();
     /** @type {Record<string, any>} */
@@ -485,7 +957,9 @@ try {
         const log = join(tmp, 'checks.log');
 
         process.stderr.write(`checks (log: ${log})\n`);
-        await exited(start(process.execPath, [join(HERE, 'checks.mjs'), postgres.url], { log }));
+        const { url } = /** @type {{ url: string }} */ (postgres);
+
+        await exited(start(process.execPath, [join(HERE, 'checks.mjs'), url], { log }));
         results.checks = readJson(join(HERE, 'checks.json'));
         console.log(readFileSync(log, 'utf8').split('\n').filter(line => line.startsWith('|')).join('\n'));
     }
@@ -497,7 +971,9 @@ try {
         for (const library of libraries) {
             for (const [workload, names] of /** @type {const} */ ([['steady', NAMES], ['idle', 1], ['idle', NAMES], ['drain', NAMES]])) {
                 process.stderr.write(`${library} ${workload} ${names}\n`);
-                runs.push(await runWorkload({ library, workload, names, server: postgres }));
+                const server = /** @type {{ url: string, pid: number }} */ (postgres);
+
+                runs.push(await runWorkload({ library, workload, names, server }));
             }
         }
 
@@ -511,9 +987,23 @@ try {
         // A run of some libraries replaces their rows only
         /** @type {Record<string, any>[]} */
         const previous = results.perf ?? [];
-        const kept = previous.filter(row => !libraries.includes(row.library));
+        const kept = previous.filter(row => row.workload.startsWith('cron-') || !libraries.includes(row.library));
 
         results.perf = [...kept, ...runs];
+    }
+
+    if (PARTS.has('cron')) {
+        const runs = await runSchedules(libraries);
+        /** @type {Record<string, any>[]} */
+        const previous = results.perf ?? [];
+        const kept = previous.filter(row => (
+            !row.workload.startsWith('cron-') || !libraries.includes(row.library)
+        ));
+
+        results.perf = [...kept, ...runs];
+    }
+
+    if (results.perf) {
         console.log(`\n${tables(results.perf)}`);
     }
 

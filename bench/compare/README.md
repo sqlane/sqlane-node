@@ -5,10 +5,13 @@ The harness behind [docs/comparison.md](../../docs/comparison.md) (features) and
 documents report what they did.
 
 ```sh
-pnpm bench:compare                                # checks and performance, about 13 minutes
+pnpm bench:compare                                # checks and performance of jobs, about 13 minutes
 pnpm bench:compare --only checks                  # the feature checks, about 1.5 minutes
 pnpm bench:compare --only perf --libs sqlane,river
+pnpm bench:compare --only cron                    # the schedules, about 9 minutes
 ```
+
+`--only` and `--libs` select runs: the other rows of `results.json` stay. Each command stays under 15 minutes.
 
 Requirements: macOS, Node.js 24 or later, and the servers from Homebrew: `postgresql@17`, `mysql@8.4`,
 `mariadb@11.8` (`--pg-bin`, `--mysql-bin`, `--mariadb-bin` for others). The run starts private servers on ports 55442,
@@ -26,7 +29,7 @@ them. sqlane runs from this checkout. The root type check skips this directory, 
 | `libs/<library>.mjs` | An adapter per library: the same small interface (`libs/common.mjs`), each in its library's own way. Its notes and limits say how it maps an option. |
 | `checks.mjs`         | The feature checks: each library in a database of its own per check, the libraries in parallel.                                                      |
 | `check_child.mjs`    | The worker that the stall check kills.                                                                                                               |
-| `perf.mjs`           | One process of a performance workload: setup, worker or producer.                                                                                    |
+| `perf.mjs`           | One process of a performance workload: setup, worker or producer. With schedules, one of several workers.                                            |
 | `run.mjs`            | Starts the servers, runs the checks and the workloads, reads the counters, prints the tables.                                                        |
 
 ## Checks
@@ -65,3 +68,30 @@ guarantee, so the same workload. PostgreSQL for all, plus sqlane on MySQL and Ma
 - **Counters.** Instructions retired, cycles and CPU time of each process (`bench/cpu/proc_usage.py`), the database
   with all its processes. Compare instructions: see [CPU cost per job](../../docs/cpu-cost.md#the-three-numbers). On
   PostgreSQL, `pg_stat_statements` counts the statements of the window, and `pg_stat_activity` the connections.
+
+### Schedules
+
+`--only cron`, apart from the default run. PostgreSQL only. The schedules belong to one job name and differ by a key
+(`s0000`…`s0999`), so the numbers are the cost of the schedules, not of 1000 job names. Each library schedules in its
+own way: sqlane `schedule()`, pg-boss `schedule()` (stored by the setup), Graphile Worker crontab items, River periodic
+jobs, with the settings above. pg-boss also forwards its cron occurrences every 1 s (`cronWorkerIntervalSeconds`,
+default 5 s), the shortest that its scheduling documentation allows.
+
+- **In parallel, 3 times.** The 5 runs of each library, of all the libraries, run at once, each in a database of its
+  own, on a PostgreSQL server per library (ports from 55450; macOS allows about 32 servers at once). Each run counts
+  the backends of its database's connections, and its own statements. The runs start together, after all their
+  workers are ready. The whole set runs 3 times: a row of `results.json` has the median of each number, and each run in
+  `samples`. Instructions do not depend on the load of the machine; latencies do: see the limits in the document.
+- **cron-idle.** 1 and 1000 schedules of a daily cron 12 hours from the start, and 1000 of a yearly one
+  (`0 0 1 1 *`), 1 worker, no jobs. A 10 s warm-up, then a 120 s window: twice the longest check (sqlane's longest
+  timer sleep and Graphile Worker's minute timer, 60 s; pg-boss's cron pass, 30 s; River's election, 5 s), so each
+  check counts a whole number of times.
+- **cron-fire.** 1000 schedules of `* * * * *`, empty handlers, with 1 and with 3 worker processes. Two slots: the
+  first comes at least 10 s after the start. The CPU window is one period, from 30 s after the first slot to 30 s
+  after the second, and is divided by the 1000 slots of a minute. The jobs of both slots get 70 s after the second to
+  start. Each worker notes the slot and the start of each scheduled job, for the lag. After the workers stop, the
+  library's tables give the jobs that it stored (`scheduledJobs` of each adapter); Graphile Worker deletes a completed
+  job, so its handlers' notes count too. Per key and slot, 1 job is expected. pg-boss's jobs do not carry the slot: its
+  forwarding jobs do. Each key's jobs must not outnumber its forwarding jobs that ran, and they pair with them, in
+  order, for the lag.
+- **Time.** About 3 minutes per set, 9 in all.

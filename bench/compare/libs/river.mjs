@@ -3,15 +3,22 @@ import { readFileSync } from 'node:fs';
 import { PgDriver } from '@riverqueue/driver-pg';
 import { createMigrator } from '@riverqueue/migrate';
 import { Pool } from 'pg';
-import { Client, defineJob, Workers } from 'riverqueue';
-import { UnsupportedError } from './common.mjs';
+import { Client, cron, defineJob, periodicJob, Workers } from 'riverqueue';
+import { queryRows, scheduleKeys, UnsupportedError } from './common.mjs';
 
 const { version } = JSON.parse(readFileSync(new URL('../node_modules/riverqueue/package.json', import.meta.url), 'utf8'));
 
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
-    async open({ url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, role }) {
+    // A periodic job's scheduled_at is its occurrence; completed jobs stay for 24 hours
+    scheduledJobs: async url => ({
+        jobs: (await queryRows(url, `SELECT args->>'s' AS key, scheduled_at FROM river_job WHERE args ? 's'`))
+            .map(row => [row.key, row.scheduled_at.toISOString()]),
+    }),
+    async open({
+        url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, role, schedules,
+    }) {
         /** @type {string[]} */
         const notes = [];
 
@@ -35,7 +42,13 @@ export const adapter = {
             const definition = defineJob()({ kind: name });
 
             definitions.set(name, definition);
-            workers.add(definition, ({ job, signal }) => handler(name, job.args, signal), {
+            workers.add(definition, ({ job, signal }) => handler(
+                name,
+                job.args,
+                signal,
+                // A periodic job's scheduled time is its occurrence
+                job.metadata.periodic ? Number(job.scheduledAt.epochMilliseconds) : undefined,
+            ), {
                 ...spec.timeoutMs && { timeout: { milliseconds: spec.timeoutMs } },
                 ...spec.backoffMs !== undefined && {
                     retryPolicy: (_job, now) => now.add({ milliseconds: spec.backoffMs }),
@@ -47,6 +60,16 @@ export const adapter = {
             notes.push('job timeout 2 s, `rescueAfter: 3 s`, rescuer every 1 s (default: rescue after 1 hour)');
         }
 
+        // Periodic jobs in code: the elected leader inserts them; the other clients only work them
+        const [cronName] = Object.keys(names);
+        const periodicJobs = schedules && role === 'worker'
+            ? scheduleKeys(schedules.count).map(key => periodicJob({
+                    id: key,
+                    job: definitions.get(cronName),
+                    args: { s: key },
+                    schedule: cron(schedules.cron, { timeZone: 'UTC' }),
+                }))
+            : [];
         const workerOptions = {
             queues: {
                 default: {
@@ -55,6 +78,7 @@ export const adapter = {
                 },
             },
             workers,
+            ...periodicJobs.length && { periodicJobs },
         };
         // A producer: an insert-only client, without queues and workers
         const client = new Client(driver, {
