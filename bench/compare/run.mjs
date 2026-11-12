@@ -86,13 +86,32 @@ const tmp = mkdtempSync(join(tmpdir(), 'sqlane-compare-'));
 const cleanups = [];
 
 /**
+ * The environment of the processes that run the libraries: PATH and NODE_*, and HOME in the temporary directory of the
+ * run. The libraries get their servers as arguments, so no other variable reaches them (no PG*, no DBOS__*, no
+ * credentials of this shell), and no default credential path of the user (~/.npmrc, ~/.aws).
+ * @returns {Record<string, string>}
+ */
+function minimalEnv() {
+    // oxlint-disable-next-line node/no-process-env -- the one place that reads it, to pass on a part
+    const env = /** @type {Record<string, string>} */ (process.env);
+
+    return {
+        ...Object.fromEntries(Object.entries(env).filter(([key]) => key === 'PATH' || key.startsWith('NODE_'))),
+        HOME: tmp,
+    };
+}
+
+/**
  * @param {string} command
  * @param {string[]} commandArgs
  * @param {{ log?: string }} [options] log: the output goes to this file.
  * @returns {import('node:child_process').ChildProcess}
  */
 function start(command, commandArgs, { log } = {}) {
-    const child = spawn(command, commandArgs, { stdio: log ? ['ignore', 'pipe', 'pipe'] : 'inherit' });
+    const child = spawn(command, commandArgs, {
+        stdio: log ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+        env: minimalEnv(),
+    });
 
     if (log) {
         /** @type {Buffer[]} */

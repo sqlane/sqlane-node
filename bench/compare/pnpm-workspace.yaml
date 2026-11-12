@@ -1,7 +1,21 @@
-# Installed apart from the root package (bench/compare/run.sh). msgpackr-extract: an optional native speedup of BullMQ.
+# Installed apart from the root package (bench/compare/run.mjs). Supply-chain guardrails: see README.md, "Adding or
+# updating a library". msgpackr-extract: an optional native speedup of BullMQ, not built.
 saveExact: true
+strictDepBuilds: true
+minimumReleaseAge: 10080
+trustPolicy: no-downgrade
+blockExoticSubdeps: true
 allowBuilds:
   msgpackr-extract: false
+# Pinned and measured less than 7 days after their release, before the 7-day rule: each exclusion can go on the date
+# in its comment, when the release is 7 days old
 minimumReleaseAgeExclude:
-  - bullmq@6.7.4
-  - pg-boss@12.38.2
+  - '@riverqueue/driver-pg@0.3.2' # 16 Nov 2026
+  - '@riverqueue/migrate@0.3.2' # 16 Nov 2026
+  - bullmq@6.7.4 # 18 Nov 2026
+  - cron-parser@5.10.4 # 13 Nov 2026; a dependency of bullmq and pg-boss
+  - pg-boss@12.38.2 # 17 Nov 2026
+  - riverqueue@0.3.2 # 16 Nov 2026
+# Type declarations only (no code), of @types/node 22; published in 2024 without provenance
+trustPolicyExclude:
+  - undici-types@6.21.0

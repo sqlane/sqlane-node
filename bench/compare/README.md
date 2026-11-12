@@ -22,6 +22,27 @@ The libraries are installed apart from sqlane, from this directory's `package.js
 them. sqlane runs from this checkout. The root type check skips this directory, which has its own dependencies:
 `pnpm --dir bench/compare install && pnpm exec tsc -p bench/compare` checks it.
 
+## Adding or updating a library
+
+The libraries run code on this machine, so each one goes through the same checks, in `pnpm-workspace.yaml` and by
+hand. Record the output of each check with the change.
+
+- **Guardrails** (`pnpm-workspace.yaml`): exact pins (`saveExact`), no build script unless `allowBuilds` lists it
+  (`strictDepBuilds`), releases at least 7 days old (`minimumReleaseAge`), no package that lost its trusted publishing
+  or provenance (`trustPolicy: no-downgrade`), and no dependency of a dependency from git or a URL
+  (`blockExoticSubdeps`). An exception names one version and says why.
+- **Who publishes it:** `npm view <package>@<version> dist.attestations maintainers repository license`: provenance,
+  the maintainers, a repository that matches the package, and a license.
+- **Signatures and advisories:** `npm audit signatures` and `pnpm audit` in this directory: no high or critical
+  finding.
+- **Install scripts:** the diff of `pnpm-lock.yaml` shows no new `requiresBuild` or lifecycle script that
+  `allowBuilds` does not deny.
+- **Pins:** an exact version in `package.json` for the library and for each optional peer that it uses (a driver, a
+  Redis client).
+- **Age:** the release is at least 7 days old.
+- **Processes:** `run.mjs` starts the library's processes with PATH, HOME and NODE_* only: pass what the library needs
+  as arguments.
+
 ## Files
 
 | File                 | What                                                                                                                                                 |
