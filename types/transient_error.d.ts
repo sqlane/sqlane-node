@@ -11,21 +11,26 @@ export type ErrorFields = {
     kind?: unknown;
     cause?: unknown;
     /**
-     * Prisma: the error of its driver adapter.
+     * Prisma: the error of its driver adapter; the code
+     * of the database (raw queries).
      */
     meta?: {
         driverAdapterError?: unknown;
+        code?: unknown;
     };
+    /**
+     * Sequelize: the error of the driver.
+     */
+    original?: unknown;
+    /**
+     * Sequelize: the error of the driver.
+     */
+    parent?: unknown;
+    /**
+     * TypeORM: the error of the driver.
+     */
+    driverError?: unknown;
 };
-/**
- * @typedef {object} ErrorFields
- * @property {unknown} [code]
- * @property {unknown} [errno]
- * @property {unknown} [originalCode] Prisma: the code of the database.
- * @property {unknown} [kind] Prisma: the kind of the error of its driver adapter.
- * @property {unknown} [cause]
- * @property {{ driverAdapterError?: unknown }} [meta] Prisma: the error of its driver adapter.
- */
 /**
  * A database error that a retry of the same work can pass: the transaction lost a lock race. Looks through the causes,
  * and through the error of a Prisma driver adapter.

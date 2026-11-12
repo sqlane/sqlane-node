@@ -11,8 +11,54 @@ const TRANSIENT_KINDS = new Set(['TransactionWriteConflict']);
  * @property {unknown} [originalCode] Prisma: the code of the database.
  * @property {unknown} [kind] Prisma: the kind of the error of its driver adapter.
  * @property {unknown} [cause]
- * @property {{ driverAdapterError?: unknown }} [meta] Prisma: the error of its driver adapter.
+ * @property {{ driverAdapterError?: unknown, code?: unknown }} [meta] Prisma: the error of its driver adapter; the code
+ *     of the database (raw queries).
+ * @property {unknown} [original] Sequelize: the error of the driver.
+ * @property {unknown} [parent] Sequelize: the error of the driver.
+ * @property {unknown} [driverError] TypeORM: the error of the driver.
  */
+
+/**
+ * Looks through the error, its causes, and the errors of the drivers that ORMs wrap.
+ * @param {unknown} error
+ * @param {(fields: ErrorFields) => boolean} predicate
+ * @returns {boolean} One of them matches.
+ */
+function someError(error, predicate) {
+    /** @type {unknown[]} */
+    const pending = [error];
+    const seen = new Set();
+
+    for (let depth = 0; pending.length && depth < 20; depth++) {
+        const current = /** @type {ErrorFields | null | undefined} */ (pending.shift());
+
+        if (!current || typeof current !== 'object' || seen.has(current)) {
+            continue;
+        }
+
+        seen.add(current);
+
+        if (predicate(current)) {
+            return true;
+        }
+
+        pending.push(current.cause, current.meta?.driverAdapterError, current.original, current.parent,
+            current.driverError);
+    }
+
+    return false;
+}
+
+/**
+ * @param {ErrorFields} fields
+ * @param {{ codes: Set<string>, errnos: Set<number>, kinds: Set<string> }} sets
+ * @returns {boolean}
+ */
+function matches({ code, errno, originalCode, kind, meta }, { codes, errnos, kinds }) {
+    return codes.has(String(code)) || errnos.has(Number(errno)) || codes.has(String(originalCode))
+        || errnos.has(Number(originalCode)) || kinds.has(String(kind)) || codes.has(String(meta?.code))
+        || errnos.has(Number(meta?.code));
+}
 
 /**
  * A database error that a retry of the same work can pass: the transaction lost a lock race. Looks through the causes,
@@ -21,26 +67,9 @@ const TRANSIENT_KINDS = new Set(['TransactionWriteConflict']);
  * @returns {boolean}
  */
 export function isTransientDbError(error) {
-    /** @type {unknown[]} */
-    const pending = [error];
-
-    for (let depth = 0; pending.length && depth < 10; depth++) {
-        const current = /** @type {ErrorFields | null | undefined} */ (pending.shift());
-
-        if (!current) {
-            continue;
-        }
-
-        const { code, errno, originalCode, kind, cause, meta } = current;
-
-        if (TRANSIENT_CODES.has(String(code)) || TRANSIENT_ERRNOS.has(Number(errno))
-            || TRANSIENT_CODES.has(String(originalCode)) || TRANSIENT_ERRNOS.has(Number(originalCode))
-            || TRANSIENT_KINDS.has(String(kind))) {
-            return true;
-        }
-
-        pending.push(cause, meta?.driverAdapterError);
-    }
-
-    return false;
+    return someError(error, fields => matches(fields, {
+        codes: TRANSIENT_CODES,
+        errnos: TRANSIENT_ERRNOS,
+        kinds: TRANSIENT_KINDS,
+    }));
 }
