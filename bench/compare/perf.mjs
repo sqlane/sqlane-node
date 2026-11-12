@@ -90,7 +90,7 @@ const queue = await adapter.open({
     concurrency: CONCURRENCY,
     pollIntervalMs: POLL_INTERVAL_MS,
     role,
-    ...scheduleCount && { schedules: { count: scheduleCount, cron: String(args.cron) } },
+    ...scheduleCount && { schedules: { count: scheduleCount, cron: String(args.cron), index: Number(args.index) } },
     /**
      * @param {string} _name
      * @param {{ t?: number, s?: string }} payload

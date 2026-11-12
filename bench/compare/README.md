@@ -9,7 +9,7 @@ pnpm bench:compare                                # checks and performance of jo
 pnpm bench:compare --only checks                  # the feature checks, about 1.5 minutes
 pnpm bench:compare --only perf                    # the jobs, about 9 minutes
 pnpm bench:compare --only perf --libs sqlane,river
-pnpm bench:compare --only cron                    # the schedules, about 9 minutes
+pnpm bench:compare --only cron                    # the schedules, about 9.5 minutes
 ```
 
 `--only` and `--libs` select runs: the other rows of `results.json` stay. Each command stays under 15 minutes.
@@ -113,15 +113,22 @@ Oxen Queue: not compared (it pins mysql2 3.16.3, which has a known high-severity
 
 ### Schedules
 
-`--only cron`, apart from the default run. PostgreSQL only. The schedules belong to one job name and differ by a key
+`--only cron`, apart from the default run. The schedules belong to one job name and differ by a key
 (`s0000`…`s0999`), so the numbers are the cost of the schedules, not of 1000 job names. Each library schedules in its
 own way: sqlane `schedule()`, pg-boss `schedule()` (stored by the setup), Graphile Worker crontab items, River periodic
-jobs, with the settings above. pg-boss also forwards its cron occurrences every 1 s (`cronWorkerIntervalSeconds`,
-default 5 s), the shortest that its scheduling documentation allows.
+jobs, BullMQ job schedulers (`upsertJobScheduler`, stored by the setup), Sidequest `schedule()` in worker 0, Boring
+Node Queue `schedule().id()` (stored by the setup), Izi Queue CronPlugin entries in each worker, with the settings
+above. pg-boss also forwards its cron occurrences every 1 s (`cronWorkerIntervalSeconds`, default 5 s), the shortest
+that its scheduling documentation allows. Sidequest registers its schedules in worker 0 only, its documentation's
+"restrict scheduling to a single node": its other option, uniqueness per period, rejects every run after the first
+with `schedule()`. Izi Queue's CronPlugin ticks every 1 s (`interval`, default 60 s). Each adapter's comment says how its library keeps a slot to one
+job.
 
-- **In parallel, 3 times.** The 5 runs of each library, of all the libraries, run at once, each in a database of its
-  own, on a PostgreSQL server per library (ports from 55450; macOS allows about 32 servers at once). Each run counts
-  the backends of its database's connections, and its own statements. The runs start together, after all their
+- **In parallel, 3 times.** A lane per library and database that its adapter lists, but MariaDB. The 5 runs of each
+  lane, of all the lanes, run at once, each in a database of its own. PostgreSQL: a server per lane (ports from 55450;
+  macOS allows about 32 servers at once), and each run counts the backends of its database's connections, and its own
+  statements. Redis (ports from 56450) and MySQL (ports from 53450): a server per run, whose process is the run's
+  database, and no statements; on MySQL, the 2 firing runs only. The runs start together, after all their
   workers are ready. The whole set runs 3 times: a row of `results.json` has the median of each number, and each run in
   `samples`. Instructions do not depend on the load of the machine; latencies do: see the limits in the document.
 - **cron-idle.** 1 and 1000 schedules of a daily cron 12 hours from the start, and 1000 of a yearly one
@@ -132,8 +139,12 @@ default 5 s), the shortest that its scheduling documentation allows.
   first comes at least 10 s after the start. The CPU window is one period, from 30 s after the first slot to 30 s
   after the second, and is divided by the 1000 slots of a minute. The jobs of both slots get 70 s after the second to
   start. Each worker notes the slot and the start of each scheduled job, for the lag. After the workers stop, the
-  library's tables give the jobs that it stored (`scheduledJobs` of each adapter); Graphile Worker deletes a completed
-  job, so its handlers' notes count too. Per key and slot, 1 job is expected. pg-boss's jobs do not carry the slot: its
-  forwarding jobs do. Each key's jobs must not outnumber its forwarding jobs that ran, and they pair with them, in
-  order, for the lag.
-- **Time.** About 3 minutes per set, 9 in all.
+  library's tables give the jobs that it stored (`scheduledJobs` of each adapter; BullMQ on Redis: its keys); Graphile
+  Worker and Boring Node Queue delete a completed job, so their handlers' notes count too. Per key and slot, 1 job is
+  expected. pg-boss's jobs do not carry the slot: its forwarding jobs do. Each key's jobs must not outnumber its
+  forwarding jobs that ran, and they pair with them, in order, for the lag.
+- **Time.** About 3 minutes per set, 9.5 in all (53 runs).
+- **Kept by hand.** `pooled` (pg-boss with 3 workers: the run with the median total among this row's 3 runs and
+  those of `cronHistory`), `cronHistory` (the earlier runs of the day) and `sidequestUniquePerMinute` in
+  `results.json` were assembled by hand: `run.mjs` does not write them, and a new `--only cron` run drops `pooled`
+  (`charts.mjs` then uses the single run).

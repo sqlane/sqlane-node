@@ -4,7 +4,7 @@
 // generated: one `export const job_NNNN = jobClass('job_NNNN');` each.
 import { Job } from 'sidequest';
 
-/** @type {(name: string, payload: any, signal?: AbortSignal) => Promise<void>} The handler of the current check */
+/** @type {(name: string, payload: any, signal?: AbortSignal, slot?: number) => Promise<void>} The current handler */
 let handler = async () => {};
 
 /** @param {typeof handler} func */
@@ -19,11 +19,14 @@ export function setHandler(func) {
 function jobClass(name) {
     const NamedJob = class extends Job {
         /**
-         * @param {object} payload
+         * @param {{ s?: string }} payload
          * @returns {Promise<void>}
          */
         run(payload) {
-            return handler(name, payload, this.abortSignal);
+            // A scheduled job: its slot is the minute of its insert
+            const slot = Math.floor(new Date(this.inserted_at).getTime() / 60_000) * 60_000;
+
+            return handler(name, payload, this.abortSignal, payload?.s ? slot : undefined);
         }
     };
 

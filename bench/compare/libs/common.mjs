@@ -45,6 +45,7 @@ export const scheduleKeys = count => Array.from({ length: count }, (_, index) =>
  *     payload is `{ s: <key> }`. In UTC, with each library's defaults (no jitter, no catch-up beyond its default).
  * @property {number} count
  * @property {string} cron A 5-field cron.
+ * @property {number} [index] The worker's index among the workers of the run, from 0.
  */
 
 /**
@@ -65,7 +66,8 @@ export const scheduleKeys = count => Array.from({ length: count }, (_, index) =>
  * @typedef {object} ScheduledJobs What a library stored for the schedules, read after its workers stopped.
  * @property {[key: string, slot: string | null][]} jobs The key and the slot (ISO) of each scheduled job in its tables;
  *     null when the job does not carry its slot (pg-boss).
- * @property {boolean} [deletesCompleted] Its completed jobs are gone (Graphile Worker): only the handlers saw them.
+ * @property {boolean} [deletesCompleted] Its completed jobs are gone (Graphile Worker, Boring Node Queue): only the
+ *     handlers saw them.
  * @property {Record<string, string[]>} [filed] pg-boss: the slots that its cron pass filed, by key, oldest first.
  * @property {Record<string, string[]>} [forwarded] pg-boss: those whose forwarding job ran (it sends one job each).
  * @property {number[]} [forwardedAt] pg-boss: when each forwarding job completed (ms).
@@ -84,11 +86,24 @@ export const scheduleKeys = count => Array.from({ length: count }, (_, index) =>
  */
 
 /**
- * @param {string} url
+ * @param {string} url PostgreSQL or MySQL
  * @param {string} sql
  * @returns {Promise<Record<string, any>[]>} The rows of one query, on a connection of its own.
  */
 export async function queryRows(url, sql) {
+    if (url.startsWith('mysql:')) {
+        const { createConnection } = await import('mysql2/promise');
+        const connection = await createConnection({ uri: url });
+
+        try {
+            const [rows] = await connection.query(sql);
+
+            return /** @type {Record<string, any>[]} */ (rows);
+        } finally {
+            await connection.end();
+        }
+    }
+
     const { Client } = await import('pg');
     const client = new Client({ connectionString: url });
 
