@@ -1,5 +1,38 @@
 # @sqlane/core
 
+## 4.0.0
+
+### Major Changes
+
+- [#91](https://github.com/sqlane/sqlane-node/pull/91) [`848154d`](https://github.com/sqlane/sqlane-node/commit/848154d81681ee731b5f39e40af7586fd5e8f816) - Cron and repeatable jobs, with three small breaking changes.
+
+    Breaking:
+
+    - `enqueue` and `enqueueMany` reject a `jobId` that starts with `schedule:`. This prefix now marks the slots of
+      schedules. To run a slot by hand, use the new option `slot: { at, key? }`.
+    - `JobInfo.scheduledAt: Date | null` is a new required field. A `HandlerContext` that you build by hand in tests
+      needs `scheduledAt: null`.
+    - `SqlaneEvent` has a new type, `schedule_fired`. An exhaustive `switch` on `event.type` needs a case for it. From now
+      on, new event types may come in minor versions: handle unknown types in a `default` branch.
+
+    New:
+
+    - `sqlane.schedule(job, { cron, timezone })` or `{ every }` adds a job at each slot. Each slot adds at most one job
+      in the cluster, without a leader, and the database clock decides. A slot missed during a short downtime runs once
+      (`missed: 'once' | 'skip'`), and `overlap: 'skip'` skips a slot while the previous run is not done. `jitter`
+      spreads the runs of many schedules over a window.
+    - Handlers get `job.scheduledAt`, `getSchedules()` gives the next and the last slot, and the event `schedule_fired`
+      reports each slot.
+
+    Migration: if you use schedules, run `migrate()` after the upgrade. It adds the table `sqlane_schedules` (migration
+    `0004_schedules`). Apps without schedules need nothing: they run no new query.
+
+### Patch Changes
+
+- [#91](https://github.com/sqlane/sqlane-node/pull/91) [`006e717`](https://github.com/sqlane/sqlane-node/commit/006e7171ad90a457c003e9b9d30aec8d8e7f7011) - Deadlocks and serialization failures wrapped by Sequelize (`original`, `parent`), TypeORM (`driverError`) and Prisma
+  raw queries (`meta.code`) are now recognized as transient: `drain()` retries its round, and the failure-job insert on
+  MySQL and MariaDB takes its retry path, as with the plain driver errors.
+
 ## 3.0.1
 
 ### Patch Changes
