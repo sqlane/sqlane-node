@@ -53,10 +53,10 @@ guarantee, so the same workload. PostgreSQL for all, plus sqlane on MySQL and Ma
 - **Setup.** 1000 job names, as each library models them: sqlane handlers, pg-boss queues (a `work()` each), Graphile
   Worker tasks, River kinds in one queue. A worker process with 8 slots, empty handlers, a poll of 5 s, and each
   library's wakes (LISTEN/NOTIFY; on MySQL and MariaDB, a UDP hint stands in for Redis, as in `bench:cpu`).
-- **Tuned.** pg-boss and River run twice: with their defaults, and with the throughput settings that their
-  documentation offers (`pg-boss:tuned`, `river:tuned`). pg-boss: `batchSize` of the 8 slots and
-  `burstWhenBatchFull`, so a full fetch fetches again at once instead of after the next poll. River: `fetchCooldown`
-  of 1 ms, its minimum (default 100 ms), with the same 8 `maxWorkers`.
+- **Settings.** Each adapter uses the settings that its library's documentation offers for throughput, and says in a
+  comment which, why and the default. pg-boss: `batchSize` of the 8 slots and `burstWhenBatchFull`, so a full fetch
+  fetches again at once instead of after the next poll (defaults 1 and off). River: `fetchCooldown` of 1 ms, its
+  minimum (default 100 ms), with the same 8 `maxWorkers`. A new library is one adapter in `libs/`.
 - **Steady load.** A producer process enqueues 20 jobs/s, each in a transaction with an `INSERT` into a business
   table. 9 of 10 jobs go to 10 hot names. 5 s warm-up, 15 s window.
 - **Idle.** 1 and 1000 job names, no jobs.

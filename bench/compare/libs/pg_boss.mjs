@@ -10,7 +10,7 @@ const SHARED_QUEUE = 'shared';
 /** @type {import('./common.mjs').Adapter} */
 export const adapter = {
     version,
-    async open({ url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, role, tuned = false }) {
+    async open({ url, names, handler, concurrency = 4, stall = false, pollIntervalMs = 500, role }) {
         /** @type {string[]} */
         const notes = [];
         /** @type {string[]} */
@@ -71,9 +71,9 @@ export const adapter = {
         const queueNames = exclusive ? [SHARED_QUEUE] : Object.keys(names);
         // A worker per queue: the process concurrency shared among them, at least 1 each
         const localConcurrency = Math.max(1, Math.floor(concurrency / queueNames.length));
-        // Tuned: a fetch takes up to `concurrency` jobs, and a full batch fetches again at once. By default a worker
-        // takes one job per fetch, then waits for the next poll or NOTIFY.
-        const batch = tuned ? { batchSize: concurrency, burstWhenBatchFull: true } : {};
+        // Throughput: a fetch takes up to `concurrency` jobs, and a full batch fetches again at once (defaults:
+        // `batchSize: 1`, `burstWhenBatchFull: false`: a worker takes one job, then waits for the next poll or NOTIFY)
+        const batch = { batchSize: concurrency, burstWhenBatchFull: true };
 
         return {
             notes,

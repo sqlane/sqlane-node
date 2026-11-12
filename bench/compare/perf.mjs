@@ -1,7 +1,6 @@
 // One process of the performance comparison (see run.mjs): `--role setup`, `worker` or `producer`.
 //
 //   node perf.mjs --role worker --library sqlane --url <url> --names 1000 --out <dir> [--warmup 5 --measure 15]
-//       [--tuned]
 //
 // The worker and the producer write their numbers to `<out>/<role>.json`. The worker runs empty handlers; the
 // producer enqueues `--rate` jobs per second, each in a transaction with a business INSERT.
@@ -25,7 +24,6 @@ const { values: args } = parseArgs({
         warmup: { type: 'string', default: '5' },
         measure: { type: 'string', default: '15' },
         out: { type: 'string', default: '.' },
-        tuned: { type: 'boolean', default: false },
     },
 });
 const url = String(args.url);
@@ -79,7 +77,6 @@ const queue = await adapter.open({
     concurrency: CONCURRENCY,
     pollIntervalMs: POLL_INTERVAL_MS,
     role,
-    tuned: args.tuned,
     handler: async (/** @type {string} */ _name, /** @type {{ t?: number }} */ payload) => {
         if (inWindow && payload.t) {
             latencies.push(Date.now() - payload.t);

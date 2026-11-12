@@ -25,14 +25,12 @@ const THEMES = {
     },
 };
 
-/** @type {{ id: string, variant?: string, label: string }[]} Each library with its defaults, then tuned (run.mjs) */
+/** @type {{ id: string, label: string }[]} One bar per library */
 const LIBS = [
     { id: 'sqlane', label: 'sqlane' },
     { id: 'graphile-worker', label: 'Graphile Worker' },
     { id: 'river', label: 'River' },
-    { id: 'river', variant: 'tuned', label: 'River, tuned' },
     { id: 'pg-boss', label: 'pg-boss' },
-    { id: 'pg-boss', variant: 'tuned', label: 'pg-boss, tuned' },
 ];
 
 const W = 720;
@@ -46,14 +44,13 @@ const FONT = `font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvet
 
 /**
  * @param {string} library
- * @param {string | undefined} variant
  * @param {string} workload
  * @returns {any} the PostgreSQL run of the library with 1000 job names
  */
-function run(library, variant, workload) {
-    const matches = (/** @type {any} */ r) => r.library === library && r.variant === variant && r.workload === workload;
+function run(library, workload) {
+    const matches = (/** @type {any} */ r) => r.library === library && r.workload === workload;
     const found = results.perf.find((/** @type {any} */ r) => matches(r) && r.dialect === 'postgres' && r.names === 1000);
-    if (!found) throw new Error(`no ${workload} run of ${library} ${variant ?? ''}`);
+    if (!found) throw new Error(`no ${workload} run of ${library}`);
     return found;
 }
 
@@ -96,6 +93,9 @@ function barShape({ x, y, w, fill, round }) {
     return `<path d="${d}" fill="${fill}"/>`;
 }
 
+/** The palette index of each series, so a series has one color in every chart */
+const SERIES = { Worker: 0, Producer: 1, Database: 2 };
+
 /**
  * @param {{ title: string, subtitle: string, legend?: string[], unit: string,
  *   rows: { label: string, parts: number[], value: string }[] }} chart
@@ -104,6 +104,11 @@ function barShape({ x, y, w, fill, round }) {
  */
 function svg({ title, subtitle, legend, rows, unit }, theme) {
     const c = THEMES[theme];
+    /**
+     * @param {number} part
+     * @returns {string} The color of the part's series.
+     */
+    const color = part => c.series[legend ? SERIES[/** @type {keyof typeof SERIES} */ (legend[part])] : 0];
     const tk = ticks(Math.max(...rows.map(r => sum(r.parts))));
     const scale = (/** @type {number} */ v) => ((X1 - X0) * v) / /** @type {number} */ (tk.at(-1));
     const top = legend ? 84 : 64;
@@ -118,7 +123,7 @@ function svg({ title, subtitle, legend, rows, unit }, theme) {
     let lx = 0;
     for (const [i, name] of (legend ?? []).entries()) {
         out.push(
-            `<rect x="${lx}" y="56" width="10" height="10" rx="2" fill="${c.series[i]}"/>`,
+            `<rect x="${lx}" y="56" width="10" height="10" rx="2" fill="${color(i)}"/>`,
             `<text x="${lx + 15}" y="65" font-size="12" fill="${c.muted}">${name}</text>`,
         );
         lx += 15 + name.length * 7 + 18;
@@ -141,7 +146,7 @@ function svg({ title, subtitle, legend, rows, unit }, theme) {
             const last = j === row.parts.length - 1;
             const w = scale(v);
             // A 2px gap between stacked segments
-            out.push(barShape({ x, y, w: last ? w : Math.max(w - 2, 1), fill: c.series[j], round: last }));
+            out.push(barShape({ x, y, w: last ? w : Math.max(w - 2, 1), fill: color(j), round: last }));
             x += w;
         }
         const vx = (Math.max(x, X0 + 2) + 6).toFixed(1);
@@ -160,8 +165,8 @@ const charts = {
         subtitle: 'PostgreSQL 17, 1000 job names, 20 jobs/s in transactions. Lower is better.',
         legend: ['Worker', 'Producer', 'Database'],
         unit: 'M instr.',
-        rows: LIBS.map(({ id, variant, label }) => {
-            const r = run(id, variant, 'steady');
+        rows: LIBS.map(({ id, label }) => {
+            const r = run(id, 'steady');
             const parts = [r.worker, r.producer, r.db].map(p => millions(p.instructions) / r.completed);
             return { label, parts, value: `${fixed(sum(parts))} M` };
         }),
@@ -170,8 +175,8 @@ const charts = {
         title: 'From enqueue to handler start, median',
         subtitle: 'PostgreSQL 17, steady load, with each library’s LISTEN/NOTIFY wake. Lower is better.',
         unit: 'ms',
-        rows: LIBS.map(({ id, variant, label }) => {
-            const r = run(id, variant, 'steady');
+        rows: LIBS.map(({ id, label }) => {
+            const r = run(id, 'steady');
             return { label, parts: [r.latencyP50Ms], value: `${r.latencyP50Ms} ms · p99 ${r.latencyP99Ms} ms` };
         }),
     },
@@ -179,8 +184,8 @@ const charts = {
         title: 'Database cost while idle, 1000 job names',
         subtitle: 'PostgreSQL 17, no jobs, a poll every 5 s. Database instructions per second. Lower is better.',
         unit: 'M/s',
-        rows: LIBS.map(({ id, variant, label }) => {
-            const r = run(id, variant, 'idle');
+        rows: LIBS.map(({ id, label }) => {
+            const r = run(id, 'idle');
             const v = millions(r.db.instructions) / r.seconds;
             return { label, parts: [v], value: `${fixed(v)} M/s` };
         }),
