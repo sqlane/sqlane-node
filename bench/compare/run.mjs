@@ -33,8 +33,8 @@ const PG_BIN = args['pg-bin'];
 const MYSQL_BIN = args['mysql-bin'];
 const MARIADB_BIN = args['mariadb-bin'];
 /**
- * The libraries that enqueue in the caller's transaction: the others are not compared on performance. Each adapter
- * uses the settings that its library's documentation offers for throughput (libs/common.mjs).
+ * The libraries of the performance runs. Each adapter uses the settings that its library's documentation offers for
+ * throughput (libs/common.mjs); a library whose enqueue cannot take the caller's transaction enqueues after the COMMIT.
  */
 const PERF_LIBRARIES = ['sqlane', 'pg-boss', 'graphile-worker', 'river'];
 const ALL_PARTS = ['checks', 'perf', 'cron'];
@@ -57,6 +57,8 @@ const MEASURE_S = 15;
 const NAMES = 1000;
 const RATE = 20;
 const BACKLOG = 10_000;
+/** A drain that takes longer stops: each run stays under 15 minutes */
+const DRAIN_LIMIT_S = 60;
 const SCHEDULES = 1000;
 /** A sparse cron, which pg-boss's cron parser evaluates far slower than a daily one: a separate idle run */
 const YEARLY_CRON = '0 0 1 1 *';
@@ -81,6 +83,11 @@ const CRON_LATE_S = 70;
 const MINUTE_MS = 60_000;
 /** The first port of the servers of the schedule runs: one per library; each run counts the backends of its database */
 const CRON_PORT = 55_450;
+/** The first ports of the servers of the performance lanes: one per library and database */
+const PERF_PG_PORT = 55_500;
+const PERF_MYSQL_PORT = 53_320;
+/** The workloads of a lane, one after the other */
+const JOB_WORKLOADS = /** @type {const} */ ([['steady', NAMES], ['idle', 1], ['idle', NAMES], ['drain', NAMES]]);
 const tmp = mkdtempSync(join(tmpdir(), 'sqlane-compare-'));
 /** @type {(() => void)[]} */
 const cleanups = [];
@@ -140,19 +147,9 @@ function exited(child) {
 }
 
 /**
+ * The counters of processes, without blocking the runs that go in parallel.
  * @param {Record<string, string>} processes label: pid, with `+` for the process and its descendants
- * @returns {Record<string, { instructions: number, cycles: number, cpuSeconds: number }>}
- */
-function counters(processes) {
-    return JSON.parse(execFileSync('python3', [PROC_USAGE, ...Object.entries(processes).map(([label, pid]) => `${label}=${pid}`)], {
-        encoding: 'utf8',
-    }));
-}
-
-/**
- * As counters(), without blocking the runs that go in parallel.
- * @param {Record<string, string>} processes
- * @returns {Promise<Record<string, any>>}
+ * @returns {Promise<Record<string, any>>} label: { instructions, cycles, cpuSeconds, byCommand }
  */
 async function countersAsync(processes) {
     const { stdout } = await execFileAsync('python3', [
@@ -194,32 +191,56 @@ async function startPostgres({ port = 55_442, template, connections = 500 } = {}
     return { url, pid: Number(readFileSync(join(data, 'postmaster.pid'), 'utf8').split('\n')[0]) };
 }
 
+/** @type {Promise<void>} The installations of MySQL and MariaDB data directories, one after the other */
+let installs = Promise.resolve();
+
 /**
  * Starts MySQL or MariaDB, as bench/cpu/measure.sh: default configuration; MariaDB with the binary log of MySQL 8.4.
  * @param {'mysql' | 'mariadb'} dialect
+ * @param {{ port?: number, name?: string }} [options] name: of its data directory, socket and log.
  * @returns {Promise<{ url: string, pid: number }>}
  */
-async function startMysqlFamily(dialect) {
-    const data = join(tmp, dialect);
-    const port = dialect === 'mysql' ? 53_317 : 53_318;
-    const initFile = join(tmp, 'init.sql');
+async function startMysqlFamily(dialect, { port = dialect === 'mysql' ? 53_317 : 53_318, name = dialect } = {}) {
+    const data = join(tmp, name);
+    const initFile = join(tmp, `${name}-init.sql`);
 
     writeFileSync(initFile, `CREATE DATABASE IF NOT EXISTS bench;
 CREATE USER IF NOT EXISTS 'bench'@'127.0.0.1';
 GRANT ALL ON *.* TO 'bench'@'127.0.0.1';
 `);
 
-    if (dialect === 'mysql') {
-        execFileSync(join(MYSQL_BIN, 'mysqld'), ['--no-defaults', '--initialize-insecure', `--datadir=${data}`], { stdio: 'ignore' });
-    } else {
-        execFileSync(join(MARIADB_BIN, 'mariadb-install-db'), ['--no-defaults', `--datadir=${data}`, '--skip-test-db'], {
-            stdio: 'ignore',
-        });
+    // One installation at a time: parallel ones share temporary tables in the system's temporary directory
+    const previous = installs;
+    /** @type {PromiseWithResolvers<void>} */
+    const { promise, resolve: done } = Promise.withResolvers();
+
+    installs = promise;
+
+    // A temporary directory of its own, too: the servers name their temporary tables after their process ids
+    const temporary = `${data}-tmp`;
+
+    execFileSync('mkdir', ['-p', temporary]);
+
+    try {
+        await previous;
+
+        if (dialect === 'mysql') {
+            await execFileAsync(join(MYSQL_BIN, 'mysqld'), [
+                '--no-defaults', '--initialize-insecure', `--datadir=${data}`, `--tmpdir=${temporary}`,
+            ]);
+        } else {
+            await execFileAsync(join(MARIADB_BIN, 'mariadb-install-db'), [
+                '--no-defaults', `--datadir=${data}`, '--skip-test-db',
+            ], { env: { ...minimalEnv(), TMPDIR: temporary } });
+        }
+    } finally {
+        done();
     }
 
     const server = spawn(dialect === 'mysql' ? join(MYSQL_BIN, 'mysqld') : join(MARIADB_BIN, 'mariadbd'), [
-        '--no-defaults', `--datadir=${data}`, `--port=${port}`, '--bind-address=127.0.0.1', `--socket=${dialect}.sock`,
-        `--log-error=${join(tmp, `${dialect}.err`)}`, `--init-file=${initFile}`,
+        '--no-defaults', `--datadir=${data}`, `--port=${port}`, '--bind-address=127.0.0.1', `--socket=${name}.sock`,
+        `--tmpdir=${temporary}`,
+        `--log-error=${join(tmp, `${name}.err`)}`, `--init-file=${initFile}`,
         ...dialect === 'mysql' ? ['--mysqlx=OFF'] : ['--log-bin=binlog', '--sync-binlog=1', '--binlog-format=ROW'],
     ], { cwd: tmp, stdio: 'ignore' });
 
@@ -372,56 +393,86 @@ function delta(before, after, role) {
 }
 
 /**
- * One workload of one library.
- * @param {{ library: string, workload: string, names: number, server: { url: string, pid: number },
- *     dialect?: string, schedules?: number, processes?: number, cron?: string, start?: Barrier }} run cron: the
- *     schedules' cron; start: the schedule runs start their windows together.
+ * @typedef {{ url: string, pid: number }} Server A database server.
+ */
+
+/**
+ * One workload of one library: prepareWorkload(), measure(), finishWorkload().
+ * @param {Parameters<typeof prepareWorkload>[0]} workload cron: the schedules' cron; start: the schedule runs start
+ *     their windows together.
  * @returns {Promise<Record<string, any>>}
  */
-async function runWorkload({
-    library, workload, names, server, dialect, schedules = 0, processes = 1, cron: spec, start: barrier,
+async function runWorkload(workload) {
+    const run = await prepareWorkload(workload);
+
+    try {
+        return await measure(run);
+    } finally {
+        await finishWorkload(run);
+    }
+}
+
+/**
+ * The database and the setup of one workload of one library.
+ * @param {{ library: string, workload: string, names: number, server: Server, dialect?: string, schedules?: number,
+ *     processes?: number, cron?: string, start?: Barrier, phase?: string, warmupS?: number, measureS?: number }} args
+ *     phase: a suffix of its database; warmupS, measureS: of the steady and idle windows.
+ * @returns {Promise<Record<string, any>>} What measure() takes.
+ */
+async function prepareWorkload({
+    library, workload, names, server, dialect, schedules = 0, processes = 1, cron: spec, start: barrier, phase = '',
+    warmupS = WARMUP_S, measureS = MEASURE_S,
 }) {
     const cron = workload.startsWith('cron-');
     // A name, and an output directory, per database server too: a stale `ready` would start a window early
     const size = cron ? `${schedules}x${processes}${spec === YEARLY_CRON ? '_yearly' : ''}` : names;
-    const database = `perf_${library}_${dialect ?? 'postgres'}_${workload}_${size}`.replaceAll(/[-:]/gu, '_');
+    const database = `perf_${library}_${dialect ?? 'postgres'}_${workload}_${size}${phase}`.replaceAll(/[-:]/gu, '_');
     const url = await freshDatabase(server.url, database);
     const out = join(tmp, database);
     const backlog = workload === 'drain' ? BACKLOG : 0;
     const common = [
         join(HERE, 'perf.mjs'), '--library', library, '--url', url, '--names', String(names), '--out', tmp,
-        '--warmup', String(WARMUP_S), '--measure', String(MEASURE_S), '--rate', String(RATE), '--backlog', String(backlog),
+        '--warmup', String(warmupS), '--measure', String(measureS), '--rate', String(RATE), '--backlog', String(backlog),
         ...dialect ? ['--dialect', dialect] : [],
         ...cron ? ['--schedules', String(schedules), '--cron', String(spec)] : [],
     ].map(arg => (arg === tmp ? out : arg));
-    const postgres = !server.url.startsWith('mysql:');
 
     execFileSync('mkdir', ['-p', out]);
 
     if (await exited(start(process.execPath, [...common, '--role', 'setup'], { log: join(out, 'setup.log') })) !== 0) {
-        throw new Error(`${database}: setup failed, see ${out}/setup.log`);
+        throw new Error(`${database}: setup failed: ${readFileSync(join(out, 'setup.log'), 'utf8').slice(-2000)}`);
     }
 
-    const db = `${server.pid}+`;
+    return {
+        library, workload, names, dialect, url, out, common, db: `${server.pid}+`, server, database, schedules, processes,
+        spec, barrier, warmupS, measureS,
+    };
+}
 
-    try {
-        const run = { library, workload, names, dialect, url, out, common, db, server, database };
-        const { adapter } = /** @type {{ adapter: import('./libs/common.mjs').Adapter }} */ (
-            await import(`./libs/${library.replaceAll('-', '_')}.mjs`)
-        );
+/**
+ * @param {Record<string, any>} run from prepareWorkload()
+ * @returns {Promise<Record<string, any>>} The row of the workload.
+ */
+async function measure(run) {
+    const { adapter } = /** @type {{ adapter: import('./libs/common.mjs').Adapter }} */ (
+        await import(`./libs/${run.library.replaceAll('-', '_')}.mjs`)
+    );
 
-        return {
-            ...cron
-                ? await measureSchedules({ ...run, schedules, processes, spec, barrier })
-                : await measureWorkload(run),
-            // Without it, the producer enqueues after the COMMIT: not atomic
-            transactional: adapter.transactional,
-        };
-    } finally {
-        if (postgres) {
-            // No autovacuum of its tables in the next runs
-            await adminQuery(server.url, `DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
-        }
+    return {
+        ...run.workload.startsWith('cron-') ? await measureSchedules(run) : await measureWorkload(run),
+        // Without it, the producer enqueues after the COMMIT: not atomic
+        transactional: adapter.transactional,
+    };
+}
+
+/**
+ * @param {Record<string, any>} run from prepareWorkload()
+ * @returns {Promise<void>}
+ */
+async function finishWorkload({ server, database }) {
+    if (!server.url.startsWith('mysql:')) {
+        // No autovacuum of its tables in the next runs
+        await adminQuery(server.url, `DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
     }
 }
 
@@ -453,23 +504,39 @@ async function untilFile(file, child) {
  * @param {Record<string, any>} run
  * @returns {Promise<Record<string, any>>}
  */
-async function measureWorkload({ library, workload, names, dialect, out, common, db, server, database }) {
-    const postgres = !server.url.startsWith('mysql:');
+async function measureWorkload({
+    library, workload, names, dialect, out, common, db, server, database, barrier, warmupS, measureS,
+}) {
+    // pg_stat_statements: PostgreSQL only
+    const statements = !server.url.startsWith('mysql:');
+    const servers = { db };
 
-    if (postgres) {
+    if (statements) {
         await adminQuery(server.url, 'CHECKPOINT');
     }
 
     if (workload === 'drain') {
-        const before = counters({ db });
+        // The drains of a phase start together
+        await barrier?.arrive();
+
+        const before = await countersAsync(servers);
         const worker = start(process.execPath, [...common, '--role', 'worker'], { log: join(out, 'worker.log') });
 
+        const limit = Date.now() + (DRAIN_LIMIT_S * 1000);
+
         // The worker writes worker.json when the backlog is done, then lingers
-        while (!readJson(join(out, 'worker.json')) && worker.exitCode === null) {
+        while (!readJson(join(out, 'worker.json')) && worker.exitCode === null && Date.now() < limit) {
             await sleep(100);
         }
 
-        const after = counters({ db, worker: String(worker.pid) });
+        const after = await countersAsync({ ...servers, worker: String(worker.pid) });
+
+        if (!readJson(join(out, 'worker.json'))) {
+            // Too long: it writes what ran, and exits
+            worker.kill('SIGUSR2');
+            await exited(worker);
+        }
+
         const result = readJson(join(out, 'worker.json'));
 
         await exited(worker);
@@ -483,30 +550,39 @@ async function measureWorkload({ library, workload, names, dialect, out, common,
     const worker = start(process.execPath, [...common, '--role', 'worker'], { log: join(out, 'worker.log') });
 
     await untilFile(join(out, 'ready'), worker);
+    // The windows of a phase start together
+    await barrier?.arrive();
 
     const producer = workload === 'steady'
         ? start(process.execPath, [...common, '--role', 'producer'], { log: join(out, 'producer.log') })
         : null;
-    const pids = { db, worker: String(worker.pid), ...producer && { producer: String(producer.pid) } };
+    const pids = { ...servers, worker: String(worker.pid), ...producer && { producer: String(producer.pid) } };
 
-    await sleep(WARMUP_S * 1000);
+    await sleep(warmupS * 1000);
 
-    const before = counters(pids);
+    // Without blocking the other lanes; the window is the time between the two readings
+    const before = await countersAsync(pids);
+    const startedAt = Date.now();
 
-    if (postgres) {
+    if (statements) {
         await postgresStats(server.url, database, { reset: true });
     }
 
-    await sleep(MEASURE_S * 1000);
+    await sleep((measureS * 1000) - (Date.now() - startedAt));
 
-    const after = counters(pids);
-    const stats = postgres ? await postgresStats(server.url, database) : null;
+    const after = await countersAsync(pids);
+    const seconds = (Date.now() - startedAt) / 1000;
+    const stats = statements ? await postgresStats(server.url, database) : null;
 
     await Promise.all([exited(worker), producer && exited(producer)]);
 
+    const result = readJson(join(out, 'worker.json'));
+
     return {
-        library, workload, names, dialect: dialect ?? 'postgres', seconds: MEASURE_S,
-        ...readJson(join(out, 'worker.json')),
+        library, workload, names, dialect: dialect ?? 'postgres', seconds,
+        ...result,
+        // Steady: the worker ran the jobs of its window, 95% at least; else its cost per job is not a cost per job
+        ...workload === 'steady' && { keptUp: (result?.completed ?? 0) >= 0.95 * RATE * measureS },
         ...stats,
         worker: delta(before, after, 'worker'),
         ...producer && { producer: delta(before, after, 'producer') },
@@ -804,7 +880,7 @@ function sum(values) {
 function tables(runs) {
     const lines = [];
 
-    lines.push('Steady load: 20 jobs/s over 1000 job names, each enqueued in a transaction with an INSERT. Per job.\n');
+    lines.push('Steady load: 20 jobs/s over 1000 job names, each with an INSERT in a transaction. Per job; (timing): phase B.\n');
     lines.push('| Library | Database | Jobs | Instructions (M), worker / producer / db = total | CPU ms | Latency p50 / p99 ms |');
     lines.push('| --- | --- | --- | --- | --- | --- |');
 
@@ -813,29 +889,35 @@ function tables(runs) {
         const instructions = roles.map(role => perJob(row, role));
         const cpu = sum(roles.map(role => row[role]?.cpuSeconds ?? 0)) / row.completed * 1000;
         const total = millions(sum(instructions));
+        const library = `${row.library}${row.transactional === false ? ' (enqueue after commit, not atomic)' : ''}${row.timing ? ' (timing)' : ''}`;
+        // Behind the load: its cost per job that ran is not a cost per job
+        const cost = row.keptUp === false ? `— (${row.completed} of ${Math.round(RATE * row.seconds)} ran)` : `${instructions.map(millions).join(' / ')} = **${total}**`;
 
-        const library = row.transactional === false ? `${row.library} (enqueue after commit, not atomic)` : row.library;
-
-        lines.push(`| ${library} | ${row.dialect} | ${row.completed} | ${instructions.map(millions).join(' / ')} = **${total}** | ${cpu.toFixed(1)} | ${row.latencyP50Ms} / ${row.latencyP99Ms} |`);
+        lines.push(`| ${library} | ${row.dialect} | ${row.completed} | ${cost} | ${cpu.toFixed(1)} | ${row.latencyP50Ms} / ${row.latencyP99Ms} |`);
     }
 
     lines.push('\nIdle: no jobs. Per second of the window.\n');
-    lines.push('| Library | Job names | Database instructions (M) | Worker instructions (M) | SQL statements | Connections |');
-    lines.push('| --- | --- | --- | --- | --- | --- |');
+    lines.push('| Library | Database | Job names | Database instructions (M) | Worker instructions (M) | SQL statements | Connections |');
+    lines.push('| --- | --- | --- | --- | --- | --- | --- |');
 
     for (const row of runs.filter(entry => entry.workload === 'idle')) {
-        lines.push(`| ${row.library} | ${row.names} | ${millions(row.db.instructions / row.seconds)} | ${millions(row.worker.instructions / row.seconds)} | ${(row.statements / row.seconds).toFixed(1)} | ${row.connections} |`);
+        // Statements and connections: PostgreSQL only
+        const statements = row.statements === undefined ? '—' : (row.statements / row.seconds).toFixed(1);
+
+        lines.push(`| ${row.library} | ${row.dialect} | ${row.names} | ${millions(row.db.instructions / row.seconds)} | ${millions(row.worker.instructions / row.seconds)} | ${statements} | ${row.connections ?? '—'} |`);
     }
 
     lines.push(`\nDrain: ${BACKLOG} due jobs over 1000 job names.\n`);
-    lines.push('| Library | Time s | Instructions per job (M), worker / db = total |');
-    lines.push('| --- | --- | --- |');
+    lines.push('| Library | Database | Time s | Instructions per job (M), worker / db = total |');
+    lines.push('| --- | --- | --- | --- |');
 
     for (const row of runs.filter(entry => entry.workload === 'drain')) {
         const worker = row.worker.instructions / row.completed;
         const db = row.db.instructions / row.completed;
 
-        lines.push(`| ${row.library} | ${(row.drainMs / 1000).toFixed(1)} | ${millions(worker)} / ${millions(db)} = **${millions(worker + db)}** |`);
+        const time = row.drainMs === null ? `> ${DRAIN_LIMIT_S} (${row.completed} ran)` : (row.drainMs / 1000).toFixed(1);
+
+        lines.push(`| ${row.library}${row.timing ? ' (timing)' : ''} | ${row.dialect} | ${time} | ${millions(worker)} / ${millions(db)} = **${millions(worker + db)}** |`);
     }
 
     lines.push(`\nSchedules, idle: no slot due, 1 job name, 1 worker. Per second; median of ${CRON_REPEATS} runs.\n`);
@@ -865,6 +947,117 @@ function tables(runs) {
 }
 
 /**
+ * The performance of jobs: a lane per library and database that its adapter lists, each with a server of its own.
+ * Phase A, for instructions: the lanes in parallel, one workload at a time, the windows started together (steady,
+ * idle with 1 and 1000 names, drain); instructions do not depend on the load of the machine (see docs/cpu-cost.md).
+ * Phase B, for times, on PostgreSQL: one lane at a time, the drains, then the steady load, for the drain
+ * times, the latencies and the CPU time. Its rows have `timing: true`.
+ * @param {string[]} libraries
+ * @returns {Promise<Record<string, any>[]>}
+ */
+async function runJobs(libraries) {
+    /** @type {{ library: string, database: 'postgres' | 'mysql' | 'mariadb' }[]} */
+    const lanes = [];
+
+    for (const library of libraries) {
+        const { adapter } = /** @type {{ adapter: import('./libs/common.mjs').Adapter }} */ (
+            await import(`./libs/${library.replaceAll('-', '_')}.mjs`)
+        );
+
+        lanes.push(...adapter.databases.map(database => ({ library, database })));
+    }
+
+    const template = join(tmp, 'pg-template');
+
+    if (!existsSync(template)) {
+        execFileSync(join(PG_BIN, 'initdb'), ['-D', template, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
+    }
+
+    /** @type {Server[]} */
+    const servers = await Promise.all(lanes.map(async ({ library, database }, index) => {
+        if (database === 'postgres') {
+            return startPostgres({ port: PERF_PG_PORT + index, template });
+        }
+
+        return startMysqlFamily(database, { port: PERF_MYSQL_PORT + index, name: `${database}-${library}` });
+    }));
+    /**
+     * @param {number} index
+     * @param {string} workload
+     * @param {number} names
+     * @param {string} [phase]
+     * @returns {Promise<Record<string, any>>}
+     */
+    const prepare = (index, workload, names, phase) => {
+        const { library, database } = lanes[index];
+
+        return prepareWorkload({
+            library, workload, names, server: servers[index], ...database !== 'postgres' && { dialect: database }, phase,
+        });
+    };
+    /** @type {Record<string, any>[]} */
+    const rows = [];
+    let startedAt = Date.now();
+
+    for (const [workload, names] of JOB_WORKLOADS) {
+        process.stderr.write(`jobs, phase A: ${workload} ${names}, ${lanes.length} lanes in parallel\n`);
+
+        const runs = await Promise.all(lanes.map((_, index) => prepare(index, workload, names)));
+        const barrier = barrierOf(runs.length);
+        const settled = await Promise.allSettled(runs.map(async (run) => {
+            const own = barrier();
+
+            try {
+                return await measure({ ...run, barrier: own });
+            } finally {
+                own.leave();
+                await finishWorkload(run);
+            }
+        }));
+        const failed = settled.find(result => result.status === 'rejected');
+
+        if (failed) {
+            throw failed.reason;
+        }
+
+        rows.push(...settled.map(result => (result.status === 'fulfilled' ? result.value : {})));
+    }
+
+    process.stderr.write(`jobs, phase A: ${Math.round((Date.now() - startedAt) / 1000)} s\n`);
+    startedAt = Date.now();
+
+    const timed = lanes.flatMap(({ database }, index) => (database === 'postgres' ? [index] : []));
+    // The backlogs in parallel, then the drains one at a time
+    const drains = await Promise.all(timed.map(index => prepare(index, 'drain', NAMES, '_b')));
+
+    for (const run of drains) {
+        process.stderr.write(`jobs, phase B: drain ${run.library} on ${run.dialect ?? 'postgres'}\n`);
+
+        try {
+            rows.push({ ...await measure(run), timing: true });
+        } finally {
+            await finishWorkload(run);
+        }
+    }
+
+    for (const index of timed) {
+        process.stderr.write(`jobs, phase B: steady ${lanes[index].library} on ${lanes[index].database}\n`);
+
+        const run = await prepare(index, 'steady', NAMES, '_b');
+
+        try {
+            rows.push({ ...await measure(run), timing: true });
+        } finally {
+            await finishWorkload(run);
+        }
+    }
+
+    process.stderr.write(`jobs, phase B: ${Math.round((Date.now() - startedAt) / 1000)} s\n`);
+
+    return rows;
+}
+
+/**
  * The schedule runs, all in parallel, each with a database of its own on a server of its library: instructions do not
  * depend on the load of the machine (see docs/cpu-cost.md), and the runs wait for the same minutes. CRON_REPEATS
  * times; a row has the median of each number, and each run in `samples`.
@@ -883,7 +1076,9 @@ async function runSchedules(libraries) {
     ]);
     const template = join(tmp, 'pg-template');
 
-    execFileSync(join(PG_BIN, 'initdb'), ['-D', template, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
+    if (!existsSync(template)) {
+        execFileSync(join(PG_BIN, 'initdb'), ['-D', template, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
+    }
 
     // A server per library: macOS allows few servers at once (32 shared memory segments, kern.sysv.shmmni)
     const servers = await Promise.all(libraries.map((_, index) => (
@@ -965,8 +1160,8 @@ function medianRow(rows) {
 }
 
 try {
-    // The checks and the jobs share a server; the schedules start servers of their own
-    const postgres = PARTS.has('checks') || PARTS.has('perf') ? await startPostgres() : null;
+    // The checks have a server; the jobs and the schedules start servers of their own
+    const postgres = PARTS.has('checks') ? await startPostgres() : null;
     // A run of one part keeps the other parts' results. The date of each part, and of the last run
     const saved = readJson(join(HERE, 'results.json')) ?? {};
     const date = new Date().toISOString();
@@ -991,24 +1186,7 @@ try {
     }
 
     if (PARTS.has('perf')) {
-        /** @type {Record<string, any>[]} */
-        const runs = [];
-
-        for (const library of libraries) {
-            for (const [workload, names] of /** @type {const} */ ([['steady', NAMES], ['idle', 1], ['idle', NAMES], ['drain', NAMES]])) {
-                process.stderr.write(`${library} ${workload} ${names}\n`);
-                const server = /** @type {{ url: string, pid: number }} */ (postgres);
-
-                runs.push(await runWorkload({ library, workload, names, server }));
-            }
-        }
-
-        for (const dialect of libraries.includes('sqlane') ? /** @type {const} */ (['mysql', 'mariadb']) : []) {
-            process.stderr.write(`sqlane steady on ${dialect}\n`);
-            runs.push(await runWorkload({
-                library: 'sqlane', workload: 'steady', names: NAMES, server: await startMysqlFamily(dialect), dialect,
-            }));
-        }
+        const runs = await runJobs(libraries);
 
         // A run of some libraries replaces their rows only
         /** @type {Record<string, any>[]} */

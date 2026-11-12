@@ -12,6 +12,7 @@ const { version } = JSON.parse(readFileSync(new URL('../node_modules/graphile-wo
 export const adapter = {
     version,
     transactional: true,
+    databases: ['postgres'],
     // A completed job is deleted: the jobs left are those that did not run
     scheduledJobs: async url => ({
         deletesCompleted: true,

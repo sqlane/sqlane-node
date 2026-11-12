@@ -72,7 +72,7 @@ setting, given in the note) or **No** (with the reason, or what happened instead
 ## Performance
 
 Only the libraries that enqueue in the caller's transaction: sqlane, pg-boss, Graphile Worker and River. The same
-guarantee, so the same workload. PostgreSQL for all, plus sqlane on MySQL and MariaDB (steady load only).
+guarantee, so the same workload. PostgreSQL for all, plus sqlane on MySQL and MariaDB.
 
 - **Setup.** 1000 job names, as each library models them: sqlane handlers, pg-boss queues (a `work()` each), Graphile
   Worker tasks, River kinds in one queue. A worker process with 8 slots, empty handlers, a poll of 5 s, and each
@@ -87,7 +87,13 @@ guarantee, so the same workload. PostgreSQL for all, plus sqlane on MySQL and Ma
   and its rows say so.
 - **Idle.** 1 and 1000 job names, no jobs.
 - **Drain.** 10,000 due jobs over the names, enqueued before the worker starts. The time until the worker has run
-  them all.
+  them all, at most 60 s: a longer drain stops, and its row gives the jobs that ran.
+- **Two phases.** A lane per library and database that its adapter lists (`databases`), each with a server of its
+  own. Phase A, for instructions: all the lanes at once, one workload at a time, their windows started together
+  (steady, idle with 1 and with 1000 names, drain). Steady and idle instructions barely depend on the load of the
+  machine; drain instructions do, so the drains come from phase B. Phase B, for times, on the PostgreSQL lanes: one
+  lane at a time, the drains (their backlogs prepared in parallel), then the steady load, for the latency and the CPU
+  time. Its rows have `timing: true`; it also checks phase A's instructions on those lanes.
 - **Counters.** Instructions retired, cycles and CPU time of each process (`bench/cpu/proc_usage.py`), the database
   with all its processes. Compare instructions: see [CPU cost per job](../../docs/cpu-cost.md#the-three-numbers). On
   PostgreSQL, `pg_stat_statements` counts the statements of the window, and `pg_stat_activity` the connections.

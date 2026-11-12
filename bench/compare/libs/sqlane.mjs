@@ -8,42 +8,42 @@ import { pgAdapter } from '../../../src/adapters/pg.js';
 import { createSqlane, defineJob } from '../../../src/index.js';
 import { queryRows, scheduleKeys, UnsupportedError } from './common.mjs';
 
-/** The UDP port of the hints on MySQL and MariaDB: one run at a time */
-const HINT_PORT = 41_301;
-
 /**
  * Hints over UDP on localhost: they stand in for the Redis pub/sub that sqlane recommends on MySQL and MariaDB, which
- * have no NOTIFY (as bench/cpu/app.js).
- * @type {import('../../../src/types.js').Hint}
+ * have no NOTIFY (as bench/cpu/app.js). One port per database server, 10000 below its own: the lanes run in parallel.
+ * @param {number} port
+ * @returns {import('../../../src/types.js').Hint}
  */
-const UDP_HINT = {
-    publish: async (channel, message) => {
-        const socket = createSocket('udp4');
+function udpHint(port) {
+    return {
+        publish: async (channel, message) => {
+            const socket = createSocket('udp4');
 
-        await new Promise((resolve) => {
-            socket.send(`${channel}\n${message}`, HINT_PORT, '127.0.0.1', () => resolve(undefined));
-        });
-        socket.close();
-    },
-    subscribe: async (channel, onMessage) => {
-        const socket = createSocket('udp4');
-
-        socket.on('message', (buffer) => {
-            const [messageChannel, message] = buffer.toString().split('\n');
-
-            if (messageChannel === channel) {
-                onMessage(message);
-            }
-        });
-        await new Promise((resolve) => {
-            socket.bind(HINT_PORT, '127.0.0.1', () => resolve(undefined));
-        });
-
-        return async () => {
+            await new Promise((resolve) => {
+                socket.send(`${channel}\n${message}`, port, '127.0.0.1', () => resolve(undefined));
+            });
             socket.close();
-        };
-    },
-};
+        },
+        subscribe: async (channel, onMessage) => {
+            const socket = createSocket('udp4');
+
+            socket.on('message', (buffer) => {
+                const [messageChannel, message] = buffer.toString().split('\n');
+
+                if (messageChannel === channel) {
+                    onMessage(message);
+                }
+            });
+            await new Promise((resolve) => {
+                socket.bind(port, '127.0.0.1', () => resolve(undefined));
+            });
+
+            return async () => {
+                socket.close();
+            };
+        },
+    };
+}
 
 const { version } = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
 
@@ -51,6 +51,7 @@ const { version } = JSON.parse(readFileSync(new URL('../../../package.json', imp
 export const adapter = {
     version,
     transactional: true,
+    databases: ['postgres', 'mysql', 'mariadb'],
     // The id of a slot's job: `<name>:schedule:<key>:<ISO>`
     scheduledJobs: async url => ({
         jobs: (await queryRows(url, String.raw`
@@ -74,7 +75,7 @@ export const adapter = {
             adapter: /** @type {import('../../../src/types.js').Adapter<any>} */ (mysql
                 ? mysql2Adapter(/** @type {import('mysql2/promise').Pool} */ (pool), { dialect })
                 : pgAdapter(/** @type {Pool} */ (pool), { notify: true })),
-            ...mysql && { hint: UDP_HINT },
+            ...mysql && { hint: udpHint(Number(new URL(url).port) - 10_000) },
             concurrency,
             pollInterval: pollIntervalMs,
             // A lease of 4 minutes: no public option shortens it

@@ -14,6 +14,7 @@ export const adapter = {
     version,
     // No API takes the caller's transaction: the performance runs enqueue after the COMMIT
     transactional: false,
+    databases: [],
     async open({ url, names, handler, concurrency = 4, stall = false }) {
         /** @type {string[]} */
         const notes = ['engine in this process, `runner: "inline"`'];
