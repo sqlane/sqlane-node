@@ -81,28 +81,29 @@ sqlane fits apps that need reliable background work in the SQL database they alr
 The first four rows are checked by running each library next to sqlane on PostgreSQL 17, the others come from their
 documentation ([comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md)):
 
-|                                        | sqlane | pg-boss | Graphile Worker | BullMQ | Sidequest     | River |
-| -------------------------------------- | ------ | ------- | --------------- | ------ | ------------- | ----- |
-| Enqueue in the caller's transaction    | ✅     | ✅      | ✅              | ❌     | ❌            | ✅    |
-| Exclusion by several resources per job | ✅     | ❌      | ❌              | ❌     | ❌            | ❌    |
-| Timeout that aborts the handler        | ✅     | ✅      | ❌              | ❌     | ✅            | ✅    |
-| Priority                               | ❌     | ✅      | ✅              | ✅     | 🟠 per queue  | ✅    |
-| MySQL and MariaDB                      | ✅     | ❌      | ❌              | ❌     | 🟠 MySQL only | ❌    |
-| Cron                                   | ✅     | ✅      | ✅              | ✅     | ✅            | ✅    |
-| Dashboard                              | ❌     | ✅      | ❌              | ✅     | ✅            | ✅    |
+|                                        | sqlane | pg-boss | Graphile Worker | BullMQ | Sidequest     | River | Boring Node Queue | Izi Queue     |
+| -------------------------------------- | ------ | ------- | --------------- | ------ | ------------- | ----- | ----------------- | ------------- |
+| Enqueue in the caller's transaction    | ✅     | ✅      | ✅              | ❌     | ❌            | ✅    | ✅                | ✅            |
+| Exclusion by several resources per job | ✅     | ❌      | ❌              | ❌     | ❌            | ❌    | ❌                | ❌            |
+| Timeout that aborts the handler        | ✅     | ✅      | ❌              | ❌     | ✅            | ✅    | ✅                | ✅            |
+| Priority                               | ❌     | ✅      | ✅              | ✅     | 🟠 per queue  | ✅    | ✅                | ✅            |
+| MySQL and MariaDB                      | ✅     | ❌      | ❌              | ❌     | 🟠 MySQL only | ❌    | ✅ Knex           | 🟠 MySQL only |
+| Cron                                   | ✅     | ✅      | ✅              | ✅     | ✅            | ✅    | ✅                | ✅            |
+| Dashboard                              | ❌     | ✅      | ❌              | ✅     | ✅            | ✅    | ❌                | ❌            |
 
-Next to the queues that also enqueue in your transaction, on PostgreSQL with 1000 job names
-([performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison-performance.md)):
+Next to other job queues for Node.js, on PostgreSQL with 1000 job names; BullMQ and Sidequest enqueue after the
+commit ([performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison-performance.md)):
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-dark.svg">
-  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 4.6 M, Graphile Worker 10.9 M, River 14.6 M, pg-boss 27.0 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-light.svg">
+  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 4.5 M, Graphile Worker 11.1 M, River 15.1 M, pg-boss 28.1 M, Izi Queue 7.7 M, Boring Node Queue 11.7 M, BullMQ 11.7 M (after the commit), Sidequest 18.2 M (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-light.svg">
 </picture>
 
-- **Graphile Worker, River and pg-boss use 2.3–5.8× as many CPU instructions per job** as sqlane under steady load,
-  with the throughput settings of their documentation.
-- **1000 idle job names cost what 1 costs.** pg-boss polls each queue: 1000 idle queues take about a quarter of a
-  database core.
+- **The other queues that enqueue in your transaction use about 1.7–6.2× as many CPU instructions per job** as sqlane
+  at steady load on PostgreSQL, with their documented throughput settings. Two exceptions: BullMQ on Redis uses 1.3×,
+  but enqueues outside your transaction; on MySQL, Izi Queue uses about a third fewer than sqlane.
+- **1000 idle job names cost what 1 costs.** pg-boss polls each queue: 1000 idle queues take 268 M database
+  instructions and 200 statements per second, about 4% of a core.
 
 Choose BullMQ for workflows and its broader ecosystem, or an established queue when a long production history is your
 main requirement.

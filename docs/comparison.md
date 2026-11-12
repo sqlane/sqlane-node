@@ -1,42 +1,42 @@
 # Compare job queues
 
-sqlane next to five job queues for Node.js. The rows marked 🔬 come from scenarios that run against each library
+sqlane next to seven job queues for Node.js. The rows marked 🔬 come from scenarios that run against each library
 ([how](../bench/compare/README.md#checks)); the others from each library's documentation and types. For CPU cost,
 latency and idle cost, see [performance](comparison-performance.md).
 
 ## Pick by requirement
 
-| You need                                                                        | Consider                                                     |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Jobs that commit or roll back with your data, on MySQL or MariaDB               | sqlane                                                       |
-| The same on PostgreSQL                                                          | sqlane, pg-boss, Graphile Worker, River                      |
-| Jobs that must not overlap when they touch the same resources, across job names | sqlane                                                       |
-| Cron with a catch-up of missed runs                                             | sqlane (the latest run), Graphile Worker (each run), pg-boss |
-| Priorities                                                                      | pg-boss, Graphile Worker, BullMQ, River                      |
-| A dashboard                                                                     | pg-boss, BullMQ, Sidequest, River                            |
-| Redis, workflows of parent and child jobs, a large ecosystem                    | BullMQ                                                       |
-| SQLite or MongoDB                                                               | Sidequest (SQLite, MongoDB), River (SQLite)                  |
+| You need                                                                        | Consider                                                                    |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Jobs that commit or roll back with your data, on MySQL or MariaDB               | sqlane; by their documentation, Boring Node Queue (Knex), Izi Queue (MySQL) |
+| The same on PostgreSQL                                                          | sqlane, pg-boss, Graphile Worker, River, Boring Node Queue, Izi Queue       |
+| Jobs that must not overlap when they touch the same resources, across job names | sqlane                                                                      |
+| Cron with a catch-up of missed runs                                             | sqlane (the latest run), Graphile Worker (each run), pg-boss                |
+| Priorities                                                                      | pg-boss, Graphile Worker, BullMQ, River, Boring Node Queue, Izi Queue       |
+| A dashboard                                                                     | pg-boss, BullMQ, Sidequest, River                                           |
+| Redis, workflows of parent and child jobs, a large ecosystem                    | BullMQ                                                                      |
+| SQLite or MongoDB                                                               | Sidequest (SQLite, MongoDB), River, Boring Node Queue, Izi Queue (SQLite)   |
 
 ## Capabilities
 
 ✅ works as described · 🟠 works with a workaround or a fixed setting · ❌ no such option, or the scenario failed
 
-| Capability                               | sqlane | pg-boss      | Graphile Worker  | BullMQ           | Sidequest       | River   |
-| ---------------------------------------- | ------ | ------------ | ---------------- | ---------------- | --------------- | ------- |
-| 🔬 Enqueue in the caller's transaction   | ✅     | ✅           | ✅               | ❌               | ❌              | ✅      |
-| 🔬 Delayed job                           | ✅     | ✅           | ✅               | ✅               | ✅              | ✅      |
-| 🔬 Retry after a configured backoff      | ✅     | ✅           | 🟠 fixed backoff | ✅               | ✅              | ✅      |
-| 🔬 Timeout that aborts the handler       | ✅     | ✅           | ❌               | ❌               | ✅              | ✅      |
-| 🔬 Job of a killed worker runs again     | ✅     | ✅           | ❌ after 4 h     | ✅               | ✅              | ✅      |
-| 🔬 Exclusion by a resource, across names | ✅     | 🟠 one queue | ✅ `queue_name`  | ❌ Pro only      | ❌              | ❌      |
-| 🔬 Exclusion by several resources        | ✅     | ❌           | ❌               | ❌               | ❌              | ❌      |
-| 🔬 Priority                              | ❌     | ✅           | ✅               | ✅               | 🟠 per queue    | ✅      |
-| Cron                                     | ✅     | ✅           | ✅               | ✅               | ✅              | ✅      |
-| Dashboard                                | ❌     | ✅           | ❌               | ✅               | ✅              | ✅      |
-| PostgreSQL                               | ✅     | ✅           | ✅               | ✅               | ✅              | ✅      |
-| MySQL and MariaDB                        | ✅     | ❌           | ❌               | ❌               | 🟠 MySQL only   | ❌      |
-| Other storage                            | —      | —            | —                | Redis-compatible | SQLite, MongoDB | SQLite  |
-| License                                  | MIT    | MIT          | MIT              | MIT              | LGPL-3.0        | MPL-2.0 |
+| Capability                               | sqlane | pg-boss      | Graphile Worker  | BullMQ           | Sidequest       | River   | Boring Node Queue | Izi Queue      |
+| ---------------------------------------- | ------ | ------------ | ---------------- | ---------------- | --------------- | ------- | ----------------- | -------------- |
+| 🔬 Enqueue in the caller's transaction   | ✅     | ✅           | ✅               | ❌               | ❌              | ✅      | ✅                | ✅             |
+| 🔬 Delayed job                           | ✅     | ✅           | ✅               | ✅               | ✅              | ✅      | ✅                | ✅             |
+| 🔬 Retry after a configured backoff      | ✅     | ✅           | 🟠 fixed backoff | ✅               | ✅              | ✅      | ✅                | 🟠 1 s for 2 s |
+| 🔬 Timeout that aborts the handler       | ✅     | ✅           | ❌               | ❌               | ✅              | ✅      | ✅                | ✅             |
+| 🔬 Job of a killed worker runs again     | ✅     | ✅           | ❌ after 4 h     | ✅               | ✅              | ✅      | ✅                | ✅ after 60 s  |
+| 🔬 Exclusion by a resource, across names | ✅     | 🟠 one queue | ✅ `queue_name`  | ❌ Pro only      | ❌              | ❌      | ❌                | ❌             |
+| 🔬 Exclusion by several resources        | ✅     | ❌           | ❌               | ❌               | ❌              | ❌      | ❌                | ❌             |
+| 🔬 Priority                              | ❌     | ✅           | ✅               | ✅               | 🟠 per queue    | ✅      | ✅                | ✅             |
+| Cron                                     | ✅     | ✅           | ✅               | ✅               | ✅              | ✅      | ✅                | ✅             |
+| Dashboard                                | ❌     | ✅           | ❌               | ✅               | ✅              | ✅      | ❌                | ❌             |
+| PostgreSQL                               | ✅     | ✅           | ✅               | ✅               | ✅              | ✅      | ✅                | ✅             |
+| MySQL and MariaDB                        | ✅     | ❌           | ❌               | ❌               | 🟠 MySQL only   | ❌      | ✅ Knex           | 🟠 MySQL only  |
+| Other storage                            | —      | —            | —                | Redis-compatible | SQLite, MongoDB | SQLite  | Redis, SQLite     | SQLite         |
+| License                                  | MIT    | MIT          | MIT              | MIT              | LGPL-3.0        | MPL-2.0 | MIT               | MIT            |
 
 Notes:
 
@@ -47,6 +47,12 @@ Notes:
 - **Graphile Worker's** `queue_name` runs its jobs one at a time across task identifiers: one queue per resource, and
   one queue per job.
 - **Sidequest** has priorities of queues, not of jobs: the check used a queue per priority.
+- **Boring Node Queue** 0.9.1, with its Knex adapter: its enqueue takes a Knex transaction (`.with(knex(trx))`), and
+  it runs on MySQL and MariaDB through Knex too. 0.10.0 adds LISTEN/NOTIFY on PostgreSQL, but was younger than the 7
+  days that the harness requires of a release.
+- **Izi Queue:** its README gives the result of a custom backoff in seconds, but 0.10.0 uses it as milliseconds: a 2 s
+  backoff became 2 ms, and the retry came when its leader staged the retries, after 1 s. A dead node is presumed after 4
+  missed heartbeats and 60 s at least, so its jobs ran again after 60 s. Its README says MariaDB is not supported.
 - **Dashboards:** pg-boss [`@pg-boss/dashboard`](https://www.npmjs.com/package/@pg-boss/dashboard) (MIT); BullMQ
   [bull-board](https://github.com/felixmosh/bull-board) (community, MIT) or [Taskforce.sh](https://taskforce.sh)
   (commercial); River [River UI](https://github.com/riverqueue/riverui), a separate binary, since River's JavaScript
@@ -68,17 +74,21 @@ Notes:
 
 The job and your business rows commit together, or neither does; workers see the job only after the commit. The check
 inserts an order and enqueues a job in two transactions, and rolls back the first: with sqlane, pg-boss, Graphile
-Worker and River only the job of the committed order ran. BullMQ and Sidequest have no API that takes your connection:
+Worker, River, Boring Node Queue and Izi Queue only the job of the committed order ran. BullMQ and Sidequest have no
+API that takes your connection:
 their enqueue commits on its own, so the job of the rolled-back order ran too.
 
-| Library         | In your transaction                                  | Drivers and ORMs                                                                                               |
-| --------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| sqlane          | `sqlane.enqueue(tx, job, payload)`                   | mysql2, pg, postgres.js, Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM, MikroORM ([adapters](adapters.md)) |
-| pg-boss         | `boss.send(name, data, { db: fromKnex(tx) })`        | Knex, Kysely, Drizzle, Prisma, PGlite, Bun SQL; any other through `executeSql`                                 |
-| Graphile Worker | `SELECT graphile_worker.add_job(...)` on your client | any that runs SQL                                                                                              |
-| River           | `client.insert(job, args, { tx })`                   | node-postgres, Knex, Prisma (driver packages)                                                                  |
+| Library           | In your transaction                                  | Drivers and ORMs                                                                                               |
+| ----------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| sqlane            | `sqlane.enqueue(tx, job, payload)`                   | mysql2, pg, postgres.js, Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM, MikroORM ([adapters](adapters.md)) |
+| pg-boss           | `boss.send(name, data, { db: fromKnex(tx) })`        | Knex, Kysely, Drizzle, Prisma, PGlite, Bun SQL; any other through `executeSql`                                 |
+| Graphile Worker   | `SELECT graphile_worker.add_job(...)` on your client | any that runs SQL                                                                                              |
+| River             | `client.insert(job, args, { tx })`                   | node-postgres, Knex, Prisma (driver packages)                                                                  |
+| Boring Node Queue | `Job.dispatch(payload).with(knex(trx))`              | Knex, Kysely                                                                                                   |
+| Izi Queue         | `queue.insert(name, { args, tx: client })`           | node-postgres, mysql2, better-sqlite3                                                                          |
 
-PostgreSQL only, except sqlane, which also runs on MySQL and MariaDB.
+PostgreSQL only, except sqlane (also MySQL and MariaDB), Boring Node Queue (MySQL and MariaDB, SQLite) and Izi Queue
+(MySQL, SQLite).
 
 ### Jobs that must not overlap
 
@@ -100,14 +110,16 @@ job failed for all but sqlane.
 Every library holds a running job for a while, then gives it to another worker. The default wait, and the shortest that
 the check could set:
 
-| Library         | Default                                          | In the check                             |
-| --------------- | ------------------------------------------------ | ---------------------------------------- |
-| sqlane          | Lease of 4 minutes, then a stall backoff of 30 s | 34 s, with a test-only lease of 3 s      |
-| pg-boss         | `expireInSeconds`: 15 minutes                    | 2.5 s, `expireInSeconds: 2`              |
-| Graphile Worker | 4 hours                                          | Not within 70 s                          |
-| BullMQ          | `lockDuration`, `stalledInterval`: 30 s          | 2 s                                      |
-| Sidequest       | Stale after 10 minutes, checked every 60 minutes | 27 s, checked every minute (its minimum) |
-| River           | `rescueAfter`: 1 hour, for jobs with a timeout   | 18 s, `rescueAfter: 3 s`                 |
+| Library           | Default                                                                    | In the check                                                |
+| ----------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| sqlane            | Lease of 4 minutes, then a stall backoff of 30 s                           | 34 s, with a test-only lease of 3 s                         |
+| pg-boss           | `expireInSeconds`: 15 minutes                                              | 2.5 s, `expireInSeconds: 2`                                 |
+| Graphile Worker   | 4 hours                                                                    | Not within 70 s                                             |
+| BullMQ            | `lockDuration`, `stalledInterval`: 30 s                                    | 2 s                                                         |
+| Sidequest         | Stale after 10 minutes, checked every 60 minutes                           | within a minute: its check runs once a minute (its minimum) |
+| River             | `rescueAfter`: 1 hour, for jobs with a timeout                             | 18 s, `rescueAfter: 3 s`                                    |
+| Boring Node Queue | `stalledThreshold`, `stalledInterval`: 30 s                                | 2 s                                                         |
+| Izi Queue         | A node is dead after 4 missed heartbeats (60 s at least); Lifeline rescues | 60 s, `rescueAfter: 10 s` (its minimum)                     |
 
 sqlane's lease is renewed while the handler runs, so it bounds the delay after a crash, not the length of a job. Its
 handlers get a `timeout` and an abort signal for that.
@@ -132,10 +144,12 @@ Sources: [sqlane](api.md#schedule), [pg-boss](https://pgboss.io/api/scheduling),
 
 ## Versions and reproduce
 
-Checked on 11 November 2026 on PostgreSQL 17: sqlane 2.0.1, [pg-boss](https://github.com/timgit/pg-boss) 12.38.2,
+Checked on 12 November 2026 on PostgreSQL 17: sqlane 4.0.1, [pg-boss](https://github.com/timgit/pg-boss) 12.38.2,
 [Graphile Worker](https://github.com/graphile/worker) 0.18.0, [BullMQ](https://github.com/taskforcesh/bullmq) 6.7.4,
-[Sidequest](https://github.com/sidequestjs/sidequest) 1.17.0 and [River for JavaScript](https://github.com/riverqueue/river)
-0.3.2. River's Go library and the commercial editions (BullMQ Pro, River Pro) are not compared.
+[Sidequest](https://github.com/sidequestjs/sidequest) 1.17.0, [River for JavaScript](https://github.com/riverqueue/river)
+0.3.2, [Boring Node Queue](https://github.com/boringnode/queue) 0.9.1 and
+[Izi Queue](https://github.com/IagoCavalcante/izi-queue) 0.10.0. River's Go library and the commercial editions
+(BullMQ Pro, River Pro) are not compared.
 
 ```sh
 pnpm bench:compare --only checks

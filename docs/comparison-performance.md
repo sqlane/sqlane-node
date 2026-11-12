@@ -1,34 +1,40 @@
 # Compare job queues: performance
 
-The CPU cost, latency and idle cost of the Node.js job queues that enqueue in your SQL transaction, and of their cron
-schedules: sqlane, pg-boss, Graphile Worker and River. They give the same guarantee, so they run the same workload.
-BullMQ and Sidequest enqueue on their own connection ([features](comparison.md)) and are not measured. Each library runs
-with the settings that its documentation offers for throughput ([settings](#settings)).
+The CPU cost, latency and idle cost of Node.js job queues on SQL databases and Redis, and of their cron schedules:
+sqlane, pg-boss, Graphile Worker, River, Izi Queue and Boring Node Queue, which enqueue in your SQL transaction, and
+BullMQ and Sidequest, which cannot: they enqueue after the `COMMIT`, **not atomic**, and their rows say so
+([features](comparison.md)). Each library runs with the settings that its documentation offers for throughput
+([settings](#settings)). The instructions come from all the libraries at once, the times from one library at a time
+([method](#method-and-limits)).
 
 ## Summary
 
-On PostgreSQL 17, one worker process, 1000 job names, empty handlers:
+One worker process, 1000 job names, empty handlers:
 
-- **CPU per job, steady load:** sqlane uses **4.6 M** instructions per job in all processes. Graphile Worker uses 2.3×
-  as many, River 3.1× and pg-boss 5.8×.
-- **Commit to handler start, p50:** sqlane **3 ms**, Graphile Worker 4 ms, River and pg-boss 5 ms.
-- **Idle names are free:** sqlane, Graphile Worker and River poll once for all job names, so 1000 names cost what 1
-  costs. pg-boss polls each queue: 1000 idle queues take about a quarter of a database core.
-- **Drain of 10,000 jobs:** pg-boss is the fastest at **0.4 s**, with up to 8 jobs at once in each of its 1000 queues.
-  sqlane takes 1.7 s, Graphile Worker 1.8 s and River 2.3 s, each with 8 slots. sqlane uses the fewest instructions
-  per job.
-- **Schedules** (sqlane 4.0.0; the bullets above used 2.0.1): 1000 schedules due every minute cost sqlane **1.7 M**
-  instructions per fired job with one worker, and 2.1 M with three, since each of its workers tries each slot. River
-  uses 2.7× and 2.6× as many, Graphile Worker 4.5× and 4.2×, pg-boss 5.1× and 7.7×. No library added a slot twice
-  ([schedules](#schedules)).
+- **CPU per job, steady load, PostgreSQL 17:** sqlane uses **4.5 M** instructions per job in all processes. Izi Queue
+  uses 1.7× as many, Graphile Worker 2.5×, Boring Node Queue 2.6×, BullMQ 2.6× (not atomic), River 3.3×, Sidequest 4.0×
+  (not atomic) and pg-boss 6.2×. BullMQ on Redis uses 5.7 M, 1.3×, not atomic, at a weaker durability.
+- **MySQL and MariaDB:** sqlane loses on MySQL: it uses 14.4 M per job, and Izi Queue 9.1 M. Boring Node Queue uses 15.2
+  M, Sidequest 25.8 M. On MariaDB, sqlane 10.5 M and Boring Node Queue 11.7 M.
+- **Commit to handler start, p50, PostgreSQL:** BullMQ 2–3 ms, sqlane 3 ms, Izi Queue, Graphile Worker and pg-boss 4 ms,
+  River 5 ms. The libraries that only poll take longer: Sidequest 53 ms, Boring Node Queue 1 s.
+- **Idle names are free** for most. pg-boss polls each queue: 1000 idle queues take 268 M database instructions and 200
+  statements per second, about 4% of a core. Graphile Worker's cost about doubles with 1000 names; Izi Queue's poll
+  every 100 ms costs it 13–14 M database instructions per second.
+- **Drain of 10,000 jobs, PostgreSQL and Redis:** pg-boss is the fastest at **0.4 s**, then BullMQ (0.5 s on Redis, 1.0
+  s on PostgreSQL) and sqlane (1.4 s). sqlane uses the fewest instructions per job on PostgreSQL (1.2 M); BullMQ on
+  Redis uses fewer (1.1 M).
+- **Schedules** (sqlane 4.0.0): 1000 schedules due every minute cost sqlane **1.7 M** instructions per fired job with
+  one worker, and 2.1 M with three, since each of its workers tries each slot. River uses 2.7× and 2.6× as many,
+  Graphile Worker 4.5× and 4.2×, pg-boss 5.1× and 5.7×. No library added a slot twice ([schedules](#schedules)).
 
-With their defaults, River waits 100 ms between two fetches, and pg-boss fetches one job at a time and forwards at most
-600 cron jobs a minute per instance. We use the settings that their documentation offers for throughput
-([settings](#settings)).
+With their defaults, River waits 100 ms between two fetches, Izi Queue a second, and pg-boss fetches one job at a time
+and forwards at most 600 cron jobs a minute per instance. We use the settings that their documentation offers for
+throughput ([settings](#settings)).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-dark.svg">
-  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 4.6 M, Graphile Worker 10.9 M, River 14.6 M, pg-boss 27.0 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-light.svg">
+  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 4.5 M, Graphile Worker 11.1 M, River 15.1 M, pg-boss 28.1 M, Izi Queue 7.7 M, Boring Node Queue 11.7 M, BullMQ 11.7 M (after the commit), Sidequest 18.2 M (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-light.svg">
 </picture>
 
 One run on a laptop: differences of about 10% are noise. Repeat it on your hardware before you plan capacity
@@ -36,73 +42,108 @@ One run on a laptop: differences of about 10% are noise. Repeat it on your hardw
 
 ## Steady load
 
-A producer process enqueues 20 jobs per second, each in a transaction with an `INSERT` into a business table. 9 of 10
-jobs go to 10 hot names, the rest to the other 990. A 15 s window after a 5 s warm-up. Per job, on PostgreSQL:
+A producer process enqueues 20 jobs per second, each in a transaction with an `INSERT` into a business table. BullMQ
+and Sidequest enqueue after the `COMMIT`, on their own connection. 9 of 10 jobs go to 10 hot names, the rest to the
+other 990. Per job, on PostgreSQL, in 15 s windows: instructions with all the libraries at once; CPU time and latency
+with one library at a time:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-latency-dark.svg">
-  <img alt="Median time from enqueue to handler start on PostgreSQL: sqlane 3 ms, Graphile Worker 4 ms, River 5 ms, pg-boss 5 ms" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-latency-light.svg">
+  <img alt="Median time from enqueue to handler start on PostgreSQL, one library at a time: sqlane 3 ms, Graphile Worker 4 ms, River 5 ms, pg-boss 4 ms, Izi Queue 4 ms, Boring Node Queue 1002 ms, BullMQ 3 ms, Sidequest 53 ms" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-latency-light.svg">
 </picture>
 
-| Library         | Instructions (M) | vs sqlane | Worker / producer / database | CPU ms | Latency p50 / p99 ms |
-| --------------- | ---------------- | --------- | ---------------------------- | ------ | -------------------- |
-| sqlane          | **4.6**          | 1×        | 1.3 / 1.1 / 2.3              | 4.9    | **3** / 7            |
-| Graphile Worker | 10.9             | 2.3×      | 5.5 / 0.9 / 4.4              | 7.2    | 4 / 8                |
-| River           | 14.6             | 3.1×      | 2.3 / 1.9 / 10.4             | 8.4    | 5 / 10               |
-| pg-boss         | 27.0             | 5.8×      | 5.4 / 1.2 / 20.5             | 11.2   | 5 / 36               |
+| Library                                     | Instructions (M) | vs sqlane | Worker / producer / database | CPU ms | Latency p50 / p99 ms |
+| ------------------------------------------- | ---------------- | --------- | ---------------------------- | ------ | -------------------- |
+| sqlane                                      | **4.5**          | 1×        | 1.1 / 1.1 / 2.3              | 4.9    | 3 / 6                |
+| Izi Queue                                   | 7.7              | 1.7×      | 1.6 / 1.6 / 4.5              | 6.0    | 4 / 9                |
+| Graphile Worker                             | 11.1             | 2.5×      | 5.5 / 1.1 / 4.5              | 6.5    | 4 / 7                |
+| Boring Node Queue                           | 11.7             | 2.6×      | 5.3 / 2.2 / 4.3              | 5.7    | 1,002 / 1,986        |
+| BullMQ, enqueue after commit, not atomic    | 11.7             | 2.6×      | 2.2 / 1.0 / 8.5              | 8.6    | 3 / 6                |
+| River                                       | 15.1             | 3.3×      | 2.4 / 1.9 / 10.8             | 8.5    | 5 / 9                |
+| Sidequest, enqueue after commit, not atomic | 18.2             | 4.0×      | 8.7 / 2.9 / 6.5              | 10.3   | 53 / 109             |
+| pg-boss                                     | 28.1             | 6.2×      | 5.2 / 1.2 / 21.7             | 8.6    | 4 / 38               |
 
-sqlane on the other databases, same workload:
+On the other databases, same workload, all the libraries at once: instructions only, since the latency and the CPU
+time of a library depend on the others' load. BullMQ on Redis also ran alone:
 
-| Database | Instructions (M) | Worker / producer / database | CPU ms | Latency p50 / p99 ms |
-| -------- | ---------------- | ---------------------------- | ------ | -------------------- |
-| MySQL    | 14.5             | 3.2 / 1.6 / 9.7              | 13.4   | 9 / 37               |
-| MariaDB  | 10.6             | 3.3 / 1.6 / 5.6              | 12.7   | 36 / 45              |
+| Library                                     | Database                                           | Instructions (M) | Worker / producer / database | CPU ms | Latency p50 / p99 ms |
+| ------------------------------------------- | -------------------------------------------------- | ---------------- | ---------------------------- | ------ | -------------------- |
+| BullMQ, enqueue after commit, not atomic    | Redis 8.10, with PostgreSQL for the business table | 5.7              | 2.4 / 1.1 / 2.3              | 5.7    | 2 / 6                |
+| Izi Queue                                   | MySQL 8.4                                          | 9.1              | 2.0 / 1.1 / 6.0              | —      | —                    |
+| sqlane                                      | MySQL 8.4                                          | 14.4             | 3.1 / 1.6 / 9.7              | —      | —                    |
+| Boring Node Queue                           | MySQL 8.4                                          | 15.2             | 5.8 / 2.1 / 7.3              | —      | —                    |
+| Sidequest, enqueue after commit, not atomic | MySQL 8.4                                          | 25.8             | 10.6 / 4.2 / 11.0            | —      | —                    |
+| sqlane                                      | MariaDB 11.8                                       | 10.5             | 3.2 / 1.6 / 5.7              | —      | —                    |
+| Boring Node Queue                           | MariaDB 11.8                                       | 11.7             | 5.4 / 2.0 / 4.2              | —      | —                    |
 
-Latency is from the enqueue, before the `COMMIT`, to the start of the handler. River's fetch cooldown, the minimum time
-between two claims, also spaces a producer's insert notifications: 1 ms here. With its default of 100 ms, River used
-11.8 M per job, but its jobs started 57 ms after the enqueue (p50), and a drain of 10,000 jobs took 126 s (the run of 11
-November 2026, under `defaults` in `results.json`). On MariaDB a commit syncs the binary log, which took about 5 ms on
-macOS (see [limits](#method-and-limits)).
+Latency is from the enqueue to the start of the handler: before the `COMMIT` for the libraries that enqueue in the
+transaction, after it for BullMQ and Sidequest. The wakes differ: LISTEN/NOTIFY for sqlane, pg-boss, Graphile Worker,
+River and Izi Queue on PostgreSQL; Redis for BullMQ; a poll for the others. Boring Node Queue 0.9.1 polls every 2 s
+when idle (`idleDelay`, documented, its default): its 1 s p50 is half of it; 0.10.0 adds LISTEN/NOTIFY. Sidequest polls
+every 100 ms, its default. River's fetch cooldown also spaces a producer's insert notifications: 1 ms here. With its
+default of 100 ms, River used 11.8 M per job, but its jobs started 57 ms after the enqueue (p50), and a drain of
+10,000 jobs took 126 s (the run of 11 November 2026, under `defaults` in `results.json`). BullMQ on Redis syncs its
+append-only file every second, so a crash can lose up to a second of jobs that PostgreSQL would have kept.
 
 ## Idle
 
-No jobs, nothing due. Per second:
+No jobs, nothing due. Per second, with 1 and 1000 job names, all the libraries at once:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-idle-dark.svg">
-  <img alt="Database instructions per second while idle with 1000 job names: sqlane 0.1 M, Graphile Worker 2.0 M, River 1.6 M, pg-boss 267 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-idle-light.svg">
+  <img alt="Database instructions per second while idle with 1000 job names on PostgreSQL: sqlane 0.1 M, Graphile Worker 1.8 M, River 1.7 M, pg-boss 268 M, Izi Queue 13.2 M, Boring Node Queue 1.1 M, BullMQ 0.9 M, Sidequest 2.0 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-idle-light.svg">
 </picture>
 
-| Library         | Job names | Database instructions (M) | Worker instructions (M) | SQL statements | Connections |
-| --------------- | --------- | ------------------------- | ----------------------- | -------------- | ----------- |
-| sqlane          | 1         | 0.1                       | 0.4                     | 0.2            | 2           |
-| sqlane          | 1000      | 0.1                       | 0.5                     | 0.2            | 2           |
-| Graphile Worker | 1         | 0.9                       | 1.7                     | 1.6            | 5           |
-| Graphile Worker | 1000      | 2.0                       | 4.8                     | 1.6            | 5           |
-| River           | 1         | 1.8                       | 3.7                     | 2.1            | 5           |
-| River           | 1000      | 1.6                       | 3.8                     | 2.1            | 5           |
-| pg-boss         | 1         | 3.8                       | 3.0                     | 2.5            | 6           |
-| pg-boss         | 1000      | **266.8**                 | **73.4**                | **202.9**      | 6           |
+| Library           | Database   | Database instructions (M), 1 / 1000 names | Worker instructions (M), 1 / 1000 names | SQL statements, 1000 names | Connections |
+| ----------------- | ---------- | ----------------------------------------- | --------------------------------------- | -------------------------- | ----------- |
+| sqlane            | PostgreSQL | 0.5 / 0.1                                 | 0.6 / 0.6                               | 0.2                        | 2           |
+| BullMQ            | PostgreSQL | 0.8 / 0.9                                 | 0.7 / 0.8                               | 0.8                        | 4           |
+| Boring Node Queue | PostgreSQL | 1.1 / 1.1                                 | 3.4 / 3.4                               | 4.7                        | 1           |
+| River             | PostgreSQL | 2.2 / 1.7                                 | 3.7 / 3.7                               | 2.1                        | 5           |
+| Graphile Worker   | PostgreSQL | 0.8 / 1.8                                 | 1.5 / 5.2                               | 1.6                        | 5           |
+| Sidequest         | PostgreSQL | 2.0 / 2.0                                 | 6.1 / 6.1                               | 9.7                        | 3           |
+| Izi Queue         | PostgreSQL | 14.0 / 13.2                               | 7.6 / 7.6                               | 11.0                       | 2           |
+| pg-boss           | PostgreSQL | 5.0 / **268.1**                           | 3.2 / **72.6**                          | **200.3**                  | 6           |
+| BullMQ            | Redis      | 0.9 / 1.2                                 | 0.4 / 0.4                               | —                          | —           |
+| sqlane            | MySQL      | 3.5 / 3.8                                 | 1.3 / 6.5                               | —                          | —           |
+| Sidequest         | MySQL      | 4.3 / 5.4                                 | 7.0 / 7.2                               | —                          | —           |
+| Boring Node Queue | MySQL      | 4.8 / 5.9                                 | 4.6 / 4.7                               | —                          | —           |
+| Izi Queue         | MySQL      | 18.8 / 19.9                               | 14.6 / 16.3                             | —                          | —           |
+| sqlane            | MariaDB    | 0.1 / 0.2                                 | 0.8 / 1.6                               | —                          | —           |
+| Boring Node Queue | MariaDB    | 0.9 / 0.9                                 | 4.6 / 4.8                               | —                          | —           |
 
 pg-boss polls each queue, so 1000 queues are 200 fetches per second at a 5 s interval. pg-boss can run several job
 names through one queue, with the name in the data; then it polls once, but the queue's options (retries, expiry) are
-shared.
+shared. Izi Queue polls every 100 ms, the setting that lets it keep up with the load. On MySQL and MariaDB the database
+is the whole server process, with its background threads, so the idle numbers there are noisy.
 
 ## Drain
 
-10,000 due jobs over the 1000 job names, enqueued before the worker starts. The time until the worker has run them all:
+10,000 due jobs over the 1000 job names, enqueued before the worker starts. The time until the worker has run them all,
+at most 60 s, one library at a time:
 
-| Library         | Time      | Jobs at once | Instructions per job (M), worker / database = total |
-| --------------- | --------- | ------------ | --------------------------------------------------- |
-| pg-boss         | **0.4 s** | up to 8,000  | 0.4 / 1.1 = 1.5                                     |
-| sqlane          | 1.7 s     | 8            | 0.5 / 0.7 = **1.2**                                 |
-| Graphile Worker | 1.8 s     | 8            | 2.6 / 3.3 = 6.0                                     |
-| River           | 2.3 s     | 8            | 0.8 / 0.8 = 1.6                                     |
+| Library           | Database   | Time    | Jobs at once | Instructions per job (M), worker / database = total |
+| ----------------- | ---------- | ------- | ------------ | --------------------------------------------------- |
+| pg-boss           | PostgreSQL | 0.4 s   | up to 8,000  | 0.4 / 1.1 = 1.5                                     |
+| BullMQ            | Redis      | 0.5 s   | 8            | 0.6 / 0.5 = 1.1                                     |
+| BullMQ            | PostgreSQL | 1.0 s   | 8            | 0.6 / 2.4 = 3.0                                     |
+| sqlane            | PostgreSQL | 1.4 s   | 8            | 0.5 / 0.7 = 1.2                                     |
+| Graphile Worker   | PostgreSQL | 1.9 s   | 8            | 2.6 / 3.3 = 6.0                                     |
+| River             | PostgreSQL | 2.2 s   | 8            | 0.8 / 0.8 = 1.6                                     |
+| Boring Node Queue | PostgreSQL | 8.2 s   | 8            | 3.8 / 3.1 = 6.9                                     |
+| Sidequest         | PostgreSQL | 9.9 s   | 8            | 5.7 / 8.8 = 14.5                                    |
+| Izi Queue         | PostgreSQL | > 60 s² | 8            | 1.1 / 6.7 = 7.8                                     |
 
+² Stopped after 60 s, when Izi Queue had run 4,296 jobs: its instructions are per job that ran.
+
+- On MySQL and MariaDB the drains ran only with all the libraries at once, where a drain changes with the others' load:
+  in that phase, with all the lanes draining at once, River's instructions per job were 3.7× those of its drain alone.
+  So no drain is given for them; `results.json` has those runs.
 - pg-boss: a fetch takes up to 8 jobs and a full one fetches again at once, so each queue runs its 10 jobs in two
   fetches. Its slots are per queue, so with real handlers up to 8,000 can run at once. With its defaults, one job per
   fetch and then a wait for the next poll, it took 45 s.
 - River: 8 workers per fetch cooldown of 1 ms. With its default of 100 ms, about 80 jobs per second, it took 126 s.
+- Izi Queue: 8 jobs per poll of 100 ms at most, about 70 jobs per second.
 
 ## Schedules
 
@@ -111,7 +152,7 @@ shared.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cron-dark.svg">
-  <img alt="CPU instructions per fired job of 1000 schedules due every minute, 3 worker processes, on PostgreSQL: sqlane 2.1 M, Graphile Worker 8.7 M, River 5.4 M, pg-boss 16.0 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cron-light.svg">
+  <img alt="CPU instructions per fired job of 1000 schedules due every minute, 3 worker processes, on PostgreSQL: sqlane 2.1 M, Graphile Worker 8.7 M, River 5.4 M, pg-boss 12.0 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cron-light.svg">
 </picture>
 
 **Firing.** All 1000 schedules due every minute (`* * * * *`), with 1 and with 3 worker processes. The CPU of all
@@ -128,7 +169,9 @@ their order of magnitude.
 | River           | 1       | 2.4 / 2.1 = 4.5                                                  | 4.4–4.5             | 0.28               | 1000                    | 0.7 s / 0.9 s                    |
 | River           | 3       | 3.1 / 2.3 = 5.4                                                  | 5.3–5.5             | 0.44               | 1000                    | 0.5 s / 0.6 s                    |
 | pg-boss         | 1       | 2.2 / 6.2 = 8.4                                                  | 8.0–8.7             | 3.79               | 1000                    | 28 s / 37 s                      |
-| pg-boss         | 3       | 3.4 / 12.6 = 16.0                                                | 12.8–17.1           | 8.57               | 1000                    | 20 s / 24 s                      |
+| pg-boss³        | 3       | 3.0 / 9.0 = 12.0                                                 | 10.4–17.1           | 8.57               | 1000                    | 20 s / 24 s                      |
+
+³ The median of 6 runs, pooled with the rerun; the other columns of this row come from the 3 runs of the table.
 
 - **One job per slot.** After each run, the library's tables give the jobs that it stored: one per schedule and slot for
   Graphile Worker (with the jobs that its handlers ran, since it deletes a completed job) and River. For sqlane it is
@@ -139,16 +182,17 @@ their order of magnitude.
 - **sqlane has no leader, so it pays per worker.** Every worker tries every slot, and a row lock picks one. From 1 to 3
   workers its cost per job grows by about 25%, Graphile Worker's by 17% and River's by 21%. sqlane still uses the
   fewest instructions: per job, River uses 2.7× as many with one worker and 2.6× with three, Graphile Worker 4.5× and
-  4.2×, pg-boss 5.1× and 7.7×. The runs of sqlane with one worker spread by about a quarter (1.3–1.7 M).
+  4.2×, pg-boss 5.1× and 5.7×. The runs of sqlane with one worker spread by about a quarter (1.3–1.7 M).
 - **River:** its leader inserts all 1000 jobs at the slot. Each worker claims at most 8 jobs (the benchmark's
   `maxWorkers`) per fetch cooldown, 1 ms here, so they all start within about a second. With the default cooldown of
   100 ms, 1000 jobs took 13 s to start with one worker (p99; the run of 12 November 2026, under `defaults`).
-- **pg-boss:** a cron pass every 30 s files the due occurrences into an internal queue, and each instance forwards
-  them to the job's queue, 50 per poll: every 1 s here, 3,000 a minute. The lag is the wait for the 30 s pass, which
-  depends on where it falls in the minute, plus about 20 s to forward 1000. Its cost per job nearly doubles with 3
-  instances. With the default poll of 5 s, one instance forwards at most 600 a minute: with 1000 schedules due every
-  minute it fell behind, and its backlog grew by 400 a minute (the run of 12 November 2026, under `defaults` in
-  `results.json`).
+- **pg-boss:** a cron pass every 30 s files the due occurrences into an internal queue, and each instance forwards them
+  to the job's queue, 50 per poll: every 1 s here, 3,000 a minute. The lag is the wait for the 30 s pass, which depends
+  on where it falls in the minute, plus about 20 s to forward 1000. With 3 instances its runs varied most: 6 runs, the 3
+  of the table and the 3 of a rerun the same day, gave 10.4 to 17.1 M per job, a median of 12.0 M (³; `pooled` and
+  `cronRerun` in `results.json`). With the default poll of 5 s, one instance forwards at most 600 a minute: with 1000
+  schedules due every minute it fell behind, and its backlog grew by 400 a minute (the run of 12 November 2026, under
+  `defaults` in `results.json`).
 
 **Idle.** No slot due in the window, 1 worker, no jobs. A daily cron 12 hours away; and, for pg-boss, whose cost
 depends on the expression, a yearly one too. Per second:
@@ -182,42 +226,70 @@ How they schedule, and what they guarantee:
 
 ## Method and limits
 
-Measured on 11 November 2026 with `pnpm bench:compare`: Apple M1 Pro (8 cores), 16 GiB, macOS 27.2, Node.js 26.13.0,
-PostgreSQL 17.11, MySQL 8.4.13 and MariaDB 11.8.9 from Homebrew, on the host. Versions: sqlane 2.0.1, pg-boss 12.38.2,
-Graphile Worker 0.18.0, River for JavaScript 0.3.2. River's numbers come from a second run in the same hour.
+The jobs were measured on 12 November 2026 with `pnpm bench:compare --only perf`: Apple M1 Pro (8 cores), 16 GiB,
+macOS 27.2, Node.js 26.13.0, PostgreSQL 17.11, MySQL 8.4.13, MariaDB 11.8.9 and Redis 8.10.3 from Homebrew, on the host.
+Versions: sqlane 4.0.1, pg-boss 12.38.2, Graphile Worker 0.18.0, River for JavaScript 0.3.2, BullMQ 6.7.4 (ioredis
+6.0.0 on Redis), Sidequest 1.17.0, Boring Node Queue 0.9.1 (Knex 3.3.0), Izi Queue 0.10.0, with pg 8.23.1 and mysql2
+3.24.6.
 
 Each library models 1000 job names in its own way, as its documentation describes:
 
-| Library         | 1000 job names                  | Worker                                    |
-| --------------- | ------------------------------- | ----------------------------------------- |
-| sqlane          | 1000 handlers                   | 8 slots                                   |
-| pg-boss         | 1000 queues, a `work()` on each | 1 slot per queue: its slots are per queue |
-| Graphile Worker | 1000 tasks                      | `concurrency: 8`                          |
-| River           | 1000 kinds in one queue         | `maxWorkers: 8`                           |
+| Library           | 1000 job names                  | Worker                                    |
+| ----------------- | ------------------------------- | ----------------------------------------- |
+| sqlane            | 1000 handlers                   | 8 slots                                   |
+| pg-boss           | 1000 queues, a `work()` on each | 1 slot per queue: its slots are per queue |
+| Graphile Worker   | 1000 tasks                      | `concurrency: 8`                          |
+| River             | 1000 kinds in one queue         | `maxWorkers: 8`                           |
+| BullMQ            | 1000 job names in one queue     | `concurrency: 8`                          |
+| Sidequest         | 1000 job classes                | `maxConcurrentJobs: 8`                    |
+| Boring Node Queue | 1000 job classes in one queue   | `concurrency: 8`                          |
+| Izi Queue         | 1000 workers in one queue       | a queue of 8                              |
 
 ### Settings
 
 Each library runs with the settings that its documentation offers for throughput, where they differ from its defaults:
 
-| Library         | Setting                                     | Its default | Why                                                                                                                                                                                       |
-| --------------- | ------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| sqlane          | —                                           |             |                                                                                                                                                                                           |
-| Graphile Worker | —                                           |             | Its documentation offers no such setting.                                                                                                                                                 |
-| River           | `fetchCooldown: 1 ms`, its minimum          | 100 ms      | The minimum time between two claims, which also spaces the insert notifications. It costs CPU: with its default, 11.8 M per job instead of 14.6 M, but a 57 ms latency and a 126 s drain. |
-| pg-boss         | `batchSize: 8`, `burstWhenBatchFull: true`  | `1`, off    | A fetch takes up to the 8 slots of the worker, and a full one fetches again at once, instead of after the next poll. With its defaults, the drain took 45 s.                              |
-| pg-boss         | `cronWorkerIntervalSeconds: 1`, its minimum | 5 s         | It forwards the cron pass's occurrences as jobs, 50 per poll: 3,000 a minute per instance instead of 600.                                                                                 |
+| Library           | Setting                                     | Its default | Why                                                                                                                                                                                                                                          |
+| ----------------- | ------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| sqlane            | —                                           |             |                                                                                                                                                                                                                                              |
+| Graphile Worker   | —                                           |             | Its documentation offers no such setting.                                                                                                                                                                                                    |
+| River             | `fetchCooldown: 1 ms`, its minimum          | 100 ms      | The minimum time between two claims, which also spaces the insert notifications. It costs CPU: on 11 November, 11.8 M per job with its default and 14.6 M with 1 ms, but a 57 ms latency and a 126 s drain with its default.                 |
+| pg-boss           | `batchSize: 8`, `burstWhenBatchFull: true`  | `1`, off    | A fetch takes up to the 8 slots of the worker, and a full one fetches again at once, instead of after the next poll. With its defaults, the drain took 45 s.                                                                                 |
+| pg-boss           | `cronWorkerIntervalSeconds: 1`, its minimum | 5 s         | It forwards the cron pass's occurrences as jobs, 50 per poll: 3,000 a minute per instance instead of 600.                                                                                                                                    |
+| Izi Queue         | `pollInterval: 100 ms`                      | 1 s         | A queue fetches up to its free slots once per poll: with its default, 8 jobs a second here, below the 20 of the load. It costs idle time: 13–14 M database instructions per second. A public option of its configuration, not in its README. |
+| BullMQ            | —                                           |             | A worker blocks on Redis for the next job; completed jobs stay (`removeOnComplete`).                                                                                                                                                         |
+| Sidequest         | —                                           |             | A poll every 100 ms (`jobPollingInterval`), its only wake.                                                                                                                                                                                   |
+| Boring Node Queue | —                                           |             | Its worker fetches again as soon as a job completes; `idleDelay` (2 s) only sets the poll when idle, its only wake in 0.9.1.                                                                                                                 |
 
 - One worker process, empty handlers: the numbers are the cost of the queue. With real work, the handlers dominate, and
   the differences shrink.
-- A poll every 5 s, plus each library's wakes: LISTEN/NOTIFY on PostgreSQL (pg-boss: `useListenNotify` and `notify` on
-  each queue, which are off by default). On MySQL and MariaDB, sqlane's hint goes over UDP on localhost, standing in
-  for Redis.
+- **Wakes:** each library's own: LISTEN/NOTIFY on PostgreSQL with a poll every 5 s as a fallback (pg-boss:
+  `useListenNotify` and `notify` on each queue, which are off by default; Izi Queue: from a started IziQueue, so the
+  producer starts one without queues); Redis for BullMQ. On MySQL and MariaDB, sqlane's hint goes over UDP on
+  localhost, standing in for Redis.
+- **Not atomic:** BullMQ and Sidequest have no API that takes the caller's transaction. Their producer runs the
+  `INSERT` in a transaction, commits, then enqueues on the library's connection: a crash between the two loses the job.
+- **Two phases.** Each library on each of its databases is a lane, with a server of its own. Phase A, for instructions:
+  all 15 lanes at once, one workload at a time, their windows started together (steady load, idle with 1 and with 1000
+  names, drain). Phase B, for times, on the 9 PostgreSQL and Redis lanes: one lane at a time, the drains, then the
+  steady load, with the same 5 s warm-up and 15 s window. The whole run took 9 minutes: phase A 192 s, phase B 333 s.
+- **The phases agree, except one lane and the drains.** At steady load, phase B's instructions per job were within 3% of
+  phase A's on 8 of the 9 lanes, from −2.9% (sqlane) to +0.7% (Boring Node Queue); BullMQ on PostgreSQL used 25% more in
+  phase B, for a cause not established. Phase A also agrees within 4% with the runs of 11 November, one library at a
+  time, with sqlane 2.0.1 (sqlane 4.6 M, pg-boss 27.0 M, Graphile Worker 10.9 M, River 14.6 M). The drains do not agree:
+  with the other lanes draining at once, River used 3.7× its instructions alone, and Graphile Worker 0.7×. So the drains
+  come from phase B, and the MySQL and MariaDB lanes, which phase B does not run, have no drain here. No MySQL lane ran
+  alone.
+- **Redis:** the append-only file, synced every second (`appendfsync everysec`), no snapshots. BullMQ's database is
+  Redis plus the PostgreSQL of the business table.
+- **Boring Node Queue 0.9.1**, not 0.10.0: 0.10.0 came out on 12 November 2026, younger than the 7 days that the
+  harness requires of a release ([bench/compare](../bench/compare/README.md)).
 - The pools keep their connections: a closed connection takes its CPU counters with it.
 - **Instructions** retired are the measure to compare: they do not depend on the core or the clock. CPU time does, on
-  Apple Silicon (see [CPU cost per job](cpu-cost.md#the-three-numbers)). The database counts the processes of its
-  connections only, not autovacuum or the checkpointer.
-- One machine, one run, 15 s windows: differences of about 10% are noise. Instructions repeat within about 3%;
-  latencies vary more between runs.
+  Apple Silicon (see [CPU cost per job](cpu-cost.md#the-three-numbers)), so it comes from phase B, on an otherwise idle
+  machine. On PostgreSQL the database counts the processes of its connections only, not autovacuum or the
+  checkpointer; on MySQL and MariaDB, the whole server.
+- One machine, one run, 15 s windows: differences of about 10% are noise.
 - The setups do not have the same capacity: pg-boss has its slots per queue, the others 8 slots in all.
 - macOS: a commit took about 0.2 ms on MySQL and 5 ms on MariaDB with its binary log synced (`sync_binlog=1`, as MySQL
   8.4). On Linux both wait for the disk.
@@ -251,7 +323,7 @@ only, with `pnpm bench:compare --only cron`:
 ## Reproduce
 
 ```sh
-pnpm bench:compare --only perf     # about 12 minutes
+pnpm bench:compare --only perf     # about 9 minutes
 pnpm bench:compare --only perf --libs sqlane,river
 pnpm bench:compare --only cron     # the schedules, about 9 minutes
 ```

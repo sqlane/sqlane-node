@@ -1,26 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="720" height="234" viewBox="0 0 720 234" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="Database cost while idle, 1000 job names">
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="370" viewBox="0 0 720 370" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="Database cost while idle, 1000 job names">
 <title>Database cost while idle, 1000 job names</title>
 <text x="0" y="20" font-size="16" font-weight="600" fill="#f0f6fc">Database cost while idle, 1000 job names</text>
-<text x="0" y="42" font-size="13" fill="#9198a1">PostgreSQL 17, no jobs, a poll every 5 s. Database instructions per second. Lower is better.</text>
-<line x1="140.0" y1="60" x2="140.0" y2="200" stroke="#3d444d"/>
-<text x="140.0" y="218" font-size="11" fill="#9198a1" text-anchor="middle">0</text>
-<line x1="283.3" y1="60" x2="283.3" y2="200" stroke="#262c36"/>
-<text x="283.3" y="218" font-size="11" fill="#9198a1" text-anchor="middle">100</text>
-<line x1="426.7" y1="60" x2="426.7" y2="200" stroke="#262c36"/>
-<text x="426.7" y="218" font-size="11" fill="#9198a1" text-anchor="middle">200</text>
-<line x1="570.0" y1="60" x2="570.0" y2="200" stroke="#262c36"/>
-<text x="570.0" y="218" font-size="11" fill="#9198a1" text-anchor="middle">300</text>
-<text x="592" y="218" font-size="11" fill="#9198a1">M/s</text>
-<text x="132" y="85" font-size="13" fill="#f0f6fc" text-anchor="end" font-weight="600">sqlane</text>
-<path d="M140,72H141.0A1,1 0 0 1 142.0,73V89A1,1 0 0 1 141.0,90H140Z" fill="#3987e5"/>
-<text x="148.0" y="85" font-size="13" fill="#f0f6fc" font-weight="600">0.1 M/s</text>
-<text x="132" y="119" font-size="13" fill="#f0f6fc" text-anchor="end">Graphile Worker</text>
-<path d="M140,106H141.4A1.4128458877777779,1.4128458877777779 0 0 1 142.8,107.41284588777778V122.58715411222222A1.4128458877777779,1.4128458877777779 0 0 1 141.4,124H140Z" fill="#3987e5"/>
-<text x="148.8" y="119" font-size="13" fill="#f0f6fc">2.0 M/s</text>
-<text x="132" y="153" font-size="13" fill="#f0f6fc" text-anchor="end">River</text>
-<path d="M140,140H141.2A1.1678052755555557,1.1678052755555557 0 0 1 142.3,141.16780527555557V156.83219472444443A1.1678052755555557,1.1678052755555557 0 0 1 141.2,158H140Z" fill="#3987e5"/>
-<text x="148.3" y="153" font-size="13" fill="#f0f6fc">1.6 M/s</text>
-<text x="132" y="187" font-size="13" fill="#f0f6fc" text-anchor="end">pg-boss</text>
-<path d="M140,174H518.4A4,4 0 0 1 522.4,178V188A4,4 0 0 1 518.4,192H140Z" fill="#3987e5"/>
-<text x="528.4" y="187" font-size="13" fill="#f0f6fc">267 M/s</text>
+<text x="0" y="42" font-size="13" fill="#9198a1">PostgreSQL 17, no jobs. Database instructions per second. Lower is better.</text>
+<line x1="158.0" y1="60" x2="158.0" y2="336" stroke="#3d444d"/>
+<text x="158.0" y="354" font-size="11" fill="#9198a1" text-anchor="middle">0</text>
+<line x1="295.3" y1="60" x2="295.3" y2="336" stroke="#262c36"/>
+<text x="295.3" y="354" font-size="11" fill="#9198a1" text-anchor="middle">100</text>
+<line x1="432.7" y1="60" x2="432.7" y2="336" stroke="#262c36"/>
+<text x="432.7" y="354" font-size="11" fill="#9198a1" text-anchor="middle">200</text>
+<line x1="570.0" y1="60" x2="570.0" y2="336" stroke="#262c36"/>
+<text x="570.0" y="354" font-size="11" fill="#9198a1" text-anchor="middle">300</text>
+<text x="592" y="354" font-size="11" fill="#9198a1">M/s</text>
+<text x="150" y="85" font-size="13" fill="#f0f6fc" text-anchor="end" font-weight="600">sqlane</text>
+<path d="M158,72H159.0A1,1 0 0 1 160.0,73V89A1,1 0 0 1 159.0,90H158Z" fill="#3987e5"/>
+<text x="166.0" y="85" font-size="13" fill="#f0f6fc" font-weight="600">0.1 M/s</text>
+<text x="150" y="119" font-size="13" fill="#f0f6fc" text-anchor="end">Graphile Worker</text>
+<path d="M158,106H159.2A1.2257909202131159,1.2257909202131159 0 0 1 160.5,107.22579092021311V122.77420907978689A1.2257909202131159,1.2257909202131159 0 0 1 159.2,124H158Z" fill="#3987e5"/>
+<text x="166.5" y="119" font-size="13" fill="#f0f6fc">1.8 M/s</text>
+<text x="150" y="153" font-size="13" fill="#f0f6fc" text-anchor="end">River</text>
+<path d="M158,140H159.2A1.1830079790887416,1.1830079790887416 0 0 1 160.4,141.18300797908873V156.81699202091127A1.1830079790887416,1.1830079790887416 0 0 1 159.2,158H158Z" fill="#3987e5"/>
+<text x="166.4" y="153" font-size="13" fill="#f0f6fc">1.7 M/s</text>
+<text x="150" y="187" font-size="13" fill="#f0f6fc" text-anchor="end">pg-boss</text>
+<path d="M158,174H522.2A4,4 0 0 1 526.2,178V188A4,4 0 0 1 522.2,192H158Z" fill="#3987e5"/>
+<text x="532.2" y="187" font-size="13" fill="#f0f6fc">268 M/s</text>
+<text x="150" y="221" font-size="13" fill="#f0f6fc" text-anchor="end">Izi Queue</text>
+<path d="M158,208H172.1A4,4 0 0 1 176.1,212V222A4,4 0 0 1 172.1,226H158Z" fill="#3987e5"/>
+<text x="182.1" y="221" font-size="13" fill="#f0f6fc">13.2 M/s</text>
+<text x="150" y="255" font-size="13" fill="#f0f6fc" text-anchor="end">Boring Node Queue</text>
+<path d="M158,242H159.0A1,1 0 0 1 160.0,243V259A1,1 0 0 1 159.0,260H158Z" fill="#3987e5"/>
+<text x="166.0" y="255" font-size="13" fill="#f0f6fc">1.1 M/s</text>
+<text x="150" y="289" font-size="13" fill="#f0f6fc" text-anchor="end">BullMQ*</text>
+<path d="M158,276H159.0A1,1 0 0 1 160.0,277V293A1,1 0 0 1 159.0,294H158Z" fill="#3987e5"/>
+<text x="166.0" y="289" font-size="13" fill="#f0f6fc">0.9 M/s</text>
+<text x="150" y="323" font-size="13" fill="#f0f6fc" text-anchor="end">Sidequest*</text>
+<path d="M158,310H159.4A1.3891223854214523,1.3891223854214523 0 0 1 160.8,311.38912238542144V326.61087761457856A1.3891223854214523,1.3891223854214523 0 0 1 159.4,328H158Z" fill="#3987e5"/>
+<text x="166.8" y="323" font-size="13" fill="#f0f6fc">2.0 M/s</text>
 </svg>
