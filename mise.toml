@@ -7,6 +7,7 @@ betterleaks = "v1.10.0"
 typos = "1.52.0"
 actionlint = "1.7.12"
 zizmor = "1.32.0"
+ls-lint = "2.3.2"
 
 [env]
 _.path = ["node_modules/.bin"]

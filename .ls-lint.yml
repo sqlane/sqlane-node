@@ -1,0 +1,25 @@
+# File and folder names: snake_case. ls-lint walks the working tree, so untracked folders are ignored here too.
+ls:
+  .dir: snake_case
+  .*: snake_case
+
+ignore:
+  # Dot-folders: names set by tools (Changesets' random names, GitHub's ISSUE_TEMPLATE)
+  - .git
+  - .changeset
+  - .github
+  - .vscode
+  - .claude
+  # Upper-case by convention
+  - '**/README.md'
+  - CHANGELOG.md
+  - CONTRIBUTING.md
+  - SECURITY.md
+  - LICENSE
+  # Names set by package managers
+  - '**/pnpm-lock.yaml'
+  - '**/pnpm-workspace.yaml'
+  - '**/package-lock.json'
+  # Untracked: dependencies, and the Prisma clients that the tests generate
+  - '**/node_modules'
+  - test/prisma/*/generated

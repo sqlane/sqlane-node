@@ -42,6 +42,8 @@ steps {
         check_diff = null
         fix = null
     }
+    // File and folder names: snake_case, with the exceptions in .ls-lint.yml
+    ["ls_lint"] = Builtins.ls_lint
     ["check_merge_conflict"] = Builtins.check_merge_conflict
     ["trailing_whitespace"] = Builtins.trailing_whitespace
     ["newlines"] = Builtins.newlines

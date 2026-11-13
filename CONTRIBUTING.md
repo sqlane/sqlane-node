@@ -17,14 +17,17 @@ scripts/    CI scripts
 is needed because its drivers take `@mikro-orm/core` as a peer, and an npm alias in the root would give them core 7.
 `pnpm install` at the root also installs this folder, through `pnpm:devPreinstall`.
 
+File and folder names are snake_case. ls-lint checks them, with the exceptions in `.ls-lint.yml`: names that tools
+or conventions set, such as `README.md` and lockfiles.
+
 ## Setup
 
-You need [mise](https://mise.jdx.dev) and Docker to work on sqlane. mise installs the tools that `mise.toml` lists: Node.js, pnpm, hk, betterleaks, typos, actionlint and zizmor.
+You need [mise](https://mise.jdx.dev) and Docker to work on sqlane. mise installs the tools that `mise.toml` lists: Node.js, pnpm, hk, betterleaks, typos, actionlint, zizmor and ls-lint.
 
 ```sh
 mise install
 pnpm install
-hk install --global --mise   # Git hooks, also for GUI Git clients: lint, format, type check, secrets, typos, Conventional Commits
+hk install --global --mise   # Git hooks, also for GUI Git clients: lint, format, type check, secrets, typos, file names, Conventional Commits
 ```
 
 ## Commands
