@@ -60,16 +60,16 @@ hand. Record the output of each check with the change.
 Each check runs a scenario and reports what happened: **Yes**, **Partial** (it works with a workaround or a fixed
 setting, given in the note) or **No** (with the reason, or what happened instead).
 
-| Check                                       | Scenario                                                                                                                                                                                                                             |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Enqueue in the caller's transaction         | Two transactions each insert an order and enqueue a job; the first rolls back. Only the job of the committed order may run. A library without such an API enqueues on its own connection, and the job of the rolled-back order runs. |
-| Delayed job                                 | A job with a delay of 2 s must not start sooner.                                                                                                                                                                                     |
-| Retry after a configured backoff            | The first attempt throws; the second must start 2 s later.                                                                                                                                                                           |
-| Timeout aborts the handler                  | A job with a timeout of 1 s: its handler's abort signal must fire.                                                                                                                                                                   |
-| Job of a killed worker runs again           | A worker process takes a job and gets `SIGKILL`. Another worker must run the job again within 70 s, with the shortest recovery settings that the library allows (in the note).                                                       |
-| Exclusion by one resource, across job names | Jobs of two names; two share a resource. They must not overlap, while the others run in parallel.                                                                                                                                    |
-| Exclusion by several resources per job      | Each job has two resources: a job with `alice` and `bob` must not overlap one with `bob` and `carol`.                                                                                                                                |
-| Priority                                    | Three low and one high priority jobs wait for a worker with one slot: the high one must run first.                                                                                                                                   |
+| Check                               | Scenario                                                                                                                                                                                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Enqueue in the caller's transaction | Two transactions each insert an order and enqueue a job; the first rolls back. Only the job of the committed order may run. A library without such an API enqueues on its own connection, and the job of the rolled-back order runs. |
+| Delayed job                         | A job with a delay of 2 s must not start sooner.                                                                                                                                                                                     |
+| Retry after a configured backoff    | The first attempt throws; the second must start 2 s later.                                                                                                                                                                           |
+| Timeout aborts the handler          | A job with a timeout of 1 s: its handler's abort signal must fire.                                                                                                                                                                   |
+| Job of a killed worker runs again   | A worker process takes a job and gets `SIGKILL`. Another worker must run the job again within 70 s, with the shortest recovery settings that the library allows (in the note).                                                       |
+| Mutex key across job names          | Jobs of two names; two share a resource. They must not overlap, while the others run in parallel.                                                                                                                                    |
+| Multiple mutex keys per job         | Each job has two resources: a job with `alice` and `bob` must not overlap one with `bob` and `carol`.                                                                                                                                |
+| Priority                            | Three low and one high priority jobs wait for a worker with one slot: the high one must run first.                                                                                                                                   |
 
 ## Performance
 
@@ -130,7 +130,7 @@ job.
   statements. Redis (ports from 56450) and MySQL (ports from 53450): a server per run, whose process is the run's
   database, and no statements; on MySQL, the 2 firing runs only. The runs start together, after all their
   workers are ready. The whole set runs 3 times: a row of `results.json` has the median of each number, and each run in
-  `samples`. Instructions do not depend on the load of the machine; latencies do: see the limits in the document.
+  `samples`. Instructions do not depend on the load of the machine; latencies do: see [Limits](#limits).
 - **cron-idle.** 1 and 1000 schedules of a daily cron 12 hours from the start, and 1000 of a yearly one
   (`0 0 1 1 *`), 1 worker, no jobs. A 10 s warm-up, then a 120 s window: twice the longest check (sqlane's longest
   timer sleep and Graphile Worker's minute timer, 60 s; pg-boss's cron pass, 30 s; River's election, 5 s), so each
@@ -148,3 +148,43 @@ job.
   those of `cronHistory`), `cronHistory` (the earlier runs of the day) and `sidequestUniquePerMinute` in
   `results.json` were assembled by hand: `run.mjs` does not write them, and a new `--only cron` run drops `pooled`
   (`charts.mjs` then uses the single run).
+
+## Limits
+
+What the documents leave out: how far the numbers can be trusted, and the runs behind a few of them.
+
+- **One machine, one run.** Apple M1 Pro, 15 s windows: differences of about 10% are noise. The setups don't have
+  the same capacity: pg-boss has its slots per queue, the others 8 in all.
+- **The two phases agree, except one lane and the drains.** At steady load, phase B's instructions per job were within
+  3% of phase A's on 8 of the 9 lanes, from −2.9% (sqlane) to +0.7% (Boring Node Queue); BullMQ on PostgreSQL used 25%
+  more in phase B, for a cause not established. Phase A also agrees within 4% with the runs of 11 November 2026, one
+  library at a time, with sqlane 2.0.1 (sqlane 4.6 M, pg-boss 27.0 M, Graphile Worker 10.9 M, River 14.6 M). The
+  drains don't agree: with the other lanes draining at once, River used 3.7× its instructions alone, and Graphile
+  Worker 0.7×. So the drains come from phase B, and the MySQL and MariaDB lanes, which phase B doesn't run, have none.
+  No MySQL lane ran alone.
+- **What the database counts.** On PostgreSQL, the processes of its connections only, not autovacuum or the
+  checkpointer; on MySQL and MariaDB, the whole server, so idle numbers there are noisy. CPU time depends on the core
+  and the clock on Apple Silicon, so it comes from phase B, on an otherwise idle machine.
+- **macOS commits.** A commit took about 0.2 ms on MySQL, and 5 ms on MariaDB with its binary log synced
+  (`sync_binlog=1`, as in MySQL 8.4). On Linux, both wait for the disk.
+- **Boring Node Queue 0.9.1**, not 0.10.0: 0.10.0 came out on 12 November 2026, less than the 7 days that the
+  guardrails require.
+- **Runs with defaults.** `defaults` in `results.json` holds River (11 November 2026) and pg-boss (12 November 2026)
+  with their own defaults instead of the settings of `libs/`; the performance document cites them.
+- **Schedule lags aren't in the documents.** They were measured with all 53 runs firing at once on 8 cores, which
+  inflates them: in an earlier run of the 4 PostgreSQL libraries, the lags were 4–6× lower (one worker: sqlane 0.3 s,
+  Graphile Worker 0.8 s, River 0.7 s; `cronHistory`). `results.json` keeps them.
+- **Schedule instructions under both loads** (that earlier run and this one) differed by at most 6%, except pg-boss
+  with 3 workers. Sidequest's 7 runs were rerun alone the same day, in 9.1 minutes, after its adapter changed to
+  schedule in worker 0.
+- **Background work in the firing window.** With 1 idle schedule and one worker, it is about 0.07 M per job for
+  sqlane, 0.09 M for BullMQ on PostgreSQL, 0.14 M on Redis, 0.18 M for Graphile Worker, 0.39 M for Boring Node Queue,
+  0.44 M for River, 0.49 M for Sidequest, 0.80 M for pg-boss and 1.10 M for Izi Queue.
+- **The slot of a scheduled job.** sqlane and River give the handler the slot (`scheduledAt`), Graphile Worker the
+  payload's `_cron.ts`, BullMQ `prevMillis`, Izi Queue `meta.cronMinute`. Sidequest's slot is the minute of the job's
+  insert, Boring Node Queue's the minute a worker took it: right while the lag stays under a minute (its p99 was 20 s
+  at most).
+- **One job per slot.** For sqlane it is enforced, not measured: the job id `<name>:schedule:<key>:<slot>` is the
+  primary key. The runs cover a steady state only, not a leader change, a crash, a missed slot or clock skew.
+- **Sidequest with `unique({ period: 'minute' })`** in every worker added 1000 of 2000 slots
+  (`sidequestUniquePerMinute`): `schedule()` computes the unique key once, at registration.
