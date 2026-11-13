@@ -37,19 +37,20 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 
 ## Terms
 
-| Term               | Meaning                                                                                     |
-| ------------------ | ------------------------------------------------------------------------------------------- |
-| **Job**            | One row: a payload, a state, attempts, a lease.                                             |
-| **Job name**       | The kind of a job, e.g. `build_report`. It is also the "queue": there is no separate queue. |
-| **Job definition** | The name and the options of a job name. Producers and workers import it.                    |
-| **Handler**        | The function that runs a job. Only workers register it.                                     |
-| **Lane**           | A per-process concurrency limit shared by handlers. Costs no connection.                    |
-| **Mutex key**      | A string (`order:42`). Jobs with a common key run one at a time, in the cluster.            |
-| **Failure job**    | A job that sqlane adds when another job fails for good.                                     |
-| **Adapter**        | Wraps a driver: the dialect, the queue's pool, and the raw connections given to `enqueue`.  |
-| **Hint**           | A message "jobs of this name are ready" between processes. Only an optimization.            |
-| **Schedule**       | A cron in a time zone, or a fixed interval, that adds a job at each of its times.           |
-| **Slot**           | One time of a schedule. It adds at most one job.                                            |
+| Term                  | Meaning                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------- |
+| **Job**               | One row: a payload, a state, attempts, a lease.                                             |
+| **Job name**          | The kind of a job, e.g. `build_report`. It is also the "queue": there is no separate queue. |
+| **Job definition**    | The name and the options of a job name. Producers and workers import it.                    |
+| **Handler**           | The function that runs a job. Only workers register it.                                     |
+| **Concurrency group** | A per-process cap shared by the handlers of several names. Costs no connection.             |
+| **Fair share weight** | A name's share of the free slots against the other due names.                               |
+| **Mutex key**         | A string (`order:42`). Jobs with a common key run one at a time, in the cluster.            |
+| **Failure job**       | A job that sqlane adds when another job fails for good.                                     |
+| **Adapter**           | Wraps a driver: the dialect, the queue's pool, and the raw connections given to `enqueue`.  |
+| **Hint**              | A message "jobs of this name are ready" between processes. Only an optimization.            |
+| **Schedule**          | A cron in a time zone, or a fixed interval, that adds a job at each of its times.           |
+| **Slot**              | One time of a schedule. It adds at most one job.                                            |
 
 ## API
 
@@ -73,8 +74,10 @@ reasons behind the shape of the API.
   Instead, an adapter checks the ORM it gets and throws a `ConfigError` with the supported versions. CI tests each
   supported major version. An ORM adapter runs sqlane's SQL on the driver connection under the ORM, or through its
   raw-SQL API, so there is one SQL per dialect. [Adapters](adapters.md) describes each one.
-- **Worker settings in worker code.** `concurrency` and `lane` are `handle()` options, not definition fields, because
-  they are per process.
+- **Worker settings in worker code.** `maxConcurrency`, `concurrencyGroup` and `fairShareWeight` are `handle()`
+  options, not definition fields, because they are per process.
+- **Groups are objects.** `defineConcurrencyGroup()` returns a frozen object, which `handle()` takes. A typo in a
+  string cannot create a new group, and producers never import them.
 - **Handlers own their transactions.** sqlane does not wrap a handler in a transaction or any other app wrapper. It
   stores no result.
 - **AbortSignal** for timeouts and close, instead of a hidden race. The lease is renewed while the handler runs, so a
@@ -223,12 +226,17 @@ many as the free slots allow, and starts their handlers. The pseudo-code below s
 
 ```text
 loop while started
-  names = registered job names whose lane has a free slot (none if `concurrency` handlers run)
+  names = registered job names with a free slot (under the caps of the name, its group and the instance)
   if no names: wait for a wake
   probe: the next run_at of each job name that has pending jobs (one statement)
   if nothing due: wait until the next run_at (at most the poll interval) or a wake
-  claim the oldest due jobs that pass the key check (not held, FIFO per key), at most the free slots
-  of each lane and of the process; with many due names, 4 names per free slot, the next ones at the next turn
+  turn = the due names, the lowest running / weight first, at most 4 per free slot and 4 per free slot of their
+    group; the others at the next turn
+  names with mutex keys in the turn: their candidates (heads of free keys, FIFO per key), once per turn;
+    a plan with fill() leaves them their share of the free slots, of the instance and of their groups
+  plain names: lock the oldest due jobs of each, up to min(its room, its group's room, the free slots), and take
+    them by share (fill(): the lowest running / weight first, ties round-robin)
+  names with mutex keys: claim their candidates whose keys are free, by share
   claimed: start the handlers, loop at once
   none (other processes took them): back off 10–200 ms, with ±50 % jitter
   none (all due jobs wait for keys): wait for a key-release wake or the poll interval
@@ -244,11 +252,26 @@ pending rows.
 - PostgreSQL has no loose index scan. Instead, a recursive CTE skips from one pending name to the next on the partial
   index. It makes two index lookups per pending name.
 
-**A backlog over many names takes turns.** A claim locks up to the free slots of each name that it requests, so a
-claim of all 1000 due names would lock thousands of rows to start a few jobs. A claim therefore requests at most 4 names
-per free process slot, and the next claim the next names. A claim that fills the free slots does not read the next due
-times of its names: they stay in the backlog, and the next turn claims them again. So the oldest-first order holds
-within the names of a turn, and the turns go round all due names.
+**Free slots are shared by weight.** A free slot goes to the eligible due name with the lowest
+`running / fairShareWeight`, under its caps; ties go round-robin from a pointer that starts at a random name in each
+process, so a fleet does not send every process to the same names. The chooser, `fill()` in `fair_share.js`, is a heap
+with exact integer comparisons (`a.running × b.weight` against `b.running × a.weight`). Each event changes one count by
+one: a free slot raises the lowest share by `1 / weight`, and a finished job lowers its own name's count. So after each
+dispatch, for two names with due jobs and room, `running_a / w_a − running_b / w_b ≤ 1 / w_a`: the running counts stay
+within one slot of the water-filling target at every moment, with no state but the counts and the pointer. The odd
+remainder slot goes by ties, not by time, so it favors long jobs (see the API reference).
+
+**Which names a claim requests.** A claim locks up to the free slots of each name that it requests, so a claim of all
+1000 due names would lock thousands of rows to start a few jobs. A claim requests at most 4 names per free slot: the
+names furthest under their share first (`rankNames()`), and at most 4 per free slot of their group: a full group
+takes no more names, so the names after it get their turn. The names that the rule serves are always a prefix of that
+order, and the other names are a margin for names whose jobs other processes hold. A claim that fills the free slots does not read the
+next due times of its names: they stay in the backlog, and the next turn claims them again.
+
+**The names with mutex keys** find their candidates once per turn, before the plain claim. A plan over all the names of
+the turn gives them their share of the free slots, on their candidate counts, and the plain claim leaves those slots
+free: in the instance, and in their groups (the plain claim gets the group rooms minus the reserved slots, and a
+`maxJobs` within them). If other processes take the candidates first, the reserved slots stay free for one turn, which comes at once.
 
 The process ignores the names that it does not handle. An idle name has no pending row, so it costs nothing. With 1000
 names and pending jobs in 10 of them, the probe reads 10 index entries. A probe with one query per registered name (a
@@ -258,7 +281,8 @@ These events wake the dispatcher:
 
 - An enqueue in this process, or a hint from another process. See
   [Wake-up after the commit](#wake-up-after-the-commit).
-- A finished job, which frees a slot, or a released mutex key.
+- A finished job, which frees a slot, or a released mutex key. A job that finishes in a full group wakes every name
+  of the group, not only its own: the slot it frees can go to any of them.
 - The poll interval (5 s by default). It is the fallback, and it also finds jobs whose delay has ended.
 
 ### Wake-up after the commit
@@ -336,11 +360,25 @@ A lost hint delays a job until the next poll. It never loses a job.
 due jobs are found, claimed and read at once, without candidates.
 
 - PostgreSQL: one statement, a transaction of its own. A `LATERAL` per due name locks its oldest due jobs
-  (`FOR UPDATE SKIP LOCKED`, at most the free slots of its lane); window functions keep the free slots of each lane
-  and of the process; an `UPDATE … RETURNING` in a CTE claims them, joined with their payloads.
+  (`FOR UPDATE SKIP LOCKED`, at most `min(room, group room, free)`). The k-th locked row of a name gets the share
+  `(running + k − 1) / weight`, its share just before it takes the row. Ordering all rows by `(share, tie)` is the
+  greedy of `fill()`, row by row: a `ROW_NUMBER` per group keeps the group caps, and `LIMIT` the instance's. The shares
+  are `float8`: equal rationals give the same double, and different ones (weights ≤ 1000) differ far above its
+  precision. An integration test checks the choice against `fill()` on random claims. The statement also
+  returns `unpicked`, the names with a locked row that the claim did not take. The runner replays the choice with
+  `replayTie()` (`fill()` over the claimed rows, plus one row of each unpicked name, under the counts and group rooms
+  that the claim was given) and moves the tie pointer as `fill()` would. The replay leaves out the names with no
+  claimed row and a share above every claimed share: they never took a slot, nor tied. A property test checks the
+  replay against `fill()` over all the locked rows.
+  An `UPDATE … RETURNING` in a CTE claims the rows, joined with their payloads.
 - MySQL: one short transaction. One `UNION ALL` locks the oldest due jobs of each name with their payloads
-  (`FOR UPDATE OF j SKIP LOCKED`); the ones that fit the free slots are claimed by one `UPDATE`. The others are unlocked
-  at the commit.
+  (`FOR UPDATE OF j SKIP LOCKED`); `fill()` chooses among them in JS, and one `UPDATE` claims them. The others are
+  unlocked at the commit. The payloads are not locked: they are a consistent read, from the read view of the
+  statement's first read, while the job rows are the latest committed ones. A job whose enqueue committed during the
+  statement is locked without its payload. Before the `UPDATE`, one more statement of the same READ COMMITTED
+  transaction, which gets a new read view, reads the payloads of the chosen jobs that came back without one. Only then:
+  the usual claim keeps its statements. A test of each MySQL-family adapter checks that the queue transaction is READ
+  COMMITTED.
 
 So one turn of a process makes 2 round trips to the database on PostgreSQL: the probe and the claim statement. On
 MySQL with the mysql2 adapter, it makes 6 round trips: the probe, and 5 for the claim transaction (the isolation level, `BEGIN`, the locking
@@ -404,10 +442,13 @@ A mutex key is a string, such as `order:42`. Two jobs that share a key do not ru
   them. The candidates of a name are its oldest 500 due jobs. Processes that handle different names see different
   jobs, so the FIFO across names is approximate.
 - **Wake-ups.** A completion with keys sends `#<key>` per key (NOTIFY, or the hint). Each process then looks up the
-  oldest due job of each released key and claims for its name, instead of probing all names.
+  oldest due job of each released key and claims for its name, instead of probing all names. The woken name competes
+  for the free slots by its share, like any other name: it is not preferred. If it loses the slot, its job keeps its
+  place in the FIFO of the key, and the key stays free until the job runs.
+- **Fair share.** A name whose due jobs all wait for keys has no candidates: it takes no slot and banks nothing.
 - **Timeout.** JavaScript cannot stop a handler. On a timeout, sqlane aborts the `signal` with a `JobTimeoutError` and
-  emits a `timed_out` event. The job stays `running`, and its lease is renewed. It keeps its keys, its lane slot and its
-  process slot until the handler settles, but for at most one more lease. During this time, `getStats()` counts it as
+  emits a `timed_out` event. The job stays `running`, and its lease is renewed. It keeps its keys and its slot until the
+  handler settles, but for at most one more lease. During this time, `getStats()` counts it as
   `stuck`. Then the attempt fails with the `JobTimeoutError`. The job is retried after its backoff, or it fails for
   good, and its keys are freed. This applies to all jobs, with or without keys.
 - **Linger.** The keys outlive their job row only in two cases, as rows with a `held_until` time. The first case is a
@@ -546,8 +587,8 @@ jobs whose retention has ended. It deletes them in batches of 1000 with SKIP LOC
 - `enqueue` uses the caller's connection or transaction.
 - All other queue work uses the adapter's pool, which should be small. The queue's transactions on this pool use
   `READ COMMITTED`. `migrate()` also runs on a connection of this pool.
-- Handlers use whatever connections they open. `concurrency` limits the running handlers of a process, so they cannot
-  exhaust the app's pool.
+- Handlers use whatever connections they open. `maxConcurrency` limits the running handlers of a process, so they
+  cannot exhaust the app's pool.
 
 ### MariaDB
 
@@ -557,7 +598,9 @@ copies of the MySQL files, changed where MariaDB differs. A change of the MySQL 
 
 - **Upserts.** MariaDB has no row alias (`INSERT … AS new`), so the upserts read the new values with `VALUES(column)`.
 - **Locks of a claim.** MariaDB has no `FOR UPDATE OF`. A claim and the final writes read the payload with a subquery,
-  not a join, so `FOR UPDATE` locks the job row only, as on MySQL.
+  not a join, so `FOR UPDATE` locks the job row only, as on MySQL. The payload that the claim statement did not see is
+  read again, as on MySQL. On 11.8 (`innodb_snapshot_isolation=ON`), the same race can fail the claim with
+  `ER_CHECKREAD` (errno 1020); it is a transient error, retried like a deadlock.
 - **Writes by a list of ids.** On a small table, MariaDB scans the whole table for `WHERE id IN (…)` and waits for
   the rows that other claims hold: concurrent claims then deadlock. These writes force the primary key (or the index
   of the column) with `FORCE INDEX`. A `DELETE` takes index hints only in its multi-table form, so it uses that form.
@@ -629,7 +672,9 @@ The source files in `src/` have snake_case names. These are the main ones:
 
 - `create_sqlane.js` is the facade. It creates the instance and connects the parts below.
 - `define_job.js` defines jobs.
-- `registry.js` keeps the handlers and their lanes.
+- `registry.js` keeps the handlers, their caps, weights and concurrency groups.
+- `fair_share.js` shares the free slots between the names: `fill()`, `rankNames()`, `chooseRows()`, and `replayTie()` for the choices made in SQL.
+- `define_concurrency_group.js` defines the concurrency groups.
 - `runner.js` runs the dispatcher loop. It also renews the leases, recovers stalled jobs, runs the cleanup, and
   implements `close()` and `drain()`.
 - `enqueue.js` implements `enqueue` and `enqueueMany`.
