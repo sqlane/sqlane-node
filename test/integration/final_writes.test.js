@@ -82,7 +82,7 @@ afterAll(async () => {
 });
 
 /**
- * @returns {Promise<{ p: string, sqlane: import('../../src/types.js').Sqlane<any, never>, store: Store }>}
+ * @returns {Promise<{ p: string, sqlane: import('../../src/types.js').Sqlane<any>, store: Store }>}
  */
 async function freshTables() {
     prefixCount++;
@@ -97,7 +97,7 @@ async function freshTables() {
 
 /**
  * Enqueues a due job with mutex keys and claims it.
- * @param {{ sqlane: import('../../src/types.js').Sqlane<any, never>, store: Store }} tables
+ * @param {{ sqlane: import('../../src/types.js').Sqlane<any>, store: Store }} tables
  * @param {Record<string, unknown>} [options] Enqueue options.
  * @param {number} [leaseMs]
  * @returns {Promise<ClaimedJob>}

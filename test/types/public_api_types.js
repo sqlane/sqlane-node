@@ -2,7 +2,7 @@
 import mysql from 'mysql2/promise';
 import { Pool } from 'pg';
 import { expectTypeOf } from 'vitest';
-import { createSqlane, defineJob, getMigrations, RetryJobError } from '@sqlane/core';
+import { createSqlane, defineConcurrencyGroup, defineJob, getMigrations, RetryJobError } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 import { pgAdapter } from '@sqlane/core/adapter-pg';
 
@@ -12,7 +12,8 @@ export async function publicApiTypes() {
     const connection = await mysqlPool.getConnection();
     const pgPool = new Pool();
     const job = defineJob({ name: 'build_report', mutexKeys: payload => [`report:${payload.reportId}`], timeout: '1m' });
-    const sqlane = createSqlane({ adapter: mysql2Adapter(mysqlPool), lanes: { heavy: { concurrency: 2 } } });
+    const sqlane = createSqlane({ adapter: mysql2Adapter(mysqlPool), maxConcurrency: 10 });
+    const heavy = defineConcurrencyGroup({ name: 'heavy', maxConcurrency: 2 });
 
     // enqueue: the result
     expectTypeOf(await sqlane.enqueue(connection, job, { reportId: 'r1' }))
@@ -69,16 +70,28 @@ export async function publicApiTypes() {
     // @ts-expect-error jobId is a string
     await sqlane.enqueue(connection, job, {}, { jobId: 42 });
 
-    // handle: lanes
+    // handle: caps, concurrency groups, weights
     sqlane.handle(job, () => {});
-    sqlane.handle(job, () => {}, { lane: 'heavy', timeout: '5m' });
-    sqlane.handle('build_report', async () => {}, { concurrency: 2 });
-    // @ts-expect-error an unknown lane
-    sqlane.handle(job, () => {}, { lane: 'light' });
-    // @ts-expect-error a lane or a concurrency, not both
-    sqlane.handle(job, () => {}, { lane: 'heavy', concurrency: 2 });
-    // @ts-expect-error no lanes in this instance
-    pgSqlane.handle(job, () => {}, { lane: 'heavy' });
+    sqlane.handle(job, () => {}, { concurrencyGroup: heavy, maxConcurrency: 1, fairShareWeight: 2, timeout: '5m' });
+    sqlane.handle('build_report', async () => {}, { maxConcurrency: 2 });
+    // @ts-expect-error lane was removed in 5.0
+    sqlane.handle(job, () => {}, { lane: 'heavy' });
+    // @ts-expect-error concurrency is now maxConcurrency
+    sqlane.handle(job, () => {}, { concurrency: 2 });
+    // @ts-expect-error a concurrency group is an object from defineConcurrencyGroup()
+    sqlane.handle(job, () => {}, { concurrencyGroup: 'heavy' });
+    // @ts-expect-error lanes were removed in 5.0
+    createSqlane({ adapter: mysql2Adapter(mysqlPool), lanes: { heavy: { concurrency: 2 } } });
+    // @ts-expect-error concurrency is now maxConcurrency
+    createSqlane({ adapter: mysql2Adapter(mysqlPool), concurrency: 2 });
+    expectTypeOf(heavy.maxConcurrency).toBeNumber();
+
+    /** @type {import('@sqlane/core').HandleOptions} */
+    const handleOptions = { maxConcurrency: 1, fairShareWeight: 3 };
+    /** @type {import('@sqlane/core').Sqlane<import('@sqlane/core/adapter-mysql2').Mysql2Connection>} */
+    const typedSqlane = sqlane;
+
+    typedSqlane.handle('typed', () => {}, handleOptions);
 
     // handle: the context
     sqlane.handle(job, ({ payload: jobPayload, job: info, signal }) => {

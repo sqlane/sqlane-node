@@ -1,6 +1,5 @@
 export type ClaimedJob = import('./store/store.js').ClaimedJob;
 export type HandlerEntry = import('./registry.js').HandlerEntry;
-export type Lane = import('./registry.js').Lane;
 export type Timings = {
     leaseMs: number;
     renewIntervalMs: number;
@@ -18,7 +17,6 @@ export type Timings = {
 };
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
-/** @typedef {import('./registry.js').Lane} Lane */
 /**
  * @typedef {object} Timings
  * @property {number} leaseMs
@@ -60,7 +58,10 @@ export type RunningJob = {
 export type RunnerParams = {
     store: import('./store/store.js').Store;
     registry: import('./registry.js').Registry;
-    concurrency: number;
+    /**
+     * The instance's cap.
+     */
+    maxConcurrency: number;
     defaults: import('./defaults.js').ResolvedDefaults;
     cleanup: boolean;
     logger: import('./types.js').Logger | undefined;
@@ -75,6 +76,10 @@ export type RunnerParams = {
      * For tests.
      */
     timings?: Partial<Timings>;
+    /**
+     * For tests: the random start of the tie pointer.
+     */
+    random?: () => number;
 };
 export type Runner = {
     start: () => Promise<void>;
@@ -108,4 +113,4 @@ export type Runner = {
  * @param {RunnerParams} params
  * @returns {Runner}
  */
-export declare function createRunner({ store, registry, concurrency, defaults, cleanup, logger, onEvent, hintChannel, hintsAfterCommit, timings, }: RunnerParams): Runner;
+export declare function createRunner({ store, registry, maxConcurrency, defaults, cleanup, logger, onEvent, hintChannel, hintsAfterCommit, timings, random, }: RunnerParams): Runner;

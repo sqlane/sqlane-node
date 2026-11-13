@@ -37,7 +37,7 @@ const buildReport = defineJob({
 let database;
 /** @type {import('./helpers/test_adapter.js').TestAdapter} */
 let testAdapter;
-/** @type {import('../../src/types.js').Sqlane<any, never>} */
+/** @type {import('../../src/types.js').Sqlane<any>} */
 let sqlane;
 
 beforeAll(async () => {

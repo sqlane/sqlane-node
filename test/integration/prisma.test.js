@@ -10,7 +10,7 @@ import { createSqlane, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/adapters/prisma.js').PrismaClientLike} PrismaClientLike */
-/** @typedef {import('../../src/types.js').Sqlane<PrismaClientLike, never>} Sqlane */
+/** @typedef {import('../../src/types.js').Sqlane<PrismaClientLike>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
 const dialect = inject('databaseDialect');
@@ -72,7 +72,7 @@ afterAll(async () => {
 
 /**
  * A sqlane instance over Prisma, on tables of its own, migrated through Prisma.
- * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
+ * @param {Partial<import('../../src/types.js').SqlaneOptions<any>>} [options]
  * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
  */
 async function freshSqlane(options = {}) {

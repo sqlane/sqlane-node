@@ -75,7 +75,7 @@ export const adapter = {
                 ? mysql2Adapter(/** @type {import('mysql2/promise').Pool} */ (pool), { dialect })
                 : pgAdapter(/** @type {Pool} */ (pool), { notify: true })),
             ...mysql && { hint: udpHint(Number(new URL(url).port) - 10_000) },
-            concurrency,
+            maxConcurrency: concurrency,
             pollInterval: pollIntervalMs,
             // A lease of 4 minutes: no public option shortens it
             ...stall && { timings: { leaseMs: 3000, renewIntervalMs: 1000, recoveryIntervalMs: 1000 } },

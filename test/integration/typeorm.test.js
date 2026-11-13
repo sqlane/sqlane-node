@@ -8,7 +8,7 @@ import { typeOrmAdapter } from '../../src/adapters/typeorm.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
 
-/** @typedef {import('../../src/types.js').Sqlane<any, never>} Sqlane */
+/** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
@@ -97,7 +97,7 @@ describe.each([
 
     /**
      * A sqlane instance over TypeORM, on tables of its own, migrated.
-     * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
+     * @param {Partial<import('../../src/types.js').SqlaneOptions<any>>} [options]
      * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
      */
     async function freshSqlane(options = {}) {

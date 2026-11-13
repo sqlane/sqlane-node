@@ -1,6 +1,7 @@
-// Scenarios: a worker with lanes and timeouts; retry and failure job; mutex keys; graceful shutdown.
+// Scenarios: a worker with concurrency groups, caps, weights and timeouts; retry and failure job; mutex keys; graceful
+// shutdown.
 import { FatalJobError, RetryJobError } from '@sqlane/core';
-import { buildReport, reportFailed, sendEmail, syncOrder } from './jobs.js';
+import { buildReport, heavy, reportFailed, sendEmail, syncOrder } from './jobs.js';
 import { sqlane } from './sqlane.js';
 
 sqlane.handle(buildReport, async ({ payload, job, signal }) => {
@@ -15,7 +16,7 @@ sqlane.handle(buildReport, async ({ payload, job, signal }) => {
     }
 
     void job.attempt;
-}, { lane: 'heavy', timeout: '5m' });
+}, { concurrencyGroup: heavy, timeout: '5m' });
 
 sqlane.handle(reportFailed, ({ payload }) => {
     /** @type {import('@sqlane/core').FailedJobPayload} */
@@ -27,11 +28,11 @@ sqlane.handle(reportFailed, ({ payload }) => {
 
 sqlane.handle(syncOrder, async ({ payload, signal }) => {
     await fetch(`https://erp.example.com/orders/${payload.orderId}`, { method: 'PUT', signal });
-}, { concurrency: 4 }); // a private lane
+}, { maxConcurrency: 4 }); // at most 4 at once in this process
 
 sqlane.handle(sendEmail, async ({ payload }) => {
     await fetch('https://mail.example.com/send', { method: 'POST', body: JSON.stringify(payload) });
-});
+}, { fairShareWeight: 3 }); // 3 times the share of the free slots of a name of weight 1
 
 /**
  * Starts the worker; closes it on SIGTERM.

@@ -9,7 +9,7 @@ import { createSqlane, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/adapters/sequelize.js').SequelizeConnection} SequelizeConnection */
-/** @typedef {import('../../src/types.js').Sqlane<SequelizeConnection, never>} Sqlane */
+/** @typedef {import('../../src/types.js').Sqlane<SequelizeConnection>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
 /**
@@ -80,7 +80,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
 
     /**
      * A sqlane instance over Sequelize, on tables of its own, migrated.
-     * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
+     * @param {Partial<import('../../src/types.js').SqlaneOptions<any>>} [options]
      * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
      */
     async function freshSqlane(options = {}) {

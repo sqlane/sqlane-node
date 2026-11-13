@@ -18,13 +18,13 @@ import {
     ShutdownError,
 } from './errors.js';
 import { ANY_NAME, KEY_PREFIX } from './hint_channel.js';
+import { chooseRows, fill, rankNames, replayTie, shareNamesOfRequests } from './fair_share.js';
 import { buildNewJob } from './new_job.js';
 import { scheduledAtOf } from './schedule.js';
 import { isTransientDbError } from './transient_error.js';
 
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
-/** @typedef {import('./registry.js').Lane} Lane */
 
 /**
  * @typedef {object} Timings
@@ -52,8 +52,9 @@ export const DEFAULT_TIMINGS = {
 const REPROBE_DELAYS_MS = [20, 50, 100, 200, 500, 1000, 2000];
 const RELEASE_EXTRA_DELAY_MS = 2000;
 /**
- * A claim of names without mutex keys requests at most this many names per free process slot: a claim locks up to the
- * free slots of each name it requests, and reads their next due times. More due names take turns.
+ * A claim requests at most this many names per free slot, the furthest under their share first: a claim locks up to
+ * the free slots of each name it requests, and the next names take the slots of a name whose due jobs are held
+ * elsewhere. More due names wait for the next turns.
  */
 const CLAIM_NAMES_PER_SLOT = 4;
 const STALLED = { name: 'StalledError', message: 'The lease of the job ended: its process stopped or blocked' };
@@ -81,7 +82,7 @@ const MAX_COMPLETE_BATCH = 100;
  * @typedef {object} RunnerParams
  * @property {import('./store/store.js').Store} store
  * @property {import('./registry.js').Registry} registry
- * @property {number} concurrency
+ * @property {number} maxConcurrency The instance's cap.
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {boolean} cleanup
  * @property {import('./types.js').Logger | undefined} logger
@@ -90,6 +91,7 @@ const MAX_COMPLETE_BATCH = 100;
  * @property {boolean} hintsAfterCommit The hints come after the commit of their enqueue (PostgreSQL NOTIFY): they wake
  *     at once, with no re-probes.
  * @property {Partial<Timings>} [timings] For tests.
+ * @property {() => number} [random] For tests: the random start of the tie pointer.
  */
 
 /**
@@ -155,13 +157,59 @@ function contextOf(job) {
 }
 
 /**
+ * @param {HandlerEntry} entry
+ * @returns {number} Its maxConcurrency minus its running jobs; Infinity without one.
+ */
+function nameRoom(entry) {
+    return entry.maxConcurrency === null ? Infinity : entry.maxConcurrency - entry.running;
+}
+
+/**
+ * @param {HandlerEntry} entry
+ * @returns {number} The room of its concurrency group; Infinity without one.
+ */
+function groupRoom(entry) {
+    return entry.group ? entry.group.group.maxConcurrency - entry.group.running : Infinity;
+}
+
+/**
+ * The names of a choice, with their counts now. The names of one group share one room object.
+ * @param {HandlerEntry[]} entries
+ * @returns {import('./fair_share.js').ShareName[]}
+ */
+function shareNamesOf(entries) {
+    /** @type {Map<import('./registry.js').GroupState, { room: number }>} */
+    const rooms = new Map();
+
+    return entries.map((entry) => {
+        /** @type {{ room: number } | null} */
+        let group = null;
+
+        if (entry.group) {
+            group = rooms.get(entry.group) ?? { room: Math.max(0, groupRoom(entry)) };
+            rooms.set(entry.group, group);
+        }
+
+        return {
+            name: entry.name,
+            index: entry.index,
+            weight: entry.weight,
+            running: entry.running,
+            room: Math.max(0, nameRoom(entry)),
+            group,
+            available: Infinity,
+        };
+    });
+}
+
+/**
  * @param {RunnerParams} params
  * @returns {Runner}
  */
 export function createRunner({
     store,
     registry,
-    concurrency,
+    maxConcurrency,
     defaults,
     cleanup,
     logger,
@@ -169,6 +217,7 @@ export function createRunner({
     hintChannel,
     hintsAfterCommit,
     timings = {},
+    random = Math.random,
 }) {
     const t = { ...DEFAULT_TIMINGS, ...timings };
     /** How long a renewal of the leases is waited for: a later one counts as failed */
@@ -219,8 +268,10 @@ export function createRunner({
     /** @type {{ timer: NodeJS.Timeout, at: number } | null} The next re-probe */
     let reprobe = null;
     let contentionDelayMs = 0;
-    /** Where the next turn of due names starts, when they are more than a claim requests */
-    let claimTurn = 0;
+    /** The tie pointer: equal shares go round-robin from it. Random at the start: a fleet breaks ties differently */
+    let tiePointer = 0;
+    /** The handled names, counted at start() or drain(): the span of the tie order */
+    let handledCount = 1;
     /** The last claim left due names out: the next turn runs at once, for them */
     let namesLeftOut = false;
     let claimsInFlight = 0;
@@ -440,53 +491,80 @@ export function createRunner({
 
     /** @returns {number} */
     function freeProcessSlots() {
-        return concurrency - running.size;
+        return maxConcurrency - running.size;
     }
 
     /**
-     * @param {Lane} lane
-     * @returns {number}
+     * @param {HandlerEntry} entry
+     * @returns {number} The jobs of the name that can start now: under its cap, its group's and the instance's.
      */
-    function freeSlots(lane) {
-        return Math.max(0, Math.min(lane.concurrency - lane.running, freeProcessSlots()));
+    function freeSlots(entry) {
+        return Math.max(0, Math.min(nameRoom(entry), groupRoom(entry), freeProcessSlots()));
+    }
+
+    /** @returns {number} The handled names: the span of the tie order. Fixed from start() or drain(). */
+    function tieSpan() {
+        return handledCount;
     }
 
     /**
-     * Takes the locked jobs that fit the free slots and whose keys are free, oldest first. A passed-over job keeps its
-     * keys from the newer ones.
-     * @param {ClaimedJob[]} locked
+     * After a choice: equal shares go next to the name after the last one that won a tie.
+     * @param {number | null} lastTieWinner
+     */
+    function movePointer(lastTieWinner) {
+        if (lastTieWinner !== null) {
+            tiePointer = (lastTieWinner + 1) % tieSpan();
+        }
+    }
+
+    /**
+     * @param {string[]} names
+     * @returns {HandlerEntry[]} Their entries.
+     */
+    function entriesOf(names) {
+        /** @type {HandlerEntry[]} */
+        const entries = [];
+
+        for (const name of names) {
+            const entry = registry.getEntry(name);
+
+            if (entry) {
+                entries.push(entry);
+            }
+        }
+
+        return entries;
+    }
+
+    /**
+     * Takes the locked jobs of names with mutex keys: those whose keys are free, by the share of their names, FIFO
+     * within a name. A passed-over job keeps its keys from the newer ones.
+     * @param {ClaimedJob[]} locked In the order of run_at.
      * @param {Set<string>} busyKeys
      * @returns {ClaimedJob[]}
      */
     function pick(locked, busyKeys) {
-        /** @type {Map<Lane, number>} */
-        const pickedByLane = new Map();
         const seenKeys = new Set(busyKeys);
-        let picked = 0;
-
-        return locked.filter((job) => {
-            const entry = registry.getEntry(job.name);
+        const startable = locked.filter((job) => {
             const keysFree = job.mutexKeys.every(key => !seenKeys.has(key));
 
             for (const key of job.mutexKeys) {
                 seenKeys.add(key);
             }
 
-            if (!entry || !keysFree) {
-                return false;
-            }
-
-            const laneCount = pickedByLane.get(entry.lane) ?? 0;
-
-            if (laneCount >= freeSlots(entry.lane) || picked >= freeProcessSlots()) {
-                return false;
-            }
-
-            pickedByLane.set(entry.lane, laneCount + 1);
-            picked++;
-
-            return true;
+            return keysFree && registry.getEntry(job.name) !== undefined;
         });
+        const { chosen, lastTieWinner } = chooseRows({
+            rows: startable,
+            names: shareNamesOf(entriesOf([...new Set(startable.map(job => job.name))])),
+            free: freeProcessSlots(),
+            base: tiePointer,
+            size: tieSpan(),
+        });
+
+        movePointer(lastTieWinner);
+
+        return chosen;
     }
 
     // ---- results ----
@@ -779,7 +857,12 @@ export function createRunner({
             startedAt: Date.now(),
         };
 
-        entry.lane.running++;
+        entry.running++;
+
+        if (entry.group) {
+            entry.group.running++;
+        }
+
         running.set(job.key, job);
         keepRenewingLeases();
         emit({ type: 'claimed', jobId: claimed.id, jobName: claimed.name, attempt: claimed.attempts + 1 });
@@ -792,15 +875,22 @@ export function createRunner({
                 // A successful keyless completion with spare capacity adds no ready work. The post-claim probe
                 // already scheduled pending jobs. Claims in flight may have captured an older slot count.
                 const mustWake = state !== 'started' || claimsInFlight > 0 || !job.completionConfirmed
-                    || job.released || job.leaseLost || freeSlots(entry.lane) === 0;
+                    || job.released || job.leaseLost || freeSlots(entry) === 0;
+                // A full group: its other names were left out of the turns, and may have due jobs
+                const fullGroup = entry.group && groupRoom(entry) <= 0 ? entry.group : null;
 
-                entry.lane.running--;
+                entry.running--;
+
+                if (entry.group) {
+                    entry.group.running--;
+                }
+
                 running.delete(job.key);
                 finishedCount++;
 
                 if (mustWake) {
-                    // Its own name, and the backlog
-                    wakeUp([claimed.name], { speculative: true });
+                    // Its own name (with its group's, if it was full), and the backlog
+                    wakeUp(fullGroup ? fullGroup.names : [claimed.name], { speculative: true });
                 }
 
                 if (claimed.mutexKeys.length) {
@@ -818,7 +908,63 @@ export function createRunner({
     // ---- dispatch ----
 
     /**
-     * Claims the due jobs of the given names that fit the free slots, and starts them.
+     * The names of this turn: the due names with a free slot, the furthest under their share first, at most 4 per free
+     * slot, and at most 4 per free slot of their group. The others stay in the backlog, for the next turns.
+     * @param {string[]} dueNames
+     * @returns {HandlerEntry[]}
+     */
+    function requestNames(dueNames) {
+        /** @type {HandlerEntry[]} */
+        const withRoom = [];
+
+        for (const name of dueNames) {
+            const entry = registry.getEntry(name);
+
+            if (entry && freeSlots(entry) > 0) {
+                withRoom.push(entry);
+            }
+        }
+
+        const limit = CLAIM_NAMES_PER_SLOT * Math.max(freeProcessSlots(), 1);
+
+        namesLeftOut = withRoom.length > limit;
+
+        if (!namesLeftOut) {
+            // All of them: the claim chooses among their rows, the order of the names does not matter
+            return withRoom;
+        }
+
+        /** @type {Map<import('./registry.js').GroupState, number>} */
+        const inGroups = new Map();
+        /** @type {HandlerEntry[]} */
+        const turn = [];
+
+        // The share, then the tie order
+        rankNames(withRoom, tiePointer, tieSpan());
+
+        for (const entry of withRoom) {
+            const { name } = entry;
+            const inGroup = entry.group ? inGroups.get(entry.group) ?? 0 : 0;
+
+            // A full group takes no more names: the names after it get their turn
+            if (turn.length >= limit || (entry.group && inGroup >= CLAIM_NAMES_PER_SLOT * groupRoom(entry))) {
+                backlog.add(name);
+            } else {
+                turn.push(entry);
+
+                if (entry.group) {
+                    inGroups.set(entry.group, inGroup + 1);
+                }
+            }
+        }
+
+        return turn;
+    }
+
+    /**
+     * Claims the due jobs of the given names, by share within the free slots, and starts them. The candidates of the
+     * names with mutex keys come first: a plan reserves their share of the free slots, of the instance and of their
+     * groups, the plain claim takes the rest, then the claim of the candidates.
      * @param {string[]} dueNames
      * @returns {Promise<{ candidates: number, claimed: number }>}
      */
@@ -826,8 +972,20 @@ export function createRunner({
         claimsInFlight++;
 
         try {
-            const plain = await claimAndStartPlain(dueNames.filter(name => !namesWithKeys.has(name)));
-            const withKeys = await claimAndStartWithKeys(dueNames.filter(name => namesWithKeys.has(name)));
+            const turn = requestNames(dueNames);
+            /** @type {HandlerEntry[]} */
+            const keyed = [];
+            /** @type {HandlerEntry[]} */
+            const plainEntries = [];
+
+            for (const entry of turn) {
+                (namesWithKeys.has(entry.name) ? keyed : plainEntries).push(entry);
+            }
+
+            const candidates = keyed.length ? await findCandidatesOf(keyed) : [];
+            const reserved = reservedForKeys(turn, candidates);
+            const plain = await claimAndStartPlain(plainEntries, freeProcessSlots() - reserved.slots, reserved.groups);
+            const withKeys = await claimAndStartWithKeys(candidates);
 
             return { candidates: plain.candidates + withKeys.candidates, claimed: plain.claimed + withKeys.claimed };
         } finally {
@@ -836,39 +994,187 @@ export function createRunner({
     }
 
     /**
-     * The due jobs of names without mutex keys: found, claimed and read at once.
-     * @param {string[]} dueNames
-     * @returns {Promise<{ candidates: number, claimed: number }>}
+     * The candidates of names with mutex keys: the heads of their free keys.
+     * @param {HandlerEntry[]} entries
+     * @returns {Promise<import('./store/store.js').Candidate[]>}
      */
-    async function claimAndStartPlain(dueNames) {
-        /** @type {Lane[]} */
-        const lanes = [];
-        /** @type {import('./store/store.js').DueRequest[]} */
-        const requests = [];
+    async function findCandidatesOf(entries) {
+        /** @type {Map<string, number>} */
+        const limits = new Map();
 
-        for (const name of takeTurn(dueNames)) {
-            const entry = registry.getEntry(name);
-            const free = entry ? freeSlots(entry.lane) : 0;
+        for (const entry of entries) {
+            // 2 × the free slots: the processes woken together can take different rows
+            limits.set(entry.name, 2 * freeSlots(entry));
+        }
 
-            if (entry && free > 0) {
-                const lane = lanes.includes(entry.lane) ? lanes.indexOf(entry.lane) : lanes.push(entry.lane) - 1;
+        const candidates = await store.findCandidates(limits, [...namesWithKeys]);
+        const withCandidates = new Set(candidates.map(candidate => candidate.name));
 
-                requests.push({ name, maxJobs: free, lane });
+        for (const { name } of entries) {
+            if (!withCandidates.has(name)) {
+                // Its due jobs wait for keys: the release of a key wakes it
+                backlog.delete(name);
             }
         }
 
-        if (!requests.length) {
+        return candidates;
+    }
+
+    /**
+     * The free slots that the names with mutex keys get by their share, on their candidates: the plain claim leaves
+     * them free, in the instance and in their groups.
+     * @param {HandlerEntry[]} turn
+     * @param {import('./store/store.js').Candidate[]} candidates
+     * @returns {{ slots: number, groups: Map<import('./registry.js').GroupState, number> }} The slots of the instance,
+     *     and of each group.
+     */
+    function reservedForKeys(turn, candidates) {
+        /** @type {Map<import('./registry.js').GroupState, number>} */
+        const groups = new Map();
+
+        if (!candidates.length) {
+            return { slots: 0, groups };
+        }
+
+        /** @type {Map<string, number>} */
+        const candidateCounts = new Map();
+
+        for (const candidate of candidates) {
+            candidateCounts.set(candidate.name, (candidateCounts.get(candidate.name) ?? 0) + 1);
+        }
+
+        const names = shareNamesOf(turn);
+        const byName = new Map(turn.map(entry => [entry.name, entry]));
+
+        for (const name of names) {
+            name.available = namesWithKeys.has(name.name) ? candidateCounts.get(name.name) ?? 0 : Infinity;
+        }
+
+        const { chosen } = fill({
+            names,
+            free: freeProcessSlots(),
+            base: tiePointer,
+            size: tieSpan(),
+            take: name => byName.get(name.name) ?? null,
+        });
+        let slots = 0;
+
+        for (const entry of chosen) {
+            if (namesWithKeys.has(entry.name)) {
+                slots++;
+
+                if (entry.group) {
+                    groups.set(entry.group, (groups.get(entry.group) ?? 0) + 1);
+                }
+            }
+        }
+
+        return { slots, groups };
+    }
+
+    /**
+     * The due jobs of names without mutex keys: found, chosen by share, claimed and read at once.
+     * @param {HandlerEntry[]} turn
+     * @param {number} free The free slots for them.
+     * @param {Map<import('./registry.js').GroupState, number>} reservedInGroups The slots of each group for the names
+     *     with mutex keys.
+     * @returns {Promise<{ candidates: number, claimed: number }>}
+     */
+    async function claimAndStartPlain(turn, free, reservedInGroups) {
+        if (!turn.length) {
             return { candidates: 0, claimed: 0 };
         }
 
-        const { jobs, next } = await store.claimDue({
+        const base = tiePointer;
+        const size = tieSpan();
+        /** @type {HandlerEntry[]} */
+        const entries = [];
+        /** @type {import('./registry.js').GroupState[]} */
+        const groups = [];
+        /** @type {import('./store/store.js').DueRequest[]} */
+        const requests = [];
+
+        for (const entry of turn) {
+            const maxJobs = Math.min(
+                freeSlots(entry),
+                free,
+                entry.group ? groupRoom(entry) - (reservedInGroups.get(entry.group) ?? 0) : Infinity,
+            );
+
+            if (maxJobs <= 0) {
+                // The names with mutex keys took its free slots: the next turn
+                backlog.add(entry.name);
+                continue;
+            }
+
+            /** @type {number | null} */
+            let group = null;
+
+            if (entry.group) {
+                group = groups.indexOf(entry.group);
+                group = group === -1 ? groups.push(entry.group) - 1 : group;
+            }
+
+            entries.push(entry);
+            requests.push({
+                name: entry.name,
+                maxJobs,
+                running: entry.running,
+                weight: entry.weight,
+                group,
+                tie: (((entry.index - base) % size) + size) % size,
+            });
+        }
+
+        if (!entries.length) {
+            return { candidates: 0, claimed: 0 };
+        }
+
+        const groupRooms = groups.map(group => Math.max(
+            0,
+            group.group.maxConcurrency - group.running - (reservedInGroups.get(group) ?? 0),
+        ));
+        /** @type {number | null | undefined} */
+        let chosenTie;
+        const { jobs, next, unpicked } = await store.claimDue({
             requests,
-            laneFree: lanes.map(lane => freeSlots(lane)),
-            processMax: freeProcessSlots(),
+            groupRooms,
+            free,
             lockToken: lockToken(),
             lockedBy,
             leaseMs: t.leaseMs,
+            // MySQL and MariaDB: the choice over the locked rows. One name: no tie
+            choose: (locked) => {
+                if (entries.length === 1) {
+                    // Its maxJobs held the locked rows within the free slots
+                    chosenTie = null;
+
+                    return locked;
+                }
+
+                // The counts and the rooms of the requests: the locked rows kept under them
+                const result = chooseRows({
+                    rows: locked,
+                    names: shareNamesOfRequests(entries, requests, groupRooms),
+                    free,
+                    base,
+                    size,
+                });
+
+                chosenTie = result.lastTieWinner;
+
+                return result.chosen;
+            },
         });
+
+        // PostgreSQL chose in SQL: the same choice again over the claimed rows, with the names that it left rows of.
+        // One name, or no job: no tie
+        if (chosenTie !== undefined) {
+            movePointer(chosenTie);
+        } else if (entries.length > 1 && jobs.length) {
+            movePointer(replayTie({ entries, requests, groupRooms, jobs, unpicked: unpicked ?? [], base, size }));
+        }
+
         const requested = new Set(requests.map(request => request.name));
         const now = Date.now();
         let stillDue = 0;
@@ -908,68 +1214,11 @@ export function createRunner({
     }
 
     /**
-     * The names of this turn: all of them, or, when they are many, the next ones in turn. The others stay in the
-     * backlog, for the next turns.
-     * @param {string[]} dueNames
-     * @returns {string[]}
-     */
-    function takeTurn(dueNames) {
-        const limit = CLAIM_NAMES_PER_SLOT * Math.max(freeProcessSlots(), 1);
-
-        namesLeftOut = dueNames.length > limit;
-
-        if (!namesLeftOut) {
-            return dueNames;
-        }
-
-        const from = claimTurn % dueNames.length;
-        const turn = [...dueNames.slice(from), ...dueNames.slice(0, from)].slice(0, limit);
-        const inTurn = new Set(turn);
-
-        claimTurn = from + limit;
-
-        for (const name of dueNames) {
-            if (!inTurn.has(name)) {
-                backlog.add(name);
-            }
-        }
-
-        return turn;
-    }
-
-    /**
-     * The due jobs of names with mutex keys: candidates, then a claim of those whose keys are free.
-     * @param {string[]} dueNames
+     * The candidates of names with mutex keys: a claim of those whose keys are free, by share, then their payloads.
+     * @param {import('./store/store.js').Candidate[]} candidates
      * @returns {Promise<{ candidates: number, claimed: number }>}
      */
-    async function claimAndStartWithKeys(dueNames) {
-        /** @type {Map<string, number>} */
-        const limits = new Map();
-
-        for (const name of dueNames) {
-            const entry = registry.getEntry(name);
-            const free = entry ? freeSlots(entry.lane) : 0;
-
-            if (free > 0) {
-                // 2 × the free slots: the processes woken together can take different rows
-                limits.set(name, 2 * free);
-            }
-        }
-
-        if (!limits.size) {
-            return { candidates: 0, claimed: 0 };
-        }
-
-        const candidates = await store.findCandidates(limits, [...namesWithKeys]);
-        const withCandidates = new Set(candidates.map(candidate => candidate.name));
-
-        for (const name of limits.keys()) {
-            if (!withCandidates.has(name)) {
-                // Its due jobs wait for keys: the release of a key wakes it
-                backlog.delete(name);
-            }
-        }
-
+    async function claimAndStartWithKeys(candidates) {
         if (!candidates.length) {
             return { candidates: 0, claimed: 0 };
         }
@@ -1006,9 +1255,9 @@ export function createRunner({
         return { candidates: candidates.length, claimed: claimed.length };
     }
 
-    /** @returns {string[]} The handled names whose lane has a free slot. */
+    /** @returns {string[]} The handled names with a free slot. */
     function namesWithFreeSlots() {
-        return registry.entries().filter(entry => freeSlots(entry.lane) > 0).map(entry => entry.name);
+        return registry.entries().filter(entry => freeSlots(entry) > 0).map(entry => entry.name);
     }
 
     /**
@@ -1036,7 +1285,7 @@ export function createRunner({
             for (const name of [...scope.claim, ...scope.probe]) {
                 const entry = registry.getEntry(name);
 
-                if (entry && freeSlots(entry.lane) > 0) {
+                if (entry && freeSlots(entry) > 0) {
                     names.add(name);
                 } else if (entry) {
                     // No free slot: the turn after a completion looks at it again
@@ -1411,8 +1660,10 @@ export function createRunner({
             return;
         }
 
-        registry.validate();
+        registry.validate('start()');
         namesWithKeys = new Set(registry.namesWithKeys());
+        handledCount = Math.max(registry.entries().length, 1);
+        tiePointer = Math.floor(random() * handledCount);
         state = 'started';
         every('recover_stale_jobs', recoverStaleJobs, t.recoveryIntervalMs);
 
@@ -1458,11 +1709,13 @@ export function createRunner({
         const timeoutMs = parseDuration(options.timeout ?? '10s');
 
         if (timeoutMs === null) {
-            throw new InvalidOptionsError('drain: "timeout" must be a duration');
+            throw new InvalidOptionsError('drain(): "timeout" must be a duration');
         }
 
-        registry.validate();
+        registry.validate('drain()');
         namesWithKeys = new Set(registry.namesWithKeys());
+        handledCount = Math.max(registry.entries().length, 1);
+        tiePointer = Math.floor(random() * handledCount);
         state = 'draining';
 
         const before = { ...counts };
@@ -1485,8 +1738,12 @@ export function createRunner({
                         await store.makeDue(names);
                     }
 
+                    // One probe per round: only the due names compete for the free slots
                     // oxlint-disable-next-line no-await-in-loop -- one round after the other
-                    ({ claimed } = await claimAndStart(names));
+                    const due = (await store.probe(names)).filter(row => row.delayMs <= 0).map(row => row.name);
+
+                    // oxlint-disable-next-line no-await-in-loop -- one round after the other
+                    ({ claimed } = due.length ? await claimAndStart(due) : { claimed: 0 });
                 } catch (error) {
                     if (!isTransientDbError(error)) {
                         throw error;
@@ -1651,7 +1908,7 @@ export function createRunner({
         canStartNow: (name) => {
             const entry = registry.getEntry(name);
 
-            return state === 'started' && Boolean(entry) && freeSlots(/** @type {HandlerEntry} */ (entry).lane) > 0;
+            return state === 'started' && Boolean(entry) && freeSlots(/** @type {HandlerEntry} */ (entry)) > 0;
         },
     };
 }

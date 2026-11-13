@@ -32,9 +32,11 @@ function lockedRow(id, payload) {
  * @param {typeof mysqlWorker.claimDue} claimDue
  * @param {Record<string, unknown>[]} rows
  * @param {Record<string, string>} payloads By id, as JSON: what a new statement sees.
+ * @param {(locked: import('./store.js').StartableJob[]) => import('./store.js').StartableJob[]} [choose] The choice by
+ *     share among the locked rows; all of them by default.
  * @returns {Promise<{ result: import('./store.js').ClaimDueResult, sent: Sent[] }>}
  */
-async function claimWith(claimDue, rows, payloads) {
+async function claimWith(claimDue, rows, payloads, choose = locked => locked) {
     /** @type {Sent[]} */
     const sent = [];
     const result = await claimDue({
@@ -54,12 +56,13 @@ async function claimWith(claimDue, rows, payloads) {
         },
         run: async () => 0,
     }, 'sqlane_', {
-        requests: [{ name: 'a', maxJobs: 5, lane: 0 }],
-        laneFree: [5],
-        processMax: 10,
+        requests: [{ name: 'a', maxJobs: 5, running: 0, weight: 1, group: null, tie: 0 }],
+        groupRooms: [],
+        free: 10,
         lockToken: 'T',
         lockedBy: 'test:T',
         leaseMs: 60_000,
+        choose,
     });
 
     return { result, sent };
@@ -88,6 +91,22 @@ describe.each([
         expect(reads.map(({ params }) => params)).toStrictEqual([['j2', 'j3']]);
         expect(sent.findIndex(({ sql }) => sql.includes('FROM sqlane_payloads WHERE')))
             .toBeLessThan(sent.findIndex(({ sql }) => sql.includes('UPDATE sqlane_jobs')));
+    });
+
+    test('a job locked without its payload that the choice does not take: not read again', async () => {
+        const { result, sent } = await claimWith(
+            claimDue,
+            [lockedRow('j1', '{"n":1}'), lockedRow('j2', null), lockedRow('j3', null)],
+            { j2: '{"n":2}', j3: '{"n":3}' },
+            locked => locked.slice(0, 2),
+        );
+
+        expect(result.jobs.map(job => [job.id, job.payload])).toStrictEqual([
+            ['j1', { found: true, payload: { n: 1 } }],
+            ['j2', { found: true, payload: { n: 2 } }],
+        ]);
+        expect(sent.filter(({ sql }) => sql.includes('FROM sqlane_payloads WHERE')).map(({ params }) => params))
+            .toStrictEqual([['j2']]);
     });
 
     test('every payload seen: no second read', async () => {

@@ -7,7 +7,7 @@ import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
 
-/** @typedef {import('../../src/types.js').Sqlane<any, any>} Sqlane */
+/** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 
 const TIMINGS = { leaseMs: 5000, renewIntervalMs: 500, recoveryIntervalMs: 500 };
 

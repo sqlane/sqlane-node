@@ -8,7 +8,7 @@ import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { knexAdapter } from '../../src/adapters/knex.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
 
-/** @typedef {import('../../src/types.js').Sqlane<import('../../src/adapters/knex.js').KnexConnection, never>} Sqlane */
+/** @typedef {import('../../src/types.js').Sqlane<import('../../src/adapters/knex.js').KnexConnection>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
 /**
@@ -74,7 +74,7 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
 
     /**
      * A sqlane instance over knex, on tables of its own, migrated.
-     * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
+     * @param {Partial<import('../../src/types.js').SqlaneOptions<any>>} [options]
      * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
      */
     async function freshSqlane(options = {}) {

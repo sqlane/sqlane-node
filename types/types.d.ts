@@ -150,21 +150,33 @@ export type HandlerContext<P = any> = {
     signal: AbortSignal;
 };
 export type Handler<P = any> = (context: HandlerContext<P>) => unknown;
-export type HandleOptions<L extends string> = {
+export type HandleOptions = {
     timeout?: Duration;
-} & ({
-    concurrency?: number;
-    lane?: never;
-} | {
-    lane: L;
-    concurrency?: never;
-});
-export type LaneOptions = {
     /**
-     * The handlers of the lane that run at the same time in one process.
+     * The most jobs of this name that run at once in this instance. Default: only the
+     * caps of its group and of the instance.
      */
-    concurrency: number;
+    maxConcurrency?: number;
+    /**
+     * A cap shared with the other names of the group.
+     */
+    concurrencyGroup?: ConcurrencyGroup;
+    /**
+     * 1–1000. The name's share of the free slots. Default: 1.
+     */
+    fairShareWeight?: number;
 };
+export type ConcurrencyGroupOptions = {
+    /**
+     * Matches `^[a-z][a-z0-9_.-]{0,127}$`.
+     */
+    name: string;
+    /**
+     * The most jobs of the names of the group that run at once in one instance.
+     */
+    maxConcurrency: number;
+};
+export type ConcurrencyGroup = Readonly<ConcurrencyGroupOptions>;
 export type JobDefaults = {
     maxAttempts?: number;
     maxStalls?: number;
@@ -377,20 +389,16 @@ export type Executor = {
      */
     run: (sql: string, params: readonly unknown[]) => Promise<number>;
 };
-export type SqlaneOptions<C, L extends string> = {
+export type SqlaneOptions<C> = {
     adapter: Adapter<C>;
     /**
      * The definitions known by name.
      */
     jobs?: readonly JobDefinition[];
     /**
-     * The handlers that run at the same time in this process. Default: 10.
+     * The handlers that run at the same time in this instance. Default: 10.
      */
-    concurrency?: number;
-    /**
-     * Limits shared by several job names.
-     */
-    lanes?: Record<L, LaneOptions>;
+    maxConcurrency?: number;
     defaults?: JobDefaults;
     /**
      * Default: `'allow'`. `'reject'`: `enqueue` of a name that is not in
@@ -496,7 +504,7 @@ export type FailedJobPayload = {
         code?: string;
     };
 };
-export type Sqlane<C, L extends string> = {
+export type Sqlane<C> = {
     /**
      * Adds a job with the caller's connection: it must be in a transaction (or a
      * pool: then sqlane opens its own transaction).
@@ -506,7 +514,7 @@ export type Sqlane<C, L extends string> = {
      * The results are in the order of the items.
      */
     enqueueMany: <J extends JobDefinition | string, P>(connection: C, job: J, items: readonly EnqueueManyItem<J, P>[]) => Promise<EnqueueResult[]>;
-    handle: <J extends JobDefinition | string>(job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions<L>) => void;
+    handle: <J extends JobDefinition | string>(job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions) => void;
     /**
      * Adds a job at each slot of a cron or an interval, in every started process that calls it.
      * Before `start()`.
@@ -691,15 +699,22 @@ export type Migration = {
  * @typedef {(context: HandlerContext<P>) => unknown} Handler
  */
 /**
- * A private lane (`concurrency`) or a shared lane of `lanes` (`lane`), not both.
- * @template {string} L
- * @typedef {{ timeout?: Duration } & (
- *     { concurrency?: number, lane?: never } | { lane: L, concurrency?: never }
- * )} HandleOptions
+ * The options of `handle()`.
+ * @typedef {object} HandleOptions
+ * @property {Duration} [timeout]
+ * @property {number} [maxConcurrency] The most jobs of this name that run at once in this instance. Default: only the
+ *     caps of its group and of the instance.
+ * @property {ConcurrencyGroup} [concurrencyGroup] A cap shared with the other names of the group.
+ * @property {number} [fairShareWeight] 1–1000. The name's share of the free slots. Default: 1.
  */
 /**
- * @typedef {object} LaneOptions
- * @property {number} concurrency The handlers of the lane that run at the same time in one process.
+ * @typedef {object} ConcurrencyGroupOptions
+ * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
+ * @property {number} maxConcurrency The most jobs of the names of the group that run at once in one instance.
+ */
+/**
+ * The result of `defineConcurrencyGroup()`. Frozen.
+ * @typedef {Readonly<ConcurrencyGroupOptions>} ConcurrencyGroup
  */
 /**
  * The instance defaults; a definition overrides them.
@@ -839,12 +854,10 @@ export type Migration = {
  */
 /**
  * @template C
- * @template {string} L
  * @typedef {object} SqlaneOptions
  * @property {Adapter<C>} adapter
  * @property {readonly JobDefinition[]} [jobs] The definitions known by name.
- * @property {number} [concurrency] The handlers that run at the same time in this process. Default: 10.
- * @property {Record<L, LaneOptions>} [lanes] Limits shared by several job names.
+ * @property {number} [maxConcurrency] The handlers that run at the same time in this instance. Default: 10.
  * @property {JobDefaults} [defaults]
  * @property {'allow' | 'reject'} [unknownJobs] Default: `'allow'`. `'reject'`: `enqueue` of a name that is not in
  *     `jobs` and not handled throws an `UnknownJobError`.
@@ -897,7 +910,6 @@ export type Migration = {
  */
 /**
  * @template C The connections that `enqueue` accepts.
- * @template {string} L The lane names.
  * @typedef {object} Sqlane
  * @property {<J extends JobDefinition | string, P>(
  *     connection: C, job: J, payload: EnqueuePayload<J, P>, options?: EnqueueOptions,
@@ -907,7 +919,7 @@ export type Migration = {
  *     connection: C, job: J, items: readonly EnqueueManyItem<J, P>[],
  * ) => Promise<EnqueueResult[]>} enqueueMany The results are in the order of the items.
  * @property {<J extends JobDefinition | string>(
- *     job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions<L>,
+ *     job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions,
  * ) => void} handle
  * @property {<J extends JobDefinition | string, P>(
  *     job: J, options: ScheduleBaseOptions & ScheduleTiming & SchedulePayload<J, P>,

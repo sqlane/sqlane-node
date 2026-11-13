@@ -11,7 +11,7 @@ import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
 
-/** @typedef {import('../../src/types.js').Sqlane<any, any>} Sqlane */
+/** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 /** @typedef {import('../../src/store/fire_slots.js').SlotCandidate} SlotCandidate */
 /** @typedef {import('../../src/store/fire_slots.js').FireResult} FireResult */
@@ -803,7 +803,7 @@ describe('schedules end to end', () => {
         /** @type {unknown[]} */
         const failures = [];
 
-        sqlane.handle(job, runs.handler, { concurrency: 5 });
+        sqlane.handle(job, runs.handler, { maxConcurrency: 5 });
         sqlane.handle('nightly_failed', ({ payload }) => {
             failures.push(payload);
         });

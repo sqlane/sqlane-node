@@ -1,6 +1,5 @@
 // The worker side of the store on MariaDB: probe, candidates, claim. Times are computed in SQL, in UTC. A copy of the
 // MySQL version, changed where MariaDB differs: keep the two in step.
-import { fitSlots } from './fit_slots.js';
 
 /** @typedef {import('../types.js').Executor} Executor */
 /** @typedef {import('./store.js').ProbeRow} ProbeRow */
@@ -309,14 +308,14 @@ export async function claim(executor, p, { candidateIds, lockToken, lockedBy, le
 /**
  * Finds, claims and reads the due jobs of names without mutex keys. Call it in a queue transaction. One statement
  * locks the oldest due jobs of each name that no other claim holds (SKIP LOCKED), with their payloads; the ones that
- * fit the free slots (`fitSlots`) are claimed. A second read gets the payloads that the statement did not see.
+ * the choice by share takes (`choose`) are claimed. A second read gets the payloads that the statement did not see.
  * @param {Executor} executor
  * @param {string} p
  * @param {import('./store.js').ClaimDueParams} params
  * @returns {Promise<import('./store.js').ClaimDueResult>} The jobs in the order of run_at.
  */
-export async function claimDue(executor, p, { requests, laneFree, processMax, lockToken, lockedBy, leaseMs }) {
-    if (!requests.length || processMax <= 0) {
+export async function claimDue(executor, p, { requests, free, lockToken, lockedBy, leaseMs, choose }) {
+    if (!requests.length || free <= 0) {
         return { jobs: [], next: [] };
     }
 
@@ -355,7 +354,8 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
         }))
         .toSorted((a, b) => a.runAtMs - b.runAtMs || (a.job.id < b.job.id ? -1 : 1));
     const idsWithKeys = new Set(locked.filter(row => row.hasKeys).map(row => row.job.id));
-    const picked = fitSlots(locked.map(({ job }) => job), requests, laneFree, processMax);
+    // The choice by share, among the locked rows
+    const picked = choose(locked.map(({ job }) => job));
     // The payload subquery is a consistent read, from the read view of the statement's first one: a job whose enqueue
     // committed later in the statement is locked without its payload. A new statement (READ COMMITTED) sees it
     const unseen = picked.filter(job => !job.payload.found).map(job => job.id);
@@ -386,7 +386,7 @@ export async function claimDue(executor, p, { requests, laneFree, processMax, lo
     // A full claim: the next turn claims again; the next due times only after a claim that took fewer
     return {
         jobs: picked,
-        next: picked.length >= processMax ? null : await probe(executor, p, requests.map(request => request.name)),
+        next: picked.length >= free ? null : await probe(executor, p, requests.map(request => request.name)),
     };
 }
 

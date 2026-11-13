@@ -10,7 +10,7 @@ import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane } from '../../src/index.js';
 
 /** @typedef {import('../../src/adapters/sequelize.js').SequelizeConnection} SequelizeConnection */
-/** @typedef {import('../../src/types.js').Sqlane<SequelizeConnection, never>} Sqlane */
+/** @typedef {import('../../src/types.js').Sqlane<SequelizeConnection>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
 Sequelize.useCLS(createNamespace('sqlane-test'));
@@ -80,7 +80,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
     });
 
     /**
-     * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
+     * @param {Partial<import('../../src/types.js').SqlaneOptions<any>>} [options]
      * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
      */
     async function freshSqlane(options = {}) {

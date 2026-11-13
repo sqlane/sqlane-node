@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import { createSqlane } from './create_sqlane.js';
+import { defineConcurrencyGroup } from './define_concurrency_group.js';
 import { defineJob } from './define_job.js';
 import { ClosedError, ConfigError } from './errors.js';
 
@@ -8,36 +9,89 @@ const adapter = /** @type {import('./types.js').Adapter<any>} */ ({ dialect: 'my
 const withKeys = defineJob({ name: 'with_keys', mutexKeys: () => ['k'] });
 
 /**
- * @param {Partial<import('./types.js').SqlaneOptions<any, 'heavy'>>} [options]
- * @returns {import('./types.js').Sqlane<any, 'heavy'>}
+ * @param {Partial<import('./types.js').SqlaneOptions<any>>} [options]
+ * @returns {import('./types.js').Sqlane<any>}
  */
 function sqlaneWith(options = {}) {
-    return createSqlane({ adapter, lanes: { heavy: { concurrency: 2 } }, ...options });
+    return createSqlane({ adapter, maxConcurrency: 10, ...options });
 }
 
 const noop = () => {};
+const heavy = defineConcurrencyGroup({ name: 'heavy', maxConcurrency: 2 });
 
 test.each([
-    ['an unknown lane', () => sqlaneWith().handle('a', noop, /** @type {any} */ ({ lane: 'light' }))],
-    ['a lane and a concurrency', () => sqlaneWith().handle('a', noop, /** @type {any} */ ({ lane: 'heavy', concurrency: 2 }))],
-    ['a concurrency of 0', () => sqlaneWith().handle('a', noop, { concurrency: 0 })],
-    ['a bad timeout', () => sqlaneWith().handle('a', noop, { timeout: 'soon' })],
-    ['an unknown option', () => sqlaneWith().handle('a', noop, /** @type {any} */ ({ retries: 3 }))],
-    ['a handler that is not a function', () => sqlaneWith().handle('a', /** @type {any} */ ('handler'))],
-    ['a bad name', () => sqlaneWith().handle('Bad', noop)],
-    ['a definition with mutex keys without a timeout', () => sqlaneWith().handle(withKeys, noop)],
+    ['the concurrency of 4.x', () => sqlaneWith().handle('a', noop, /** @type {any} */ ({ concurrency: 2 })),
+        'handle("a"): "concurrency" is now "maxConcurrency" (5.0)'],
+    ['the lane of 4.x', () => sqlaneWith().handle('a', noop, /** @type {any} */ ({ lane: 'heavy' })),
+        'handle("a"): "lane" was removed in 5.0: use "concurrencyGroup"'],
+    ['a weight of 0', () => sqlaneWith().handle('a', noop, { fairShareWeight: 0 }),
+        'handle("a"): "fairShareWeight" must be an integer from 1 to 1000'],
+    ['a weight of 1001', () => sqlaneWith().handle('a', noop, { fairShareWeight: 1001 }),
+        'handle("a"): "fairShareWeight" must be an integer from 1 to 1000'],
+    ['a weight of null', () => sqlaneWith().handle('a', noop, /** @type {any} */ ({ fairShareWeight: null })),
+        'handle("a"): "fairShareWeight" must be an integer from 1 to 1000'],
+    ['a fractional weight', () => sqlaneWith().handle('a', noop, { fairShareWeight: 1.5 }),
+        'handle("a"): "fairShareWeight" must be an integer from 1 to 1000'],
+    ['a group that is not from defineConcurrencyGroup()', () => sqlaneWith().handle('a', noop, /** @type {any} */ ({
+        concurrencyGroup: { name: 'heavy', maxConcurrency: 2 },
+    })), 'handle("a"): "concurrencyGroup" must be a group from defineConcurrencyGroup()'],
+    ['two groups with one name', () => {
+        const sqlane = sqlaneWith();
+
+        sqlane.handle('a', noop, { concurrencyGroup: heavy });
+        sqlane.handle('b', noop, { concurrencyGroup: defineConcurrencyGroup({ name: 'heavy', maxConcurrency: 3 }) });
+    }, 'handle("b"): another concurrency group is named "heavy"'],
+    ['a maxConcurrency of 0', () => sqlaneWith().handle('a', noop, { maxConcurrency: 0 }), '"maxConcurrency"'],
+    ['a bad timeout', () => sqlaneWith().handle('a', noop, { timeout: 'soon' }), '"timeout"'],
+    ['an unknown option', () => sqlaneWith().handle('a', noop, /** @type {any} */ ({ retries: 3 })),
+        'unknown options: retries'],
+    ['a handler that is not a function', () => sqlaneWith().handle('a', /** @type {any} */ ('handler')),
+        'the handler must be a function'],
+    ['a bad name', () => sqlaneWith().handle('Bad', noop), 'the job must be a job definition or a job name'],
+    ['a definition with mutex keys without a timeout', () => sqlaneWith().handle(withKeys, noop), 'needs a timeout'],
     ['a second handler of a name', () => {
         const sqlane = sqlaneWith();
 
         sqlane.handle('a', noop);
         sqlane.handle('a', noop);
-    }],
+    }, 'the job is handled already'],
     ['another definition of a name in "jobs"', () => {
         sqlaneWith({ jobs: [defineJob({ name: 'a' })] }).handle(defineJob({ name: 'a' }), noop);
-    }],
-    ['bad lanes', () => sqlaneWith({ lanes: /** @type {any} */ ({ heavy: { concurrency: -1 } }) })],
-])('handle() throws ConfigError on %s', (_, func) => {
+    }, 'another definition of "a" is in "jobs"'],
+    ['the concurrency of createSqlane() in 4.x', () => createSqlane(/** @type {any} */ ({ adapter, concurrency: 5 })),
+        'createSqlane: "concurrency" is now "maxConcurrency" (5.0)'],
+    ['the lanes of createSqlane() in 4.x', () => createSqlane(/** @type {any} */ ({ adapter, lanes: {} })),
+        'createSqlane: "lanes" was removed in 5.0: define groups with defineConcurrencyGroup() and pass them to handle() as "concurrencyGroup"'],
+])('handle() and createSqlane() throw ConfigError on %s', (_, func, message) => {
     expect(func).toThrow(ConfigError);
+    expect(func).toThrow(message);
+});
+
+test('one group object shared by several handlers, combined with a maxConcurrency and a weight', () => {
+    const sqlane = sqlaneWith();
+
+    expect(() => {
+        sqlane.handle('a', noop, { concurrencyGroup: heavy, maxConcurrency: 1, fairShareWeight: 2 });
+        sqlane.handle('b', noop, { concurrencyGroup: heavy });
+    }).not.toThrow();
+});
+
+test.each([
+    ['start()', (/** @type {import('./types.js').Sqlane<any>} */ sqlane) => sqlane.start()],
+    ['drain()', (/** @type {import('./types.js').Sqlane<any>} */ sqlane) => sqlane.drain()],
+])('%s throws a ConfigError for a cap above the instance\'s, naming the handler or the group', async (where, run) => {
+    const handlerCap = sqlaneWith();
+    const groupCap = sqlaneWith();
+
+    handlerCap.handle('transcode', noop, { maxConcurrency: 16 });
+    groupCap.handle('render', noop, { concurrencyGroup: defineConcurrencyGroup({ name: 'wide', maxConcurrency: 20 }) });
+
+    await expect(run(handlerCap)).rejects.toThrow(
+        `${where}: the maxConcurrency of handle("transcode") (16) is above the instance's maxConcurrency (10)`,
+    );
+    await expect(run(groupCap)).rejects.toThrow(
+        `${where}: the maxConcurrency of the concurrency group "wide" (20) is above the instance's maxConcurrency (10)`,
+    );
 });
 
 test('a definition with mutex keys takes its timeout from handle() or the defaults', () => {
@@ -77,6 +131,17 @@ test('handle() after start() throws ConfigError', async () => {
     await sqlane.start();
 
     expect(() => sqlane.handle('a', noop)).toThrow(ConfigError);
+    await sqlane.close({ deadline: 0 });
+});
+
+test('handle() during drain() throws ConfigError', async () => {
+    const sqlane = sqlaneWith();
+    // No handler: nothing to drain
+    const draining = sqlane.drain({ timeout: '1s' });
+
+    expect(() => sqlane.handle('a', noop))
+        .toThrow('handle() during drain(): register all the handlers before drain()');
+    await expect(draining).resolves.toStrictEqual({ completed: 0, retried: 0, failed: 0 });
     await sqlane.close({ deadline: 0 });
 });
 

@@ -107,11 +107,23 @@ const definitions = names.map(name => defineJob({
 const heldKeys = new Set();
 const checks = { overlaps: 0, wrongKeys: 0 };
 let completed = 0;
-const sqlane = createSqlane({
+/**
+ * The instance, with its cap as the version of `--src` names it: `maxConcurrency` from 5.0, `concurrency` before.
+ * @param {Record<string, unknown>} rest
+ * @returns {any}
+ */
+function createInstance(rest) {
+    try {
+        return createSqlane({ ...rest, maxConcurrency: 8 });
+    } catch {
+        return createSqlane({ ...rest, concurrency: 8 });
+    }
+}
+
+const sqlane = createInstance({
     adapter,
     hint,
     jobs: definitions,
-    concurrency: 8,
     pollInterval: 5000,
     onEvent: (/** @type {import('../../src/types.js').SqlaneEvent} */ event) => {
         if (event.type === 'completed') {

@@ -170,16 +170,24 @@
  */
 
 /**
- * A private lane (`concurrency`) or a shared lane of `lanes` (`lane`), not both.
- * @template {string} L
- * @typedef {{ timeout?: Duration } & (
- *     { concurrency?: number, lane?: never } | { lane: L, concurrency?: never }
- * )} HandleOptions
+ * The options of `handle()`.
+ * @typedef {object} HandleOptions
+ * @property {Duration} [timeout]
+ * @property {number} [maxConcurrency] The most jobs of this name that run at once in this instance. Default: only the
+ *     caps of its group and of the instance.
+ * @property {ConcurrencyGroup} [concurrencyGroup] A cap shared with the other names of the group.
+ * @property {number} [fairShareWeight] 1–1000. The name's share of the free slots. Default: 1.
  */
 
 /**
- * @typedef {object} LaneOptions
- * @property {number} concurrency The handlers of the lane that run at the same time in one process.
+ * @typedef {object} ConcurrencyGroupOptions
+ * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
+ * @property {number} maxConcurrency The most jobs of the names of the group that run at once in one instance.
+ */
+
+/**
+ * The result of `defineConcurrencyGroup()`. Frozen.
+ * @typedef {Readonly<ConcurrencyGroupOptions>} ConcurrencyGroup
  */
 
 /**
@@ -335,12 +343,10 @@
 
 /**
  * @template C
- * @template {string} L
  * @typedef {object} SqlaneOptions
  * @property {Adapter<C>} adapter
  * @property {readonly JobDefinition[]} [jobs] The definitions known by name.
- * @property {number} [concurrency] The handlers that run at the same time in this process. Default: 10.
- * @property {Record<L, LaneOptions>} [lanes] Limits shared by several job names.
+ * @property {number} [maxConcurrency] The handlers that run at the same time in this instance. Default: 10.
  * @property {JobDefaults} [defaults]
  * @property {'allow' | 'reject'} [unknownJobs] Default: `'allow'`. `'reject'`: `enqueue` of a name that is not in
  *     `jobs` and not handled throws an `UnknownJobError`.
@@ -400,7 +406,6 @@
 
 /**
  * @template C The connections that `enqueue` accepts.
- * @template {string} L The lane names.
  * @typedef {object} Sqlane
  * @property {<J extends JobDefinition | string, P>(
  *     connection: C, job: J, payload: EnqueuePayload<J, P>, options?: EnqueueOptions,
@@ -410,7 +415,7 @@
  *     connection: C, job: J, items: readonly EnqueueManyItem<J, P>[],
  * ) => Promise<EnqueueResult[]>} enqueueMany The results are in the order of the items.
  * @property {<J extends JobDefinition | string>(
- *     job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions<L>,
+ *     job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions,
  * ) => void} handle
  * @property {<J extends JobDefinition | string, P>(
  *     job: J, options: ScheduleBaseOptions & ScheduleTiming & SchedulePayload<J, P>,

@@ -7,7 +7,7 @@ import { postgresJsAdapter } from '../../src/adapters/postgres_js.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 
 /** @typedef {import('../../src/adapters/postgres_js.js').PostgresJsConnection} PostgresJsConnection */
-/** @typedef {import('../../src/types.js').Sqlane<PostgresJsConnection, never>} Sqlane */
+/** @typedef {import('../../src/types.js').Sqlane<PostgresJsConnection>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
@@ -87,7 +87,7 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
 
     /**
      * A sqlane instance over postgres.js, on tables of its own, migrated.
-     * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
+     * @param {Partial<import('../../src/types.js').SqlaneOptions<any>>} [options]
      * @param {string} [prefix] The tables of another instance.
      * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
      */
