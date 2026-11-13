@@ -1,5 +1,5 @@
-// The comparison of docs/comparison.md and docs/comparison-performance.md: the feature checks, the performance
-// workloads of jobs, and those of schedules, on database servers of this host (macOS, Homebrew).
+// The comparison of docs/features_vs_other_libs.md and docs/performance_vs_other_libs.md: the feature checks, the
+// performance workloads of jobs, and those of schedules, on database servers of this host (macOS, Homebrew).
 //
 //   pnpm bench:compare                    # checks and perf, about 10.5 minutes
 //   pnpm bench:compare --only checks      # or: perf (the jobs, about 9 minutes), cron (the schedules, about 9)
@@ -1040,7 +1040,8 @@ function tables(runs) {
 /**
  * The performance of jobs: a lane per library and database that its adapter lists, each with a server of its own.
  * Phase A, for instructions: the lanes in parallel, one workload at a time, the windows started together (steady,
- * idle with 1 and 1000 names, drain); instructions do not depend on the load of the machine (see docs/cpu-cost.md).
+ * idle with 1 and 1000 names, drain); instructions do not depend on the load of the machine
+ * (see docs/contributing/measuring_cpu_cost.md).
  * Phase B, for times, on PostgreSQL and Redis: one lane at a time, the drains, then the steady load, for the drain
  * times, the latencies and the CPU time. Its rows have `timing: true`.
  * @param {string[]} libraries
@@ -1156,10 +1157,10 @@ async function runJobs(libraries) {
 
 /**
  * The schedule runs, all in parallel, each with a database of its own: instructions do not depend on the load of the
- * machine (see docs/cpu-cost.md), and the runs wait for the same minutes. A lane per library and database that its
- * adapter lists, but MariaDB. PostgreSQL: a server per lane, for all its runs (macOS allows few PostgreSQL servers at
- * once: 32 shared memory segments, kern.sysv.shmmni). Redis and MySQL: a server per run; on MySQL, the runs that fire
- * only. CRON_REPEATS times; a row has the median of each number, and each run in `samples`.
+ * machine (see docs/contributing/measuring_cpu_cost.md), and the runs wait for the same minutes. A lane per library
+ * and database that its adapter lists, but MariaDB. PostgreSQL: a server per lane, for all its runs (macOS allows few
+ * PostgreSQL servers at once: 32 shared memory segments, kern.sysv.shmmni). Redis and MySQL: a server per run; on
+ * MySQL, the runs that fire only. CRON_REPEATS times; a row has the median of each number, and each run in `samples`.
  * @param {string[]} libraries
  * @returns {Promise<Record<string, any>[]>}
  */

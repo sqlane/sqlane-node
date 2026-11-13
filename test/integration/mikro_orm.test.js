@@ -6,7 +6,7 @@ import {
     MariaDbMikroORM as MariaDbMikroORM6,
     MySqlMikroORM as MySqlMikroORM6,
     PostgreSqlMikroORM as PostgreSqlMikroORM6,
-} from '../mikro-orm-6/index.js';
+} from '../mikro_orm_6/index.js';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
 import { mikroOrmAdapter } from '../../src/adapters/mikro_orm.js';

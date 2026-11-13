@@ -1,4 +1,4 @@
-// The charts of docs/comparison-performance.md, from results.json: a light and a dark SVG of each, which the docs
+// The charts of docs/performance_vs_other_libs.md, from results.json: a light and a dark SVG of each, which the docs
 // show with <picture>. Run: node bench/compare/charts.mjs
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -183,7 +183,7 @@ const millions = (/** @type {number} */ n) => n / 1e6;
 const fixed = (/** @type {number} */ n) => (n >= 100 ? n.toFixed(0) : n.toFixed(1));
 
 const charts = {
-    'perf-cpu-per-job': {
+    perf_cpu_per_job: {
         title: 'CPU instructions per job, steady load',
         subtitle: 'PostgreSQL 17, 1000 job names, 20 jobs/s with an INSERT each. *: after the COMMIT. Lower is better.',
         legend: ['Worker', 'Producer', 'Database'],
@@ -194,7 +194,7 @@ const charts = {
             return { label, parts, value: `${fixed(sum(parts))} M` };
         }),
     },
-    'perf-latency': {
+    perf_latency: {
         title: 'From enqueue to handler start, median',
         subtitle: 'PostgreSQL 17, steady load, one library at a time. Lower is better.',
         unit: 'ms',
@@ -203,7 +203,7 @@ const charts = {
             return { label, parts: [r.latencyP50Ms], value: `${r.latencyP50Ms} ms · p99 ${r.latencyP99Ms} ms` };
         }),
     },
-    'perf-idle': {
+    perf_idle: {
         title: 'Database cost while idle, 1000 job names',
         subtitle: 'PostgreSQL 17, no jobs. Database instructions per second. Lower is better.',
         unit: 'M/s',
@@ -213,7 +213,7 @@ const charts = {
             return { label, parts: [v], value: `${fixed(v)} M/s` };
         }),
     },
-    'perf-cron': {
+    perf_cron: {
         title: 'CPU instructions per fired job of a schedule, 3 workers',
         subtitle: 'PostgreSQL 17, 1000 schedules due every minute, 3 workers. *: not transactional. Lower is better.',
         legend: ['Workers', 'Database'],
@@ -234,7 +234,7 @@ const charts = {
 mkdirSync(OUT, { recursive: true });
 for (const [name, chart] of Object.entries(charts)) {
     for (const theme of /** @type {const} */ (['light', 'dark'])) {
-        writeFileSync(join(OUT, `${name}-${theme}.svg`), svg(chart, theme));
+        writeFileSync(join(OUT, `${name}_${theme}.svg`), svg(chart, theme));
     }
 }
 console.log(`wrote ${Object.keys(charts).length * 2} charts to ${OUT}`);

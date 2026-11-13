@@ -10,8 +10,8 @@ and commit with your data. Its npm package is `@sqlane/core`.
 [Getting started](https://github.com/sqlane/sqlane-node/blob/main/README.md#getting-started) ·
 [Adapters](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md) ·
 [API](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md) ·
-[Comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) ·
-[Benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks.md) ·
+[Comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/features_vs_other_libs.md) ·
+[Benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_results.md) ·
 [Design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md)
 
 **Status:** the API and the schema are stable since version 1.0 and follow
@@ -69,7 +69,7 @@ sqlane fits apps that need reliable background work in the SQL database they alr
   for 10 drivers and ORMs.
 - **Many job names, one polling loop.** Register hundreds of handlers without a separate idle poll or a dedicated
   connection per name. One readiness query per poll finds names with pending jobs; completed history does not keep a name active.
-  The worker uses one shared connection pool. See the [performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison-performance.md).
+  The worker uses one shared connection pool. See the [performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_vs_other_libs.md).
 - **Coordinate work by entity.** Give `sync_order` and `cancel_order` the same `order:42` mutex key to keep them
   from overlapping across processes. A job can hold up to 10 keys, for example an order and its customer. Handlers
   must honor the abort signal; see the [guarantees](https://github.com/sqlane/sqlane-node/blob/main/README.md#guarantees-and-limits).
@@ -79,7 +79,7 @@ sqlane fits apps that need reliable background work in the SQL database they alr
 ## How it compares
 
 The first four rows are checked by running each library next to sqlane on PostgreSQL 17, the others come from their
-documentation ([comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md)):
+documentation ([comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/features_vs_other_libs.md)):
 
 |                                        | sqlane | pg-boss | Graphile Worker | BullMQ | Sidequest     | River | Boring Node Queue | Izi Queue     |
 | -------------------------------------- | ------ | ------- | --------------- | ------ | ------------- | ----- | ----------------- | ------------- |
@@ -92,11 +92,11 @@ documentation ([comparison](https://github.com/sqlane/sqlane-node/blob/main/docs
 | Dashboard                              | ❌     | ✅      | ❌              | ✅     | ✅            | ✅    | ❌                | ❌            |
 
 Next to other job queues for Node.js, on PostgreSQL with 1000 job names; BullMQ and Sidequest enqueue after the
-commit ([performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison-performance.md)):
+commit ([performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_vs_other_libs.md)):
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-dark.svg">
-  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 4.5 M, Graphile Worker 11.1 M, River 15.1 M, pg-boss 28.1 M, Izi Queue 7.7 M, Boring Node Queue 11.7 M, BullMQ 11.7 M (after the commit), Sidequest 18.2 M (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cpu_per_job_dark.svg">
+  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 4.5 M, Graphile Worker 11.1 M, River 15.1 M, pg-boss 28.1 M, Izi Queue 7.7 M, Boring Node Queue 11.7 M, BullMQ 11.7 M (after the commit), Sidequest 18.2 M (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cpu_per_job_light.svg">
 </picture>
 
 - **The other queues that enqueue in your transaction use about 1.7–6.2× as many CPU instructions per job** as sqlane
@@ -239,21 +239,21 @@ On a laptop (Apple M1 Pro) with empty handlers, across MySQL, MariaDB and Postgr
 - 8 producers enqueue **1,700–4,100 jobs/s** with a transaction each, or **51,000–114,000** with `enqueueMany` of 100.
 - A job starts **20–25 ms** after the commit at the median, or about **2.4 ms** with PostgreSQL NOTIFY.
 
-The [benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks.md) have each database and
-scenario, and the [performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison-performance.md)
+The [benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_results.md) have each database and
+scenario, and the [performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_vs_other_libs.md)
 measures sqlane next to pg-boss, Graphile Worker and River.
 
 ## Documentation
 
 - The [API reference](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md) describes every function and option.
 - The [adapters page](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md) explains each driver and ORM.
-- The [comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison.md) puts sqlane next to other queues, and the
-  [performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/comparison-performance.md) measures their cost.
+- The [comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/features_vs_other_libs.md) puts sqlane next to other queues, and the
+  [performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_vs_other_libs.md) measures their cost.
 - The [design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md) explains how sqlane works inside.
-- The [benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks.md) give the measured numbers.
+- The [benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_results.md) give the measured numbers.
 - The [examples folder](https://github.com/sqlane/sqlane-node/tree/main/examples) has more examples.
 - The [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists the changes of each version, and
-  the [migration guide to 5.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrating-to-5.md) the changes of
+  the [migration guide to 5.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/5.md) the changes of
   your code from 4.x.
 - The [contributing guide](https://github.com/sqlane/sqlane-node/blob/main/CONTRIBUTING.md) explains the project setup.
 

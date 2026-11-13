@@ -5323,7 +5323,7 @@
         "cron": "2026-11-12T18:45:06.966Z"
     },
     "defaults": {
-        "note": "Not in the tables: River and pg-boss with their own defaults instead of the settings of libs/, from the runs of 11 November 2026 (jobs) and 12 November 2026 (schedules). docs/comparison-performance.md cites them.",
+        "note": "Not in the tables: River and pg-boss with their own defaults instead of the settings of libs/, from the runs of 11 November 2026 (jobs) and 12 November 2026 (schedules). docs/performance_vs_other_libs.md cites them.",
         "perf": [
             {
                 "library": "river",

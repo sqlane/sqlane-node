@@ -1,4 +1,4 @@
-# Release with Changesets (see docs/releasing.md)
+# Release with Changesets (see docs/contributing/releasing.md)
 # - Push to main with changesets: create or update the "Version Packages" pull request.
 # - "Run workflow" after that pull request is merged: test, pack, then publish to npm (approval of the npm environment).
 name: Release
@@ -55,7 +55,7 @@ jobs:
           cache: false
       - run: pnpm install --frozen-lockfile
       # The release app's token, not GITHUB_TOKEN: GitHub runs no workflow on a pull request that GITHUB_TOKEN opens,
-      # and a merge to main requires the CI checks (docs/releasing.md)
+      # and a merge to main requires the CI checks (docs/contributing/releasing.md)
       - id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:

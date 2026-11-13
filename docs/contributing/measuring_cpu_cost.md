@@ -1,7 +1,7 @@
 # CPU cost per job
 
 How to measure what one job costs in CPU: in the worker, in the process that enqueues it, and in the database. Use it
-to check a change that should make sqlane cheaper, or to find what to optimize next. The [benchmarks](benchmarks.md)
+to check a change that should make sqlane cheaper, or to find what to optimize next. The [benchmarks](../performance_results.md)
 measure latency and throughput instead.
 
 ## Quick start

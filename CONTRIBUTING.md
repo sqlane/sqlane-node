@@ -8,11 +8,12 @@ types/      its declarations: generated from the JSDoc of src/ (`pnpm build:type
 test/       integration tests (MySQL, MariaDB and PostgreSQL in Docker, testcontainers), type tests, test databases
 examples/   usage examples; examples/quickstart: runs with the published package (CI: with the packed one)
 bench/      the benchmarks
-docs/       api, adapters, comparison, comparison-performance, design, benchmarks, cpu-cost, releasing
+docs/       user docs: api, adapters, design, features and performance vs other libs, performance results, migrations
+docs/contributing/  maintainer docs: measuring CPU cost, releasing
 scripts/    CI scripts
 ```
 
-`test/mikro-orm-6` has its own `package.json` and lockfile, which install MikroORM 6 for the tests. A separate install
+`test/mikro_orm_6` has its own `package.json` and lockfile, which install MikroORM 6 for the tests. A separate install
 is needed because its drivers take `@mikro-orm/core` as a peer, and an npm alias in the root would give them core 7.
 `pnpm install` at the root also installs this folder, through `pnpm:devPreinstall`.
 
@@ -28,25 +29,25 @@ hk install --global --mise   # Git hooks, also for GUI Git clients: lint, format
 
 ## Commands
 
-| Command              | Does                                                       |
-| -------------------- | ---------------------------------------------------------- |
-| `pnpm test`          | Run the tests (Vitest)                                     |
-| `pnpm lint`          | Lint, including formatting (oxlint, @stylistic)            |
-| `pnpm lint:fix`      | Fix lint and formatting                                    |
-| `pnpm format`        | Format the other files: JSON, YAML, Markdown, TOML (oxfmt) |
-| `pnpm lint:package`  | Check the package that npm would publish (publint)         |
-| `pnpm typecheck`     | Type-check the JSDoc (`tsc`, no emit)                      |
-| `pnpm build:types`   | Generate `types/` from the JSDoc of `src/`                 |
-| `pnpm check`         | Run all hook checks on all files (`hk check --all`)        |
-| `pnpm bench`         | Run the [benchmarks](docs/benchmarks.md) (Docker)          |
-| `pnpm bench:cpu`     | Measure the [CPU cost per job](docs/cpu-cost.md) vs `main` |
-| `pnpm bench:compare` | Run the [comparison](docs/comparison.md) with other queues |
+| Command              | Does                                                                              |
+| -------------------- | --------------------------------------------------------------------------------- |
+| `pnpm test`          | Run the tests (Vitest)                                                            |
+| `pnpm lint`          | Lint, including formatting (oxlint, @stylistic)                                   |
+| `pnpm lint:fix`      | Fix lint and formatting                                                           |
+| `pnpm format`        | Format the other files: JSON, YAML, Markdown, TOML (oxfmt)                        |
+| `pnpm lint:package`  | Check the package that npm would publish (publint)                                |
+| `pnpm typecheck`     | Type-check the JSDoc (`tsc`, no emit)                                             |
+| `pnpm build:types`   | Generate `types/` from the JSDoc of `src/`                                        |
+| `pnpm check`         | Run all hook checks on all files (`hk check --all`)                               |
+| `pnpm bench`         | Run the [benchmarks](docs/performance_results.md) (Docker)                        |
+| `pnpm bench:cpu`     | Measure the [CPU cost per job](docs/contributing/measuring_cpu_cost.md) vs `main` |
+| `pnpm bench:compare` | Run the [comparison](docs/features_vs_other_libs.md) with other queues            |
 
 ## Commits and changesets
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org). A change of what npm publishes
 (`src/`, `types/`, `README.md`, `LICENSE`, `package.json` beyond dev dependencies and scripts) adds a changeset
-(`pnpm changeset`); see [releasing](docs/releasing.md).
+(`pnpm changeset`); see [releasing](docs/contributing/releasing.md).
 
 ## Pull requests
 
