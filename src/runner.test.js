@@ -1349,13 +1349,16 @@ test('close(): the running counts of the names and of the groups go back to 0', 
 });
 
 /**
- * A started runner of the name `ping`, always due, whose claims fail as given, call after call.
- * @param {(Error | null)[]} outcomes The error of each claim; null: it succeeds.
- * @param {Error | null} [rest] The error of the claims after them; null by default.
+ * A started runner of the name `ping`, always due, whose claims fail as given, then succeed. `trace` records, in order,
+ * each claim (`claim`, `claim:ok` for a success), each retry at once (`retry`, its debug log) and each error event
+ * (`error`): the tests check its exact prefix, not wall times, so a slow machine cannot change what they see.
+ * @param {(Error | null)[]} errors The error of each claim, one after the other (null: it succeeds); the claims after
+ *     them succeed.
  * @returns {Promise<{ runner: import('./runner.js').Runner, events: import('./types.js').SqlaneEvent[],
- *     claimTimes: number[], logger: Record<'debug' | 'info' | 'warn' | 'error', import('vitest').Mock> }>}
+ *     claimTimes: number[], trace: string[],
+ *     logger: Record<'debug' | 'info' | 'warn' | 'error', import('vitest').Mock> }>}
  */
-async function runnerWithClaims(outcomes, rest = null) {
+async function runnerWithClaims(errors) {
     const registry = createRegistry({
         jobsByName: new Map(),
         maxConcurrency: 10,
@@ -1365,12 +1368,16 @@ async function runnerWithClaims(outcomes, rest = null) {
     const events = [];
     /** @type {number[]} */
     const claimTimes = [];
-    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    /** @type {string[]} */
+    const trace = [];
+    const logger = { debug: vi.fn(() => trace.push('retry')), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
         probe: async () => [{ name: 'ping', delayMs: 0 }],
         claimDue: async () => {
+            const error = errors[claimTimes.length] ?? null;
+
             claimTimes.push(Date.now());
-            const error = claimTimes.length <= outcomes.length ? outcomes[claimTimes.length - 1] : rest;
+            trace.push(error ? 'claim' : 'claim:ok');
 
             if (error) {
                 throw error;
@@ -1390,7 +1397,13 @@ async function runnerWithClaims(outcomes, rest = null) {
         defaults: resolveDefaults(),
         cleanup: false,
         logger,
-        onEvent: event => events.push(event),
+        onEvent: (event) => {
+            events.push(event);
+
+            if (event.type === 'error') {
+                trace.push('error');
+            }
+        },
         hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
         hintsAfterCommit: false,
         timings: { pollIntervalMs: 300 },
@@ -1398,7 +1411,17 @@ async function runnerWithClaims(outcomes, rest = null) {
 
     await runner.start();
 
-    return { runner, events, claimTimes, logger };
+    return { runner, events, claimTimes, trace, logger };
+}
+
+/**
+ * Waits for the n-th successful claim.
+ * @param {string[]} trace
+ * @param {number} count
+ * @returns {Promise<void>}
+ */
+async function successfulClaims(trace, count) {
+    await waitFor(() => trace.filter(entry => entry === 'claim:ok').length >= count, 10_000);
 }
 
 const checkRead = () => Object.assign(new Error('Record has changed since last read'), {
@@ -1406,16 +1429,17 @@ const checkRead = () => Object.assign(new Error('Record has changed since last r
     errno: 1020,
 });
 const deadlock = () => Object.assign(new Error('Deadlock found when trying to get lock'), { errno: 1213 });
+/** Three transient errors and a retry at once after each, then the claim that succeeds */
+const RETRIED_THREE_TIMES = ['claim', 'retry', 'claim', 'retry', 'claim', 'retry'];
 
 test('dispatch: a transient error is retried at once, logged at debug, with no error event', async () => {
-    const { runner, events, claimTimes, logger } = await runnerWithClaims([checkRead(), deadlock(), checkRead()]);
+    const { runner, events, trace, logger } = await runnerWithClaims([checkRead(), deadlock(), checkRead()]);
 
     try {
-        await waitFor(() => claimTimes.length >= 4, 1000);
+        await successfulClaims(trace, 1);
 
-        expect(claimTimes).toHaveLength(4);
-        // Three retries with a jitter of 5 to 30 ms, not the back-off of 300 ms
-        expect(claimTimes[3] - claimTimes[0]).toBeLessThan(200);
+        // Three retries, no error event (a back-off comes only after one)
+        expect(trace.slice(0, 7)).toStrictEqual([...RETRIED_THREE_TIMES, 'claim:ok']);
         expect(events.filter(event => event.type === 'error')).toStrictEqual([]);
         expect(logger.debug).toHaveBeenCalledTimes(3);
         expect(logger.debug).toHaveBeenLastCalledWith(
@@ -1429,16 +1453,20 @@ test('dispatch: a transient error is retried at once, logged at debug, with no e
 });
 
 test('dispatch: a transient error after 3 retries is reported and backed off, then retried again', async () => {
-    const { runner, events, claimTimes } = await runnerWithClaims([], checkRead());
+    const { runner, events, claimTimes, trace } = await runnerWithClaims(Array.from({ length: 8 }, checkRead));
 
     try {
-        await waitFor(() => claimTimes.length >= 8, 2000);
+        await successfulClaims(trace, 1);
 
-        // 1 + 3 retries, the error, the back-off, 1 + 3 retries, the error
-        expect(claimTimes.length).toBeGreaterThanOrEqual(8);
-        expect(claimTimes[3] - claimTimes[0]).toBeLessThan(200);
+        // 1 + 3 retries, the error, the back-off, 1 + 3 retries, the error, the back-off, the claim
+        expect(trace.slice(0, 17)).toStrictEqual([
+            ...RETRIED_THREE_TIMES, 'claim', 'error',
+            ...RETRIED_THREE_TIMES, 'claim', 'error',
+            'claim:ok',
+        ]);
+        // The back-off: min(the poll interval, 1 s); a slow machine only makes it longer
         expect(claimTimes[4] - claimTimes[3]).toBeGreaterThanOrEqual(250);
-        expect(claimTimes[7] - claimTimes[4]).toBeLessThan(200);
+        expect(claimTimes[8] - claimTimes[7]).toBeGreaterThanOrEqual(250);
         expect(events.filter(event => event.type === 'error')).toMatchObject([
             { operation: 'dispatch', error: { errno: 1020 } },
             { operation: 'dispatch', error: { errno: 1020 } },
@@ -1450,50 +1478,37 @@ test('dispatch: a transient error after 3 retries is reported and backed off, th
 
 test('dispatch: the retries start again after a turn that succeeds', async () => {
     // Three errors, a success, three errors, a success: never four in a row
-    const { runner, events, claimTimes } = await runnerWithClaims([
-        deadlock(), deadlock(), deadlock(), null, deadlock(), deadlock(), deadlock(), null,
-    ]);
+    const errors = [deadlock(), deadlock(), deadlock()];
+    const { runner, events, trace } = await runnerWithClaims([...errors, null, ...errors]);
 
     try {
-        await waitFor(() => claimTimes.length >= 9, 2000);
+        await successfulClaims(trace, 2);
 
-        expect(claimTimes.length).toBeGreaterThanOrEqual(9);
+        expect(trace.slice(0, 14)).toStrictEqual([
+            ...RETRIED_THREE_TIMES, 'claim:ok',
+            ...RETRIED_THREE_TIMES, 'claim:ok',
+        ]);
         expect(events.filter(event => event.type === 'error')).toStrictEqual([]);
     } finally {
         await runner.close({ deadline: 0 });
     }
 });
 
-test('dispatch: another error is reported at once and backed off', async () => {
-    const { runner, events, claimTimes, logger } = await runnerWithClaims([new Error('syntax error')]);
-
-    try {
-        await waitFor(() => claimTimes.length >= 2, 1000);
-
-        expect(claimTimes[1] - claimTimes[0]).toBeGreaterThanOrEqual(250);
-        expect(events.filter(event => event.type === 'error')).toMatchObject([
-            { operation: 'dispatch', error: { message: 'syntax error' } },
-        ]);
-        expect(logger.debug).not.toHaveBeenCalled();
-    } finally {
-        await runner.close({ deadline: 0 });
-    }
-});
-
-test('dispatch: a lock wait timeout is not retried at once: reported and backed off', async () => {
-    const lockWaitTimeout = Object.assign(new Error('Lock wait timeout exceeded; try restarting transaction'), {
+test.each([
+    ['another error', new Error('syntax error')],
+    ['a lock wait timeout', Object.assign(new Error('Lock wait timeout exceeded; try restarting transaction'), {
         code: 'ER_LOCK_WAIT_TIMEOUT',
         errno: 1205,
-    });
-    const { runner, events, claimTimes, logger } = await runnerWithClaims([lockWaitTimeout]);
+    })],
+])('dispatch: %s is not retried at once: reported and backed off', async (_, error) => {
+    const { runner, events, claimTimes, trace, logger } = await runnerWithClaims([error]);
 
     try {
-        await waitFor(() => claimTimes.length >= 2, 1000);
+        await successfulClaims(trace, 1);
 
+        expect(trace.slice(0, 3)).toStrictEqual(['claim', 'error', 'claim:ok']);
         expect(claimTimes[1] - claimTimes[0]).toBeGreaterThanOrEqual(250);
-        expect(events.filter(event => event.type === 'error')).toMatchObject([
-            { operation: 'dispatch', error: { errno: 1205 } },
-        ]);
+        expect(events.filter(event => event.type === 'error')).toMatchObject([{ operation: 'dispatch', error }]);
         expect(logger.debug).not.toHaveBeenCalled();
     } finally {
         await runner.close({ deadline: 0 });

@@ -395,19 +395,24 @@ function failingClaims(failures) {
 describe('a transient error of a claim', () => {
     test('retried at once: no error event, no back-off', async () => {
         const failures = { left: 2 };
-        // The back-off after an error: 1 s
-        const { sqlane, events } = await freshSqlane({ adapter: failingClaims(failures), pollInterval: '10s' });
+        /** @type {string[]} The retries at once (their debug logs) and the errors (their error logs), in order */
+        const logged = [];
+        const logger = {
+            debug: () => logged.push('retry'),
+            info: () => {},
+            warn: () => {},
+            error: () => logged.push('error'),
+        };
+        const { sqlane, events } = await freshSqlane({ adapter: failingClaims(failures), logger });
 
         sqlane.handle('a', () => {});
         await sqlane.start();
-
-        const startedAt = Date.now();
-
         await sqlane.enqueue(testAdapter.pool, 'a', {});
         await waitFor(() => events.some(event => event.type === 'completed'));
 
         expect(failures.left).toBe(0);
-        expect(Date.now() - startedAt).toBeLessThan(800);
+        // A back-off comes only after an error: none here
+        expect(logged).toStrictEqual(['retry', 'retry']);
         expect(events.filter(event => event.type === 'error')).toStrictEqual([]);
     });
 
