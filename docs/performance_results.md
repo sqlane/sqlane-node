@@ -1,8 +1,8 @@
 # Benchmarks
 
 The cost of sqlane itself on each supported database, with empty handlers. For sqlane next to pg-boss, Graphile
-Worker and River, see [compare performance](comparison-performance.md); for the CPU cost of each job, see
-[CPU cost per job](cpu-cost.md).
+Worker and River, see [compare performance](performance_vs_other_libs.md); for the CPU cost of each job, see
+[CPU cost per job](contributing/measuring_cpu_cost.md).
 
 ## Summary
 

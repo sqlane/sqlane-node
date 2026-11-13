@@ -2,7 +2,7 @@
 
 sqlane next to seven job queues for Node.js. The rows marked 🔬 come from scenarios that run against each library
 ([how](../bench/compare/README.md#checks)); the others from each library's documentation and types. For CPU cost,
-latency and idle cost, see [performance](comparison-performance.md).
+latency and idle cost, see [performance](performance_vs_other_libs.md).
 
 ## Pick by requirement
 
@@ -141,7 +141,7 @@ Cron is not one guarantee:
   failover. With `unique({ period: 'minute' })`, which Sidequest's recurring-jobs page recommends when several
   instances schedule, `schedule()` computes the job and its unique key once, at registration (`Object.freeze`). The
   key holds the registration minute, so every later run collides with the first job's row and is rejected, even
-  after that job completed ([performance](comparison-performance.md#schedules)).
+  after that job completed ([performance](performance_vs_other_libs.md#schedules)).
 - Boring Node Queue stores the schedules. A worker claims a due one with a row lock and sets its next run from the
   claim time: a missed run is skipped.
 - Izi Queue's CronPlugin: the leader evaluates each minute, and each insert is unique on the entry and the minute. A

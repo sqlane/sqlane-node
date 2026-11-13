@@ -85,7 +85,7 @@
         "access": "public"
     },
     "scripts": {
-        "pnpm:devPreinstall": "pnpm install --dir test/mikro-orm-6 --ignore-workspace",
+        "pnpm:devPreinstall": "pnpm install --dir test/mikro_orm_6 --ignore-workspace",
         "lint": "oxlint --deny-warnings",
         "lint:fix": "oxlint --fix",
         "lint:package": "publint --strict",

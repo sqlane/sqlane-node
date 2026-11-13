@@ -1,7 +1,7 @@
 # Queue comparison
 
-The harness behind [docs/comparison.md](../../docs/comparison.md) (features) and
-[docs/comparison-performance.md](../../docs/comparison-performance.md) (performance). It runs the libraries; the
+The harness behind [docs/features_vs_other_libs.md](../../docs/features_vs_other_libs.md) (features) and
+[docs/performance_vs_other_libs.md](../../docs/performance_vs_other_libs.md) (performance). It runs the libraries; the
 documents report what they did.
 
 ```sh
@@ -108,7 +108,7 @@ Oxen Queue: not compared (it pins mysql2 3.16.3, which has a known high-severity
   then the steady load, for the latency and the CPU time. Its rows have
   `timing: true`; it also checks phase A's instructions on those lanes.
 - **Counters.** Instructions retired, cycles and CPU time of each process (`bench/cpu/proc_usage.py`), the database
-  with all its processes. Compare instructions: see [CPU cost per job](../../docs/cpu-cost.md#the-three-numbers). On
+  with all its processes. Compare instructions: see [CPU cost per job](../../docs/contributing/measuring_cpu_cost.md#the-three-numbers). On
   PostgreSQL, `pg_stat_statements` counts the statements of the window, and `pg_stat_activity` the connections.
 
 ### Schedules

@@ -1,5 +1,5 @@
-// Runnable feature checks for docs/comparison.md: each queue library runs the same small scenarios on PostgreSQL, and
-// the result of each is what the library did, not what its documentation says.
+// Runnable feature checks for docs/features_vs_other_libs.md: each queue library runs the same small scenarios on
+// PostgreSQL, and the result of each is what the library did, not what its documentation says.
 //
 //   node checks.mjs <postgres admin url> [--mysql <mysql admin url>] [library ...]   # all libraries: see LIBRARIES
 //

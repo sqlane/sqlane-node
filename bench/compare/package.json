@@ -2,7 +2,7 @@
     "name": "@sqlane/bench-compare",
     "version": "0.0.0",
     "private": true,
-    "description": "The queues that docs/comparison.md and docs/comparison-performance.md compare with sqlane: installed apart, by bench/compare/run.mjs",
+    "description": "The queues that docs/features_vs_other_libs.md and docs/performance_vs_other_libs.md compare with sqlane: installed apart, by bench/compare/run.mjs",
     "type": "module",
     "dependencies": {
         "@boringnode/queue": "0.9.1",

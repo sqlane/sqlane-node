@@ -43,7 +43,7 @@ jobs:
       # MikroORM 6: installed apart, as the drivers of MikroORM 7 pin @mikro-orm/core as a peer
       - name: The newest MikroORM 6
         run: >- # zizmor: ignore[adhoc-packages]
-          pnpm --dir test/mikro-orm-6 --ignore-workspace add
+          pnpm --dir test/mikro_orm_6 --ignore-workspace add
           '@mikro-orm/core@^6' '@mikro-orm/mysql@^6' '@mikro-orm/postgresql@^6'
       - name: Versions
         run: |
@@ -51,7 +51,7 @@ jobs:
             echo '### Versions'
             echo '```text'
             pnpm list --depth 0
-            pnpm --dir test/mikro-orm-6 --ignore-workspace list --depth 0
+            pnpm --dir test/mikro_orm_6 --ignore-workspace list --depth 0
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Unit and integration tests (MySQL and PostgreSQL in testcontainers)

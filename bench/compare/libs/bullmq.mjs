@@ -64,7 +64,8 @@ export const adapter = {
         // sets the search_path of its schema, and migrates
         const options = redis
             ? { connection: { host: hostname, port: Number(port), maxRetriesPerRequest: null } }
-            // No idle timeout: a closed connection takes its CPU counters with it (see docs/cpu-cost.md, pitfall 5)
+            // No idle timeout: a closed connection takes its CPU counters with it
+            // (see docs/contributing/measuring_cpu_cost.md, pitfall 5)
             : { connection: { connectionString: url, max: 5, idleTimeoutMillis: 0, migrate: true } };
         const queue = redis ? new Queue(QUEUE, options) : new Queue(QUEUE, options, createPostgresBackend);
         /** @type {import('bullmq').Processor} */

@@ -1,6 +1,6 @@
-// One process of the CPU cost benchmark (see docs/cpu-cost.md): `--role setup`, `worker` or `producer`. It loads sqlane
-// from `--src`, a source tree: the working tree, or the baseline that measure.sh extracts from a git ref. The worker
-// and the producer write their numbers of the measured window to `<out>/<role>.json`.
+// One process of the CPU cost benchmark (see docs/contributing/measuring_cpu_cost.md): `--role setup`, `worker` or
+// `producer`. It loads sqlane from `--src`, a source tree: the working tree, or the baseline that measure.sh extracts
+// from a git ref. The worker and the producer write their numbers of the measured window to `<out>/<role>.json`.
 import { createSocket } from 'node:dgram';
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';

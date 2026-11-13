@@ -26,7 +26,8 @@ export const adapter = {
         const notes = [];
         /** @type {string[]} */
         const limits = [];
-        // No idle timeout: a closed connection takes its CPU counters with it (see docs/cpu-cost.md, pitfall 5)
+        // No idle timeout: a closed connection takes its CPU counters with it
+        // (see docs/contributing/measuring_cpu_cost.md, pitfall 5)
         const pool = new Pool({ connectionString: url, max: 5, idleTimeoutMillis: 0 });
 
         pool.on('error', () => {});

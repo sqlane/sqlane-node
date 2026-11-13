@@ -13,4 +13,4 @@ Pull requests that do not change what the package publishes need no changeset: t
 lockfile. CI checks it (`scripts/check_changeset.js`): `src/` without the tests, `README.md`, `LICENSE`, and
 `package.json` without `devDependencies`.
 
-See [the release process](../docs/releasing.md).
+See [the release process](../docs/contributing/releasing.md).

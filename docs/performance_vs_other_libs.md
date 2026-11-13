@@ -3,7 +3,7 @@
 The CPU cost, latency and idle cost of Node.js job queues on SQL databases and Redis, and of their cron schedules:
 sqlane, pg-boss, Graphile Worker, River, Izi Queue and Boring Node Queue, which enqueue in your SQL transaction, and
 BullMQ and Sidequest, which cannot: they enqueue after the `COMMIT`, **not atomic**, and their rows say so
-([features](comparison.md)). Each library runs with the settings that its documentation offers for throughput
+([features](features_vs_other_libs.md)). Each library runs with the settings that its documentation offers for throughput
 ([settings](#settings)). The instructions come from all the libraries at once, the times from one library at a time
 ([method](#method-and-limits)).
 
@@ -34,8 +34,8 @@ and forwards at most 600 cron jobs a minute per instance. We use the settings th
 throughput ([settings](#settings)).
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-dark.svg">
-  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 4.5 M, Graphile Worker 11.1 M, River 15.1 M, pg-boss 28.1 M, Izi Queue 7.7 M, Boring Node Queue 11.7 M, BullMQ 11.7 M (after the commit), Sidequest 18.2 M (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cpu-per-job-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cpu_per_job_dark.svg">
+  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 4.5 M, Graphile Worker 11.1 M, River 15.1 M, pg-boss 28.1 M, Izi Queue 7.7 M, Boring Node Queue 11.7 M, BullMQ 11.7 M (after the commit), Sidequest 18.2 M (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cpu_per_job_light.svg">
 </picture>
 
 One run on a laptop: differences of about 10% are noise. Repeat it on your hardware before you plan capacity
@@ -49,8 +49,8 @@ other 990. Per job, on PostgreSQL, in 15 s windows: instructions with all the li
 with one library at a time:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-latency-dark.svg">
-  <img alt="Median time from enqueue to handler start on PostgreSQL, one library at a time: sqlane 3 ms, Graphile Worker 4 ms, River 5 ms, pg-boss 4 ms, Izi Queue 4 ms, Boring Node Queue 1002 ms, BullMQ 3 ms, Sidequest 53 ms" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-latency-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_latency_dark.svg">
+  <img alt="Median time from enqueue to handler start on PostgreSQL, one library at a time: sqlane 3 ms, Graphile Worker 4 ms, River 5 ms, pg-boss 4 ms, Izi Queue 4 ms, Boring Node Queue 1002 ms, BullMQ 3 ms, Sidequest 53 ms" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_latency_light.svg">
 </picture>
 
 | Library                                     | Instructions (M) | vs sqlane | Worker / producer / database | CPU ms | Latency p50 / p99 ms |
@@ -91,8 +91,8 @@ append-only file every second, so a crash can lose up to a second of jobs that P
 No jobs, nothing due. Per second, with 1 and 1000 job names, all the libraries at once:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-idle-dark.svg">
-  <img alt="Database instructions per second while idle with 1000 job names on PostgreSQL: sqlane 0.1 M, Graphile Worker 1.8 M, River 1.7 M, pg-boss 268 M, Izi Queue 13.2 M, Boring Node Queue 1.1 M, BullMQ 0.9 M, Sidequest 2.0 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-idle-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_idle_dark.svg">
+  <img alt="Database instructions per second while idle with 1000 job names on PostgreSQL: sqlane 0.1 M, Graphile Worker 1.8 M, River 1.7 M, pg-boss 268 M, Izi Queue 13.2 M, Boring Node Queue 1.1 M, BullMQ 0.9 M, Sidequest 2.0 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_idle_light.svg">
 </picture>
 
 | Library           | Database   | Database instructions (M), 1 / 1000 names | Worker instructions (M), 1 / 1000 names | SQL statements, 1000 names | Connections |
@@ -153,8 +153,8 @@ at most 60 s, one library at a time:
 not atomically (\*); a scheduled job has no business transaction in any library. The median of 3 runs.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cron-dark.svg">
-  <img alt="CPU instructions per fired job of 1000 schedules due every minute, 3 worker processes, on PostgreSQL: sqlane 2.1 M, Graphile Worker 8.8 M, River 5.7 M, pg-boss 15.4 M (median of 9 runs), Izi Queue 37.0 M, Boring Node Queue 18.1 M, BullMQ 8.1 M, Sidequest 27.2 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf-cron-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cron_dark.svg">
+  <img alt="CPU instructions per fired job of 1000 schedules due every minute, 3 worker processes, on PostgreSQL: sqlane 2.1 M, Graphile Worker 8.8 M, River 5.7 M, pg-boss 15.4 M (median of 9 runs), Izi Queue 37.0 M, Boring Node Queue 18.1 M, BullMQ 8.1 M, Sidequest 27.2 M" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cron_light.svg">
 </picture>
 
 **Firing.** All 1000 schedules due every minute (`* * * * *`), with 1 and with 3 worker processes. The CPU of all
@@ -351,7 +351,7 @@ Each library runs with the settings that its documentation offers for throughput
   harness requires of a release ([bench/compare](../bench/compare/README.md)).
 - The pools keep their connections: a closed connection takes its CPU counters with it.
 - **Instructions** retired are the measure to compare: they do not depend on the core or the clock. CPU time does, on
-  Apple Silicon (see [CPU cost per job](cpu-cost.md#the-three-numbers)), so it comes from phase B, on an otherwise idle
+  Apple Silicon (see [CPU cost per job](contributing/measuring_cpu_cost.md#the-three-numbers)), so it comes from phase B, on an otherwise idle
   machine. On PostgreSQL the database counts the processes of its connections only, not autovacuum or the
   checkpointer; on MySQL and MariaDB, the whole server.
 - One machine, one run, 15 s windows: differences of about 10% are noise.

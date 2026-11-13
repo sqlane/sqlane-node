@@ -45,7 +45,8 @@ export const adapter = {
         }
 
         const mysql = url.startsWith('mysql:');
-        // No idle timeout: a closed connection takes its CPU counters with it (see docs/cpu-cost.md, pitfall 5)
+        // No idle timeout: a closed connection takes its CPU counters with it
+        // (see docs/contributing/measuring_cpu_cost.md, pitfall 5)
         const mysqlPool = mysql ? createPool({ uri: url, connectionLimit: 5 }) : null;
         const pgPool = mysql ? null : new Pool({ connectionString: url, max: 5, idleTimeoutMillis: 0 });
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # The CPU cost per job of a baseline git ref and of the working tree, on PostgreSQL, MySQL and MariaDB that run on this
-# host (macOS, Homebrew). See docs/cpu-cost.md. About 3 minutes with the defaults.
+# host (macOS, Homebrew). See docs/contributing/measuring_cpu_cost.md. About 3 minutes with the defaults.
 #
 #   bench/cpu/measure.sh                         # main vs the working tree, all three databases
 #   BASE=v2.0.0 DIALECTS=postgres bench/cpu/measure.sh
