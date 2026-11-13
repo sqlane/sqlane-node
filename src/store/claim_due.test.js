@@ -118,3 +118,57 @@ describe.each([
         expect(sent.some(({ sql }) => sql.includes('FROM sqlane_payloads WHERE'))).toBe(false);
     });
 });
+
+/**
+ * The statements of a claim of one locked job.
+ * @param {typeof mariadbWorker.claimDue} claimDue
+ * @param {{ snapshotIsolationOff?: boolean }} [options]
+ * @returns {Promise<Sent[]>}
+ */
+async function sentBy(claimDue, options) {
+    /** @type {Sent[]} */
+    const sent = [];
+
+    await claimDue({
+        query: async (sql, params) => {
+            sent.push({ sql, params });
+
+            return sql.includes('SKIP LOCKED') ? [lockedRow('j1', '{"n":1}')] : [];
+        },
+        run: async () => 0,
+    }, 'sqlane_', {
+        requests: [{ name: 'a', maxJobs: 5, running: 0, weight: 1, group: null, tie: 0 }],
+        groupRooms: [],
+        free: 10,
+        lockToken: 'T',
+        lockedBy: 'test:T',
+        leaseMs: 60_000,
+        choose: locked => locked,
+    }, options);
+
+    return sent;
+}
+
+describe('the snapshot isolation of the MariaDB claim statement', () => {
+    test('MariaDB: the claim statement, and only it, turns innodb_snapshot_isolation off from 10.11.8', async () => {
+        const sent = await sentBy(mariadbWorker.claimDue);
+
+        expect(mariadbWorker.SNAPSHOT_ISOLATION_OFF)
+            .toBe('/*M!101108 SET STATEMENT innodb_snapshot_isolation = OFF FOR */ ');
+        expect(sent[0].sql.startsWith(mariadbWorker.SNAPSHOT_ISOLATION_OFF)).toBe(true);
+        expect(sent[0].sql).toContain('FOR UPDATE SKIP LOCKED');
+        expect(sent.slice(1).some(({ sql }) => sql.includes('innodb_snapshot_isolation'))).toBe(false);
+    });
+
+    test('MariaDB, snapshotIsolationOff: false: no prefix', async () => {
+        const sent = await sentBy(mariadbWorker.claimDue, { snapshotIsolationOff: false });
+
+        expect(sent.some(({ sql }) => sql.includes('innodb_snapshot_isolation'))).toBe(false);
+    });
+
+    test('MySQL: no prefix', async () => {
+        const sent = await sentBy(mysqlWorker.claimDue);
+
+        expect(sent.some(({ sql }) => sql.includes('innodb_snapshot_isolation'))).toBe(false);
+    });
+});
