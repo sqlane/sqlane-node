@@ -13,10 +13,12 @@ explains how sqlane works and why.
 - [Durations](#durations)
 - [`defineJob`](#definejob)
 - [`createSqlane`](#createsqlane)
+- [`defineConcurrencyGroup`](#defineconcurrencygroup)
 - [Where job options come from](#where-job-options-come-from)
 - [`enqueue`](#enqueue)
 - [`enqueueMany`](#enqueuemany)
 - [`handle`](#handle)
+- [How free slots are shared](#how-free-slots-are-shared)
 - [`schedule`](#schedule)
 - [`getSchedules`](#getschedules)
 - [`start`](#start)
@@ -34,21 +36,22 @@ explains how sqlane works and why.
 
 ## Terms
 
-| Term           | Meaning                                                                                                                                                                          |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Job            | One unit of work. It is one row in the database, with a payload, a state and a number of attempts.                                                                               |
-| Job name       | The kind of a job, for example `build_report`. The job name is also the queue, because sqlane has no separate queue object.                                                      |
-| Job definition | The name and the options of a job name. You create it with `defineJob`. Producers and workers import the same definition.                                                        |
-| Handler        | The function that runs a job. Only workers register handlers.                                                                                                                    |
-| Lane           | A limit on the number of handlers that run at the same time in one process. Several job names can share one lane.                                                                |
-| Lease          | The time for which a process owns a running job. The process renews the lease while the handler runs. If the process stops, the lease ends and another process can take the job. |
-| Stall          | A stall happens when the lease of a running job ends because its process stopped or blocked. sqlane then puts the job back in the queue.                                         |
-| Mutex key      | A string such as `order:42`. Two jobs that share a mutex key never run at the same time in the whole cluster, as long as handlers stop when their `signal` aborts.               |
-| Failure job    | A job that sqlane adds when another job fails for good. It lets you react to the failure, for example by sending an alert.                                                       |
-| Adapter        | The object that connects sqlane to your database driver or ORM.                                                                                                                  |
-| Hint           | A message that tells other processes that jobs of a name are ready. Hints only make jobs start sooner. If a hint is lost, the job still runs at the next poll.                   |
-| Schedule       | A cron or an interval that adds a job of a name at each of its times. You add it with `schedule()`.                                                                              |
-| Slot           | One time of a schedule. Each slot adds at most one job, whose id is `<job name>:schedule:[<key>:]<ISO time>`.                                                                    |
+| Term              | Meaning                                                                                                                                                                          |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Job               | One unit of work. It is one row in the database, with a payload, a state and a number of attempts.                                                                               |
+| Job name          | The kind of a job, for example `build_report`. The job name is also the queue, because sqlane has no separate queue object.                                                      |
+| Job definition    | The name and the options of a job name. You create it with `defineJob`. Producers and workers import the same definition.                                                        |
+| Handler           | The function that runs a job. Only workers register handlers.                                                                                                                    |
+| Concurrency group | A limit on the handlers of several job names that run at the same time in one instance. You create it with `defineConcurrencyGroup`.                                             |
+| Fair share weight | The share of the free slots that a job name gets, against the other due names: `fairShareWeight`, default 1.                                                                     |
+| Lease             | The time for which a process owns a running job. The process renews the lease while the handler runs. If the process stops, the lease ends and another process can take the job. |
+| Stall             | A stall happens when the lease of a running job ends because its process stopped or blocked. sqlane then puts the job back in the queue.                                         |
+| Mutex key         | A string such as `order:42`. Two jobs that share a mutex key never run at the same time in the whole cluster, as long as handlers stop when their `signal` aborts.               |
+| Failure job       | A job that sqlane adds when another job fails for good. It lets you react to the failure, for example by sending an alert.                                                       |
+| Adapter           | The object that connects sqlane to your database driver or ORM.                                                                                                                  |
+| Hint              | A message that tells other processes that jobs of a name are ready. Hints only make jobs start sooner. If a hint is lost, the job still runs at the next poll.                   |
+| Schedule          | A cron or an interval that adds a job of a name at each of its times. You add it with `schedule()`.                                                                              |
+| Slot              | One time of a schedule. Each slot adds at most one job, whose id is `<job name>:schedule:[<key>:]<ISO time>`.                                                                    |
 
 ## Durations
 
@@ -141,28 +144,28 @@ validate payloads at runtime, so your app must validate its own payloads if it n
 `createSqlane` creates a sqlane instance.
 
 ```ts
-createSqlane<C, L extends string = never>(options: SqlaneOptions<C, L>): Sqlane<C, L>
+createSqlane<C>(options: SqlaneOptions<C>): Sqlane<C>
 ```
 
-The type `C` is the connection type that `enqueue` accepts, and it comes from the adapter. The type `L` is the union
-of the lane names in `lanes`. `createSqlane` does not connect, migrate or start anything. It throws a `ConfigError` if
-an option is unknown or has a bad value.
+The type `C` is the connection type that `enqueue` accepts, and it comes from the adapter. `createSqlane` does not
+connect, migrate or start anything. It throws a `ConfigError` if an option is unknown or has a bad value. The options
+of 4.x throw a `ConfigError` that names the new one: `concurrency` is now `maxConcurrency`, and `lanes` became
+[concurrency groups](#defineconcurrencygroup).
 
-| Option            | Type                                 | Default     | Description                                                                                                                                                                                           |
-| ----------------- | ------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `adapter`         | `Adapter<C>`                         | Required    | The adapter of your driver or ORM, created over the queue's own pool. sqlane uses this pool to claim jobs, renew leases and write results. See [Adapters](#adapters).                                 |
-| `jobs`            | `readonly JobDefinition[]`           | `[]`        | The definitions that this instance knows by name. List every definition here, so that an enqueue by name finds its options. Two different definitions with one name throw a `ConfigError`.            |
-| `concurrency`     | integer, at least 1                  | `10`        | The highest number of handlers that run at the same time in this process.                                                                                                                             |
-| `lanes`           | `Record<L, { concurrency: number }>` | `{}`        | Named lanes. Each lane limits the handlers that use it. A lane's concurrency is capped by the process `concurrency`.                                                                                  |
-| `defaults`        | `JobDefaults`                        | See below   | Defaults for `maxAttempts`, `maxStalls`, `backoff`, `retention` and `timeout`. A definition overrides them.                                                                                           |
-| `unknownJobs`     | `'allow'` or `'reject'`              | `'allow'`   | With `'reject'`, `enqueue` rejects with an `UnknownJobError` for a job name that is neither in `jobs` nor handled.                                                                                    |
-| `hint`            | [`Hint`](#hint) or `null`            | `null`      | A publish/subscribe service that wakes other processes after an enqueue. With `null`, other processes find new jobs at their next poll. You cannot combine it with the `notify` option of an adapter. |
-| `logger`          | `Logger`                             | None        | A pino-compatible logger with `debug`, `info`, `warn` and `error` methods. Each method takes an object and an optional message. Without a logger, sqlane writes no logs.                              |
-| `onEvent`         | `(event: SqlaneEvent) => void`       | None        | A function that receives the [events](#events) of the job lifecycle. If it throws, sqlane logs the error and goes on.                                                                                 |
-| `tablePrefix`     | `string`                             | `'sqlane_'` | The prefix of the table names. It must match `^[a-z][a-z0-9_]{0,31}$`.                                                                                                                                |
-| `pollInterval`    | positive duration                    | `'5s'`      | How often a started process checks the database for due jobs when nothing wakes it.                                                                                                                   |
-| `maxPayloadBytes` | integer, at least 1                  | `262144`    | The largest payload, in bytes of JSON. The default is 256 KiB.                                                                                                                                        |
-| `cleanup`         | `boolean`                            | `true`      | When it is `true`, a started process deletes the completed and failed jobs after their retention.                                                                                                     |
+| Option            | Type                           | Default     | Description                                                                                                                                                                                           |
+| ----------------- | ------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `adapter`         | `Adapter<C>`                   | Required    | The adapter of your driver or ORM, created over the queue's own pool. sqlane uses this pool to claim jobs, renew leases and write results. See [Adapters](#adapters).                                 |
+| `jobs`            | `readonly JobDefinition[]`     | `[]`        | The definitions that this instance knows by name. List every definition here, so that an enqueue by name finds its options. Two different definitions with one name throw a `ConfigError`.            |
+| `maxConcurrency`  | integer, at least 1            | `10`        | The highest number of handlers that run at the same time in this instance. The free slots are [shared by weight](#how-free-slots-are-shared).                                                         |
+| `defaults`        | `JobDefaults`                  | See below   | Defaults for `maxAttempts`, `maxStalls`, `backoff`, `retention` and `timeout`. A definition overrides them.                                                                                           |
+| `unknownJobs`     | `'allow'` or `'reject'`        | `'allow'`   | With `'reject'`, `enqueue` rejects with an `UnknownJobError` for a job name that is neither in `jobs` nor handled.                                                                                    |
+| `hint`            | [`Hint`](#hint) or `null`      | `null`      | A publish/subscribe service that wakes other processes after an enqueue. With `null`, other processes find new jobs at their next poll. You cannot combine it with the `notify` option of an adapter. |
+| `logger`          | `Logger`                       | None        | A pino-compatible logger with `debug`, `info`, `warn` and `error` methods. Each method takes an object and an optional message. Without a logger, sqlane writes no logs.                              |
+| `onEvent`         | `(event: SqlaneEvent) => void` | None        | A function that receives the [events](#events) of the job lifecycle. If it throws, sqlane logs the error and goes on.                                                                                 |
+| `tablePrefix`     | `string`                       | `'sqlane_'` | The prefix of the table names. It must match `^[a-z][a-z0-9_]{0,31}$`.                                                                                                                                |
+| `pollInterval`    | positive duration              | `'5s'`      | How often a started process checks the database for due jobs when nothing wakes it.                                                                                                                   |
+| `maxPayloadBytes` | integer, at least 1            | `262144`    | The largest payload, in bytes of JSON. The default is 256 KiB.                                                                                                                                        |
+| `cleanup`         | `boolean`                      | `true`      | When it is `true`, a started process deletes the completed and failed jobs after their retention.                                                                                                     |
 
 The built-in job defaults are `maxAttempts: 3`, `maxStalls: 2`, the default [backoff](#backoff),
 `retention: { completed: '1h', failed: '30d' }` and no timeout.
@@ -174,11 +177,41 @@ import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 const sqlane = createSqlane({
     adapter: mysql2Adapter(queuePool),
     jobs: [buildReport, syncOrder],
-    concurrency: 10,
-    lanes: { heavy: { concurrency: 2 } },
+    maxConcurrency: 10,
     defaults: { timeout: '10m' },
     unknownJobs: 'reject',
 });
+```
+
+## `defineConcurrencyGroup`
+
+`defineConcurrencyGroup` defines a cap shared by the handlers of several job names.
+
+```ts
+defineConcurrencyGroup(options: { name: string, maxConcurrency: number }): ConcurrencyGroup
+```
+
+Pass the group to `handle()` as `concurrencyGroup`. The jobs of all its names that run at the same time in one instance
+stay at or below its `maxConcurrency`. Each instance counts its own handlers: a group is not a limit in the whole
+cluster. Define the group at module level, like a job definition, and use the same object in every `handle()` call.
+The group is a frozen object.
+
+| Option           | Type                | Description                                               |
+| ---------------- | ------------------- | --------------------------------------------------------- |
+| `name`           | `string`            | It must match `^[a-z][a-z0-9_.-]{0,127}$`.                |
+| `maxConcurrency` | integer, at least 1 | The most jobs of the names of the group that run at once. |
+
+`defineConcurrencyGroup` throws a `ConfigError` for an unknown option, a bad name or a bad `maxConcurrency`.
+`handle()` throws a `ConfigError` for two different groups with one name in one instance. `start()` and `drain()`
+throw one for a group whose `maxConcurrency` is above the instance's.
+
+```js
+import { defineConcurrencyGroup } from '@sqlane/core';
+
+export const heavy = defineConcurrencyGroup({ name: 'heavy', maxConcurrency: 2 });
+
+sqlane.handle(transcode, work, { concurrencyGroup: heavy, maxConcurrency: 1, fairShareWeight: 2 });
+sqlane.handle(render, work, { concurrencyGroup: heavy });
 ```
 
 ## Where job options come from
@@ -292,21 +325,26 @@ sqlane.handle(job: JobDefinition | string, handler: (context: HandlerContext<P>)
 Register all the handlers before you call `start()`. The return value of the handler is ignored. sqlane does not wrap
 the handler in a transaction, so a handler that needs one opens it with its own connection.
 
-| Option        | Type                | Default                    | Description                                                                                                             |
-| ------------- | ------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `concurrency` | integer, at least 1 | None                       | Gives the handler a private lane with this limit. The process `concurrency` caps it. You cannot combine it with `lane`. |
-| `lane`        | a name in `lanes`   | None                       | Makes the handler share this lane with other handlers. You cannot combine it with `concurrency`.                        |
-| `timeout`     | positive duration   | The definition's `timeout` | The time after which sqlane aborts the handler. It overrides the timeout of the definition and of `defaults`.           |
-
-Without `concurrency` or `lane`, only the process `concurrency` limits the handler.
+| Option             | Type                                          | Default                    | Description                                                                                                                     |
+| ------------------ | --------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `maxConcurrency`   | integer, at least 1                           | None                       | The most jobs of this name that run at once in this instance. Without it, only the caps of its group and of the instance apply. |
+| `concurrencyGroup` | [`ConcurrencyGroup`](#defineconcurrencygroup) | None                       | A cap shared with the other names of the group. One group per handler. It combines with `maxConcurrency`.                       |
+| `fairShareWeight`  | integer, 1 to 1000                            | `1`                        | The name's share of the free slots, against the other due names. See [How free slots are shared](#how-free-slots-are-shared).   |
+| `timeout`          | positive duration                             | The definition's `timeout` | The time after which sqlane aborts the handler. It overrides the timeout of the definition and of `defaults`.                   |
 
 `handle` throws a `ConfigError` in these cases:
 
-- The options are unknown or bad, the lane is unknown, or both `lane` and `concurrency` are set.
+- The options are unknown or bad, or the group is not from `defineConcurrencyGroup()`. The options of 4.x name the new
+  ones: `concurrency` is now `maxConcurrency`, and `lane` is now `concurrencyGroup`.
+- Another concurrency group has the same name in this instance.
 - The job name already has a handler.
 - `jobs` holds a different definition with the same name.
 - The definition has `mutexKeys`, but no timeout is set in the `handle()` options, the definition or `defaults`.
-- `start()` was called before.
+- `start()` was called before, or `drain()` runs.
+
+`start()` and `drain()` throw a `ConfigError` for a handler whose `maxConcurrency` is above the instance's, for
+example `start(): the maxConcurrency of handle("transcode") (16) is above the instance's maxConcurrency (10)`. They
+check all the handlers together, so the order of the `handle()` calls does not matter.
 
 `handle` throws a `ClosedError` after `close()`.
 
@@ -355,8 +393,48 @@ A handler finishes in one of these ways:
 ```js
 sqlane.handle(buildReport, async ({ payload, job, signal }) => {
     await generateReport(payload.reportId, { signal });
-}, { lane: 'heavy', timeout: '5m' });
+}, { concurrencyGroup: heavy, timeout: '5m' });
 ```
+
+## How free slots are shared
+
+A process runs at most `maxConcurrency` handlers at once. When slots are free and several job names have due jobs, a
+free slot goes to the due name with the lowest `running / fairShareWeight`. `running` counts the jobs of the name that
+run in this instance, retries included. The name must be under its own `maxConcurrency`, its group's and the
+instance's. Ties go round-robin.
+
+- **Within a name**, jobs start in FIFO order: `run_at`, then the id. The FIFO per mutex key stays as before.
+- **A name is not in the race, and banks nothing,** while it has no due job, its due jobs wait for mutex keys, or it is
+  at one of its caps. The rule keeps no history: only the running counts of the moment.
+- **The shares are per instance.** Each process shares its own slots.
+- **Not oldest first across names.** In 4.x, the oldest due job across names started first. Now a busy name cannot
+  crowd out the others.
+- **A name woken by the release of a mutex key** competes by its share, like any other name. If it loses the slot, its
+  job keeps its place in the FIFO of the key.
+
+With weights 3 and 1 on 8 slots, and both names busy, 6 jobs of the first name and 2 of the second run. When a job
+ends, its slot goes back to its own name.
+
+**The rule equalizes the running counts, not the order of the starts.** Take A's 10 jobs, then B's 3, with equal
+weights and `maxConcurrency: 4`. A1 to A4 start first.
+
+- When the 4 jobs end together, the next claims take `{A5, B1, A6, B2}`, then `{B3, A7, A8, A9}`.
+- When the slots free one at a time, B first catches up to its share: `B1 B2 A5 A6 B3 …`.
+
+**The odd remainder.** When a share is not a whole number of slots, the extra slot goes to a name at each tie, not by
+time. So a name with long jobs keeps it longer. With jobs of 10 s against 1 s, equal weights and 3 slots, the long
+jobs take 63.5 % of the slot time and the short ones 36.5 %: 1.9 and 1.1 slots, against 1.5 each. The error stays
+below one slot. With 4 or 8 slots, each name gets exactly half.
+
+**Very short jobs.** Shares count running handlers. A name whose jobs take a few milliseconds loses the short gap
+between a completion and the next claim, so its measured slot time is a little below its share.
+
+**Groups.** Take T (weight 2, `maxConcurrency: 1`) and R (weight 1) in a group `heavy` of 2, and E (weight 3), on 10
+slots. T and R each run 1 job, and E runs 8. With `heavy` at 4, R and E share the 9 slots that T leaves by 1:3.
+
+**The slots of names with mutex keys.** A claim first finds the jobs of names with mutex keys whose keys are free, and
+leaves them their share of the free slots, of the instance and of their groups. If another process takes those jobs
+first, the slots stay free until the next turn, which comes at once.
 
 ## `schedule`
 

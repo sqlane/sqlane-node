@@ -182,7 +182,7 @@ export async function orderReport(reportId) {
 // Worker: in the same process or in another one
 sqlane.handle(buildReport, async ({ payload, signal }) => {
     await generateReport(payload.reportId, { signal }); // your code: it stops when the signal aborts
-}, { concurrency: 2, timeout: '5m' });
+}, { maxConcurrency: 2, timeout: '5m' });
 await sqlane.start();
 
 process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));

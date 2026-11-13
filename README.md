@@ -116,7 +116,7 @@ main requirement.
 - **Delayed and unique jobs.** A job can wait for a `delay` or start at a `runAt` time. A `jobId` blocks a duplicate enqueue while the first job's row exists. By default, the row exists until about 1 hour after the job completes. The `retention` option changes this time. ([enqueue options](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue))
 - **Cron and repeatable jobs.** `schedule()` adds a job at each time of a cron in your time zone, or at a fixed interval. Each time adds at most one job in the whole cluster, with no leader, and a time missed during a short downtime runs once. ([schedule](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedule))
 - **Failure jobs.** When a job fails for good, sqlane adds a job of another name, so you can react, for example with an alert. ([failure jobs](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#failedjobpayload))
-- **Concurrency limits.** You can limit the number of handlers that run at the same time in each process. The limit can apply to all handlers, to one job name, or to a lane that several job names share. ([handle](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#handle))
+- **Concurrency limits and fair sharing.** Limit the handlers that run at once per process, per job name, or per group of names. Free slots are shared between job names by weight, so a busy name cannot crowd out the others. ([handle](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#handle), [how free slots are shared](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#how-free-slots-are-shared))
 - **Typed payloads.** In TypeScript or JSDoc, `enqueue`, the handler and `mutexKeys` share one payload type. ([typed payloads](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#typed-payloads))
 - **Fast start after the commit.** Workers in the same process start a job about 25 ms after the commit, or at the commit with Knex, Sequelize, TypeORM and MikroORM. Workers in other processes start it within a few milliseconds with PostgreSQL NOTIFY (the pg, postgres.js and Drizzle adapters), or about 25 ms after the commit with a [hint](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#hint) over Redis or another publish/subscribe service. Without either, they find the job at their next poll, which comes every 5 seconds by default. ([wake-up](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#wake-up-after-the-commit))
 - **Cheap idle job names.** Workers look only at the job names that have pending jobs, so 1000 mostly idle names cost about the same as 10. ([how it works](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#dispatcher-one-loop-per-process))
@@ -186,7 +186,7 @@ accept one, such as `fetch`. `close()` stops taking new jobs and waits for the r
 ```js
 sqlane.handle(sendReceipt, async ({ payload, signal }) => {
     await sendReceiptEmail(payload.orderId, { signal }); // your code
-}, { concurrency: 5, timeout: '1m' });
+}, { maxConcurrency: 5, timeout: '1m' });
 await sqlane.start();
 process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));
 ```
@@ -252,7 +252,9 @@ measures sqlane next to pg-boss, Graphile Worker and River.
 - The [design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md) explains how sqlane works inside.
 - The [benchmarks](https://github.com/sqlane/sqlane-node/blob/main/docs/benchmarks.md) give the measured numbers.
 - The [examples folder](https://github.com/sqlane/sqlane-node/tree/main/examples) has more examples.
-- The [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists the changes of each version.
+- The [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists the changes of each version, and
+  the [migration guide to 5.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrating-to-5.md) the changes of
+  your code from 4.x.
 - The [contributing guide](https://github.com/sqlane/sqlane-node/blob/main/CONTRIBUTING.md) explains the project setup.
 
 ## Versioning
