@@ -32,6 +32,8 @@ function runnerWith(makeDueErrors) {
         findCandidates: async () => [],
         probe: async () => [{ name: 'ping', delayMs: 0 }],
         claimDue: async () => ({ jobs: [], next: [] }),
+        findStaleJobs: async () => [],
+        sweepMutexes: async () => ({ lingers: 0, orphans: 0 }),
     }));
 
     registry.handle('ping', () => {});
@@ -1373,6 +1375,9 @@ async function runnerWithClaims(errors) {
     const logger = { debug: vi.fn(() => trace.push('retry')), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
         probe: async () => [{ name: 'ping', delayMs: 0 }],
+        // The recovery timer: its first run comes at recoveryIntervalMs × Math.random(), so at times during the test
+        findStaleJobs: async () => [],
+        sweepMutexes: async () => ({ lingers: 0, orphans: 0 }),
         claimDue: async () => {
             const error = errors[claimTimes.length] ?? null;
 
@@ -1449,6 +1454,26 @@ test('dispatch: a transient error is retried at once, logged at debug, with no e
         expect(logger.error).not.toHaveBeenCalled();
     } finally {
         await runner.close({ deadline: 0 });
+    }
+});
+
+test('dispatch: the recovery timer that runs during the retries at once adds no error event', async () => {
+    // Every timer's first run at once (interval × Math.random()), the recovery one too, and the jitters at 5 ms
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    try {
+        const { runner, events, trace } = await runnerWithClaims([checkRead(), deadlock(), checkRead()]);
+
+        try {
+            await successfulClaims(trace, 1);
+
+            expect(trace.slice(0, 7)).toStrictEqual([...RETRIED_THREE_TIMES, 'claim:ok']);
+            expect(events.filter(event => event.type === 'error')).toStrictEqual([]);
+        } finally {
+            await runner.close({ deadline: 0 });
+        }
+    } finally {
+        random.mockRestore();
     }
 });
 
