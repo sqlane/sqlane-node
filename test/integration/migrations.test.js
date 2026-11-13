@@ -48,7 +48,7 @@ function nextPrefix() {
 
 /**
  * @param {string} tablePrefix
- * @returns {import('../../src/types.js').Sqlane<any, never>}
+ * @returns {import('../../src/types.js').Sqlane<any>}
  */
 function sqlaneOf(tablePrefix) {
     return createSqlane({ adapter: testAdapter.adapter, tablePrefix });

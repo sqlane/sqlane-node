@@ -44,7 +44,7 @@ sqlane.handle(syncOrder, async ({ payload, signal }) => {
     timeline.push({ order: payload.orderId, event: 'start', at: performance.now() - startedAt });
     await sleep(200, undefined, { signal }); // the work: stops when sqlane aborts the signal
     timeline.push({ order: payload.orderId, event: 'end', at: performance.now() - startedAt });
-}, { concurrency: 4 });
+}, { maxConcurrency: 4 });
 await sqlane.start();
 
 console.log('1. Commit: order 1 and its job');

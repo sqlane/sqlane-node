@@ -2,6 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import {
     createSqlane,
+    defineConcurrencyGroup,
     defineJob,
     DrainTimeoutError,
     FatalJobError,
@@ -12,7 +13,7 @@ import {
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
 
-/** @typedef {import('../../src/types.js').Sqlane<any, any>} Sqlane */
+/** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
 /** Fast timers: the tests wait milliseconds, not minutes */
@@ -44,7 +45,7 @@ afterAll(async () => {
 
 /**
  * A sqlane instance on tables of its own, migrated.
- * @param {Partial<import('../../src/types.js').SqlaneOptions<any, any>>} [options]
+ * @param {Partial<import('../../src/types.js').SqlaneOptions<any>>} [options]
  * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
  */
 async function freshSqlane(options = {}) {
@@ -297,8 +298,9 @@ describe('start()', () => {
 });
 
 describe('concurrency', () => {
-    test('a private lane, a shared lane and the process concurrency', async () => {
-        const { sqlane, p } = await freshSqlane({ concurrency: 3, lanes: { shared: { concurrency: 2 } } });
+    test('the cap of a name, of a concurrency group and of the instance', async () => {
+        const { sqlane, p } = await freshSqlane({ maxConcurrency: 3 });
+        const shared = defineConcurrencyGroup({ name: 'shared', maxConcurrency: 2 });
         const privateMeter = concurrencyMeter();
         const sharedMeter = concurrencyMeter();
         const allMeter = concurrencyMeter();
@@ -314,9 +316,9 @@ describe('concurrency', () => {
             allMeter.leave();
         };
 
-        sqlane.handle('solo', slowHandler(privateMeter), { concurrency: 1 });
-        sqlane.handle('shared_a', slowHandler(sharedMeter), { lane: 'shared' });
-        sqlane.handle('shared_b', slowHandler(sharedMeter), { lane: 'shared' });
+        sqlane.handle('solo', slowHandler(privateMeter), { maxConcurrency: 1 });
+        sqlane.handle('shared_a', slowHandler(sharedMeter), { concurrencyGroup: shared });
+        sqlane.handle('shared_b', slowHandler(sharedMeter), { concurrencyGroup: shared });
         sqlane.handle('free', slowHandler(concurrencyMeter()));
 
         for (const name of ['solo', 'shared_a', 'shared_b', 'free']) {

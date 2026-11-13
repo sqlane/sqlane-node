@@ -13,7 +13,7 @@ import { isMissingTableError } from './transient_error.js';
 import { checkDuration, checkInteger, checkObject, checkTablePrefix, isPlainObject } from './validate.js';
 
 const OPTION_NAMES = [
-    'adapter', 'jobs', 'concurrency', 'lanes', 'defaults', 'unknownJobs', 'hint', 'logger', 'onEvent', 'tablePrefix',
+    'adapter', 'jobs', 'maxConcurrency', 'defaults', 'unknownJobs', 'hint', 'logger', 'onEvent', 'tablePrefix',
     'pollInterval', 'maxPayloadBytes', 'cleanup', 'timings',
 ];
 
@@ -83,12 +83,23 @@ function resolveHint(adapter, hint) {
 /**
  * Creates a sqlane instance. It connects, migrates and starts nothing.
  * @template C The connections that `enqueue` accepts, from the adapter.
- * @template {string} [L=never] The lane names, from `lanes`.
- * @param {import('./types.js').SqlaneOptions<C, L>} options
- * @returns {import('./types.js').Sqlane<C, L>}
+ * @param {import('./types.js').SqlaneOptions<C>} options
+ * @returns {import('./types.js').Sqlane<C>}
  */
 export function createSqlane(options) {
     const scope = { where: 'createSqlane', ErrorClass: ConfigError };
+
+    // The options of 4.x: an error that names the new API
+    const given = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (options));
+
+    if (isPlainObject(given) && given.concurrency !== undefined) {
+        throw new ConfigError('createSqlane: "concurrency" is now "maxConcurrency" (5.0)');
+    }
+
+    if (isPlainObject(given) && given.lanes !== undefined) {
+        throw new ConfigError('createSqlane: "lanes" was removed in 5.0: define groups with defineConcurrencyGroup() '
+            + 'and pass them to handle() as "concurrencyGroup"');
+    }
 
     checkObject(options, OPTION_NAMES, 'options', scope);
 
@@ -110,9 +121,9 @@ export function createSqlane(options) {
         throw new ConfigError(`createSqlane: "unknownJobs" must be 'allow' or 'reject'`);
     }
 
-    const { concurrency = 10, cleanup = true } = options;
+    const { maxConcurrency = 10, cleanup = true } = options;
 
-    checkInteger(concurrency, '"concurrency"', scope);
+    checkInteger(maxConcurrency, '"maxConcurrency"', scope);
 
     if (typeof cleanup !== 'boolean') {
         throw new ConfigError('createSqlane: "cleanup" must be a boolean');
@@ -123,8 +134,7 @@ export function createSqlane(options) {
     const defaults = resolveDefaults(options.defaults);
     const registry = createRegistry({
         jobsByName,
-        lanes: options.lanes,
-        concurrency,
+        maxConcurrency,
         defaultTimeoutMs: defaults.timeoutMs,
     });
     const hint = resolveHint(adapter, options.hint);
@@ -146,7 +156,7 @@ export function createSqlane(options) {
     const runner = createRunner({
         store,
         registry,
-        concurrency,
+        maxConcurrency,
         defaults,
         cleanup,
         logger: options.logger,
@@ -154,6 +164,8 @@ export function createSqlane(options) {
         hintChannel,
         hintsAfterCommit: Boolean(adapter.notify),
         timings: { pollIntervalMs, ...testTimings },
+        // Undocumented, for the tests of sqlane: the random start of the tie pointer
+        random: /** @type {{ random?: () => number }} */ (testTimings ?? {}).random ?? Math.random,
     });
     const enqueuer = createEnqueuer({
         adapter,
@@ -288,6 +300,10 @@ export function createSqlane(options) {
 
             if (runner.isStarted()) {
                 throw new ConfigError('handle() after start(): register all the handlers before start()');
+            }
+
+            if (!runner.isIdle()) {
+                throw new ConfigError('handle() during drain(): register all the handlers before drain()');
             }
 
             registry.handle(job, handler, handleOptions);

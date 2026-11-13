@@ -1,24 +1,32 @@
-// The handlers of an instance, their lanes and the known definitions.
+// The handlers of an instance, their caps, weights and concurrency groups, and the known definitions.
+import { isConcurrencyGroup } from './define_concurrency_group.js';
 import { parseDuration } from './duration.js';
 import { ConfigError } from './errors.js';
 import { checkDuration, checkInteger, checkObject, isPlainObject, JOB_NAME_REGEXP } from './validate.js';
 
 /** @typedef {import('./types.js').JobDefinition} JobDefinition */
 
+const HANDLE_OPTION_NAMES = ['maxConcurrency', 'concurrencyGroup', 'fairShareWeight', 'timeout'];
+const MAX_WEIGHT = 1000;
+
 /**
- * A concurrency limit in this process.
- * @typedef {object} Lane
- * @property {string} name
- * @property {number} concurrency
+ * A concurrency group in this instance: its handlers that run.
+ * @typedef {object} GroupState
+ * @property {import('./types.js').ConcurrencyGroup} group
  * @property {number} running
+ * @property {string[]} names Its handled names.
  */
 
 /**
  * @typedef {object} HandlerEntry
  * @property {string} name
+ * @property {number} index Its position in the order of the handle() calls: the order of the ties.
  * @property {JobDefinition | null} definition
  * @property {import('./types.js').Handler} handler
- * @property {Lane} lane
+ * @property {number | null} maxConcurrency Null: only the caps of its group and of the instance.
+ * @property {number} weight Its fairShareWeight.
+ * @property {number} running Its jobs that run in this instance.
+ * @property {GroupState | null} group
  * @property {number | null} timeoutMs Resolved: the handle() options, else the definition, else the defaults.
  */
 
@@ -26,43 +34,63 @@ import { checkDuration, checkInteger, checkObject, isPlainObject, JOB_NAME_REGEX
  * @typedef {object} Registry
  * @property {(job: JobDefinition | string, handler: import('./types.js').Handler, options?: object) => void} handle
  * @property {(name: string) => HandlerEntry | undefined} getEntry
- * @property {() => HandlerEntry[]} entries
+ * @property {() => HandlerEntry[]} entries In the order of the handle() calls.
  * @property {(name: string) => JobDefinition | null} findDefinition In `jobs`, else handled.
  * @property {() => string[]} namesWithKeys The handled names whose definition has mutex keys.
- * @property {() => void} validate Checks the handlers together: each failure job resolves and has none of its own.
+ * @property {(where: string) => void} validate Checks the handlers together: each failure job resolves and has none
+ *     of its own, and no cap is above the instance's. `where`: `start()` or `drain()`, for the messages.
  */
 
 /**
  * @param {object} params
  * @param {Map<string, JobDefinition>} params.jobsByName
- * @param {unknown} params.lanes The `lanes` option.
- * @param {number} params.concurrency The process concurrency.
+ * @param {number} params.maxConcurrency The instance's cap.
  * @param {number | null} params.defaultTimeoutMs
  * @returns {Registry}
  */
-export function createRegistry({ jobsByName, lanes, concurrency, defaultTimeoutMs }) {
-    const scope = { where: 'createSqlane', ErrorClass: ConfigError };
-    /** @type {Map<string, Lane>} */
-    const namedLanes = new Map();
-    /** The handlers without a lane: the process concurrency only */
-    const defaultLane = { name: '', concurrency, running: 0 };
+export function createRegistry({ jobsByName, maxConcurrency, defaultTimeoutMs }) {
     /** @type {Map<string, HandlerEntry>} */
     const entriesByName = new Map();
-
-    if (lanes !== undefined && !isPlainObject(lanes)) {
-        throw new ConfigError('createSqlane: "lanes" must be an object of lane options');
-    }
-
-    for (const [name, options] of Object.entries(lanes ?? {})) {
-        const laneOptions = checkObject(options, ['concurrency'], `lane "${name}" options`, scope);
-
-        checkInteger(laneOptions.concurrency, `lane "${name}" concurrency`, scope);
-        namedLanes.set(name, { name, concurrency: Math.min(Number(laneOptions.concurrency), concurrency), running: 0 });
-    }
+    /** @type {Map<import('./types.js').ConcurrencyGroup, GroupState>} */
+    const groupStates = new Map();
+    /** @type {Map<string, import('./types.js').ConcurrencyGroup>} */
+    const groupsByName = new Map();
 
     /** @type {Registry['findDefinition']} */
     function findDefinition(name) {
         return jobsByName.get(name) ?? entriesByName.get(name)?.definition ?? null;
+    }
+
+    /**
+     * @param {unknown} value
+     * @param {string} where
+     * @returns {GroupState | null}
+     */
+    function groupStateOf(value, where) {
+        if (value === undefined) {
+            return null;
+        }
+
+        if (!isConcurrencyGroup(value)) {
+            throw new ConfigError(`${where}: "concurrencyGroup" must be a group from defineConcurrencyGroup()`);
+        }
+
+        const known = groupsByName.get(value.name);
+
+        if (known && known !== value) {
+            throw new ConfigError(`${where}: another concurrency group is named ${JSON.stringify(value.name)}`);
+        }
+
+        groupsByName.set(value.name, value);
+
+        let state = groupStates.get(value);
+
+        if (!state) {
+            state = { group: value, running: 0, names: [] };
+            groupStates.set(value, state);
+        }
+
+        return state;
     }
 
     /** @type {Registry['handle']} */
@@ -79,7 +107,16 @@ export function createRegistry({ jobsByName, lanes, concurrency, defaultTimeoutM
             throw new ConfigError(`${where}: the handler must be a function`);
         }
 
-        const handleOptions = checkObject(options, ['concurrency', 'lane', 'timeout'], 'options', handleScope);
+        // The options of 4.x: an error that names the new one
+        if (isPlainObject(options) && options.concurrency !== undefined) {
+            throw new ConfigError(`${where}: "concurrency" is now "maxConcurrency" (5.0)`);
+        }
+
+        if (isPlainObject(options) && options.lane !== undefined) {
+            throw new ConfigError(`${where}: "lane" was removed in 5.0: use "concurrencyGroup"`);
+        }
+
+        const handleOptions = checkObject(options, HANDLE_OPTION_NAMES, 'options', handleScope);
 
         if (entriesByName.has(name)) {
             throw new ConfigError(`${where}: the job is handled already`);
@@ -92,29 +129,17 @@ export function createRegistry({ jobsByName, lanes, concurrency, defaultTimeoutM
             throw new ConfigError(`${where}: another definition of "${name}" is in "jobs"`);
         }
 
-        if (handleOptions.lane !== undefined && handleOptions.concurrency !== undefined) {
-            throw new ConfigError(`${where}: "lane" or "concurrency", not both`);
+        if (handleOptions.maxConcurrency !== undefined) {
+            checkInteger(handleOptions.maxConcurrency, '"maxConcurrency"', handleScope);
         }
 
-        /** @type {Lane} */
-        let lane = defaultLane;
+        const weight = handleOptions.fairShareWeight === undefined ? 1 : handleOptions.fairShareWeight;
 
-        if (handleOptions.lane !== undefined) {
-            const named = namedLanes.get(String(handleOptions.lane));
-
-            if (!named) {
-                throw new ConfigError(`${where}: unknown lane ${JSON.stringify(handleOptions.lane)}`);
-            }
-
-            lane = named;
-        } else if (handleOptions.concurrency !== undefined) {
-            checkInteger(handleOptions.concurrency, '"concurrency"', handleScope);
-            lane = {
-                name: `handler:${name}`,
-                concurrency: Math.min(Number(handleOptions.concurrency), concurrency),
-                running: 0,
-            };
+        if (!Number.isSafeInteger(weight) || Number(weight) < 1 || Number(weight) > MAX_WEIGHT) {
+            throw new ConfigError(`${where}: "fairShareWeight" must be an integer from 1 to ${MAX_WEIGHT}`);
         }
+
+        const group = groupStateOf(handleOptions.concurrencyGroup, where);
 
         if (handleOptions.timeout !== undefined) {
             checkDuration(handleOptions.timeout, '"timeout"', handleScope, true);
@@ -128,11 +153,22 @@ export function createRegistry({ jobsByName, lanes, concurrency, defaultTimeoutM
             );
         }
 
-        entriesByName.set(name, { name, definition, handler, lane, timeoutMs });
+        group?.names.push(name);
+        entriesByName.set(name, {
+            name,
+            index: entriesByName.size,
+            definition,
+            handler,
+            maxConcurrency: handleOptions.maxConcurrency === undefined ? null : Number(handleOptions.maxConcurrency),
+            weight: Number(weight),
+            running: 0,
+            group,
+            timeoutMs,
+        });
     }
 
     /** @type {Registry['validate']} */
-    function validate() {
+    function validate(where) {
         for (const entry of entriesByName.values()) {
             const failureJob = entry.definition?.failureJob;
 
@@ -140,18 +176,34 @@ export function createRegistry({ jobsByName, lanes, concurrency, defaultTimeoutM
                 continue;
             }
 
-            const where = `handle(${JSON.stringify(entry.name)})`;
+            const handleWhere = `handle(${JSON.stringify(entry.name)})`;
             const known = typeof failureJob !== 'string' || jobsByName.has(failureJob) || entriesByName.has(failureJob);
 
             if (!known) {
-                throw new ConfigError(`${where}: the failure job "${failureJob}" is not in "jobs" and not handled`);
+                throw new ConfigError(`${handleWhere}: the failure job "${failureJob}" is not in "jobs" and not handled`);
             }
 
             // Handled by name only: no definition, so no failure job of its own
             const failureDefinition = typeof failureJob === 'string' ? findDefinition(failureJob) : failureJob;
 
             if (failureDefinition?.failureJob !== undefined) {
-                throw new ConfigError(`${where}: the failure job "${failureDefinition?.name}" has a failure job of its own`);
+                throw new ConfigError(
+                    `${handleWhere}: the failure job "${failureDefinition?.name}" has a failure job of its own`,
+                );
+            }
+        }
+
+        for (const entry of entriesByName.values()) {
+            if (entry.maxConcurrency !== null && entry.maxConcurrency > maxConcurrency) {
+                throw new ConfigError(`${where}: the maxConcurrency of handle(${JSON.stringify(entry.name)}) `
+                    + `(${entry.maxConcurrency}) is above the instance's maxConcurrency (${maxConcurrency})`);
+            }
+        }
+
+        for (const { group } of groupStates.values()) {
+            if (group.maxConcurrency > maxConcurrency) {
+                throw new ConfigError(`${where}: the maxConcurrency of the concurrency group ${JSON.stringify(group.name)} `
+                    + `(${group.maxConcurrency}) is above the instance's maxConcurrency (${maxConcurrency})`);
             }
         }
     }

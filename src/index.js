@@ -1,6 +1,7 @@
 // The public API of sqlane. See docs/design.md.
 
 export { createSqlane } from './create_sqlane.js';
+export { defineConcurrencyGroup } from './define_concurrency_group.js';
 export { defineJob } from './define_job.js';
 export {
     ClosedError,
@@ -26,14 +27,12 @@ export { getMigrations } from './migrations.js';
  * @template C
  */
 /**
- * @typedef {import('./types.js').Sqlane<C, L>} Sqlane
+ * @typedef {import('./types.js').Sqlane<C>} Sqlane
  * @template C
- * @template {string} L
  */
 /**
- * @typedef {import('./types.js').SqlaneOptions<C, L>} SqlaneOptions
+ * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions
  * @template C
- * @template {string} L
  */
 /**
  * @typedef {import('./types.js').Jsonable<T>} Jsonable
@@ -41,6 +40,8 @@ export { getMigrations } from './migrations.js';
  */
 /** @typedef {import('./types.js').Backoff} Backoff */
 /** @typedef {import('./types.js').CloseOptions} CloseOptions */
+/** @typedef {import('./types.js').ConcurrencyGroup} ConcurrencyGroup */
+/** @typedef {import('./types.js').ConcurrencyGroupOptions} ConcurrencyGroupOptions */
 /** @typedef {import('./types.js').Dialect} Dialect */
 /** @typedef {import('./types.js').DrainOptions} DrainOptions */
 /** @typedef {import('./types.js').DrainResult} DrainResult */
@@ -57,6 +58,7 @@ export { getMigrations } from './migrations.js';
  * @typedef {import('./types.js').HandlerContext<P>} HandlerContext
  * @template [P=any]
  */
+/** @typedef {import('./types.js').HandleOptions} HandleOptions */
 /** @typedef {import('./types.js').Hint} Hint */
 /** @typedef {import('./types.js').JobDefaults} JobDefaults */
 /**
@@ -69,7 +71,6 @@ export { getMigrations } from './migrations.js';
  * @template [P=any]
  */
 /** @typedef {import('./types.js').JobStats} JobStats */
-/** @typedef {import('./types.js').LaneOptions} LaneOptions */
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').Migration} Migration */

@@ -32,7 +32,7 @@ export const SIZES = {
     quick: { historyPerName: 10, probeSamples: 50, latencySamples: 30, enqueueJobs: 500, runJobs: 1000 },
 };
 
-/** @typedef {import('../src/types.js').Sqlane<any, any>} Sqlane */
+/** @typedef {import('../src/types.js').Sqlane<any>} Sqlane */
 
 /**
  * @typedef {object} Percentiles
@@ -387,7 +387,7 @@ export async function benchProcess({ dialect, url, nextPrefix, sizes }, { label,
             const worker = createSqlane({
                 adapter: pool.adapter(),
                 tablePrefix: p,
-                concurrency,
+                maxConcurrency: concurrency,
                 onEvent,
             });
 

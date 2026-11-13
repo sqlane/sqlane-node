@@ -1,5 +1,8 @@
-// The job definitions: imported by producers and workers.
-import { defineJob } from '@sqlane/core';
+// The job definitions and the concurrency groups: imported by producers and workers.
+import { defineConcurrencyGroup, defineJob } from '@sqlane/core';
+
+/** At most 2 heavy jobs at once in one process, across the names of the group */
+export const heavy = defineConcurrencyGroup({ name: 'heavy', maxConcurrency: 2 });
 
 export const buildReport = defineJob({
     name: 'build_report',

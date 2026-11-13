@@ -25,8 +25,8 @@ const enqueueToken = createMonotonicUlid();
 /**
  * @template C
  * @typedef {object} Enqueuer
- * @property {import('./types.js').Sqlane<C, never>['enqueue']} enqueue
- * @property {import('./types.js').Sqlane<C, never>['enqueueMany']} enqueueMany
+ * @property {import('./types.js').Sqlane<C>['enqueue']} enqueue
+ * @property {import('./types.js').Sqlane<C>['enqueueMany']} enqueueMany
  */
 
 /**

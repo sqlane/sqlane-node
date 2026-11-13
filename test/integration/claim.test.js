@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, inject, test } from 'vitest';
+import { chooseRows } from '../../src/fair_share.js';
 import { createSqlane, defineJob } from '../../src/index.js';
 import { probeSql } from '../../src/store/mysql_worker.js';
 import { createStore } from '../../src/store/store.js';
@@ -38,7 +39,7 @@ afterAll(async () => {
  * Tables of their own for a test.
  * @returns {Promise<{
  *     p: string,
- *     sqlane: import('../../src/types.js').Sqlane<any, never>,
+ *     sqlane: import('../../src/types.js').Sqlane<any>,
  *     store: import('../../src/store/store.js').Store,
  * }>}
  */
@@ -239,15 +240,58 @@ async function claimDue(store, params) {
  * @returns {Promise<import('../../src/store/store.js').ClaimDueResult>}
  */
 function claimDueWithNext(store, params) {
+    const requests = params.requests ?? [];
+    const groupRooms = params.groupRooms ?? [];
+    const free = params.free ?? 100;
+
     return store.claimDue({
-        requests: [],
-        laneFree: [],
-        processMax: 100,
+        requests,
+        groupRooms,
+        free,
         lockToken: 'TOKEN1',
         lockedBy: 'test:TOKEN1',
         leaseMs: LEASE_MS,
+        // MySQL and MariaDB: the choice of the runner, by share
+        choose: locked => chooseRows({
+            rows: locked,
+            names: shareNamesOf(requests, groupRooms),
+            free,
+            base: 0,
+            size: Math.max(requests.length, 1),
+        }).chosen,
         ...params,
     });
+}
+
+/**
+ * The names of a claim as the runner makes them: the tie order is the index.
+ * @param {import('../../src/store/store.js').DueRequest[]} requests
+ * @param {number[]} groupRooms
+ * @returns {import('../../src/fair_share.js').ShareName[]}
+ */
+function shareNamesOf(requests, groupRooms) {
+    const rooms = groupRooms.map(room => ({ room }));
+
+    return requests.map(due => ({
+        name: due.name,
+        index: due.tie,
+        weight: due.weight,
+        running: due.running,
+        room: Infinity,
+        group: due.group === null ? null : rooms[due.group],
+        available: Infinity,
+    }));
+}
+
+/**
+ * @param {string} name
+ * @param {number} maxJobs
+ * @param {number} tie
+ * @param {Partial<import('../../src/store/store.js').DueRequest>} [fields]
+ * @returns {import('../../src/store/store.js').DueRequest}
+ */
+function request(name, maxJobs, tie, fields = {}) {
+    return { name, maxJobs, running: 0, weight: 1, group: null, tie, ...fields };
 }
 
 /**
@@ -281,6 +325,72 @@ function afterClaimStatement(executor, func) {
     };
 }
 
+/**
+ * @param {number} seed
+ * @returns {() => number} A seeded random generator (LCG), in [0, 1).
+ */
+function seeded(seed) {
+    let state = seed;
+
+    return () => {
+        state = ((state * 1_103_515_245) + 12_345) % (2 ** 31);
+
+        return state / (2 ** 31);
+    };
+}
+
+/**
+ * One random claim: 2–6 names with due jobs, weights, running counts, groups and caps. The claim must take the jobs
+ * that fill() takes on the rows that it locks: the oldest maxJobs due jobs of each name.
+ * @param {import('../../src/types.js').Sqlane<any>} sqlane
+ * @param {import('../../src/store/store.js').Store} store
+ * @param {() => number} random
+ * @param {number} round
+ * @returns {Promise<object[]>} The case if the jobs differ.
+ */
+async function compareChoice(sqlane, store, random, round) {
+    const int = (/** @type {number} */ max) => Math.floor(random() * (max + 1));
+    const count = 2 + int(4);
+    /** @type {{ id: string, name: string }[]} */
+    const rows = [];
+    const requests = [];
+
+    for (let index = 0; index < count; index++) {
+        const name = `r${round}_${index}`;
+        const due = int(5);
+        // oxlint-disable-next-line no-await-in-loop -- the jobs of each name in order
+        const results = await sqlane.enqueueMany(testAdapter.pool, name, Array.from({ length: due }, (_, k) => ({
+            payload: {},
+            options: { runAt: ago(100 - k) },
+        })));
+        const maxJobs = 1 + int(4);
+
+        rows.push(...results.slice(0, maxJobs).map(result => ({ id: result.id, name })));
+        requests.push(request(name, maxJobs, index, {
+            running: int(6),
+            weight: [1, 1, 2, 3, 7, 1000][int(5)],
+            group: [null, 0, 1][int(2)],
+        }));
+    }
+
+    const groupRooms = [int(3), int(6)];
+    const free = 1 + int(10);
+    // The rows of the names in FIFO order; the jobs of a name were enqueued oldest first
+    const expected = chooseRows({
+        rows,
+        names: shareNamesOf(requests, groupRooms),
+        free,
+        base: 0,
+        size: count,
+    }).chosen.map(row => row.id);
+    const claimed = await claimDue(store, { requests, groupRooms, free, lockToken: `R${round}` });
+    const got = claimed.map(job => job.id);
+
+    return expected.toSorted().join(',') === got.toSorted().join(',')
+        ? []
+        : [{ round, requests, groupRooms, free, expected, got }];
+}
+
 describe('claimDue', () => {
     test('claims the oldest due jobs of each name, with their payloads, in one go', async () => {
         const { p, sqlane, store } = await freshTables();
@@ -294,8 +404,7 @@ describe('claimDue', () => {
         await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(40) });
 
         const claimed = await claimDue(store, {
-            requests: [{ name: 'a', maxJobs: 2, lane: 0 }, { name: 'b', maxJobs: 5, lane: 1 }],
-            laneFree: [2, 5],
+            requests: [request('a', 2, 0), request('b', 5, 1)],
         });
 
         expect(claimed.map(row => [row.id, row.payload])).toStrictEqual([
@@ -329,8 +438,7 @@ describe('claimDue', () => {
         await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(10) });
 
         const first = await claimDueWithNext(store, {
-            requests: [{ name: 'a', maxJobs: 1, lane: 0 }, { name: 'b', maxJobs: 1, lane: 0 }],
-            laneFree: [5],
+            requests: [request('a', 1, 0), request('b', 1, 1)],
         });
 
         expect(first.jobs.map(job => job.name)).toStrictEqual(['a', 'b']);
@@ -338,7 +446,7 @@ describe('claimDue', () => {
         expect(Object.keys(delaysByName(first.next)).filter(name => name !== 'c')).toStrictEqual(['a']);
         expect(delaysByName(first.next).a).toBeLessThanOrEqual(-19_000);
 
-        const second = await claimDueWithNext(store, { requests: [{ name: 'a', maxJobs: 5, lane: 0 }], laneFree: [5] });
+        const second = await claimDueWithNext(store, { requests: [request('a', 5, 0)] });
 
         expect(second.jobs).toHaveLength(1);
         expect(delaysByName(second.next).a).toBeGreaterThan(3_590_000);
@@ -349,19 +457,19 @@ describe('claimDue', () => {
 
         await Promise.all(['a', 'b', 'c'].map(name => sqlane.enqueue(testAdapter.pool, name, {}, { runAt: ago(10) })));
 
-        const requests = ['a', 'b', 'c'].map(name => ({ name, maxJobs: 2, lane: 0 }));
-        const full = await claimDueWithNext(store, { requests, laneFree: [2], processMax: 2 });
+        const requests = ['a', 'b', 'c'].map((name, index) => request(name, 2, index));
+        const full = await claimDueWithNext(store, { requests, free: 2 });
 
         expect(full.jobs).toHaveLength(2);
         expect(full.next).toBeNull();
 
-        const rest = await claimDueWithNext(store, { requests, laneFree: [2], processMax: 2 });
+        const rest = await claimDueWithNext(store, { requests, free: 2 });
 
         expect(rest.jobs).toHaveLength(1);
         expect(rest.next).toStrictEqual([]);
     });
 
-    test('the free slots of each lane and of the process, oldest first', async () => {
+    test('the free slots of each group and of the instance, by share', async () => {
         const { sqlane, store } = await freshTables();
         const a1 = await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(50) });
         const b1 = await sqlane.enqueue(testAdapter.pool, 'b', {}, { runAt: ago(40) });
@@ -370,24 +478,32 @@ describe('claimDue', () => {
         await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(30) });
         await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(20) });
 
-        // a and b share lane 0 (1 free slot); c has lane 1; the process has 2 free slots
+        // a and b share group 0 (1 free slot); c has no group; the instance has 2 free slots
         const claimed = await claimDue(store, {
-            requests: [
-                { name: 'a', maxJobs: 1, lane: 0 },
-                { name: 'b', maxJobs: 1, lane: 0 },
-                { name: 'c', maxJobs: 2, lane: 1 },
-            ],
-            laneFree: [1, 2],
-            processMax: 2,
+            requests: [request('a', 1, 0, { group: 0 }), request('b', 1, 1, { group: 0 }), request('c', 2, 2)],
+            groupRooms: [1],
+            free: 2,
         });
 
         expect(claimed.map(row => row.id)).toStrictEqual([a1.id, c1.id]);
         // The jobs that did not fit stay pending, unlocked
         await expect(claimDue(store, {
-            requests: [{ name: 'b', maxJobs: 1, lane: 0 }],
-            laneFree: [1],
+            requests: [request('b', 1, 0)],
             lockToken: 'TOKEN2',
         })).resolves.toMatchObject([{ id: b1.id }]);
+    });
+
+    test('the choice in the claim equals fill() on the locked rows, on 25 random claims', async () => {
+        const { sqlane, store } = await freshTables();
+        const random = seeded(5);
+        const mismatches = [];
+
+        for (let round = 0; round < 25; round++) {
+            // oxlint-disable-next-line no-await-in-loop -- one claim after the other
+            mismatches.push(...await compareChoice(sqlane, store, random, round));
+        }
+
+        expect(mismatches).toStrictEqual([]);
     });
 
     test('concurrent claims never take the same job', async () => {
@@ -398,8 +514,7 @@ describe('claimDue', () => {
             Array.from({ length: 40 }, () => ({ payload: {}, options: { runAt: ago(5) } })),
         );
         const claims = await Promise.all(['T1', 'T2', 'T3', 'T4'].map(token => claimDue(store, {
-            requests: [{ name: 'busy', maxJobs: 15, lane: 0 }],
-            laneFree: [15],
+            requests: [request('busy', 15, 0)],
             lockToken: token,
         })));
         const claimedIds = claims.flatMap(jobs => jobs.map(job => job.id));
@@ -415,7 +530,7 @@ describe('claimDue', () => {
 
         await database.query(`DELETE FROM ${p}payloads`);
 
-        await expect(claimDue(store, { requests: [{ name: 'a', maxJobs: 1, lane: 0 }], laneFree: [1] }))
+        await expect(claimDue(store, { requests: [request('a', 1, 0)] }))
             .resolves.toMatchObject([{ id, payload: { found: false } }]);
     });
 
@@ -439,7 +554,7 @@ describe('claimDue', () => {
                 database.query(`INSERT INTO ${p}payloads (id, payload) VALUES (?, '{"n": 1}')`, [id])))),
         }, p);
 
-        await expect(claimDue(store, { requests: [{ name: 'a', maxJobs: 1, lane: 0 }], laneFree: [1] }))
+        await expect(claimDue(store, { requests: [request('a', 1, 0)] }))
             .resolves.toMatchObject([{ id, payload: { found: true, payload: { n: 1 } } }]);
     });
 });
@@ -523,7 +638,7 @@ describe('mutex keys', () => {
         // A claim deletes them: the claim of jobs with mutex keys, and the claim of a name without keys
         const claimed = await claimAll(store, [retried.id, released.id], 'T1');
 
-        await claimDue(store, { requests: [{ name: 'plain', maxJobs: 2, lane: 0 }], laneFree: [2] });
+        await claimDue(store, { requests: [request('plain', 2, 0)] });
         await expect(listKeys()).resolves.toStrictEqual([]);
 
         // Pending again: they are back

@@ -5,7 +5,7 @@ import { ConfigError } from '../../../src/index.js';
 /**
  * The schedules through an adapter: start() without the table of the schedules asks for migrate() (the error of the
  * driver, wrapped by the ORM), then a slot adds its job.
- * @param {import('../../../src/types.js').Sqlane<any, any>} sqlane Migrated, not started.
+ * @param {import('../../../src/types.js').Sqlane<any>} sqlane Migrated, not started.
  * @param {string} p Its table prefix.
  * @param {import('../../support/test_database.js').TestDatabaseConnection} database
  * @returns {Promise<string | null>} The id of the first job of the schedule.

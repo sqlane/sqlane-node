@@ -19,8 +19,8 @@ export type EnqueuerOptions<C> = {
     notifyChannel: string | null;
 };
 export type Enqueuer<C> = {
-    enqueue: import('./types.js').Sqlane<C, never>['enqueue'];
-    enqueueMany: import('./types.js').Sqlane<C, never>['enqueueMany'];
+    enqueue: import('./types.js').Sqlane<C>['enqueue'];
+    enqueueMany: import('./types.js').Sqlane<C>['enqueueMany'];
 };
 /**
  * @template C
@@ -38,8 +38,8 @@ export type Enqueuer<C> = {
 /**
  * @template C
  * @typedef {object} Enqueuer
- * @property {import('./types.js').Sqlane<C, never>['enqueue']} enqueue
- * @property {import('./types.js').Sqlane<C, never>['enqueueMany']} enqueueMany
+ * @property {import('./types.js').Sqlane<C>['enqueue']} enqueue
+ * @property {import('./types.js').Sqlane<C>['enqueueMany']} enqueueMany
  */
 /**
  * The enqueue side of an instance.

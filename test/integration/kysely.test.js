@@ -12,7 +12,7 @@ import { createSqlane, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/adapters/kysely.js').KyselyConnection} KyselyConnection */
-/** @typedef {import('../../src/types.js').Sqlane<KyselyConnection, never>} Sqlane */
+/** @typedef {import('../../src/types.js').Sqlane<KyselyConnection>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 /** @typedef {typeof kysely029} KyselyModule */
 
@@ -108,7 +108,7 @@ describe.each([
 
     /**
      * A sqlane instance over Kysely, on tables of its own, migrated.
-     * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
+     * @param {Partial<import('../../src/types.js').SqlaneOptions<any>>} [options]
      * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
      */
     async function freshSqlane(options = {}) {

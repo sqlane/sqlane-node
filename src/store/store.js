@@ -49,21 +49,27 @@ import * as postgresWorker from './postgres_worker.js';
  */
 
 /**
- * One request of a claim of due jobs: a job name without mutex keys, and the lane of its handler.
+ * One request of a claim of due jobs: a job name without mutex keys, and what its share needs.
  * @typedef {object} DueRequest
  * @property {string} name
- * @property {number} maxJobs At most this many of its jobs: the free slots of its lane.
- * @property {number} lane The index of its lane in `laneFree`.
+ * @property {number} maxJobs At most this many of its jobs: the minimum of its room, its group's room and the free
+ *     slots.
+ * @property {number} running Its jobs that run in this instance.
+ * @property {number} weight Its fairShareWeight.
+ * @property {number | null} group Its group in `groupRooms`; null without one.
+ * @property {number} tie Its place in the order of the ties.
  */
 
 /**
  * @typedef {object} ClaimDueParams
  * @property {DueRequest[]} requests
- * @property {number[]} laneFree The free slots of each lane.
- * @property {number} processMax The free slots of the process.
+ * @property {number[]} groupRooms The free slots of each group.
+ * @property {number} free The free slots of the instance for this claim.
  * @property {string} lockToken Of this claim.
  * @property {string} lockedBy The process.
  * @property {number} leaseMs
+ * @property {(locked: StartableJob[]) => StartableJob[]} choose MySQL and MariaDB: the jobs to take among the locked
+ *     ones (in the order of run_at), by share. PostgreSQL makes the same choice in SQL.
  */
 
 /**
@@ -77,6 +83,8 @@ import * as postgresWorker from './postgres_worker.js';
  * @property {ProbeRow[] | null} next The next due time of the requested names with pending jobs that the claim did not
  *     take: zero or less, more of their jobs are due. It may give other names too. Null: the claim filled the free
  *     process slots and did not read them.
+ * @property {string[]} [unpicked] PostgreSQL: the requested names with a locked row that the claim did not take, under
+ *     any cap. The runner replays the choice with them, to move the tie pointer as the choice did.
  */
 
 /**
@@ -126,9 +134,9 @@ import * as postgresWorker from './postgres_worker.js';
  * @property {(keys: string[], namesWithKeys: string[]) => Promise<string[]>} namesWaitingFor The names whose jobs may
  *     start after a release of the keys: of the oldest due job of each key, among the names with mutex keys.
  * @property {(params: ClaimParams) => Promise<ClaimedJob[]>} claim In a queue transaction of its own.
- * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, claims and reads the due jobs of
- *     names without mutex keys, at once: one statement on PostgreSQL. The keys of their rows are not taken: the
- *     definition of this process decides.
+ * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, chooses by share, claims and reads
+ *     the due jobs of names without mutex keys, at once: one statement on PostgreSQL. The keys of their rows are not
+ *     taken: the definition of this process decides.
  * @property {(ids: string[]) => Promise<Map<string, unknown>>} readPayloads
  * @property {(jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>} renewLeases
  * @property {(job: OwnedJob) => Promise<boolean>} markTimedOut

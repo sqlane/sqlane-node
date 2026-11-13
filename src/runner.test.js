@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expect, test } from 'vitest';
 import { resolveDefaults } from './defaults.js';
+import { defineConcurrencyGroup } from './define_concurrency_group.js';
 import { defineJob } from './define_job.js';
 import { LeaseLostError, RetryJobError, ShutdownError } from './errors.js';
 import { createHintChannel } from './hint_channel.js';
@@ -15,8 +16,7 @@ import { createRunner } from './runner.js';
 function runnerWith(makeDueErrors) {
     const registry = createRegistry({
         jobsByName: new Map(),
-        lanes: undefined,
-        concurrency: 10,
+        maxConcurrency: 10,
         defaultTimeoutMs: null,
     });
     /** @type {import('./types.js').SqlaneEvent[]} */
@@ -30,6 +30,7 @@ function runnerWith(makeDueErrors) {
             }
         },
         findCandidates: async () => [],
+        probe: async () => [{ name: 'ping', delayMs: 0 }],
         claimDue: async () => ({ jobs: [], next: [] }),
     }));
 
@@ -39,7 +40,7 @@ function runnerWith(makeDueErrors) {
         runner: createRunner({
             store,
             registry,
-            concurrency: 10,
+            maxConcurrency: 10,
             defaults: resolveDefaults(),
             cleanup: false,
             logger: undefined,
@@ -84,8 +85,7 @@ test('drain: another error rejects', async () => {
 async function runnerWithHint(hintsAfterCommit) {
     const registry = createRegistry({
         jobsByName: new Map(),
-        lanes: undefined,
-        concurrency: 10,
+        maxConcurrency: 10,
         defaultTimeoutMs: null,
     });
     // The probes and the claims of due jobs
@@ -110,7 +110,7 @@ async function runnerWithHint(hintsAfterCommit) {
     const runner = createRunner({
         store,
         registry,
-        concurrency: 10,
+        maxConcurrency: 10,
         defaults: resolveDefaults(),
         cleanup: false,
         logger: undefined,
@@ -153,8 +153,7 @@ test.each([
 test('hints before the commit: the re-probes of a name end with its steps, while later enqueues go on', async () => {
     const registry = createRegistry({
         jobsByName: new Map(),
-        lanes: undefined,
-        concurrency: 10,
+        maxConcurrency: 10,
         defaultTimeoutMs: null,
     });
     /** @type {string[]} The names of each probe, joined; "null": all names */
@@ -174,7 +173,7 @@ test('hints before the commit: the re-probes of a name end with its steps, while
     const runner = createRunner({
         store,
         registry,
-        concurrency: 10,
+        maxConcurrency: 10,
         defaults: resolveDefaults(),
         cleanup: false,
         logger: undefined,
@@ -269,8 +268,7 @@ function runnerWithHeldJobs(withKeys, {
 } = {}) {
     const registry = createRegistry({
         jobsByName: new Map(),
-        lanes: undefined,
-        concurrency: processConcurrency,
+        maxConcurrency: processConcurrency,
         defaultTimeoutMs: null,
     });
     const held = Promise.withResolvers();
@@ -379,14 +377,14 @@ function runnerWithHeldJobs(withKeys, {
         }
     }
 
-    registry.handle(definition, handler, { concurrency: laneConcurrency });
+    registry.handle(definition, handler, { maxConcurrency: laneConcurrency });
     registry.handle('later', handler);
 
     return {
         runner: createRunner({
             store,
             registry,
-            concurrency: processConcurrency,
+            maxConcurrency: processConcurrency,
             defaults: resolveDefaults(),
             cleanup: false,
             logger: undefined,
@@ -487,8 +485,8 @@ test('dispatch: a delayed job of the same name starts while its earlier handler 
 });
 
 test.each([
-    { reason: 'a full process', withKeys: false, options: { processConcurrency: 1 } },
-    { reason: 'a full lane', withKeys: false, options: { laneConcurrency: 1 } },
+    { reason: 'a full process', withKeys: false, options: { processConcurrency: 1, laneConcurrency: 1 } },
+    { reason: 'a name at its maxConcurrency', withKeys: false, options: { laneConcurrency: 1 } },
     { reason: 'an unconfirmed completion', withKeys: false, options: { completeCount: 0 } },
     { reason: 'mutex keys', withKeys: true, options: {} },
 ])('dispatch: completion still wakes for $reason', async ({ withKeys, options }) => {
@@ -618,8 +616,7 @@ const LEASE_TIMINGS = { leaseMs: 800, renewIntervalMs: 200, recoveryIntervalMs: 
 async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
     const registry = createRegistry({
         jobsByName: new Map(),
-        lanes: undefined,
-        concurrency: 10,
+        maxConcurrency: 10,
         defaultTimeoutMs: null,
     });
     /** @type {import('./types.js').SqlaneEvent[]} */
@@ -676,7 +673,7 @@ async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
     const runner = createRunner({
         store,
         registry,
-        concurrency: 10,
+        maxConcurrency: 10,
         defaults: resolveDefaults(),
         cleanup: false,
         logger: undefined,
@@ -850,8 +847,7 @@ test.each([
 }) => {
     const registry = createRegistry({
         jobsByName: new Map(),
-        lanes: undefined,
-        concurrency: 10,
+        maxConcurrency: 10,
         defaultTimeoutMs: null,
     });
     /** @type {import('./types.js').SqlaneEvent[]} */
@@ -875,7 +871,7 @@ test.each([
     const runner = createRunner({
         store,
         registry,
-        concurrency: 10,
+        maxConcurrency: 10,
         defaults: resolveDefaults(),
         cleanup: false,
         logger: undefined,
@@ -906,8 +902,7 @@ test.each([
     const warnings = [];
     const registry = createRegistry({
         jobsByName: new Map(),
-        lanes: undefined,
-        concurrency: 10,
+        maxConcurrency: 10,
         defaultTimeoutMs: null,
     });
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({ probe: async () => [] }));
@@ -916,7 +911,7 @@ test.each([
     const runner = createRunner({
         store,
         registry,
-        concurrency: 10,
+        maxConcurrency: 10,
         defaults: resolveDefaults(),
         cleanup: false,
         logger: {
@@ -978,7 +973,7 @@ function storeOfDueNames(names) {
         .map(request => ({ name: request.name, delayMs: -1 }));
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
         probe: async () => [...pending].map(name => ({ name, delayMs: -1 })),
-        claimDue: async (/** @type {import('./store/store.js').ClaimDueParams} */ { requests, processMax }) => {
+        claimDue: async (/** @type {import('./store/store.js').ClaimDueParams} */ { requests, free: processMax }) => {
             requestSizes.push(requests.length);
 
             const jobs = stillDue(requests).slice(0, processMax).map(row => dueJobOf(row.name));
@@ -1002,8 +997,7 @@ function storeOfDueNames(names) {
 test('dispatch: many due names take turns, a claim requests at most 4 names per free slot', async () => {
     const registry = createRegistry({
         jobsByName: new Map(),
-        lanes: undefined,
-        concurrency: 2,
+        maxConcurrency: 2,
         defaultTimeoutMs: null,
     });
     const names = Array.from({ length: 50 }, (_, index) => `name_${index}`);
@@ -1020,7 +1014,7 @@ test('dispatch: many due names take turns, a claim requests at most 4 names per 
     const runner = createRunner({
         store,
         registry,
-        concurrency: 2,
+        maxConcurrency: 2,
         defaults: resolveDefaults(),
         cleanup: false,
         logger: undefined,
@@ -1044,8 +1038,7 @@ test('dispatch: many due names take turns, a claim requests at most 4 names per 
 test('the handler gets the slot of a job of a schedule as job.scheduledAt; null for other jobs', async () => {
     const registry = createRegistry({
         jobsByName: new Map(),
-        lanes: undefined,
-        concurrency: 2,
+        maxConcurrency: 2,
         defaultTimeoutMs: null,
     });
     const ids = { report: 'report:schedule:tenant:42:2026-11-11T02:00:00.000Z', ping: 'ping:my-id' };
@@ -1073,7 +1066,7 @@ test('the handler gets the slot of a job of a schedule as job.scheduledAt; null 
     const runner = createRunner({
         store,
         registry,
-        concurrency: 2,
+        maxConcurrency: 2,
         defaults: resolveDefaults(),
         cleanup: false,
         logger: undefined,
@@ -1091,4 +1084,266 @@ test('the handler gets the slot of a job of a schedule as job.scheduledAt; null 
     } finally {
         await runner.close({ deadline: 0 });
     }
+});
+
+/**
+ * A runner over a store that records its calls: one plain name and one name with mutex keys, each with due jobs.
+ * @param {{ maxConcurrency?: number, names?: number, pointer?: number }} [options] `pointer`: where the ties start.
+ * @returns {{ runner: import('./runner.js').Runner, calls: string[], requested: string[][] }}
+ */
+function recordingRunner({ maxConcurrency = 4, names = 2, pointer = 0 } = {}) {
+    const registry = createRegistry({ jobsByName: new Map(), maxConcurrency, defaultTimeoutMs: null });
+    /** @type {string[]} */
+    const calls = [];
+    /** @type {string[][]} */
+    const requested = [];
+    const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
+        probe: async (/** @type {string[] | null} */ probed) => {
+            calls.push('probe');
+
+            return (probed ?? registry.entries().map(entry => entry.name)).map(name => ({ name, delayMs: -1 }));
+        },
+        findCandidates: async () => {
+            calls.push('findCandidates');
+
+            return [{ id: 'keyed-1', name: 'keyed', runAtMs: 0 }];
+        },
+        claimDue: async (/** @type {import('./store/store.js').ClaimDueParams} */ { requests }) => {
+            calls.push('claimDue');
+            requested.push(requests.map(request => request.name));
+
+            return { jobs: [], next: [] };
+        },
+        claim: async () => {
+            calls.push('claim');
+
+            return [];
+        },
+        findStaleJobs: async () => [],
+        renewLeases: async () => new Set(),
+    }));
+
+    registry.handle(defineJob({ name: 'keyed', mutexKeys: () => ['k'], timeout: '1m' }), () => {});
+
+    for (let index = 0; index < names - 1; index++) {
+        registry.handle(`plain_${index}`, () => {});
+    }
+
+    const runner = createRunner({
+        store,
+        registry,
+        maxConcurrency,
+        defaults: resolveDefaults(),
+        cleanup: false,
+        logger: undefined,
+        onEvent: undefined,
+        hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+        hintsAfterCommit: false,
+        timings: { pollIntervalMs: 60_000 },
+        random: () => pointer / names,
+    });
+
+    return { runner, calls, requested };
+}
+
+test('fair share: findCandidates runs once per dispatch, before the claim of the plain names', async () => {
+    const { runner, calls } = recordingRunner();
+
+    try {
+        await runner.start();
+        await waitFor(() => calls.includes('claim'), 1000);
+
+        expect(calls.slice(0, 4)).toStrictEqual(['probe', 'findCandidates', 'claimDue', 'claim']);
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('fair share: a claim requests at most 4 names per free slot, the furthest under their share first', async () => {
+    // The ties start at plain_4: the plan gives the slot to the plain names
+    const { runner, requested } = recordingRunner({ maxConcurrency: 1, names: 10, pointer: 5 });
+
+    try {
+        await runner.start();
+        await waitFor(() => requested.length > 0, 1000);
+
+        // 1 free slot: 4 names, from the pointer; the keyed one is claimed apart
+        expect(requested[0]).toStrictEqual(['plain_4', 'plain_5', 'plain_6', 'plain_7']);
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
+});
+
+/**
+ * A started runner over a store whose due jobs never run out: the test's handlers hold them. A plain name and a name
+ * with mutex keys in one group, and an ungrouped name.
+ * @param {{ maxConcurrency?: number, random?: () => number, groupCap?: number }} [options]
+ * @returns {{ runner: import('./runner.js').Runner, registry: import('./registry.js').Registry,
+ *     claims: import('./store/store.js').ClaimDueParams[], release: () => void }}
+ */
+function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}) {
+    const registry = createRegistry({ jobsByName: new Map(), maxConcurrency, defaultTimeoutMs: null });
+    const pair = defineConcurrencyGroup({ name: 'pair', maxConcurrency: groupCap });
+    /** @type {import('./store/store.js').ClaimDueParams[]} */
+    const claims = [];
+    /** @type {(() => void)[]} */
+    const held = [];
+    let id = 0;
+    /**
+     * @param {string} name
+     * @returns {import('./store/store.js').StartableJob}
+     */
+    const jobOf = (name) => {
+        id++;
+
+        return {
+            id: `${name}-${id}`, name, attempts: 0, maxAttempts: 1, stalls: 0, maxStalls: 1, failureJob: null,
+            enqueuedAt: new Date(0), waitedMs: 0, mutexKeys: name === 'keyed' ? [`k${id}`] : [], lockToken: 't',
+            payload: { found: true, payload: {} },
+        };
+    };
+    const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
+        probe: async (/** @type {string[] | null} */ names) => (names ?? registry.entries().map(entry => entry.name))
+            .map(name => ({ name, delayMs: -1 })),
+        findCandidates: async (/** @type {Map<string, number>} */ limits) => Array.from(
+            { length: limits.get('keyed') ?? 0 },
+            (_, index) => ({ id: `c${index}`, name: 'keyed', runAtMs: 0 }),
+        ),
+        claimDue: async (/** @type {import('./store/store.js').ClaimDueParams} */ params) => {
+            const { choose: _choose, ...copied } = params;
+
+            claims.push(/** @type {import('./store/store.js').ClaimDueParams} */ (structuredClone(copied)));
+
+            // As PostgreSQL: one row per request, in the order of the ties, within the rooms
+            const jobs = params.requests.toSorted((a, b) => a.tie - b.tie).slice(0, params.free)
+                .filter((request) => {
+                    if (request.group === null) {
+                        return true;
+                    }
+
+                    return params.groupRooms[request.group]-- > 0;
+                })
+                .map(request => jobOf(request.name));
+
+            return { jobs, next: [], unpicked: [] };
+        },
+        claim: async (/** @type {import('./store/store.js').ClaimParams} */ { candidateIds, pick }) => pick(
+            candidateIds.map(() => jobOf('keyed')),
+            new Set(),
+        ),
+        readPayloads: async (/** @type {string[]} */ ids) => new Map(ids.map(jobId => [jobId, {}])),
+        completeJobs: async (/** @type {unknown[]} */ jobs) => jobs.length,
+        findStaleJobs: async () => [],
+        renewLeases: async () => new Set(),
+        namesWaitingFor: async () => [],
+    }));
+    const hold = () => new Promise((resolve) => {
+        held.push(() => resolve(undefined));
+    });
+
+    registry.handle('plain', hold, { concurrencyGroup: pair });
+    registry.handle(defineJob({ name: 'keyed', mutexKeys: () => ['k'], timeout: '1m' }), hold, {
+        concurrencyGroup: pair,
+    });
+    registry.handle('free', hold);
+
+    const runner = createRunner({
+        store,
+        registry,
+        maxConcurrency,
+        defaults: resolveDefaults(),
+        cleanup: false,
+        logger: undefined,
+        onEvent: undefined,
+        hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+        hintsAfterCommit: true,
+        timings: { pollIntervalMs: 60_000 },
+        random,
+    });
+
+    return {
+        runner,
+        registry,
+        claims,
+        release: () => {
+            for (const resolve of held.splice(0)) {
+                resolve();
+            }
+        },
+    };
+}
+
+test('fair share: the plain claim leaves the share of the names with mutex keys in their group', async () => {
+    const { runner, registry, claims, release } = groupRunner({ maxConcurrency: 4, groupCap: 2 });
+
+    try {
+        await runner.start();
+        await waitFor(() => claims.length > 0, 1000);
+
+        // The plan: plain, keyed, free, then free or plain... The group's 2 slots: 1 for keyed, 1 for plain
+        const request = claims[0].requests.find(({ name }) => name === 'plain');
+
+        expect(request?.maxJobs).toBe(1);
+        expect(claims[0].groupRooms).toStrictEqual([1]);
+        await waitFor(() => registry.getEntry('keyed')?.running === 1, 1000);
+        expect(registry.getEntry('plain')?.running).toBe(1);
+    } finally {
+        release();
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('canStartNow: false for a name whose group is full, true for the others', async () => {
+    const { runner, registry, release } = groupRunner({ maxConcurrency: 4, groupCap: 2 });
+
+    try {
+        expect(runner.canStartNow('free')).toBe(false);
+        await runner.start();
+        await waitFor(() => registry.getEntry('keyed')?.running === 1, 1000);
+
+        expect(runner.canStartNow('plain')).toBe(false);
+        expect(runner.canStartNow('keyed')).toBe(false);
+        expect(runner.canStartNow('free')).toBe(true);
+        expect(runner.canStartNow('unknown')).toBe(false);
+    } finally {
+        release();
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test.each([
+    { random: 0, ties: { plain: 0, keyed: 1, free: 2 } },
+    { random: 0.5, ties: { plain: 2, keyed: 0, free: 1 } },
+    { random: 0.99, ties: { plain: 1, keyed: 2, free: 0 } },
+])('fair share: the tie pointer starts at floor(random() × names): $random', async ({ random, ties }) => {
+    const { runner, claims, release } = groupRunner({ maxConcurrency: 10, groupCap: 10, random: () => random });
+
+    try {
+        await runner.start();
+        await waitFor(() => claims.length > 0, 1000);
+
+        // The plain names of the first claim: their tie order is (index − pointer) mod 3
+        expect(Object.fromEntries(claims[0].requests.map(request => [request.name, request.tie])))
+            .toStrictEqual({ plain: ties.plain, free: ties.free });
+    } finally {
+        release();
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('close(): the running counts of the names and of the groups go back to 0', async () => {
+    const { runner, registry, release } = groupRunner({ maxConcurrency: 4, groupCap: 2 });
+
+    await runner.start();
+    // The store gives one job per requested name
+    await waitFor(() => registry.entries().every(entry => entry.running === 1), 1000);
+    expect(registry.getEntry('plain')?.group?.running).toBe(2);
+
+    const closed = runner.close({ deadline: 1000 });
+
+    release();
+    await closed;
+
+    expect(registry.entries().map(entry => entry.running)).toStrictEqual([0, 0, 0]);
+    expect(registry.getEntry('plain')?.group?.running).toBe(0);
 });

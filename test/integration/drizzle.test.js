@@ -16,7 +16,7 @@ import { createSqlane, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/adapters/drizzle.js').DrizzleConnection} DrizzleConnection */
-/** @typedef {import('../../src/types.js').Sqlane<DrizzleConnection, never>} Sqlane */
+/** @typedef {import('../../src/types.js').Sqlane<DrizzleConnection>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 /** @typedef {(options: { client: any }) => any} DrizzleFactory */
 
@@ -118,7 +118,7 @@ describe.each([
 
     /**
      * A sqlane instance over Drizzle, on tables of its own, migrated.
-     * @param {Partial<import('../../src/types.js').SqlaneOptions<any, never>>} [options]
+     * @param {Partial<import('../../src/types.js').SqlaneOptions<any>>} [options]
      * @param {string} [prefix] The tables of another instance.
      * @returns {Promise<{ sqlane: Sqlane, p: string, events: SqlaneEvent[] }>}
      */
