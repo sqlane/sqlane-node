@@ -46,6 +46,13 @@ export declare function isTransientDbError(error: unknown): boolean;
  */
 export declare function isMissingTableError(error: unknown): boolean;
 /**
+ * A transient error that is worth a retry at once: a deadlock, a serialization failure, a 1020. Not a lock wait
+ * timeout: the lock that it waited for is likely still held, and each retry would wait as long again.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export declare function isQuickRetryError(error: unknown): boolean;
+/**
  * The server does not know a system variable that a statement sets.
  * @param {unknown} error
  * @returns {boolean}

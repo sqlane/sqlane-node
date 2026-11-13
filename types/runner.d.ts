@@ -15,8 +15,6 @@ export type Timings = {
      */
     missingPayloadGraceMs: number;
 };
-/** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
-/** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
 /**
  * @typedef {object} Timings
  * @property {number} leaseMs

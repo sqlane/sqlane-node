@@ -358,6 +358,75 @@ describe('concurrency', () => {
     });
 });
 
+/**
+ * The adapter of the tests, whose claim statements fail with a deadlock while `failures.left` is above 0.
+ * @param {{ left: number }} failures
+ * @returns {import('../../src/types.js').Adapter<any>}
+ */
+function failingClaims(failures) {
+    const { adapter } = testAdapter;
+    /**
+     * @param {import('../../src/types.js').Executor} executor
+     * @returns {import('../../src/types.js').Executor}
+     */
+    const wrap = executor => ({
+        ...executor,
+        query: async (sql, params) => {
+            if (failures.left > 0 && sql.includes('SKIP LOCKED') && sql.includes('\'pending\'')) {
+                failures.left--;
+
+                throw Object.assign(new Error('Deadlock found when trying to get lock'), {
+                    code: 'ER_LOCK_DEADLOCK',
+                    errno: 1213,
+                });
+            }
+
+            return executor.query(sql, params);
+        },
+    });
+
+    return {
+        ...adapter,
+        queue: wrap(adapter.queue),
+        queueTransaction: func => adapter.queueTransaction(executor => func(wrap(executor))),
+    };
+}
+
+describe('a transient error of a claim', () => {
+    test('retried at once: no error event, no back-off', async () => {
+        const failures = { left: 2 };
+        // The back-off after an error: 1 s
+        const { sqlane, events } = await freshSqlane({ adapter: failingClaims(failures), pollInterval: '10s' });
+
+        sqlane.handle('a', () => {});
+        await sqlane.start();
+
+        const startedAt = Date.now();
+
+        await sqlane.enqueue(testAdapter.pool, 'a', {});
+        await waitFor(() => events.some(event => event.type === 'completed'));
+
+        expect(failures.left).toBe(0);
+        expect(Date.now() - startedAt).toBeLessThan(800);
+        expect(events.filter(event => event.type === 'error')).toStrictEqual([]);
+    });
+
+    test('still failing after 3 retries: an error event, the back-off, then the job runs', async () => {
+        const failures = { left: 4 };
+        const { sqlane, events } = await freshSqlane({ adapter: failingClaims(failures) });
+
+        sqlane.handle('a', () => {});
+        await sqlane.start();
+        await sqlane.enqueue(testAdapter.pool, 'a', {});
+        await waitFor(() => events.some(event => event.type === 'completed'));
+
+        expect(failures.left).toBe(0);
+        expect(events.filter(event => event.type === 'error')).toMatchObject([
+            { operation: 'dispatch', error: { errno: 1213 } },
+        ]);
+    });
+});
+
 test('a timeout: the signal aborts; the job keeps running until the handler settles, then it is retried', async () => {
     const { sqlane, p, events } = await freshSqlane();
     const slow = slowFirst(300);
