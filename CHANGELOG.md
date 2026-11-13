@@ -1,5 +1,15 @@
 # @sqlane/core
 
+## 4.0.3
+
+### Patch Changes
+
+- [#99](https://github.com/sqlane/sqlane-node/pull/99) [`8a22cf0`](https://github.com/sqlane/sqlane-node/commit/8a22cf02809c58d105795a31ced5ce95e7bde270) - On MySQL and MariaDB, a job enqueued while a worker was claiming could be claimed without its payload: the worker
+  released it for 1 s and claimed it again (an extra `claimed` event), or, with the worker's clock more than 60 s ahead of
+  the database's, failed it with `MissingPayloadError`. The claim now reads such payloads again in the same transaction.
+  On MariaDB 11.8 and later (`innodb_snapshot_isolation`), the same race could fail the claim with "Record has changed
+  since last read" (errno 1020); that error is now transient: `drain()` retries its round instead of rejecting.
+
 ## 4.0.2
 
 ### Patch Changes
