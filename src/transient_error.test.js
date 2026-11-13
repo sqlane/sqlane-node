@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { isConnectionError, isMissingTableError, isTransientDbError } from './transient_error.js';
+import { isConnectionError, isMissingTableError, isQuickRetryError, isTransientDbError } from './transient_error.js';
 
 test.each([
     ['a MySQL deadlock', { code: 'ER_LOCK_DEADLOCK', errno: 1213 }],
@@ -95,4 +95,17 @@ test.each([
 ])('%s is neither a missing table nor a connection error', (_, error) => {
     expect(isMissingTableError(error)).toBe(false);
     expect(isConnectionError(error)).toBe(false);
+});
+
+test.each([
+    ['a MySQL deadlock', { code: 'ER_LOCK_DEADLOCK', errno: 1213 }, true],
+    ['a MariaDB record changed since the read view', { code: 'ER_CHECKREAD', errno: 1020 }, true],
+    ['a PostgreSQL serialization failure', { code: '40001' }, true],
+    ['a PostgreSQL deadlock', { code: '40P01' }, true],
+    ['a MySQL lock wait timeout', { code: 'ER_LOCK_WAIT_TIMEOUT', errno: 1205 }, false],
+    ['a lock wait timeout by its errno, wrapped by Sequelize', { original: { errno: 1205 } }, false],
+    ['a lock wait timeout through Prisma', { code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '1205' } } } }, false],
+    ['a duplicate key', { code: 'ER_DUP_ENTRY', errno: 1062 }, false],
+])('%s: a quick retry: %s', (_, error, expected) => {
+    expect(isQuickRetryError(error)).toBe(expected);
 });

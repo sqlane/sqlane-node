@@ -21,10 +21,16 @@ import { ANY_NAME, KEY_PREFIX } from './hint_channel.js';
 import { chooseRows, fill, rankNames, replayTie, shareNamesOfRequests } from './fair_share.js';
 import { buildNewJob } from './new_job.js';
 import { scheduledAtOf } from './schedule.js';
-import { isTransientDbError } from './transient_error.js';
+import { isQuickRetryError, isTransientDbError } from './transient_error.js';
 
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
+
+/** A turn that fails with a deadlock-like error is retried at once this many times, then reported and backed off */
+const MAX_TRANSIENT_DISPATCH_RETRIES = 3;
+/** The pause before such a retry: 5 to 30 ms, so that the claims that collided do not collide again */
+const TRANSIENT_RETRY_MIN_MS = 5;
+const TRANSIENT_RETRY_JITTER_MS = 25;
 
 /**
  * @typedef {object} Timings
@@ -1378,6 +1384,9 @@ export function createRunner({
     }
 
     async function loop() {
+        /** The transient errors in a row that the next turns retry at once */
+        let transientRetries = 0;
+
         // oxlint-disable-next-line no-unmodified-loop-condition -- close() changes it
         while (state === 'started') {
             const seenWakes = wakeCount;
@@ -1386,10 +1395,24 @@ export function createRunner({
             try {
                 // oxlint-disable-next-line no-await-in-loop -- one turn after the other
                 delayMs = await dispatch();
+                transientRetries = 0;
             } catch (error) {
-                reportError('dispatch', error);
                 // The names of its wakes are lost: all names
                 wakeAll = true;
+
+                // A deadlock, a serialization failure, a 1020: the turn again at once, before an error event and a
+                // back-off. Not a lock wait timeout: the lock is likely still held, and each retry would wait as long
+                if (isQuickRetryError(error) && transientRetries < MAX_TRANSIENT_DISPATCH_RETRIES) {
+                    transientRetries++;
+                    logger?.debug({ error, operation: 'dispatch', retry: transientRetries },
+                        'sqlane: dispatch failed with a transient error, retried at once');
+                    // oxlint-disable-next-line no-await-in-loop -- one turn after the other
+                    await sleep(TRANSIENT_RETRY_MIN_MS + (Math.random() * TRANSIENT_RETRY_JITTER_MS));
+                    continue;
+                }
+
+                transientRetries = 0;
+                reportError('dispatch', error);
                 delayMs = Math.min(t.pollIntervalMs, 1000);
             }
 

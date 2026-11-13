@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { resolveDefaults } from './defaults.js';
 import { defineConcurrencyGroup } from './define_concurrency_group.js';
 import { defineJob } from './define_job.js';
@@ -1346,4 +1346,156 @@ test('close(): the running counts of the names and of the groups go back to 0', 
 
     expect(registry.entries().map(entry => entry.running)).toStrictEqual([0, 0, 0]);
     expect(registry.getEntry('plain')?.group?.running).toBe(0);
+});
+
+/**
+ * A started runner of the name `ping`, always due, whose claims fail as given, call after call.
+ * @param {(Error | null)[]} outcomes The error of each claim; null: it succeeds.
+ * @param {Error | null} [rest] The error of the claims after them; null by default.
+ * @returns {Promise<{ runner: import('./runner.js').Runner, events: import('./types.js').SqlaneEvent[],
+ *     claimTimes: number[], logger: Record<'debug' | 'info' | 'warn' | 'error', import('vitest').Mock> }>}
+ */
+async function runnerWithClaims(outcomes, rest = null) {
+    const registry = createRegistry({
+        jobsByName: new Map(),
+        maxConcurrency: 10,
+        defaultTimeoutMs: null,
+    });
+    /** @type {import('./types.js').SqlaneEvent[]} */
+    const events = [];
+    /** @type {number[]} */
+    const claimTimes = [];
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
+        probe: async () => [{ name: 'ping', delayMs: 0 }],
+        claimDue: async () => {
+            claimTimes.push(Date.now());
+            const error = claimTimes.length <= outcomes.length ? outcomes[claimTimes.length - 1] : rest;
+
+            if (error) {
+                throw error;
+            }
+
+            // Due again at the next full probe
+            return { jobs: [], next: [{ name: 'ping', delayMs: 60_000 }] };
+        },
+    }));
+
+    registry.handle('ping', () => {});
+
+    const runner = createRunner({
+        store,
+        registry,
+        maxConcurrency: 10,
+        defaults: resolveDefaults(),
+        cleanup: false,
+        logger,
+        onEvent: event => events.push(event),
+        hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+        hintsAfterCommit: false,
+        timings: { pollIntervalMs: 300 },
+    });
+
+    await runner.start();
+
+    return { runner, events, claimTimes, logger };
+}
+
+const checkRead = () => Object.assign(new Error('Record has changed since last read'), {
+    code: 'ER_CHECKREAD',
+    errno: 1020,
+});
+const deadlock = () => Object.assign(new Error('Deadlock found when trying to get lock'), { errno: 1213 });
+
+test('dispatch: a transient error is retried at once, logged at debug, with no error event', async () => {
+    const { runner, events, claimTimes, logger } = await runnerWithClaims([checkRead(), deadlock(), checkRead()]);
+
+    try {
+        await waitFor(() => claimTimes.length >= 4, 1000);
+
+        expect(claimTimes).toHaveLength(4);
+        // Three retries with a jitter of 5 to 30 ms, not the back-off of 300 ms
+        expect(claimTimes[3] - claimTimes[0]).toBeLessThan(200);
+        expect(events.filter(event => event.type === 'error')).toStrictEqual([]);
+        expect(logger.debug).toHaveBeenCalledTimes(3);
+        expect(logger.debug).toHaveBeenLastCalledWith(
+            expect.objectContaining({ operation: 'dispatch', retry: 3 }),
+            expect.any(String),
+        );
+        expect(logger.error).not.toHaveBeenCalled();
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('dispatch: a transient error after 3 retries is reported and backed off, then retried again', async () => {
+    const { runner, events, claimTimes } = await runnerWithClaims([], checkRead());
+
+    try {
+        await waitFor(() => claimTimes.length >= 8, 2000);
+
+        // 1 + 3 retries, the error, the back-off, 1 + 3 retries, the error
+        expect(claimTimes.length).toBeGreaterThanOrEqual(8);
+        expect(claimTimes[3] - claimTimes[0]).toBeLessThan(200);
+        expect(claimTimes[4] - claimTimes[3]).toBeGreaterThanOrEqual(250);
+        expect(claimTimes[7] - claimTimes[4]).toBeLessThan(200);
+        expect(events.filter(event => event.type === 'error')).toMatchObject([
+            { operation: 'dispatch', error: { errno: 1020 } },
+            { operation: 'dispatch', error: { errno: 1020 } },
+        ]);
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('dispatch: the retries start again after a turn that succeeds', async () => {
+    // Three errors, a success, three errors, a success: never four in a row
+    const { runner, events, claimTimes } = await runnerWithClaims([
+        deadlock(), deadlock(), deadlock(), null, deadlock(), deadlock(), deadlock(), null,
+    ]);
+
+    try {
+        await waitFor(() => claimTimes.length >= 9, 2000);
+
+        expect(claimTimes.length).toBeGreaterThanOrEqual(9);
+        expect(events.filter(event => event.type === 'error')).toStrictEqual([]);
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('dispatch: another error is reported at once and backed off', async () => {
+    const { runner, events, claimTimes, logger } = await runnerWithClaims([new Error('syntax error')]);
+
+    try {
+        await waitFor(() => claimTimes.length >= 2, 1000);
+
+        expect(claimTimes[1] - claimTimes[0]).toBeGreaterThanOrEqual(250);
+        expect(events.filter(event => event.type === 'error')).toMatchObject([
+            { operation: 'dispatch', error: { message: 'syntax error' } },
+        ]);
+        expect(logger.debug).not.toHaveBeenCalled();
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('dispatch: a lock wait timeout is not retried at once: reported and backed off', async () => {
+    const lockWaitTimeout = Object.assign(new Error('Lock wait timeout exceeded; try restarting transaction'), {
+        code: 'ER_LOCK_WAIT_TIMEOUT',
+        errno: 1205,
+    });
+    const { runner, events, claimTimes, logger } = await runnerWithClaims([lockWaitTimeout]);
+
+    try {
+        await waitFor(() => claimTimes.length >= 2, 1000);
+
+        expect(claimTimes[1] - claimTimes[0]).toBeGreaterThanOrEqual(250);
+        expect(events.filter(event => event.type === 'error')).toMatchObject([
+            { operation: 'dispatch', error: { errno: 1205 } },
+        ]);
+        expect(logger.debug).not.toHaveBeenCalled();
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
 });

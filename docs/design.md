@@ -240,7 +240,18 @@ loop while started
   claimed: start the handlers, loop at once
   none (other processes took them): back off 10–200 ms, with ±50 % jitter
   none (all due jobs wait for keys): wait for a key-release wake or the poll interval
+  a deadlock, a serialization failure, ER_CHECKREAD: the turn again at once, after 5–30 ms, up to 3 times
+  another error (a lock wait timeout too), or a 4th such error in a row: an `error` event, then wait
+    min(poll interval, 1 s)
 ```
+
+**Deadlocks of a turn are retried at once.** A deadlock, a serialization failure or a 1020 of a claim says nothing
+about the next claim, so the turn runs again after a 5–30 ms jitter, logged at debug level, with no `error` event. A
+lock wait timeout is not: the lock is likely still held, and 4 tries would wait 4 × `innodb_lock_wait_timeout` (200 s
+by default) with no event; it is reported and backed off at once. After 3 such retries in a
+row, the error is reported (`error` event, `logger.error`) and the loop backs off, as for any other error; a turn that
+succeeds, or the back-off, resets the count. The retries are bounded, so a database that keeps failing costs 4 turns
+per back-off, not a busy loop.
 
 **The probe is the key to cheap idle names.** The probe is one statement, and it reads only the names that have
 pending rows.

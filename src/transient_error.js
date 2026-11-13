@@ -107,6 +107,24 @@ export function isMissingTableError(error) {
     }));
 }
 
+/** MySQL, MariaDB: a lock wait timeout (`innodb_lock_wait_timeout`, 50 s by default) */
+const LOCK_WAIT_TIMEOUT_CODES = new Set(['ER_LOCK_WAIT_TIMEOUT']);
+const LOCK_WAIT_TIMEOUT_ERRNOS = new Set([1205]);
+
+/**
+ * A transient error that is worth a retry at once: a deadlock, a serialization failure, a 1020. Not a lock wait
+ * timeout: the lock that it waited for is likely still held, and each retry would wait as long again.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isQuickRetryError(error) {
+    return isTransientDbError(error) && !someError(error, fields => matches(fields, {
+        codes: LOCK_WAIT_TIMEOUT_CODES,
+        errnos: LOCK_WAIT_TIMEOUT_ERRNOS,
+        kinds: new Set(),
+    }));
+}
+
 /** MySQL, MariaDB: an unknown system variable, such as `innodb_snapshot_isolation` before MariaDB 10.11.8 */
 const UNKNOWN_VARIABLE_CODES = new Set(['ER_UNKNOWN_SYSTEM_VARIABLE']);
 const UNKNOWN_VARIABLE_ERRNOS = new Set([1193]);
