@@ -599,8 +599,20 @@ copies of the MySQL files, changed where MariaDB differs. A change of the MySQL 
 - **Upserts.** MariaDB has no row alias (`INSERT … AS new`), so the upserts read the new values with `VALUES(column)`.
 - **Locks of a claim.** MariaDB has no `FOR UPDATE OF`. A claim and the final writes read the payload with a subquery,
   not a join, so `FOR UPDATE` locks the job row only, as on MySQL. The payload that the claim statement did not see is
-  read again, as on MySQL. On 11.8 (`innodb_snapshot_isolation=ON`), the same race can fail the claim with
-  `ER_CHECKREAD` (errno 1020); it is a transient error, retried like a deadlock.
+  read again, as on MySQL.
+- **Snapshot isolation of the claim.** `innodb_snapshot_isolation` (10.11.8, 11.0.6, 11.1.5, 11.2.4, 11.4.2 and later,
+  [InnoDB system variables](https://mariadb.com/docs/server/server-usage/storage-engines/innodb/innodb-system-variables#innodb_snapshot_isolation);
+  ON by default from 11.6.2) fails a locking read of a row that the statement's read view does not see with
+  `ER_CHECKREAD` (errno 1020). The payload subquery of the claim opens that view, so a job whose enqueue commits
+  during the claim statement failed the whole claim: 37–50 % of the claims under heavy enqueues on 11.8. The claim
+  statement starts with `/*M!101108 SET STATEMENT innodb_snapshot_isolation = OFF FOR */`: the job is locked, its
+  payload not seen and read again, as on 10.11 and MySQL. Older versions skip the versioned comment; a version from
+  the gap (11.0.0–11.0.5, 11.1.0–11.1.4, 11.2.0–11.2.3, 11.3, 11.4.0–11.4.1) answers `ER_UNKNOWN_SYSTEM_VARIABLE`
+  (1193), and the store claims again without the prefix, from then on (a debug log). Only the claim statement needs
+  it: the other locking reads either have no consistent read in the same statement (`renewLeases`,
+  `deleteExpiredJobs`, the claim of jobs with mutex keys), or lock their one row, by primary key, before the payload
+  subquery opens the view (`lockJob` of `failJob` and of stall recovery). Each statement of the READ COMMITTED queue
+  transaction has a read view of its own, so no view from an earlier statement is open.
 - **Writes by a list of ids.** On a small table, MariaDB scans the whole table for `WHERE id IN (…)` and waits for
   the rows that other claims hold: concurrent claims then deadlock. These writes force the primary key (or the index
   of the column) with `FORCE INDEX`. A `DELETE` takes index hints only in its multi-table form, so it uses that form.

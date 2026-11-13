@@ -152,7 +152,7 @@ export function createSqlane(options) {
     const notifyChannel = adapter.notify ? `${tablePrefix}ready` : null;
     // Undocumented, for the tests of sqlane
     const testTimings = /** @type {{ timings?: object }} */ (options).timings;
-    const store = createStore(adapter, tablePrefix);
+    const store = createStore(adapter, tablePrefix, options.logger);
     const runner = createRunner({
         store,
         registry,

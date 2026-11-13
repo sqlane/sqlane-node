@@ -46,6 +46,12 @@ export declare function isTransientDbError(error: unknown): boolean;
  */
 export declare function isMissingTableError(error: unknown): boolean;
 /**
+ * The server does not know a system variable that a statement sets.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export declare function isUnknownSystemVariableError(error: unknown): boolean;
+/**
  * The database cannot be reached, or the pool gives no connection: other work fails the same way.
  * @param {unknown} error
  * @returns {boolean}

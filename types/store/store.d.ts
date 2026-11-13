@@ -390,6 +390,7 @@ export type ScheduleRead = {
 /**
  * @param {import('../types.js').Adapter<any>} adapter
  * @param {string} tablePrefix Checked.
+ * @param {import('../types.js').Logger} [logger]
  * @returns {Store}
  */
-export declare function createStore(adapter: import('../types.js').Adapter<any>, tablePrefix: string): Store;
+export declare function createStore(adapter: import('../types.js').Adapter<any>, tablePrefix: string, logger?: import('../types.js').Logger): Store;

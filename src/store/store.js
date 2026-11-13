@@ -8,6 +8,7 @@ import * as mysqlWorker from './mysql_worker.js';
 import * as postgresFinal from './postgres_final.js';
 import * as postgresSchedules from './postgres_schedules.js';
 import * as postgresWorker from './postgres_worker.js';
+import { isUnknownSystemVariableError } from '../transient_error.js';
 
 /**
  * @typedef {object} ProbeRow
@@ -172,9 +173,10 @@ import * as postgresWorker from './postgres_worker.js';
 /**
  * @param {import('../types.js').Adapter<any>} adapter
  * @param {string} tablePrefix Checked.
+ * @param {import('../types.js').Logger} [logger]
  * @returns {Store}
  */
-export function createStore(adapter, tablePrefix) {
+export function createStore(adapter, tablePrefix, logger) {
     const { sql, final, schedules } = {
         mysql: { sql: mysqlWorker, final: mysqlFinal, schedules: mysqlSchedules },
         mariadb: { sql: mariadbWorker, final: mariadbFinal, schedules: mariadbSchedules },
@@ -187,6 +189,36 @@ export function createStore(adapter, tablePrefix) {
      */
     const inQueue = func => adapter.queueTransaction(func);
     const p = tablePrefix;
+    // MariaDB: false once the server rejects `innodb_snapshot_isolation` (a version without it)
+    let snapshotIsolationOff = true;
+
+    /**
+     * @param {ClaimDueParams} params
+     * @returns {Promise<ClaimDueResult>}
+     */
+    async function claimDueMariadb(params) {
+        const claimOnce = () => inQueue(executor => mariadbWorker.claimDue(executor, p, params, {
+            snapshotIsolationOff,
+        }));
+
+        try {
+            return await claimOnce();
+        } catch (error) {
+            if (!snapshotIsolationOff || !isUnknownSystemVariableError(error)) {
+                throw error;
+            }
+
+            snapshotIsolationOff = false;
+            logger?.debug({ error }, 'sqlane: the server has no innodb_snapshot_isolation, claims without it');
+
+            return claimOnce();
+        }
+    }
+
+    /** @type {(params: ClaimDueParams) => Promise<ClaimDueResult>} */
+    const claimDueInQueue = adapter.dialect === 'mariadb'
+        ? claimDueMariadb
+        : params => inQueue(executor => sql.claimDue(executor, p, params));
 
     return {
         probe: names => sql.probe(adapter.queue, tablePrefix, names),
@@ -201,7 +233,7 @@ export function createStore(adapter, tablePrefix) {
         claimDue: params => (adapter.dialect === 'postgres'
             // One statement: a transaction of its own
             ? postgresWorker.claimDue(adapter.queue, p, params)
-            : inQueue(executor => sql.claimDue(executor, p, params))),
+            : claimDueInQueue(params)),
         readPayloads: ids => sql.readPayloads(adapter.queue, tablePrefix, ids),
         renewLeases: (jobs, leaseMs) => inQueue(executor => final.renewLeases(executor, p, jobs, leaseMs)),
         markTimedOut: job => final.markTimedOut(adapter.queue, p, job),

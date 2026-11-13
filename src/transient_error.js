@@ -107,6 +107,23 @@ export function isMissingTableError(error) {
     }));
 }
 
+/** MySQL, MariaDB: an unknown system variable, such as `innodb_snapshot_isolation` before MariaDB 10.11.8 */
+const UNKNOWN_VARIABLE_CODES = new Set(['ER_UNKNOWN_SYSTEM_VARIABLE']);
+const UNKNOWN_VARIABLE_ERRNOS = new Set([1193]);
+
+/**
+ * The server does not know a system variable that a statement sets.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isUnknownSystemVariableError(error) {
+    return someError(error, fields => matches(fields, {
+        codes: UNKNOWN_VARIABLE_CODES,
+        errnos: UNKNOWN_VARIABLE_ERRNOS,
+        kinds: new Set(),
+    }));
+}
+
 /**
  * The database cannot be reached, or the pool gives no connection: other work fails the same way.
  * @param {unknown} error

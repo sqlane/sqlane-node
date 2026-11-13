@@ -557,6 +557,61 @@ describe('claimDue', () => {
         await expect(claimDue(store, { requests: [request('a', 1, 0)] }))
             .resolves.toMatchObject([{ id, payload: { found: true, payload: { n: 1 } } }]);
     });
+
+    // innodb_snapshot_isolation (MariaDB 10.11.8 and later; ON by default from 11.6.2, ON here on 10.11 too): a job
+    // whose enqueue commits during the claim statement would fail the claim with ER_CHECKREAD (1020). The claim
+    // statement turns it off: the job is locked, its payload read again.
+    test.runIf(inject('databaseDialect') === 'mariadb')('mariadb: claims that race enqueues under innodb_snapshot_isolation: no ER_CHECKREAD, every payload', async () => {
+        const { p, sqlane } = await freshTables();
+        const { adapter } = testAdapter;
+        const store = createStore({
+            ...adapter,
+            queueTransaction: func => adapter.queueTransaction(async (executor) => {
+                await executor.run('SET SESSION innodb_snapshot_isolation = ON', []);
+
+                try {
+                    return await func(executor);
+                } finally {
+                    await executor.run('SET SESSION innodb_snapshot_isolation = DEFAULT', []);
+                }
+            }),
+        }, p);
+        const names = Array.from({ length: 10 }, (_, index) => `n${index}`);
+        const until = Date.now() + 1500;
+        /** @type {unknown[]} */
+        const errors = [];
+        let claimed = 0;
+        let missing = 0;
+        const enqueuer = async () => {
+            for (let n = 0; Date.now() < until; n++) {
+                // oxlint-disable-next-line no-await-in-loop -- one enqueue after the other
+                await sqlane.enqueue(testAdapter.pool, names[n % names.length], { n });
+            }
+        };
+        const claimer = async (/** @type {number} */ index) => {
+            for (let round = 0; Date.now() < until; round++) {
+                try {
+                    // oxlint-disable-next-line no-await-in-loop -- one claim after the other
+                    const jobs = await claimDue(store, {
+                        requests: names.map((name, tie) => request(name, 5, tie)),
+                        free: 1000,
+                        lockToken: `T${index}-${round}`,
+                    });
+
+                    claimed += jobs.length;
+                    missing += jobs.filter(job => !job.payload.found).length;
+                } catch (error) {
+                    errors.push(error);
+                }
+            }
+        };
+
+        await Promise.all([...Array.from({ length: 4 }, enqueuer), claimer(1), claimer(2)]);
+
+        expect(errors.filter(error => /** @type {{ errno?: unknown }} */ (error).errno === 1020)).toStrictEqual([]);
+        expect(claimed).toBeGreaterThan(0);
+        expect(missing).toBe(0);
+    });
 });
 
 describe('mutex keys', () => {
