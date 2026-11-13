@@ -10,6 +10,7 @@ const results = JSON.parse(readFileSync(join(HERE, 'results.json'), 'utf8'));
 // Colors for GitHub's light (#ffffff) and dark (#0d1117) pages; the series pass the palette checks on both.
 const THEMES = {
     light: {
+        page: '#ffffff',
         text: '#1f2328',
         muted: '#59636e',
         grid: '#e1e0d9',
@@ -17,6 +18,7 @@ const THEMES = {
         series: ['#2a78d6', '#eb6834', '#1baf7a'],
     },
     dark: {
+        page: '#0d1117',
         text: '#f0f6fc',
         muted: '#9198a1',
         grid: '#262c36',
@@ -120,20 +122,22 @@ function barShape({ x, y, w, fill, round }) {
 const SERIES = { Worker: 0, Workers: 0, Producer: 1, Database: 2 };
 
 /**
- * @param {{ title: string, subtitle: string, legend?: string[], unit: string,
- *   rows: { label: string, parts: number[], value: string }[] }} chart
+ * @param {{ title: string, subtitle: string, legend?: string[], unit: string, max?: number,
+ *   rows: { label: string, parts: number[], value: string }[] }} chart `max`: the end of the axis, when a row would
+ *     dwarf the others; its bar stops at the edge, and its value says so
  * @param {keyof typeof THEMES} theme
  * @returns {string} the SVG document
  */
-function svg({ title, subtitle, legend, rows, unit }, theme) {
+function svg({ title, subtitle, legend, rows, unit, max }, theme) {
     const c = THEMES[theme];
     /**
      * @param {number} part
      * @returns {string} The color of the part's series.
      */
     const color = part => c.series[legend ? SERIES[/** @type {keyof typeof SERIES} */ (legend[part])] : 0];
-    const tk = ticks(Math.max(...rows.map(r => sum(r.parts))));
-    const scale = (/** @type {number} */ v) => ((X1 - X0) * v) / /** @type {number} */ (tk.at(-1));
+    const tk = ticks(max ?? Math.max(...rows.map(r => sum(r.parts))));
+    const end = /** @type {number} */ (tk.at(-1));
+    const scale = (/** @type {number} */ v) => ((X1 - X0) * Math.min(v, end)) / end;
     const top = legend ? 84 : 64;
     const plotH = rows.length * ROW;
     const H = top + plotH + 34;
@@ -169,8 +173,16 @@ function svg({ title, subtitle, legend, rows, unit }, theme) {
             const last = j === row.parts.length - 1;
             const w = scale(v);
             // A 2px gap between stacked segments
-            out.push(barShape({ x, y, w: last ? w : Math.max(w - 2, 1), fill: color(j), round: last }));
+            const cut = v > end;
+            out.push(barShape({ x, y, w: last ? w : Math.max(w - 2, 1), fill: color(j), round: last && !cut }));
             x += w;
+            // A bar cut at the end of the axis: two slashes in the page color mark the break
+            if (cut) {
+                for (const dx of [16, 9]) {
+                    const at = `M${(x - dx).toFixed(1)},${y + BAR + 2}l6,${-(BAR + 4)}`;
+                    out.push(`<path d="${at}" stroke="${c.page}" stroke-width="2.5"/>`);
+                }
+            }
         }
         const vx = (Math.max(x, X0 + 2) + 6).toFixed(1);
         out.push(`<text x="${vx}" y="${y + 13}" font-size="13" fill="${c.text}"${bold}>${row.value}</text>`);
@@ -181,6 +193,24 @@ function svg({ title, subtitle, legend, rows, unit }, theme) {
 
 const millions = (/** @type {number} */ n) => n / 1e6;
 const fixed = (/** @type {number} */ n) => (n >= 100 ? n.toFixed(0) : n.toFixed(1));
+
+/**
+ * @param {string} library
+ * @param {string} dialect
+ * @returns {any} the drain of the library on that database, in phase B (one library at a time)
+ */
+function drainRun(library, dialect) {
+    const found = results.perf.find((/** @type {any} */ r) => (
+        r.library === library && r.workload === 'drain' && r.timing && r.dialect === dialect && r.names === 1000
+    ));
+    if (!found) throw new Error(`no drain run of ${library} on ${dialect}`);
+    return found;
+}
+
+const DRAINS = [
+    ...LIBS.map(({ id, label }) => ({ id, label, dialect: 'postgres' })),
+    { id: 'bullmq', label: 'BullMQ* (Redis)', dialect: 'redis' },
+].map(({ id, label, dialect }) => ({ label, r: drainRun(id, dialect) }));
 
 const charts = {
     perf_cpu_per_job: {
@@ -211,6 +241,22 @@ const charts = {
             const r = run(id, 'idle');
             const v = millions(r.db.instructions) / r.seconds;
             return { label, parts: [v], value: `${fixed(v)} M/s` };
+        }),
+    },
+    perf_drain: {
+        title: 'Time to drain 10,000 jobs',
+        subtitle: 'PostgreSQL 17 (BullMQ also on Redis), 1000 job names, one library at a time. *: after the COMMIT. Lower is better.',
+        unit: 's',
+        // The axis ends at the slowest library that finished: a stopped drain runs off it
+        max: Math.max(...DRAINS.filter(({ r }) => r.drainMs).map(({ r }) => r.drainMs / 1000)),
+        rows: DRAINS.map(({ label, r }) => {
+            if (!r.drainMs) {
+                return { label, parts: [r.stoppedAfterMs / 1000], value: `> ${Math.floor(r.stoppedAfterMs / 1000)} s, stopped` };
+            }
+            const s = r.drainMs / 1000;
+            // pg-boss's slots are per queue: up to 8 per job name, where the others run 8 jobs at once in all
+            const note = r.library === 'pg-boss' ? ' · up to 8,000 at once' : '';
+            return { label, parts: [s], value: `${s.toFixed(1)} s${note}` };
         }),
     },
     perf_cron: {

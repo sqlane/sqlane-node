@@ -108,11 +108,16 @@ Supported databases, from each library's documentation:
 </picture>
 
 <details>
-<summary>More charts: latency and cron</summary>
+<summary>More charts: latency, drain and cron</summary>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_latency_dark.svg">
   <img alt="Median time from enqueue to handler start on PostgreSQL, one library at a time: sqlane 3 ms, Graphile Worker 4 ms, River 5 ms, pg-boss 4 ms, Izi Queue 4 ms, Boring Node Queue 1002 ms, BullMQ 3 ms, Sidequest 53 ms" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_latency_light.svg">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_drain_dark.svg">
+  <img alt="Time to drain 10,000 jobs, one library at a time: sqlane 1.4 s, Graphile Worker 1.9 s, River 2.2 s, pg-boss 0.4 s (up to 8,000 jobs at once), Izi Queue stopped after 60 s, Boring Node Queue 8.2 s, BullMQ 1.0 s on PostgreSQL and 0.5 s on Redis (after the commit), Sidequest 9.9 s (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_drain_light.svg">
 </picture>
 
 <picture>
