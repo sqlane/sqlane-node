@@ -130,7 +130,7 @@ all, one library at a time, stopped after 60 s.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_drain_dark.svg">
-  <img alt="Time to drain 10,000 jobs, one library at a time: sqlane 1.9 s, Graphile Worker 2.8 s, River 6.0 s, pg-boss 0.5 s, up to 8,000 at once, Izi Queue > 60 s, stopped, Boring Node Queue 12.3 s, BullMQ 1.2 s (after the commit), Sidequest 15.4 s (after the commit), BullMQ (Redis) 0.6 s (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_drain_light.svg">
+  <img alt="Time to drain 10,000 jobs, one library at a time: sqlane 1.9 s, Graphile Worker 2.8 s, River 6.0 s, pg-boss 0.5 s, up to 8,000 at once, Izi Queue over 60 s, stopped, Boring Node Queue 12.3 s, BullMQ 1.2 s (after the commit), Sidequest 15.4 s (after the commit), BullMQ (Redis) 0.6 s (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_drain_light.svg">
 </picture>
 
 | Library           | Database   | Time     | Jobs at once | Instructions per job (M), worker / database = total |
