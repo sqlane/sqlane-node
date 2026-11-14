@@ -1,0 +1,462 @@
+{
+    "postgres-18": {
+        "enqueue": {
+            "operations": 100,
+            "statements": {
+                "min": 100,
+                "max": 100
+            },
+            "rows": {
+                "min": 100,
+                "max": 100
+            },
+            "blocks": {
+                "min": 1012,
+                "max": 1012
+            }
+        },
+        "enqueue_many": {
+            "operations": 10,
+            "statements": {
+                "min": 10,
+                "max": 10
+            },
+            "rows": {
+                "min": 1000,
+                "max": 1000
+            },
+            "blocks": {
+                "min": 14235,
+                "max": 14235
+            }
+        },
+        "run": {
+            "operations": 200,
+            "statements": {
+                "min": 602,
+                "max": 603
+            },
+            "rows": {
+                "min": 20500,
+                "max": 20500
+            },
+            "blocks": {
+                "min": 433582,
+                "max": 435589
+            }
+        },
+        "idle": {
+            "operations": 1,
+            "statements": {
+                "min": 2,
+                "max": 2
+            },
+            "rows": {
+                "min": 0,
+                "max": 0
+            },
+            "blocks": {
+                "min": 4000,
+                "max": 4000
+            }
+        },
+        "mutex": {
+            "operations": 100,
+            "statements": {
+                "min": 1002,
+                "max": 1005
+            },
+            "rows": {
+                "min": 1387,
+                "max": 1391
+            },
+            "blocks": {
+                "min": 20716,
+                "max": 20729
+            }
+        },
+        "schedule": {
+            "operations": 1000,
+            "statements": {
+                "min": 50,
+                "max": 50
+            },
+            "rows": {
+                "min": 3000,
+                "max": 3000
+            },
+            "blocks": {
+                "min": 23035,
+                "max": 23359
+            }
+        }
+    },
+    "mysql-8.4": {
+        "enqueue": {
+            "operations": 100,
+            "statements": {
+                "min": 500,
+                "max": 500
+            },
+            "rows": {
+                "min": 100,
+                "max": 100
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "enqueue_many": {
+            "operations": 10,
+            "statements": {
+                "min": 50,
+                "max": 50
+            },
+            "rows": {
+                "min": 1300,
+                "max": 1300
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "run": {
+            "operations": 200,
+            "statements": {
+                "min": 2375,
+                "max": 2394
+            },
+            "rows": {
+                "min": 2388,
+                "max": 2389
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "idle": {
+            "operations": 1,
+            "statements": {
+                "min": 2,
+                "max": 2
+            },
+            "rows": {
+                "min": 0,
+                "max": 0
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "mutex": {
+            "operations": 100,
+            "statements": {
+                "min": 1901,
+                "max": 1901
+            },
+            "rows": {
+                "min": 65607,
+                "max": 107457
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "schedule": {
+            "operations": 1000,
+            "statements": {
+                "min": 80,
+                "max": 80
+            },
+            "rows": {
+                "min": 3000,
+                "max": 3000
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        }
+    },
+    "mariadb-10.11": {
+        "enqueue": {
+            "operations": 100,
+            "statements": {
+                "min": 500,
+                "max": 500
+            },
+            "rows": {
+                "min": 100,
+                "max": 100
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "enqueue_many": {
+            "operations": 10,
+            "statements": {
+                "min": 50,
+                "max": 50
+            },
+            "rows": {
+                "min": 2500,
+                "max": 2500
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "run": {
+            "operations": 200,
+            "statements": {
+                "min": 2325,
+                "max": 2395
+            },
+            "rows": {
+                "min": 33059,
+                "max": 41176
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "idle": {
+            "operations": 1,
+            "statements": {
+                "min": 2,
+                "max": 2
+            },
+            "rows": {
+                "min": 0,
+                "max": 0
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "mutex": {
+            "operations": 100,
+            "statements": {
+                "min": 1891,
+                "max": 1901
+            },
+            "rows": {
+                "min": 52184,
+                "max": 52314
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "schedule": {
+            "operations": 1000,
+            "statements": {
+                "min": 80,
+                "max": 80
+            },
+            "rows": {
+                "min": 3000,
+                "max": 3000
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        }
+    },
+    "mariadb-11.8": {
+        "enqueue": {
+            "operations": 100,
+            "statements": {
+                "min": 500,
+                "max": 500
+            },
+            "rows": {
+                "min": 100,
+                "max": 100
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "enqueue_many": {
+            "operations": 10,
+            "statements": {
+                "min": 50,
+                "max": 50
+            },
+            "rows": {
+                "min": 5500,
+                "max": 5500
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "run": {
+            "operations": 200,
+            "statements": {
+                "min": 2333,
+                "max": 2363
+            },
+            "rows": {
+                "min": 33353,
+                "max": 37121
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "idle": {
+            "operations": 1,
+            "statements": {
+                "min": 2,
+                "max": 2
+            },
+            "rows": {
+                "min": 0,
+                "max": 0
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "mutex": {
+            "operations": 100,
+            "statements": {
+                "min": 1900,
+                "max": 1901
+            },
+            "rows": {
+                "min": 52104,
+                "max": 52106
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "schedule": {
+            "operations": 1000,
+            "statements": {
+                "min": 80,
+                "max": 80
+            },
+            "rows": {
+                "min": 3000,
+                "max": 3000
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        }
+    },
+    "postgres-15": {
+        "enqueue": {
+            "operations": 100,
+            "statements": {
+                "min": 100,
+                "max": 100
+            },
+            "rows": {
+                "min": 100,
+                "max": 100
+            },
+            "blocks": {
+                "min": 1014,
+                "max": 1014
+            }
+        },
+        "enqueue_many": {
+            "operations": 10,
+            "statements": {
+                "min": 10,
+                "max": 10
+            },
+            "rows": {
+                "min": 1000,
+                "max": 1000
+            },
+            "blocks": {
+                "min": 14237,
+                "max": 14237
+            }
+        },
+        "run": {
+            "operations": 200,
+            "statements": {
+                "min": 602,
+                "max": 603
+            },
+            "rows": {
+                "min": 20500,
+                "max": 20500
+            },
+            "blocks": {
+                "min": 433579,
+                "max": 435613
+            }
+        },
+        "idle": {
+            "operations": 1,
+            "statements": {
+                "min": 2,
+                "max": 2
+            },
+            "rows": {
+                "min": 0,
+                "max": 0
+            },
+            "blocks": {
+                "min": 4000,
+                "max": 4000
+            }
+        },
+        "mutex": {
+            "operations": 100,
+            "statements": {
+                "min": 1002,
+                "max": 1004
+            },
+            "rows": {
+                "min": 1387,
+                "max": 1391
+            },
+            "blocks": {
+                "min": 21013,
+                "max": 21022
+            }
+        },
+        "schedule": {
+            "operations": 1000,
+            "statements": {
+                "min": 50,
+                "max": 50
+            },
+            "rows": {
+                "min": 3000,
+                "max": 3000
+            },
+            "blocks": {
+                "min": 23035,
+                "max": 23523
+            }
+        }
+    }
+}
