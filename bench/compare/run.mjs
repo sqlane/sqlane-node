@@ -1,16 +1,20 @@
 // The comparison of docs/features_vs_other_libs.md and docs/performance_vs_other_libs.md: the feature checks, the
-// performance workloads of jobs, and those of schedules, on database servers of this host (macOS, Homebrew).
+// performance workloads of jobs, and those of schedules, on database servers of this host: macOS with Homebrew, or
+// Linux in the container of linux.dockerfile.
 //
 //   pnpm bench:compare                    # checks and perf, about 10.5 minutes
 //   pnpm bench:compare --only checks      # or: perf (the jobs, about 9 minutes), cron (the schedules, about 9)
 //   pnpm bench:compare --only cron --libs sqlane,river
+//   pnpm bench:compare --parallel 4       # at most 4 runs at once: a machine with fewer cores than 8
 //
-// Options: --pg-bin, --mysql-bin, --mariadb-bin (the directories of the server binaries). Writes results.json next to
-// this file and prints Markdown tables. See README.md.
+// Options: --pg-bin, --mysql-bin, --mariadb-bin, --redis-bin (the directories of the server binaries; defaults: the
+// PG_BIN, MYSQL_BIN, MARIADB_BIN and REDIS_BIN variables, else Homebrew's). Writes results.json next to this file and
+// prints Markdown tables. See README.md.
 /* oxlint-disable no-await-in-loop -- the runs go one after the other: they share the machine */
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpus, release as kernelRelease, tmpdir, totalmem } from 'node:os';
+import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs, promisify } from 'node:util';
@@ -19,21 +23,53 @@ import { Client } from 'pg';
 
 const execFileAsync = promisify(execFile);
 const HERE = import.meta.dirname;
+const LINUX = process.platform === 'linux';
+// oxlint-disable-next-line node/no-process-env -- the server binaries and the counters' interpreter (linux.dockerfile)
+const ENV = process.env;
+const { PG_BIN: PG_ENV, MYSQL_BIN: MYSQL_ENV, MARIADB_BIN: MARIADB_ENV, REDIS_BIN: REDIS_ENV } = ENV;
+const { PROC_USAGE_PYTHON } = ENV;
 const PROC_USAGE = join(HERE, '../cpu/proc_usage.py');
+const PROC_USAGE_LINUX = join(HERE, '../cpu/proc_usage_linux.py');
 const { values: args } = parseArgs({
     options: {
         'only': { type: 'string' },
         'libs': { type: 'string' },
-        'pg-bin': { type: 'string', default: '/opt/homebrew/opt/postgresql@17/bin' },
-        'mysql-bin': { type: 'string', default: '/opt/homebrew/opt/mysql@8.4/bin' },
-        'mariadb-bin': { type: 'string', default: '/opt/homebrew/opt/mariadb@11.8/bin' },
-        'redis-bin': { type: 'string', default: '/opt/homebrew/bin' },
+        'pg-bin': { type: 'string', default: PG_ENV ?? '/opt/homebrew/opt/postgresql@17/bin' },
+        'mysql-bin': { type: 'string', default: MYSQL_ENV ?? '/opt/homebrew/opt/mysql@8.4/bin' },
+        'mariadb-bin': { type: 'string', default: MARIADB_ENV ?? '/opt/homebrew/opt/mariadb@11.8/bin' },
+        'redis-bin': { type: 'string', default: REDIS_ENV ?? '/opt/homebrew/bin' },
+        'parallel': { type: 'string' },
     },
 });
 const PG_BIN = args['pg-bin'];
 const MYSQL_BIN = args['mysql-bin'];
 const MARIADB_BIN = args['mariadb-bin'];
 const REDIS_BIN = args['redis-bin'];
+/**
+ * The most runs at once: the lanes of phase A, and the firing schedule runs, go in batches of this size, each batch
+ * with its windows started together. Unlimited by default (8 cores): on fewer cores, the runs fall behind the load.
+ */
+const PARALLEL = args.parallel ? Number(args.parallel) : Number.POSITIVE_INFINITY;
+
+if (!(PARALLEL >= 1)) {
+    throw new Error(`--parallel ${args.parallel}: a number of 1 or more`);
+}
+
+/**
+ * @template T
+ * @param {T[]} items
+ * @param {number} size
+ * @returns {T[][]} the items in batches of at most size
+ */
+function batches(items, size) {
+    const out = [];
+
+    for (let first = 0; first < items.length; first += size) {
+        out.push(items.slice(first, first + size));
+    }
+
+    return out;
+}
 /**
  * The libraries of the performance runs. Each adapter uses the settings that its library's documentation offers for
  * throughput (libs/common.mjs); a library whose enqueue cannot take the caller's transaction enqueues after the COMMIT.
@@ -162,11 +198,62 @@ function exited(child) {
 }
 
 /**
+ * Linux keeps no running total of a process's instructions: a daemon opens a counter on each thread of the container
+ * as it appears (proc_usage_linux.py), from the start of the run. PROC_USAGE_PYTHON: an interpreter with CAP_PERFMON,
+ * so the counts include the kernel.
+ */
+const linuxCounters = LINUX ? startLinuxCounters() : null;
+
+/**
+ * @returns {Promise<(processes: Record<string, string>) => Promise<Record<string, any>>>} a request to the daemon
+ */
+async function startLinuxCounters() {
+    const daemon = spawn(PROC_USAGE_PYTHON ?? 'python3', [PROC_USAGE_LINUX], {
+        stdio: ['pipe', 'pipe', 'inherit'],
+    });
+
+    cleanups.push(() => daemon.kill('SIGKILL'));
+
+    /** @type {Map<number, (result: Record<string, any>) => void>} */
+    const pending = new Map();
+    /** @type {PromiseWithResolvers<void>} */
+    const ready = Promise.withResolvers();
+    let next = 0;
+
+    createInterface({ input: /** @type {import('node:stream').Readable} */ (daemon.stdout) }).on('line', (line) => {
+        const message = JSON.parse(line);
+
+        if (message.ready) {
+            ready.resolve();
+        } else {
+            pending.get(message.id)?.(message.result);
+            pending.delete(message.id);
+        }
+    });
+    daemon.on('exit', code => ready.reject(new Error(`proc_usage_linux.py exited with ${code}`)));
+    await ready.promise;
+
+    return (processes) => {
+        const id = next++;
+        const { promise, resolve } = Promise.withResolvers();
+
+        pending.set(id, resolve);
+        daemon.stdin?.write(`${JSON.stringify({ id, processes })}\n`);
+
+        return promise;
+    };
+}
+
+/**
  * The counters of processes, without blocking the runs that go in parallel.
  * @param {Record<string, string>} processes label: pid, with `+` for the process and its descendants
  * @returns {Promise<Record<string, any>>} label: { instructions, cycles, cpuSeconds, byCommand }
  */
 async function countersAsync(processes) {
+    if (linuxCounters) {
+        return (await linuxCounters)(processes);
+    }
+
     const { stdout } = await execFileAsync('python3', [
         PROC_USAGE, ...Object.entries(processes).map(([label, pid]) => `${label}=${pid}`),
     ], { encoding: 'utf8' });
@@ -184,8 +271,8 @@ async function startPostgres({ port = 55_442, template, connections = 500 } = {}
     const data = join(tmp, `pg-${port}`);
 
     if (template) {
-        // A clone on APFS: instant
-        await execFileAsync('cp', ['-c', '-R', template, data]);
+        // A clone on APFS: instant; on Linux, a reflink where the file system has them
+        await execFileAsync('cp', LINUX ? ['-a', '--reflink=auto', template, data] : ['-c', '-R', template, data]);
     } else {
         execFileSync(join(PG_BIN, 'initdb'), ['-D', data, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
     }
@@ -1098,27 +1185,29 @@ async function runJobs(libraries) {
     let startedAt = Date.now();
 
     for (const [workload, names] of JOB_WORKLOADS) {
-        process.stderr.write(`jobs, phase A: ${workload} ${names}, ${lanes.length} lanes in parallel\n`);
+        for (const batch of batches(lanes.map((_, index) => index), PARALLEL)) {
+            process.stderr.write(`jobs, phase A: ${workload} ${names}, ${batch.length} of ${lanes.length} lanes in parallel\n`);
 
-        const runs = await Promise.all(lanes.map((_, index) => prepare(index, workload, names)));
-        const barrier = barrierOf(runs.length);
-        const settled = await Promise.allSettled(runs.map(async (run) => {
-            const own = barrier();
+            const runs = await Promise.all(batch.map(index => prepare(index, workload, names)));
+            const barrier = barrierOf(runs.length);
+            const settled = await Promise.allSettled(runs.map(async (run) => {
+                const own = barrier();
 
-            try {
-                return await measure({ ...run, barrier: own });
-            } finally {
-                own.leave();
-                await finishWorkload(run);
+                try {
+                    return await measure({ ...run, barrier: own });
+                } finally {
+                    own.leave();
+                    await finishWorkload(run);
+                }
+            }));
+            const failed = settled.find(result => result.status === 'rejected');
+
+            if (failed) {
+                throw failed.reason;
             }
-        }));
-        const failed = settled.find(result => result.status === 'rejected');
 
-        if (failed) {
-            throw failed.reason;
+            rows.push(...settled.map(result => (result.status === 'fulfilled' ? result.value : {})));
         }
-
-        rows.push(...settled.map(result => (result.status === 'fulfilled' ? result.value : {})));
     }
 
     process.stderr.write(`jobs, phase A: ${Math.round((Date.now() - startedAt) / 1000)} s\n`);
@@ -1220,31 +1309,42 @@ async function runSchedules(libraries) {
     /** @type {Record<string, any>[][]} the runs of each step */
     const samples = steps.map(() => []);
 
+    // The idle runs barely load the machine: they go together. The firing ones go in batches of PARALLEL.
+    const indices = steps.map((_, index) => index);
+    const idleRuns = indices.filter(index => steps[index].step.workload === 'cron-idle');
+    const firingRuns = indices.filter(index => steps[index].step.workload !== 'cron-idle');
+    const groups = PARALLEL >= steps.length
+        ? [indices]
+        : [idleRuns, ...batches(firingRuns, PARALLEL)].filter(group => group.length);
+
     for (let repeat = 1; repeat <= CRON_REPEATS; repeat++) {
-        const barrier = barrierOf(steps.length);
+        for (const group of groups) {
+            const barrier = barrierOf(group.length);
 
-        process.stderr.write(`schedules ${repeat}/${CRON_REPEATS}: ${steps.length} runs in parallel\n`);
+            process.stderr.write(`schedules ${repeat}/${CRON_REPEATS}: ${group.length} of ${steps.length} runs in parallel\n`);
 
-        const settled = await Promise.allSettled(steps.map(async ({ lane: { library, database }, step }, index) => {
-            const own = barrier();
+            const settled = await Promise.allSettled(group.map(async (index) => {
+                const { lane: { library, database }, step } = steps[index];
+                const own = barrier();
 
-            try {
-                return await runWorkload({
-                    library, ...step, ...database !== 'postgres' && { dialect: database }, server: servers[index],
-                    start: own,
-                });
-            } finally {
-                own.leave();
+                try {
+                    return await runWorkload({
+                        library, ...step, ...database !== 'postgres' && { dialect: database }, server: servers[index],
+                        start: own,
+                    });
+                } finally {
+                    own.leave();
+                }
+            }));
+            const failed = settled.find(result => result.status === 'rejected');
+
+            if (failed) {
+                throw failed.reason;
             }
-        }));
-        const failed = settled.find(result => result.status === 'rejected');
 
-        if (failed) {
-            throw failed.reason;
-        }
-
-        for (const [index, result] of settled.entries()) {
-            samples[index].push(result.status === 'fulfilled' ? result.value : {});
+            for (const [position, result] of settled.entries()) {
+                samples[group[position]].push(result.status === 'fulfilled' ? result.value : {});
+            }
         }
     }
 
@@ -1307,6 +1407,14 @@ try {
         date,
         node: process.version,
         dates: { ...saved.dates, ...Object.fromEntries([...PARTS].map(part => [part, date])) },
+        // The machine of each part: its numbers compare with those of other parts only on the same one
+        machines: {
+            ...saved.machines,
+            ...Object.fromEntries([...PARTS].map(part => [part, {
+                platform: process.platform, kernel: kernelRelease(), cpu: cpus()[0]?.model.trim(), cores: cpus().length,
+                memoryGiB: Math.round(totalmem() / 2 ** 30), parallel: Number.isFinite(PARALLEL) ? PARALLEL : null,
+            }])),
+        },
     };
     const libraries = LIBRARIES;
 

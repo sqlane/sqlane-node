@@ -5,20 +5,44 @@ The harness behind [docs/features_vs_other_libs.md](../../docs/features_vs_other
 documents report what they did.
 
 ```sh
-pnpm bench:compare                                # checks and performance of jobs, about 10.5 minutes
+pnpm bench:compare                                # checks and performance of jobs
 pnpm bench:compare --only checks                  # the feature checks, about 1.5 minutes
-pnpm bench:compare --only perf                    # the jobs, about 9 minutes
+pnpm bench:compare --only perf                    # the jobs
 pnpm bench:compare --only perf --libs sqlane,river
-pnpm bench:compare --only cron                    # the schedules, about 9.5 minutes
+pnpm bench:compare --only cron                    # the schedules
+pnpm bench:compare --parallel 8                   # at most 8 runs at once
 ```
 
-`--only` and `--libs` select runs: the other rows of `results.json` stay. Each command stays under 15 minutes.
+`--only` and `--libs` select runs: the other rows of `results.json` stay. `--parallel` caps the runs that share the
+machine: phase A of the jobs and the firing schedules go in batches of that size (unlimited by default). With too many
+runs per core, the libraries fall behind the load and the numbers are wrong: on 4 cores, unlimited runs missed slots.
+The run starts private servers on ports from 55442 (PostgreSQL), 53317 (MySQL and MariaDB) and 56380 (Redis), with
+data in a temporary directory, and stops them at the end. It writes `results.json` here, with the machine of each part
+(`machines`), and prints Markdown tables.
 
-Requirements: macOS, Node.js 24 or later, and the servers from Homebrew: `postgresql@17`, `mysql@8.4`,
-`mariadb@11.8`, `redis` (`--pg-bin`, `--mysql-bin`, `--mariadb-bin`, `--redis-bin` for others). The run starts
-private servers on ports from 55442 (PostgreSQL), 53317 (MySQL and MariaDB) and 56380 (Redis), with data in a
-temporary directory, and stops them at the end. It writes `results.json` here and
-prints Markdown tables.
+### Linux: the published numbers
+
+The documents' numbers come from Linux, in the container of `linux.dockerfile`: Node.js, pnpm, PostgreSQL, MySQL,
+MariaDB and Redis at pinned versions, every download checked against its SHA-256. The counters come from
+`bench/cpu/proc_usage_linux.py`, which opens a hardware counter on every thread of the container (`perf_event_open`)
+and needs `CAP_PERFMON`; with `kernel.perf_event_paranoid` of 1 or less on the host, they count the kernel too.
+
+```sh
+podman build -f bench/compare/linux.dockerfile -t sqlane-bench:linux bench/compare
+podman run --rm --cap-add PERFMON --userns=keep-id:uid=1000,gid=1000 --shm-size=2g --ulimit nofile=65536:65536 \
+    -v "$PWD":/work sqlane-bench:linux bash -c \
+    'pnpm install --frozen-lockfile && pnpm bench:compare --parallel 8 && pnpm bench:compare --only cron --parallel 8'
+```
+
+On a Ryzen 5 3600 (6 cores, 12 threads), the checks and the jobs take about 12 minutes, the schedules about 45. With
+rootful Docker, drop `--userns` and add `--cap-add SYS_PTRACE -e PROC_USAGE_PYTHON=/usr/local/bin/python3-perf`: a
+Python with `CAP_PERFMON` that counts the processes of the image's `bench` user (PostgreSQL refuses to run as root).
+
+### macOS: for development
+
+Node.js 24 or later and the servers from Homebrew: `postgresql@17`, `mysql@8.4`, `mariadb@11.8`, `redis`
+(`--pg-bin`, `--mysql-bin`, `--mariadb-bin`, `--redis-bin` for others). The counters come from `bench/cpu/proc_usage.py`
+(`proc_pid_rusage`). Good for comparing two versions of sqlane on one machine; the documents don't use these numbers.
 
 The libraries are installed apart from sqlane, from this directory's `package.json` and lockfile: the script installs
 them. sqlane runs from this checkout. The root type check skips this directory, which has its own dependencies:
@@ -101,13 +125,15 @@ Oxen Queue: not compared (it pins mysql2 3.16.3, which has a known high-severity
 - **Drain.** 10,000 due jobs over the names, enqueued before the worker starts. The time until the worker has run
   them all, at most 60 s: a longer drain stops, and its row gives the jobs that ran.
 - **Two phases.** A lane per library and database that its adapter lists (`databases`), each with a server of its
-  own. Phase A, for instructions: all the lanes at once, one workload at a time, their windows started together
+  own. Phase A, for instructions: the lanes at once (in batches of `--parallel`), one workload at a time, their windows
+  started together
   (steady, idle with 1 and with 1000 names, drain). Steady and idle instructions barely depend on the load of the
   machine; drain instructions do, so the drains come from phase B. Phase B,
   for times, on the PostgreSQL and Redis lanes: one lane at a time, the drains (their backlogs prepared in parallel),
   then the steady load, for the latency and the CPU time. Its rows have
   `timing: true`; it also checks phase A's instructions on those lanes.
-- **Counters.** Instructions retired, cycles and CPU time of each process (`bench/cpu/proc_usage.py`), the database
+- **Counters.** Instructions retired, cycles and CPU time of each process (`proc_usage_linux.py` or `proc_usage.py`),
+  the database
   with all its processes. Compare instructions: see [CPU cost per job](../../docs/contributing/measuring_cpu_cost.md#the-three-numbers). On
   PostgreSQL, `pg_stat_statements` counts the statements of the window, and `pg_stat_activity` the connections.
 
@@ -125,7 +151,8 @@ with `schedule()`. Izi Queue's CronPlugin ticks every 1 s (`interval`, default 6
 job.
 
 - **In parallel, 3 times.** A lane per library and database that its adapter lists, but MariaDB. The 5 runs of each
-  lane, of all the lanes, run at once, each in a database of its own. PostgreSQL: a server per lane (ports from 55450;
+  lane, of all the lanes, run at once (with `--parallel`, the idle runs together, then the firing ones in batches),
+  each in a database of its own. PostgreSQL: a server per lane (ports from 55450;
   macOS allows about 32 servers at once), and each run counts the backends of its database's connections, and its own
   statements. Redis (ports from 56450) and MySQL (ports from 53450): a server per run, whose process is the run's
   database, and no statements; on MySQL, the 2 firing runs only. The runs start together, after all their
@@ -143,48 +170,26 @@ job.
   Worker and Boring Node Queue delete a completed job, so their handlers' notes count too. Per key and slot, 1 job is
   expected. pg-boss's jobs do not carry the slot: its forwarding jobs do. Each key's jobs must not outnumber its
   forwarding jobs that ran, and they pair with them, in order, for the lag.
-- **Time.** About 3 minutes per set, 9.5 in all (53 runs).
-- **Kept by hand.** `pooled` (pg-boss with 3 workers: the run with the median total among this row's 3 runs and
-  those of `cronHistory`), `cronHistory` (the earlier runs of the day) and `sidequestUniquePerMinute` in
-  `results.json` were assembled by hand: `run.mjs` does not write them, and a new `--only cron` run drops `pooled`
-  (`charts.mjs` then uses the single run).
+- **Time.** About 3 minutes per batch of runs.
 
 ## Limits
 
-What the documents leave out: how far the numbers can be trusted, and the runs behind a few of them.
+What the documents leave out: how far the numbers can be trusted.
 
-- **One machine, one run.** Apple M1 Pro, 15 s windows: differences of about 10% are noise. The setups don't have
-  the same capacity: pg-boss has its slots per queue, the others 8 in all.
-- **The two phases agree, except one lane and the drains.** At steady load, phase B's instructions per job were within
-  3% of phase A's on 8 of the 9 lanes, from −2.9% (sqlane) to +0.7% (Boring Node Queue); BullMQ on PostgreSQL used 25%
-  more in phase B, for a cause not established. Phase A also agrees within 4% with the runs of 11 November 2026, one
-  library at a time, with sqlane 2.0.1 (sqlane 4.6 M, pg-boss 27.0 M, Graphile Worker 10.9 M, River 14.6 M). The
-  drains don't agree: with the other lanes draining at once, River used 3.7× its instructions alone, and Graphile
-  Worker 0.7×. So the drains come from phase B, and the MySQL and MariaDB lanes, which phase B doesn't run, have none.
-  No MySQL lane ran alone.
+- **One machine, one run.** 15 s windows: differences of about 10% are noise. The setups don't have the same
+  capacity: pg-boss has its slots per queue, the others 8 in all.
+- **The two phases agree.** On the PC run of 14 November 2026 (`--parallel 8`), phase B's instructions per job were
+  within 5% of phase A's at steady load on all 9 lanes, and within 8% for the drains. The drains still come from
+  phase B, where a library runs alone, so MySQL and MariaDB, which phase B doesn't run, have no drain time.
 - **What the database counts.** On PostgreSQL, the processes of its connections only, not autovacuum or the
-  checkpointer; on MySQL and MariaDB, the whole server, so idle numbers there are noisy. CPU time depends on the core
-  and the clock on Apple Silicon, so it comes from phase B, on an otherwise idle machine.
-- **macOS commits.** A commit took about 0.2 ms on MySQL, and 5 ms on MariaDB with its binary log synced
-  (`sync_binlog=1`, as in MySQL 8.4). On Linux, both wait for the disk.
+  checkpointer; on MySQL and MariaDB, the whole server, so idle numbers there are noisy. On Linux, a counter opens up
+  to 50 ms after a thread starts: the pools keep their connections, so a window loses next to nothing.
 - **Boring Node Queue 0.9.1**, not 0.10.0: 0.10.0 came out on 12 November 2026, less than the 7 days that the
   guardrails require.
-- **Runs with defaults.** `defaults` in `results.json` holds River (11 November 2026) and pg-boss (12 November 2026)
-  with their own defaults instead of the settings of `libs/`; the performance document cites them.
-- **Schedule lags aren't in the documents.** They were measured with all 53 runs firing at once on 8 cores, which
-  inflates them: in an earlier run of the 4 PostgreSQL libraries, the lags were 4–6× lower (one worker: sqlane 0.3 s,
-  Graphile Worker 0.8 s, River 0.7 s; `cronHistory`). `results.json` keeps them.
-- **Schedule instructions under both loads** (that earlier run and this one) differed by at most 6%, except pg-boss
-  with 3 workers. Sidequest's 7 runs were rerun alone the same day, in 9.1 minutes, after its adapter changed to
-  schedule in worker 0.
-- **Background work in the firing window.** With 1 idle schedule and one worker, it is about 0.07 M per job for
-  sqlane, 0.09 M for BullMQ on PostgreSQL, 0.14 M on Redis, 0.18 M for Graphile Worker, 0.39 M for Boring Node Queue,
-  0.44 M for River, 0.49 M for Sidequest, 0.80 M for pg-boss and 1.10 M for Izi Queue.
+- **Schedule lags aren't in the documents.** They depend on how many runs fire in the same second on the machine;
+  `results.json` keeps them.
 - **The slot of a scheduled job.** sqlane and River give the handler the slot (`scheduledAt`), Graphile Worker the
   payload's `_cron.ts`, BullMQ `prevMillis`, Izi Queue `meta.cronMinute`. Sidequest's slot is the minute of the job's
-  insert, Boring Node Queue's the minute a worker took it: right while the lag stays under a minute (its p99 was 20 s
-  at most).
+  insert, Boring Node Queue's the minute a worker took it: right while the lag stays under a minute.
 - **One job per slot.** For sqlane it is enforced, not measured: the job id `<name>:schedule:<key>:<slot>` is the
   primary key. The runs cover a steady state only, not a leader change, a crash, a missed slot or clock skew.
-- **Sidequest with `unique({ period: 'minute' })`** in every worker added 1000 of 2000 slots
-  (`sidequestUniquePerMinute`): `schedule()` computes the unique key once, at registration.
