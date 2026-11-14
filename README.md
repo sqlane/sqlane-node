@@ -221,7 +221,6 @@ const { completed, failed } = await sqlane.drain();
 - The [comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/features_vs_other_libs.md) puts sqlane next to other queues, and the
   [performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_vs_other_libs.md) measures their cost.
 - The [design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md) explains how sqlane works inside.
-- The [performance results](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_results.md) give sqlane's own numbers on each database.
 - The [examples folder](https://github.com/sqlane/sqlane-node/tree/main/examples) has more examples.
 - The [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists the changes of each version, and
   the [migration guide to 5.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/5.md) the changes of
