@@ -42,7 +42,7 @@ hk install --global --mise   # Git hooks, also for GUI Git clients: lint, format
 | `pnpm typecheck`     | Type-check the JSDoc (`tsc`, no emit)                                             |
 | `pnpm build:types`   | Generate `types/` from the JSDoc of `src/`                                        |
 | `pnpm check`         | Run all hook checks on all files (`hk check --all`)                               |
-| `pnpm bench`         | Run the [benchmarks](docs/performance_results.md) (Docker)                        |
+| `pnpm bench`         | Run the benchmarks: latency and throughput on each database (Docker)              |
 | `pnpm bench:cpu`     | Measure the [CPU cost per job](docs/contributing/measuring_cpu_cost.md) vs `main` |
 | `pnpm bench:compare` | Run the [comparison](docs/features_vs_other_libs.md) with other queues            |
 
