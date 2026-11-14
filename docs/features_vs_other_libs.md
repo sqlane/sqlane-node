@@ -128,10 +128,11 @@ was up, and whether several instances add one job per slot.
 
 ## Versions
 
-Checked on 12 November 2026 on PostgreSQL 17: sqlane 4.0.1, [pg-boss](https://github.com/timgit/pg-boss) 12.38.2,
-[Graphile Worker](https://github.com/graphile/worker) 0.18.0, [BullMQ](https://github.com/taskforcesh/bullmq) 6.7.4,
-[Sidequest](https://github.com/sidequestjs/sidequest) 1.17.0, [River for JavaScript](https://github.com/riverqueue/river)
-0.3.2, [Boring Node Queue](https://github.com/boringnode/queue) 0.9.1 and
-[Izi Queue](https://github.com/IagoCavalcante/izi-queue) 0.10.0. River's Go library and the paid editions (BullMQ Pro,
-River Pro, Graphile Worker Pro) are not compared. To rerun the 🔬 checks: `pnpm bench:compare --only checks`
+Checked on 14 November 2026 on PostgreSQL 17, on the Linux machine of the [performance
+comparison](performance_vs_other_libs.md#conditions): sqlane 5.0.0, [pg-boss](https://github.com/timgit/pg-boss)
+12.38.2, [Graphile Worker](https://github.com/graphile/worker) 0.18.0, [BullMQ](https://github.com/taskforcesh/bullmq)
+6.7.4, [Sidequest](https://github.com/sidequestjs/sidequest) 1.17.0, [River for
+JavaScript](https://github.com/riverqueue/river) 0.3.2, [Boring Node Queue](https://github.com/boringnode/queue) 0.9.1
+and [Izi Queue](https://github.com/IagoCavalcante/izi-queue) 0.10.0. River's Go library and the paid editions (BullMQ
+Pro, River Pro, Graphile Worker Pro) are not compared. To rerun the 🔬 checks: `pnpm bench:compare --only checks`
 ([bench/compare](../bench/compare/README.md)).
