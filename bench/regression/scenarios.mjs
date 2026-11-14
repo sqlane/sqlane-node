@@ -1,0 +1,232 @@
+// The hot paths of sqlane, as deterministic scenarios: each runs a fixed sequence of public calls on an empty
+// database, and the database's statement statistics count what it cost. No timers decide the work, so the counts are
+// the same on every run; bench:snapshot keeps them in snapshot.json. A scenario gets sqlane's module, so a run can
+// load another source tree.
+/* oxlint-disable no-await-in-loop -- the steps of a scenario go one after the other */
+import { setTimeout as sleep } from 'node:timers/promises';
+
+/** @typedef {import('../lib/db_stats.mjs').StatementStats} StatementStats */
+
+/**
+ * @typedef {object} Context
+ * @property {any} lib The module of sqlane: `createSqlane`, `defineJob`.
+ * @property {(options?: Record<string, unknown>) => any} create A sqlane instance on the scenario's database, with
+ *     these options on top of its adapter.
+ * @property {any} pool The pool of the scenario's database, for `enqueue`.
+ * @property {(func: () => Promise<void>) => Promise<StatementStats>} measure Clears the statistics, runs `func`, and
+ *     reads them.
+ */
+
+/**
+ * @typedef {object} Scenario
+ * @property {string} name
+ * @property {string} unit What one operation is: the counts are per operation.
+ * @property {(context: Context) => Promise<{ operations: number, stats: StatementStats }>} run
+ */
+
+const NAMES = 1000;
+const JOBS = 200;
+
+/**
+ * @param {any} lib
+ * @param {number} count
+ * @param {Record<string, unknown>} [options]
+ * @returns {any[]} Definitions `job_0000`…, with these options.
+ */
+function definitions(lib, count, options = {}) {
+    return Array.from({ length: count }, (_, index) => lib.defineJob({
+        name: `job_${String(index).padStart(4, '0')}`,
+        ...options,
+    }));
+}
+
+/**
+ * @param {any} sqlane
+ * @param {any[]} jobs
+ */
+function handleAll(sqlane, jobs) {
+    for (const job of jobs) {
+        sqlane.handle(job, async () => {});
+    }
+}
+
+/**
+ * @param {() => boolean} done
+ * @param {number} timeoutMs
+ * @param {() => string} message
+ */
+async function waitUntil(done, timeoutMs, message) {
+    const deadline = Date.now() + timeoutMs;
+
+    while (!done()) {
+        if (Date.now() > deadline) {
+            throw new Error(message());
+        }
+
+        await sleep(50);
+    }
+}
+
+/** @type {Scenario[]} */
+export const SCENARIOS = [
+    {
+        name: 'enqueue',
+        unit: 'enqueue, in a transaction of its own',
+        async run({ lib, create, pool, measure }) {
+            const [job] = definitions(lib, 1);
+            const sqlane = create({ jobs: [job] });
+
+            await sqlane.migrate();
+
+            const stats = await measure(async () => {
+                for (let index = 0; index < 100; index++) {
+                    await sqlane.enqueue(pool, job, { index });
+                }
+            });
+
+            await sqlane.close();
+
+            return { operations: 100, stats };
+        },
+    },
+    {
+        name: 'enqueue_many',
+        unit: '`enqueueMany` of 100 jobs',
+        async run({ lib, create, pool, measure }) {
+            const [job] = definitions(lib, 1);
+            const sqlane = create({ jobs: [job] });
+
+            await sqlane.migrate();
+
+            const stats = await measure(async () => {
+                for (let batch = 0; batch < 10; batch++) {
+                    const items = Array.from({ length: 100 }, (_, index) => ({ payload: { batch, index } }));
+
+                    await sqlane.enqueueMany(pool, job, items);
+                }
+            });
+
+            await sqlane.close();
+
+            return { operations: 10, stats };
+        },
+    },
+    {
+        name: 'run',
+        unit: 'job claimed, run and completed, over 1000 handled names',
+        async run({ lib, create, pool, measure }) {
+            const jobs = definitions(lib, NAMES);
+            const sqlane = create({ jobs, maxConcurrency: 1 });
+
+            handleAll(sqlane, jobs);
+            await sqlane.migrate();
+
+            for (let index = 0; index < JOBS; index++) {
+                await sqlane.enqueue(pool, jobs[(index * 7) % NAMES], { index });
+            }
+
+            const stats = await measure(async () => {
+                const { completed } = await sqlane.drain({ timeout: '60s' });
+
+                if (completed !== JOBS) {
+                    throw new Error(`run: ${completed} of ${JOBS} jobs completed`);
+                }
+            });
+
+            await sqlane.close();
+
+            return { operations: JOBS, stats };
+        },
+    },
+    {
+        name: 'idle',
+        unit: '`drain()` of 1000 handled names with no job: its rounds until it finds none',
+        async run({ lib, create, measure }) {
+            const jobs = definitions(lib, NAMES);
+            const sqlane = create({ jobs });
+
+            handleAll(sqlane, jobs);
+            await sqlane.migrate();
+
+            const stats = await measure(async () => {
+                await sqlane.drain();
+            });
+
+            await sqlane.close();
+
+            return { operations: 1, stats };
+        },
+    },
+    {
+        name: 'mutex',
+        unit: 'job with a mutex key, 100 jobs of 2 names over 10 keys',
+        async run({ lib, create, pool, measure }) {
+            const jobs = definitions(lib, 2, {
+                mutexKeys: (/** @type {{ key: number }} */ payload) => [`account:${payload.key}`],
+                timeout: '1m',
+            });
+            const sqlane = create({ jobs, maxConcurrency: 1 });
+
+            handleAll(sqlane, jobs);
+            await sqlane.migrate();
+
+            for (let index = 0; index < 100; index++) {
+                await sqlane.enqueue(pool, jobs[index % 2], { key: index % 10 });
+            }
+
+            const stats = await measure(async () => {
+                const { completed } = await sqlane.drain({ timeout: '60s' });
+
+                if (completed !== 100) {
+                    throw new Error(`mutex: ${completed} of 100 jobs completed`);
+                }
+            });
+
+            await sqlane.close();
+
+            return { operations: 100, stats };
+        },
+    },
+    {
+        name: 'schedule',
+        unit: 'slot of 1000 `every: \'10s\'` schedules, in one process that handles none of them',
+        async run({ lib, create, measure }) {
+            const jobs = definitions(lib, NAMES);
+            let fired = 0;
+            const sqlane = create({
+                jobs,
+                // The stall recovery and the cleanup run every 30 s and 5 minutes: off, so the window holds the
+                // scheduler's work only (`timings` is undocumented, for the tests of sqlane)
+                timings: { recoveryIntervalMs: 3_600_000, cleanupIntervalMs: 3_600_000 },
+                onEvent: (/** @type {{ type: string }} */ event) => {
+                    if (event.type === 'schedule_fired') {
+                        fired++;
+                    }
+                },
+            });
+
+            for (const job of jobs) {
+                sqlane.schedule(job, { every: '10s' });
+            }
+
+            await sqlane.migrate();
+            await sqlane.start();
+
+            // The first slot may come during the registration: measure the next one, from 2 s before it
+            const slot = (Math.floor(Date.now() / 10_000) + 2) * 10_000;
+
+            await sleep(slot - 2000 - Date.now());
+
+            const stats = await measure(async () => {
+                fired = 0;
+                await waitUntil(() => fired >= NAMES, 20_000, () => `schedule: ${fired} of ${NAMES} slots fired`);
+
+                // The statements of the last chunk have committed: its events come after the commit
+            });
+
+            await sqlane.close();
+
+            return { operations: NAMES, stats };
+        },
+    },
+];
