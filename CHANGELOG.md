@@ -1,5 +1,12 @@
 # @sqlane/core
 
+## 5.0.1
+
+### Patch Changes
+
+- [#106](https://github.com/sqlane/sqlane-node/pull/106) [`6267e5e`](https://github.com/sqlane/sqlane-node/commit/6267e5e7c16b9364410c131727002e014a8df370) - Rewrite the README as a short landing page, with tables of supported databases and of drivers and ORMs, and charts
+  from the Linux benchmark run.
+
 ## 5.0.0
 
 ### Major Changes
