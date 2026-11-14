@@ -5,41 +5,41 @@
 <line x1="158.0" y1="60" x2="158.0" y2="370" stroke="#c3c2b7"/>
 <text x="158.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">0</text>
 <line x1="261.0" y1="60" x2="261.0" y2="370" stroke="#e1e0d9"/>
-<text x="261.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">2.5</text>
+<text x="261.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">5</text>
 <line x1="364.0" y1="60" x2="364.0" y2="370" stroke="#e1e0d9"/>
-<text x="364.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">5</text>
+<text x="364.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">10</text>
 <line x1="467.0" y1="60" x2="467.0" y2="370" stroke="#e1e0d9"/>
-<text x="467.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">7.5</text>
+<text x="467.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">15</text>
 <line x1="570.0" y1="60" x2="570.0" y2="370" stroke="#e1e0d9"/>
-<text x="570.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">10</text>
+<text x="570.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">20</text>
 <text x="592" y="388" font-size="11" fill="#59636e">s</text>
 <text x="150" y="85" font-size="13" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
-<path d="M158,72H209.9A4,4 0 0 1 213.9,76V86A4,4 0 0 1 209.9,90H158Z" fill="#2a78d6"/>
-<text x="219.9" y="85" font-size="13" fill="#1f2328" font-weight="600">1.4 s</text>
+<path d="M158,72H194.0A4,4 0 0 1 198.0,76V86A4,4 0 0 1 194.0,90H158Z" fill="#2a78d6"/>
+<text x="204.0" y="85" font-size="13" fill="#1f2328" font-weight="600">1.9 s</text>
 <text x="150" y="119" font-size="13" fill="#1f2328" text-anchor="end">Graphile Worker</text>
-<path d="M158,106H230.9A4,4 0 0 1 234.9,110V120A4,4 0 0 1 230.9,124H158Z" fill="#2a78d6"/>
-<text x="240.9" y="119" font-size="13" fill="#1f2328">1.9 s</text>
+<path d="M158,106H210.8A4,4 0 0 1 214.8,110V120A4,4 0 0 1 210.8,124H158Z" fill="#2a78d6"/>
+<text x="220.8" y="119" font-size="13" fill="#1f2328">2.8 s</text>
 <text x="150" y="153" font-size="13" fill="#1f2328" text-anchor="end">River</text>
-<path d="M158,140H244.1A4,4 0 0 1 248.1,144V154A4,4 0 0 1 244.1,158H158Z" fill="#2a78d6"/>
-<text x="254.1" y="153" font-size="13" fill="#1f2328">2.2 s</text>
+<path d="M158,140H277.4A4,4 0 0 1 281.4,144V154A4,4 0 0 1 277.4,158H158Z" fill="#2a78d6"/>
+<text x="287.4" y="153" font-size="13" fill="#1f2328">6.0 s</text>
 <text x="150" y="187" font-size="13" fill="#1f2328" text-anchor="end">pg-boss</text>
-<path d="M158,174H170.4A4,4 0 0 1 174.4,178V188A4,4 0 0 1 170.4,192H158Z" fill="#2a78d6"/>
-<text x="180.4" y="187" font-size="13" fill="#1f2328">0.4 s · up to 8,000 at once</text>
+<path d="M158,174H165.2A4,4 0 0 1 169.2,178V188A4,4 0 0 1 165.2,192H158Z" fill="#2a78d6"/>
+<text x="175.2" y="187" font-size="13" fill="#1f2328">0.5 s · up to 8,000 at once</text>
 <text x="150" y="221" font-size="13" fill="#1f2328" text-anchor="end">Izi Queue</text>
 <rect x="158" y="208" width="412.0" height="18" fill="#2a78d6"/>
 <path d="M554.0,228l6,-22" stroke="#ffffff" stroke-width="2.5"/>
 <path d="M561.0,228l6,-22" stroke="#ffffff" stroke-width="2.5"/>
 <text x="576.0" y="221" font-size="13" fill="#1f2328">> 60 s, stopped</text>
 <text x="150" y="255" font-size="13" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
-<path d="M158,242H492.0A4,4 0 0 1 496.0,246V256A4,4 0 0 1 492.0,260H158Z" fill="#2a78d6"/>
-<text x="502.0" y="255" font-size="13" fill="#1f2328">8.2 s</text>
+<path d="M158,242H406.6A4,4 0 0 1 410.6,246V256A4,4 0 0 1 406.6,260H158Z" fill="#2a78d6"/>
+<text x="416.6" y="255" font-size="13" fill="#1f2328">12.3 s</text>
 <text x="150" y="289" font-size="13" fill="#1f2328" text-anchor="end">BullMQ*</text>
-<path d="M158,276H196.1A4,4 0 0 1 200.1,280V290A4,4 0 0 1 196.1,294H158Z" fill="#2a78d6"/>
-<text x="206.1" y="289" font-size="13" fill="#1f2328">1.0 s</text>
+<path d="M158,276H178.7A4,4 0 0 1 182.7,280V290A4,4 0 0 1 178.7,294H158Z" fill="#2a78d6"/>
+<text x="188.7" y="289" font-size="13" fill="#1f2328">1.2 s</text>
 <text x="150" y="323" font-size="13" fill="#1f2328" text-anchor="end">Sidequest*</text>
-<path d="M158,310H562.3A4,4 0 0 1 566.3,314V324A4,4 0 0 1 562.3,328H158Z" fill="#2a78d6"/>
-<text x="572.3" y="323" font-size="13" fill="#1f2328">9.9 s</text>
+<path d="M158,310H471.2A4,4 0 0 1 475.2,314V324A4,4 0 0 1 471.2,328H158Z" fill="#2a78d6"/>
+<text x="481.2" y="323" font-size="13" fill="#1f2328">15.4 s</text>
 <text x="150" y="357" font-size="13" fill="#1f2328" text-anchor="end">BullMQ* (Redis)</text>
-<path d="M158,344H174.1A4,4 0 0 1 178.1,348V358A4,4 0 0 1 174.1,362H158Z" fill="#2a78d6"/>
-<text x="184.1" y="357" font-size="13" fill="#1f2328">0.5 s</text>
+<path d="M158,344H167.2A4,4 0 0 1 171.2,348V358A4,4 0 0 1 167.2,362H158Z" fill="#2a78d6"/>
+<text x="177.2" y="357" font-size="13" fill="#1f2328">0.6 s</text>
 </svg>

@@ -192,7 +192,7 @@ function svg({ title, subtitle, legend, rows, unit, max }, theme) {
 }
 
 const millions = (/** @type {number} */ n) => n / 1e6;
-const fixed = (/** @type {number} */ n) => (n >= 100 ? n.toFixed(0) : n.toFixed(1));
+const fixed = (/** @type {number} */ n) => (n >= 100 ? n.toFixed(0) : n.toFixed(n < 0.1 ? 2 : 1));
 
 /**
  * @param {string} library
@@ -251,7 +251,7 @@ const charts = {
         max: Math.max(...DRAINS.filter(({ r }) => r.drainMs).map(({ r }) => r.drainMs / 1000)),
         rows: DRAINS.map(({ label, r }) => {
             if (!r.drainMs) {
-                return { label, parts: [r.stoppedAfterMs / 1000], value: `> ${Math.floor(r.stoppedAfterMs / 1000)} s, stopped` };
+                return { label, parts: [r.stoppedAfterMs / 1000], value: `> ${Math.round(r.stoppedAfterMs / 1000)} s, stopped` };
             }
             const s = r.drainMs / 1000;
             // pg-boss's slots are per queue: up to 8 per job name, where the others run 8 jobs at once in all
@@ -268,10 +268,7 @@ const charts = {
             const r = fireRun(id, 3);
             // The CPU window holds one slot of each schedule per minute
             const slots = (r.schedules * r.seconds) / 60;
-            // pg-boss with 3 workers: the median of its runs of the day (`pooled`), since they varied
-            const parts = r.pooled
-                ? [r.pooled.workerPerSlot, r.pooled.dbPerSlot].map(millions)
-                : [r.worker, r.db].map(p => millions(p.instructions) / slots);
+            const parts = [r.worker, r.db].map(p => millions(p.instructions) / slots);
             return { label, parts, value: `${fixed(sum(parts))} M` };
         }),
     },
