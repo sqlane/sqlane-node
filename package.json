@@ -101,7 +101,7 @@
         "test:watch": "vitest",
         "test:coverage": "pnpm prisma:generate && vitest run --coverage",
         "check": "hk check --all",
-        "bench": "node bench/run.js",
+        "bench": "node bench/regression/ab.mjs",
         "bench:cpu": "bench/cpu/measure.sh",
         "bench:snapshot": "node bench/regression/snapshot.mjs",
         "bench:compare": "pnpm --dir bench/compare install --frozen-lockfile && node bench/compare/run.mjs",
