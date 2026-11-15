@@ -44,9 +44,9 @@ export type Registry = {
      */
     findDefinition: (name: string) => JobDefinition | null;
     /**
-     * The handled names whose definition has mutex keys.
+     * The handled names whose definition has global limits.
      */
-    namesWithKeys: () => string[];
+    namesWithLimits: () => string[];
     /**
      * Checks the handlers together: each failure job resolves and has none of its own.
      */
@@ -77,7 +77,7 @@ export type Registry = {
  * @property {(name: string) => HandlerEntry | undefined} getEntry
  * @property {() => HandlerEntry[]} entries In the order of the handle() calls.
  * @property {(name: string) => JobDefinition | null} findDefinition In `jobs`, else handled.
- * @property {() => string[]} namesWithKeys The handled names whose definition has mutex keys.
+ * @property {() => string[]} namesWithLimits The handled names whose definition has global limits.
  * @property {() => void} validate Checks the handlers together: each failure job resolves and has none of its own.
  */
 /**

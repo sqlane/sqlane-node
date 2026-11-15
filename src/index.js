@@ -8,7 +8,7 @@ export {
     ConfigError,
     DrainTimeoutError,
     FatalJobError,
-    InvalidMutexKeyError,
+    InvalidConcurrencyLimitError,
     InvalidOptionsError,
     JobTimeoutError,
     LeaseLostError,
@@ -42,6 +42,7 @@ export { getMigrations } from './migrations.js';
 /** @typedef {import('./types.js').CloseOptions} CloseOptions */
 /** @typedef {import('./types.js').ConcurrencyLimit} ConcurrencyLimit */
 /** @typedef {import('./types.js').ConcurrencyLimitOptions} ConcurrencyLimitOptions */
+/** @typedef {import('./types.js').ConcurrencyLimitKey} ConcurrencyLimitKey */
 /** @typedef {import('./types.js').Dialect} Dialect */
 /** @typedef {import('./types.js').DrainOptions} DrainOptions */
 /** @typedef {import('./types.js').DrainResult} DrainResult */

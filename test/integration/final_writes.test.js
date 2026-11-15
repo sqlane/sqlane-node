@@ -2,7 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, inject, test, vi } from 'vitest';
 import { resolveDefaults } from '../../src/defaults.js';
 import { toErrorJson } from '../../src/error_json.js';
-import { createSqlane, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { buildNewJob } from '../../src/new_job.js';
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
@@ -33,34 +33,35 @@ const READ_JOB_SQL = {
 
 /** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
 const READ_HOLDS_SQL = {
-    mysql: p => `SELECT mutex_key, job_id, TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(3), held_until) DIV 1000 AS held_in_ms
-                  FROM ${p}mutexes ORDER BY mutex_key`,
-    postgres: p => `SELECT mutex_key, job_id,
+    mysql: p => `SELECT limit_key, job_id, TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(3), held_until) DIV 1000 AS held_in_ms
+                  FROM ${p}concurrency_slots ORDER BY limit_key`,
+    postgres: p => `SELECT limit_key, job_id,
                            (EXTRACT(EPOCH FROM held_until - clock_timestamp()) * 1000)::bigint AS held_in_ms
-                      FROM ${p}mutexes ORDER BY mutex_key`,
+                      FROM ${p}concurrency_slots ORDER BY limit_key`,
 };
 
 /** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
 const INSERT_HOLD_SQL = {
-    mysql: p => `INSERT INTO ${p}mutexes (mutex_key, job_id, lock_token, held_until, created_at)
-                 VALUES (?, ?, ?, UTC_TIMESTAMP(3) + INTERVAL ? SECOND, UTC_TIMESTAMP(3))`,
-    postgres: p => `INSERT INTO ${p}mutexes (mutex_key, job_id, lock_token, held_until, created_at)
-                    VALUES ($1, $2, $3, clock_timestamp() + $4 * interval '1 second', clock_timestamp())`,
+    mysql: p => `INSERT INTO ${p}concurrency_slots (limit_key, slot, job_id, lock_token, held_until, created_at)
+                 VALUES (?, 0, ?, ?, UTC_TIMESTAMP(3) + INTERVAL ? SECOND, UTC_TIMESTAMP(3))`,
+    postgres: p => `INSERT INTO ${p}concurrency_slots (limit_key, slot, job_id, lock_token, held_until, created_at)
+                    VALUES ($1, 0, $2, $3, clock_timestamp() + $4 * interval '1 second', clock_timestamp())`,
 };
 
 /** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
 const INSERT_ORPHAN_SQL = {
-    mysql: p => `INSERT INTO ${p}mutexes (mutex_key, job_id, lock_token, held_until, created_at)
-                 VALUES (?, ?, ?, NULL, UTC_TIMESTAMP(3))`,
-    postgres: p => `INSERT INTO ${p}mutexes (mutex_key, job_id, lock_token, held_until, created_at)
-                    VALUES ($1, $2, $3, NULL, clock_timestamp())`,
+    mysql: p => `INSERT INTO ${p}concurrency_slots (limit_key, slot, job_id, lock_token, held_until, created_at)
+                 VALUES (?, 0, ?, ?, NULL, UTC_TIMESTAMP(3))`,
+    postgres: p => `INSERT INTO ${p}concurrency_slots (limit_key, slot, job_id, lock_token, held_until, created_at)
+                    VALUES ($1, 0, $2, $3, NULL, clock_timestamp())`,
 };
 
 const LEASE_MS = 240_000;
 const defaults = resolveDefaults();
+const order = defineConcurrencyLimit({ name: 'order', max: 1 });
 const withKeys = defineJob({
     name: 'sync_order',
-    mutexKeys: payload => [`order:${payload.orderId}`],
+    globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
     timeout: '1m',
     failureJob: 'sync_failed',
 });
@@ -96,7 +97,7 @@ async function freshTables() {
 }
 
 /**
- * Enqueues a due job with mutex keys and claims it.
+ * Enqueues a due job with a global limit and claims it.
  * @param {{ sqlane: import('../../src/types.js').Sqlane<any>, store: Store }} tables
  * @param {Record<string, unknown>} [options] Enqueue options.
  * @param {number} [leaseMs]
@@ -107,8 +108,9 @@ async function claimedJob({ sqlane, store }, options = {}, leaseMs = LEASE_MS) {
         runAt: new Date(Date.now() - 1000),
         ...options,
     });
-    const [job] = await store.claim({
+    const { jobs: [job] } = await store.claim({
         candidateIds: [id],
+        fullIds: [],
         lockToken: `T${Date.now()}${Math.random()}`.slice(0, 26),
         lockedBy: 'test',
         leaseMs,
@@ -139,11 +141,11 @@ async function readJob(p, id) {
 
 /**
  * @param {string} p
- * @returns {Promise<{ mutex_key: string, job_id: string, held_in_ms: number | null }[]>}
+ * @returns {Promise<{ limit_key: string, job_id: string, held_in_ms: number | null }[]>}
  */
 async function readHolds(p) {
     return (await database.query(READ_HOLDS_SQL[database.family](p))).map(row => ({
-        mutex_key: String(row.mutex_key),
+        limit_key: String(row.limit_key),
         job_id: String(row.job_id),
         held_in_ms: row.held_in_ms === null ? null : Number(row.held_in_ms),
     }));
@@ -262,7 +264,7 @@ test.runIf(inject('databaseDialect') === 'postgres')('completeJobs: PostgreSQL r
             lock_token: job.lockToken,
             payload: { orderId: 1 },
         });
-        await expect(readHolds(tables.p)).resolves.toMatchObject([{ mutex_key: 'order:1', job_id: job.id }]);
+        await expect(readHolds(tables.p)).resolves.toMatchObject([{ limit_key: 'order:1', job_id: job.id }]);
     } finally {
         await database.query(`DROP FUNCTION ${tables.p}reject_payload_delete() CASCADE`);
     }
@@ -273,8 +275,9 @@ test('completeJobs: one write for many jobs, the own ones only; the payload of a
     const job = await claimedJob(tables);
     const ids = (await tables.sqlane.enqueueMany(testAdapter.pool, 'plain', [{ payload: { n: 1 } }, { payload: { n: 2 } }]))
         .map(result => result.id);
-    const [plain, lost] = await tables.store.claim({
+    const { jobs: [plain, lost] } = await tables.store.claim({
         candidateIds: ids,
+        fullIds: [],
         lockToken: 'PLAINTOKEN',
         lockedBy: 'test',
         leaseMs: LEASE_MS,
@@ -291,7 +294,7 @@ test('completeJobs: one write for many jobs, the own ones only; the payload of a
 test('a write with another lock token changes nothing', async () => {
     const tables = await freshTables();
     const job = await claimedJob(tables);
-    const other = { id: job.id, lockToken: 'other', mutexKeys: job.mutexKeys };
+    const other = { id: job.id, lockToken: 'other' };
 
     await expect(tables.store.completeJobs([other])).resolves.toBe(0);
     await expect(tables.store.retryJob(other, { delayMs: 0, error: toErrorJson('x') })).resolves.toBe(false);
@@ -299,7 +302,7 @@ test('a write with another lock token changes nothing', async () => {
     await expect(tables.store.failJob(other, { error: toErrorJson('x'), buildFailureJob }))
         .resolves.toStrictEqual({ changed: false, failureJob: null });
     await expect(readJob(tables.p, job.id)).resolves.toMatchObject({ status: 'running', lock_token: job.lockToken });
-    await expect(readHolds(tables.p)).resolves.toMatchObject([{ mutex_key: 'order:1', job_id: job.id }]);
+    await expect(readHolds(tables.p)).resolves.toMatchObject([{ limit_key: 'order:1', job_id: job.id }]);
 });
 
 test('retryJob: pending after the delay, one attempt used, the error kept, the keys freed', async () => {
@@ -461,7 +464,7 @@ describe('stall recovery', () => {
     });
 });
 
-test('sweepMutexes: deletes the ended lingers and the holds without their running job', async () => {
+test('sweepSlots: deletes the ended lingers and the slots without their running job', async () => {
     const tables = await freshTables();
     const job = await claimedJob(tables);
     const insertHold = INSERT_HOLD_SQL[database.family](tables.p);
@@ -470,16 +473,16 @@ test('sweepMutexes: deletes the ended lingers and the holds without their runnin
     await database.query(insertHold, ['future', 'gone', 'old', 3600]);
     await database.query(INSERT_ORPHAN_SQL[database.family](tables.p), ['orphan', 'gone', 'old']);
 
-    await expect(tables.store.sweepMutexes(100)).resolves.toStrictEqual({ lingers: 1, orphans: 1 });
+    await expect(tables.store.sweepSlots(100)).resolves.toStrictEqual({ lingers: 1, orphans: 1, unblocked: 0 });
     await expect(readHolds(tables.p)).resolves.toMatchObject([
-        { mutex_key: 'future' },
-        { mutex_key: 'order:1', job_id: job.id },
+        { limit_key: 'future' },
+        { limit_key: 'order:1', job_id: job.id },
     ]);
 });
 
 test('deleteExpiredJobs: the finished jobs after their retention, with their payloads', async () => {
     const tables = await freshTables();
-    // One after the other: the jobs share their mutex key
+    // One after the other: the jobs share their key
     const completed = await claimedJob(tables, { retention: { completed: 0 } });
 
     await tables.store.completeJobs([completed]);

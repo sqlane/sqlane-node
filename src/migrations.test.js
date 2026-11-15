@@ -2,11 +2,14 @@ import { expect, test } from 'vitest';
 import { ConfigError } from './errors.js';
 import { getMigrations } from './migrations.js';
 
+/** The migrations of 6.0 */
+const SIX = ['0005_concurrency_limits', '0006_concurrency_slots'];
+
 test.each([
     // No 0003 on MySQL and MariaDB: the ids are matched, never counted
-    { dialect: 'mysql', ids: ['0001_initial', '0002_job_keys', '0004_schedules'] },
-    { dialect: 'mariadb', ids: ['0001_initial', '0002_job_keys', '0004_schedules'] },
-    { dialect: 'postgres', ids: ['0001_initial', '0002_pending_order', '0003_job_keys', '0004_schedules'] },
+    { dialect: 'mysql', ids: ['0001_initial', '0002_job_keys', '0004_schedules', ...SIX] },
+    { dialect: 'mariadb', ids: ['0001_initial', '0002_job_keys', '0004_schedules', ...SIX] },
+    { dialect: 'postgres', ids: ['0001_initial', '0002_pending_order', '0003_job_keys', '0004_schedules', ...SIX] },
 ])('$dialect: the migrations use the table prefix', ({ dialect, ids }) => {
     const migrations = getMigrations({ dialect: /** @type {import('./types.js').Dialect} */ (dialect), tablePrefix: 'q_' });
 

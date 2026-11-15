@@ -1,7 +1,7 @@
 // Enqueue on MariaDB: in the caller's transaction. The rows of this call are the rows with its enqueue token. A copy of
 // the MySQL version, changed where MariaDB differs: keep the two in step.
 
-/** Rows per INSERT: 14 placeholders a row stay far below the 65,535 of MariaDB. */
+/** Rows per INSERT: 15 placeholders a row stay far below the 65,535 of MariaDB. */
 const CHUNK_SIZE = 500;
 
 /**
@@ -30,7 +30,7 @@ function runAtSql(job) {
  * @returns {Promise<Set<string>>} The ids that this call created.
  */
 async function insertChunk(executor, p, jobs, enqueueToken) {
-    const values = jobs.map(job => `(?, ?, 'pending', ${runAtSql(job).sql}, ?, ?, ?, ?, ?, ?, ?, `
+    const values = jobs.map(job => `(?, ?, 'pending', ${runAtSql(job).sql}, ?, ?, ?, ?, ?, ?, ?, ?, `
         + 'UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))');
     const params = jobs.flatMap(job => [
         job.id,
@@ -38,7 +38,8 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
         ...runAtSql(job).params,
         job.maxAttempts,
         job.maxStalls,
-        job.mutexKeys.length ? JSON.stringify(job.mutexKeys) : null,
+        job.limits.length ? JSON.stringify(job.limits.map(limit => limit.key)) : null,
+        job.limits.length ? JSON.stringify(job.limits.map(limit => limit.max)) : null,
         enqueueToken,
         job.completedRetentionMs,
         job.failedRetentionMs,
@@ -47,8 +48,8 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
 
     // A duplicate id keeps its row: its token is not this one.
     await executor.query(`
-        INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, mutex_keys, enqueue_token,
-            completed_retention_ms, failed_retention_ms, failure_job, created_at, updated_at)
+        INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, limit_keys, limit_maxes,
+            enqueue_token, completed_retention_ms, failed_retention_ms, failure_job, created_at, updated_at)
         VALUES ${values.join(', ')}
         ON DUPLICATE KEY UPDATE id = id
     `, params);
@@ -66,19 +67,6 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
             INSERT INTO ${p}payloads (id, payload) VALUES ${createdJobs.map(() => '(?, ?)').join(', ')}
             ON DUPLICATE KEY UPDATE payload = VALUES(payload)
         `, createdJobs.flatMap(job => [job.id, job.payloadJson]));
-    }
-
-    const withKeys = createdJobs.filter(job => job.mutexKeys.length);
-
-    if (withKeys.length) {
-        await executor.query(`
-            INSERT INTO ${p}job_keys (mutex_key, run_at, job_id, job_name)
-            SELECT k.mutex_key, j.run_at, j.id, j.job_name FROM ${p}jobs j, JSON_TABLE(j.mutex_keys, '$[*]' COLUMNS (
-                mutex_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin PATH '$'
-            )) AS k
-             WHERE j.id IN (${withKeys.map(() => '?').join(', ')})
-            ON DUPLICATE KEY UPDATE job_id = job_id
-        `, withKeys.map(job => job.id));
     }
 
     return created;

@@ -66,8 +66,8 @@ describe('claimDue on MariaDB without innodb_snapshot_isolation', () => {
             dbError('ER_UNKNOWN_SYSTEM_VARIABLE', 1193),
         );
 
-        await expect(claimDue()).resolves.toStrictEqual({ jobs: [], next: [] });
-        await expect(claimDue()).resolves.toStrictEqual({ jobs: [], next: [] });
+        await expect(claimDue()).resolves.toStrictEqual({ jobs: [], next: [], limited: [] });
+        await expect(claimDue()).resolves.toStrictEqual({ jobs: [], next: [], limited: [] });
 
         expect(claims.map(sql => sql.includes('innodb_snapshot_isolation'))).toStrictEqual([true, false, false]);
         expect(transactions()).toBe(3);

@@ -31,7 +31,7 @@ import { isPlainObject, JOB_NAME_REGEXP } from './validate.js';
  * @property {(name: string) => HandlerEntry | undefined} getEntry
  * @property {() => HandlerEntry[]} entries In the order of the handle() calls.
  * @property {(name: string) => JobDefinition | null} findDefinition In `jobs`, else handled.
- * @property {() => string[]} namesWithKeys The handled names whose definition has mutex keys.
+ * @property {() => string[]} namesWithLimits The handled names whose definition has global limits.
  * @property {() => void} validate Checks the handlers together: each failure job resolves and has none of its own.
  */
 
@@ -106,8 +106,10 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
 
         const timeoutMs = parseDuration(definition?.timeout) ?? defaultTimeoutMs;
 
-        if (definition?.mutexKeys && timeoutMs === null) {
-            throw new ConfigError(`${where}: a job with mutex keys needs a timeout (in the definition or "defaults")`);
+        if (definition?.globalConcurrencyLimits && timeoutMs === null) {
+            throw new ConfigError(
+                `${where}: a job with global concurrency limits needs a timeout (in the definition or "defaults")`,
+            );
         }
 
         const limits = limitStatesOf(definition?.localConcurrencyLimits ?? [], where);
@@ -160,8 +162,8 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
         getEntry: name => entriesByName.get(name),
         entries: () => [...entriesByName.values()],
         findDefinition,
-        namesWithKeys: () => [...entriesByName.values()]
-            .filter(entry => entry.definition?.mutexKeys)
+        namesWithLimits: () => [...entriesByName.values()]
+            .filter(entry => entry.definition?.globalConcurrencyLimits)
             .map(entry => entry.name),
         validate,
     };

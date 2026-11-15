@@ -336,12 +336,12 @@ describe('the worked examples', () => {
         expect(jobs.started.join('')).toBe('ababab');
     });
 
-    test('a limit with a plain name and a name with mutex keys: they share it', async () => {
+    test('a local limit with a plain name and a name with global limits: they share it', async () => {
         const pair = defineConcurrencyLimit({ name: 'pair', max: 2 });
         const keyed = defineJob({
             name: 'k',
             timeout: '10s',
-            mutexKeys: payload => [String(payload.n)],
+            globalConcurrencyLimits: ({ payload }) => [defineConcurrencyLimit({ name: 'n', max: 1 }).key(payload.n)],
             localConcurrencyLimits: [pair],
         });
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 10 });
@@ -386,7 +386,7 @@ function countingClaims() {
     const { adapter } = testAdapter;
     /** @param {string} sql */
     const count = (sql) => {
-        counter.claims += Number(sql.includes('SKIP LOCKED') && !sql.includes('mutexes'));
+        counter.claims += Number(sql.includes('SKIP LOCKED') && !sql.includes('concurrency_slots'));
     };
 
     return {
@@ -493,8 +493,9 @@ describe('ties and processes', () => {
         expect(counter.claims).toBeLessThan(20);
     });
 
-    test('mutex keys: the slots of a blocked name go to the others; its jobs keep their FIFO per key', async () => {
-        const keyed = defineJob({ name: 'keyed', timeout: '10s', mutexKeys: () => ['k'] });
+    test('global limits: the slots of a blocked name go to the others; its jobs keep their FIFO per key', async () => {
+        const k = defineConcurrencyLimit({ name: 'k', max: 1 });
+        const keyed = defineJob({ name: 'keyed', timeout: '10s', globalConcurrencyLimits: () => [k] });
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 3 });
         const jobs = holdingHandlers();
         /** @type {unknown[]} */

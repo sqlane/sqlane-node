@@ -1,7 +1,7 @@
 import { createMonotonicUlid } from './ulid.js';
 import { parseDuration } from './duration.js';
 import { InvalidOptionsError } from './errors.js';
-import { normalizeMutexKeys } from './mutex_keys.js';
+import { normalizeGlobalLimits } from './concurrency_keys.js';
 import { serializePayload } from './payload.js';
 import { isSlotKey, isSlotTime, MAX_KEY_LENGTH, SLOT_PREFIX, slotJobIdOf } from './schedule.js';
 import {
@@ -13,7 +13,7 @@ import {
 } from './validate.js';
 
 const ENQUEUE_OPTION_NAMES = [
-    'jobId', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureJob', 'mutexKeys', 'slot',
+    'jobId', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureJob', 'globalConcurrencyLimits', 'slot',
 ];
 const MAX_JOB_ID_LENGTH = 120;
 /** Sorted by creation order in this process, also within one millisecond */
@@ -26,7 +26,8 @@ const ulid = createMonotonicUlid();
  * @property {boolean} hasJobId
  * @property {string} name
  * @property {string} payloadJson
- * @property {readonly string[]} mutexKeys Sorted, without duplicates.
+ * @property {readonly import('./concurrency_keys.js').GlobalLimit[]} limits Its global limits: sorted by key, without
+ *     duplicates.
  * @property {number} maxAttempts
  * @property {number} maxStalls
  * @property {number} completedRetentionMs
@@ -127,6 +128,11 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
 
     const scope = { where, ErrorClass: InvalidOptionsError };
 
+    // The option of 5.x: an error that names the new one
+    if (/** @type {Record<string, unknown>} */ (options)?.mutexKeys !== undefined) {
+        throw new InvalidOptionsError(`${where}: "mutexKeys" was removed in 6.0: use "globalConcurrencyLimits"`);
+    }
+
     checkObject(options, ENQUEUE_OPTION_NAMES, 'options', scope);
     checkJobFields(options, scope);
 
@@ -146,8 +152,9 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
 
     const failureJob = options.failureJob ?? definition?.failureJob;
     const payloadJson = serializePayload(payload, maxPayloadBytes, where);
-    // The keys come from the payload as the handler gets it: as JSON gives it back.
-    const rawKeys = options.mutexKeys ?? definition?.mutexKeys?.(JSON.parse(payloadJson)) ?? [];
+    // The limits come from the payload as the handler gets it: as JSON gives it back.
+    const rawLimits = options.globalConcurrencyLimits
+        ?? definition?.globalConcurrencyLimits?.({ payload: JSON.parse(payloadJson) }) ?? [];
     const retention = { ...definition?.retention, ...options.retention };
 
     return {
@@ -155,7 +162,7 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
         hasJobId: jobId !== undefined,
         name,
         payloadJson,
-        mutexKeys: normalizeMutexKeys(rawKeys, where),
+        limits: normalizeGlobalLimits(rawLimits, where),
         maxAttempts: options.maxAttempts ?? definition?.maxAttempts ?? defaults.maxAttempts,
         maxStalls: options.maxStalls ?? definition?.maxStalls ?? defaults.maxStalls,
         completedRetentionMs: parseDuration(retention.completed) ?? defaults.retention.completedMs,

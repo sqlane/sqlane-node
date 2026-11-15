@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import knexLib from 'knex';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
-import { createSqlane, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
 import { mysqlFamilyOptions } from './helpers/test_adapter.js';
@@ -184,8 +184,13 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         await expect(statuses(p)).resolves.toStrictEqual(['completed']);
     });
 
-    test('drain: retries, mutex keys and a failure job, over knex', async () => {
-        const report = defineJob({ name: 'report', mutexKeys: payload => [`r:${payload.id}`], timeout: '5s' });
+    test('drain: retries, global limits and a failure job, over knex', async () => {
+        const reportLimit = defineConcurrencyLimit({ name: 'r', max: 1 });
+        const report = defineJob({
+            name: 'report',
+            globalConcurrencyLimits: ({ payload }) => [reportLimit.key(payload.id)],
+            timeout: '5s',
+        });
         const reportFailed = defineJob({ name: 'report_failed' });
         const failing = defineJob({
             name: 'failing',

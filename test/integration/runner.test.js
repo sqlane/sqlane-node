@@ -185,7 +185,7 @@ describe('start()', () => {
         await expect(readJobs(p)).resolves.toMatchObject([{ status: 'completed' }]);
         expect(contexts).toMatchObject([{
             payload: { reportId: 'r1' },
-            job: { id, name: 'build_report', attempt: 1, maxAttempts: 3, mutexKeys: [] },
+            job: { id, name: 'build_report', attempt: 1, maxAttempts: 3, globalConcurrencyLimits: [] },
         }]);
         expect(contexts[0].signal.aborted).toBe(false);
         expect(events.map(event => event.type)).toStrictEqual(['claimed', 'completed']);
@@ -335,13 +335,20 @@ describe('concurrency', () => {
         expect(allMeter.max()).toBe(3);
     });
 
-    test('mutex keys: the jobs of a key run one at a time, other keys in parallel', async () => {
+    test('a global limit of 1: the jobs of a key run one at a time, other keys in parallel', async () => {
         const { sqlane, p } = await freshSqlane();
         const perKey = new Map([['order:1', concurrencyMeter()], ['order:2', concurrencyMeter()]]);
         const allMeter = concurrencyMeter();
+        const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+        const sync = defineJob({
+            name: 'sync',
+            globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
+            timeout: '5s',
+        });
 
-        sqlane.handle(defineJob({ name: 'sync', mutexKeys: payload => [`order:${payload.orderId}`], timeout: '5s' }), async ({ job }) => {
-            const meter = /** @type {ReturnType<typeof concurrencyMeter>} */ (perKey.get(job.mutexKeys[0]));
+        sqlane.handle(sync, async ({ job }) => {
+            const key = job.globalConcurrencyLimits[0].key;
+            const meter = /** @type {ReturnType<typeof concurrencyMeter>} */ (perKey.get(key));
 
             meter.enter();
             allMeter.enter();
@@ -356,6 +363,44 @@ describe('concurrency', () => {
         expect(perKey.get('order:1')?.max()).toBe(1);
         expect(perKey.get('order:2')?.max()).toBe(1);
         expect(allMeter.max()).toBe(2);
+    });
+
+    test('a backlog of 600 jobs on a full key, more than a search reads: the jobs of another key still run', async () => {
+        const { sqlane, p } = await freshSqlane();
+        const client = defineConcurrencyLimit({ name: 'client', max: 1 });
+        const send = defineJob({
+            name: 'send',
+            globalConcurrencyLimits: ({ payload }) => [client.key(payload.clientId)],
+            timeout: '30s',
+        });
+        const held = Promise.withResolvers();
+        /** @type {Record<string, Promise<unknown>>} The flood waits; the other key runs at once */
+        const gates = { flood: held.promise, other: Promise.resolve() };
+        /** @type {string[]} */
+        const done = [];
+
+        sqlane.handle(send, async ({ payload }) => {
+            await gates[payload.clientId];
+            done.push(payload.clientId);
+        });
+        await sqlane.enqueueMany(testAdapter.pool, send, Array.from({ length: 600 }, () => ({
+            payload: { clientId: 'flood' },
+        })));
+        await sqlane.enqueueMany(testAdapter.pool, send, [1, 2, 3].map(() => ({ payload: { clientId: 'other' } })));
+        const countsOf = async () => (await database.query(
+            `SELECT status, count(*) AS count FROM ${p}jobs GROUP BY status ORDER BY status`,
+        )).map(row => [row.status, Number(row.count)]);
+
+        await sqlane.start();
+        // The completions commit before their events: wait for the rows
+        await waitFor(async () => JSON.stringify(await countsOf()).includes('["completed",3]'), 10_000);
+
+        expect(done).toStrictEqual(['other', 'other', 'other']);
+        await expect(countsOf()).resolves.toStrictEqual([
+            ['blocked', 599], ['completed', 3], ['running', 1],
+        ]);
+        held.resolve(undefined);
+        await sqlane.close({ deadline: '1s' });
     });
 });
 

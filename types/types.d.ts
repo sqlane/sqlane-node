@@ -49,13 +49,15 @@ export type JobOptions<P = any> = {
     backoff?: Backoff;
     retention?: Retention;
     /**
-     * No default. A job with mutex keys needs one.
+     * No default. A job with global concurrency limits needs one.
      */
     timeout?: Duration;
     /**
-     * Sync, from the payload only.
+     * Limits that the whole cluster counts, per key. Sync, from the context only; at enqueue.
      */
-    mutexKeys?: (payload: P) => readonly string[];
+    globalConcurrencyLimits?: (context: {
+        payload: P;
+    }) => readonly (ConcurrencyLimit | ConcurrencyLimitKey)[];
     /**
      * 1–1000. The name's share of the free slots of an instance. Default: 1.
      */
@@ -92,9 +94,10 @@ export type EnqueueBaseOptions = {
     retention?: Retention;
     failureJob?: string | JobDefinition;
     /**
-     * Replace the keys of the definition; `[]` clears them.
+     * Replace the global limits
+     * of the definition; `[]` clears them.
      */
-    mutexKeys?: readonly string[];
+    globalConcurrencyLimits?: readonly (ConcurrencyLimit | ConcurrencyLimitKey)[];
 };
 export type EnqueueJobIdOption = {
     /**
@@ -141,7 +144,13 @@ export type JobInfo = {
     attempt: number;
     maxAttempts: number;
     enqueuedAt: Date;
-    mutexKeys: readonly string[];
+    /**
+     * Its keys, sorted, with their maxes.
+     */
+    globalConcurrencyLimits: readonly {
+        key: string;
+        max: number;
+    }[];
     /**
      * The slot of a job of a schedule (also when it runs late); else null.
      */
@@ -169,7 +178,13 @@ export type ConcurrencyLimitOptions = {
      */
     max: number;
 };
-export type ConcurrencyLimit = Readonly<ConcurrencyLimitOptions>;
+export type ConcurrencyLimit = Readonly<ConcurrencyLimitOptions> & {
+    readonly key: (value: string | number) => ConcurrencyLimitKey;
+};
+export type ConcurrencyLimitKey = Readonly<{
+    limit: ConcurrencyLimit;
+    key: string;
+}>;
 export type JobDefaults = {
     maxAttempts?: number;
     maxStalls?: number;
@@ -583,15 +598,17 @@ export type Migration = {
  */
 /**
  * The options of a job name, shared by its producers and workers. A definition overrides the instance `defaults`.
- * @template [P=any] The payload: `defineJob<{ reportId: string }>(…)` types `enqueue`, `handle` and `mutexKeys`.
+ * @template [P=any] The payload: `defineJob<{ reportId: string }>(…)` types `enqueue`, `handle` and
+ *     `globalConcurrencyLimits`.
  * @typedef {object} JobOptions
  * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
  * @property {number} [maxAttempts] Default: 3.
  * @property {number} [maxStalls] Default: 2.
  * @property {Backoff} [backoff]
  * @property {Retention} [retention]
- * @property {Duration} [timeout] No default. A job with mutex keys needs one.
- * @property {(payload: P) => readonly string[]} [mutexKeys] Sync, from the payload only.
+ * @property {Duration} [timeout] No default. A job with global concurrency limits needs one.
+ * @property {(context: { payload: P }) => readonly (ConcurrencyLimit | ConcurrencyLimitKey)[]}
+ *     [globalConcurrencyLimits] Limits that the whole cluster counts, per key. Sync, from the context only; at enqueue.
  * @property {number} [fairShareWeight] 1–1000. The name's share of the free slots of an instance. Default: 1.
  * @property {readonly ConcurrencyLimit[]} [localConcurrencyLimits] Limits that each instance counts for its own jobs.
  *     A job starts only while every one of them has room.
@@ -642,7 +659,8 @@ export type Migration = {
  * @property {number} [maxStalls]
  * @property {Retention} [retention]
  * @property {string | JobDefinition} [failureJob]
- * @property {readonly string[]} [mutexKeys] Replace the keys of the definition; `[]` clears them.
+ * @property {readonly (ConcurrencyLimit | ConcurrencyLimitKey)[]} [globalConcurrencyLimits] Replace the global limits
+ *     of the definition; `[]` clears them.
  */
 /**
  * @typedef {object} EnqueueJobIdOption
@@ -679,7 +697,7 @@ export type Migration = {
  * @property {number} attempt 1 for the first run.
  * @property {number} maxAttempts
  * @property {Date} enqueuedAt
- * @property {readonly string[]} mutexKeys
+ * @property {readonly { key: string, max: number }[]} globalConcurrencyLimits Its keys, sorted, with their maxes.
  * @property {Date | null} scheduledAt The slot of a job of a schedule (also when it runs late); else null.
  */
 /**
@@ -701,7 +719,13 @@ export type Migration = {
  */
 /**
  * The result of `defineConcurrencyLimit()`. Frozen.
- * @typedef {Readonly<ConcurrencyLimitOptions>} ConcurrencyLimit
+ * @typedef {Readonly<ConcurrencyLimitOptions> & {
+ *     readonly key: (value: string | number) => ConcurrencyLimitKey,
+ * }} ConcurrencyLimit
+ */
+/**
+ * A key of a global limit, `<limit name>:<value>`: each key counts its own jobs. The result of `limit.key()`.
+ * @typedef {Readonly<{ limit: ConcurrencyLimit, key: string }>} ConcurrencyLimitKey
  */
 /**
  * The instance defaults; a definition overrides them.

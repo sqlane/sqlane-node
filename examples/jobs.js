@@ -21,11 +21,13 @@ export const reportFailed = defineJob({
     name: 'report_failed',
 });
 
+/** One job of an order at a time, in the whole cluster: a key per order */
+export const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+
 export const syncOrder = defineJob({
     name: 'sync_order',
-    // Two jobs of one order never run at the same time, in the whole cluster
-    mutexKeys: payload => [`order:${payload.orderId}`],
-    timeout: '2m', // a job with mutex keys needs a timeout
+    globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
+    timeout: '2m', // a job with global limits needs a timeout
     localConcurrencyLimits: [orderSyncs],
 });
 

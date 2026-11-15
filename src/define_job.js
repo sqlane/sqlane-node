@@ -3,14 +3,14 @@ import { ConfigError } from './errors.js';
 import { checkFailureJob, checkJobFields, checkObject, JOB_NAME_REGEXP } from './validate.js';
 
 const JOB_OPTION_NAMES = [
-    'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'mutexKeys', 'failureJob',
-    'fairShareWeight', 'localConcurrencyLimits',
+    'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'failureJob', 'fairShareWeight',
+    'localConcurrencyLimits', 'globalConcurrencyLimits',
 ];
 export const MAX_WEIGHT = 1000;
 
 /**
  * Defines a job name and its options. Producers and workers import the definition. `defineJob<{ reportId: string }>(…)`
- * declares the payload: `enqueue`, `handle` and `mutexKeys` then check it.
+ * declares the payload: `enqueue`, `handle` and `globalConcurrencyLimits` then check it.
  * @template [P=any]
  * @param {import('./types.js').JobOptions<P>} options
  * @returns {import('./types.js').JobDefinition<P>} Frozen.
@@ -21,6 +21,12 @@ export function defineJob(options) {
 
     const scope = { where, ErrorClass: ConfigError };
 
+    // The option of 5.x: an error that names the new one
+    if (/** @type {Record<string, unknown>} */ (options)?.mutexKeys !== undefined) {
+        throw new ConfigError(`${where}: "mutexKeys" was removed in 6.0: return a limit with max 1, or its keys, from `
+            + '"globalConcurrencyLimits"');
+    }
+
     checkObject(options, JOB_OPTION_NAMES, 'options', scope);
 
     if (!JOB_NAME_REGEXP.test(name)) {
@@ -29,8 +35,8 @@ export function defineJob(options) {
 
     checkJobFields(options, scope);
 
-    if (options.mutexKeys !== undefined && typeof options.mutexKeys !== 'function') {
-        throw new ConfigError(`${where}: "mutexKeys" must be a function of the payload`);
+    if (options.globalConcurrencyLimits !== undefined && typeof options.globalConcurrencyLimits !== 'function') {
+        throw new ConfigError(`${where}: "globalConcurrencyLimits" must be a function of the context, ({ payload })`);
     }
 
     if (options.failureJob !== undefined) {

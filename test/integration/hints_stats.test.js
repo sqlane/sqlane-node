@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { pgAdapter } from '../../src/adapters/pg.js';
-import { createSqlane, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
@@ -127,8 +127,9 @@ test('getStats: the counts of each name', async () => {
 
     const { id: runningId } = await sqlane.enqueue(testAdapter.pool, 'b', {});
     const { id: failedId } = await sqlane.enqueue(testAdapter.pool, 'b', {});
-    const claimed = await store.claim({
+    const { jobs: claimed } = await store.claim({
         candidateIds: [runningId, failedId],
+        fullIds: [],
         lockToken: 'TOKEN',
         lockedBy: 'test',
         leaseMs: 60_000,
@@ -202,12 +203,13 @@ describe('hints', () => {
         expect(errors).toMatchObject([{ type: 'error', operation: 'hint_publish' }]);
     });
 
-    test('freed mutex keys wake the other processes', async () => {
+    test('a freed slot of a global limit wakes the other processes', async () => {
         const p = nextPrefix();
         const hint = memoryHint();
         // Two names with one key: each process handles one, so the second job can only run in the second process
-        const firstJob = defineJob({ name: 'sync_first', mutexKeys: () => ['order:1'], timeout: '5s' });
-        const secondJob = defineJob({ name: 'sync_second', mutexKeys: () => ['order:1'], timeout: '5s' });
+        const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+        const firstJob = defineJob({ name: 'sync_first', globalConcurrencyLimits: () => [order.key(1)], timeout: '5s' });
+        const secondJob = defineJob({ name: 'sync_second', globalConcurrencyLimits: () => [order.key(1)], timeout: '5s' });
         const first = sqlaneOn(p, { hint, pollInterval: '10s' });
         const second = sqlaneOn(p, { hint, pollInterval: '10s' });
         /** @type {(() => void) | null} */
@@ -225,8 +227,9 @@ describe('hints', () => {
         await second.start();
         await second.enqueue(testAdapter.pool, secondJob, {});
         await sleep(200);
-        // The second job waits for the key, until the second process polls in 10 s
-        await expect(statuses(p)).resolves.toStrictEqual(['running', 'pending']);
+        // The second job is blocked on the key; the first process unblocks it, and its hint wakes the second process
+        // before its poll in 10 s
+        await expect(statuses(p)).resolves.toStrictEqual(['running', 'blocked']);
         /** @type {() => void} */ (/** @type {unknown} */ (finishFirst))();
 
         await expect(timeUntil(async () => (await statuses(p)).every(status => status === 'completed'), 5000))

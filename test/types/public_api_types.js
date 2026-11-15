@@ -14,7 +14,7 @@ export async function publicApiTypes() {
     const heavy = defineConcurrencyLimit({ name: 'heavy', max: 2 });
     const job = defineJob({
         name: 'build_report',
-        mutexKeys: payload => [`report:${payload.reportId}`],
+        globalConcurrencyLimits: ({ payload }) => [heavy.key(payload.reportId)],
         timeout: '1m',
         fairShareWeight: 2,
         localConcurrencyLimits: [heavy],
@@ -69,7 +69,14 @@ export async function publicApiTypes() {
     await sqlane.enqueueMany(connection, job, [{ payload: { at: new Date() } }]);
 
     // enqueue: the options
-    await sqlane.enqueue(connection, job, {}, { jobId: 'r1', delay: '10s', maxAttempts: 5, mutexKeys: ['a'] });
+    await sqlane.enqueue(connection, job, {}, {
+        jobId: 'r1',
+        delay: '10s',
+        maxAttempts: 5,
+        globalConcurrencyLimits: [heavy, heavy.key('a'), heavy.key(1)],
+    });
+    // @ts-expect-error a global limit is a limit or its key, not a string
+    await sqlane.enqueue(connection, job, {}, { globalConcurrencyLimits: ['heavy:a'] });
     await sqlane.enqueue(connection, job, {}, { runAt: new Date() });
     // @ts-expect-error delay or runAt, not both
     await sqlane.enqueue(connection, job, {}, { delay: '1s', runAt: new Date() });
@@ -99,7 +106,8 @@ export async function publicApiTypes() {
         expectTypeOf(jobPayload).toBeAny();
         expectTypeOf(info.attempt).toBeNumber();
         expectTypeOf(info.enqueuedAt).toEqualTypeOf(new Date());
-        expectTypeOf(info.mutexKeys).toEqualTypeOf(/** @type {readonly string[]} */ ([]));
+        expectTypeOf(info.globalConcurrencyLimits)
+            .toEqualTypeOf(/** @type {readonly { key: string, max: number }[]} */ ([]));
         expectTypeOf(signal).toEqualTypeOf(new AbortController().signal);
     });
 
@@ -107,10 +115,10 @@ export async function publicApiTypes() {
     /** @type {import('@sqlane/core').JobDefinition<{ orderId: number, note?: string }>} */
     const syncOrder = defineJob({
         name: 'sync_order',
-        mutexKeys: (order) => {
+        globalConcurrencyLimits: ({ payload: order }) => {
             expectTypeOf(order).toEqualTypeOf(/** @type {{ orderId: number, note?: string }} */ ({ orderId: 1 }));
 
-            return [`order:${order.orderId}`];
+            return [heavy.key(order.orderId)];
         },
         timeout: '1m',
     });
@@ -155,8 +163,10 @@ export async function publicApiTypes() {
     defineJob({ maxAttempts: 3 });
     // @ts-expect-error an unknown backoff type
     defineJob({ name: 'a', backoff: { type: 'linear', delay: '1s' } });
-    // @ts-expect-error mutexKeys returns strings
-    defineJob({ name: 'a', mutexKeys: () => [1] });
+    // @ts-expect-error globalConcurrencyLimits returns limits and their keys
+    defineJob({ name: 'a', globalConcurrencyLimits: () => ['a'] });
+    // @ts-expect-error mutexKeys was removed in 6.0
+    defineJob({ name: 'a', mutexKeys: () => ['a'] });
     expectTypeOf(job.name).toBeString();
 
     // errors
@@ -245,7 +255,9 @@ export async function publicApiTypes() {
     });
     /** @type {import('@sqlane/core').JobInfo} */
     // @ts-expect-error scheduledAt is required in a context built by hand
-    const builtByHand = { id: 'a', name: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), mutexKeys: [] };
+    const builtByHand = {
+        id: 'a', name: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
+    };
 
     void builtByHand;
 

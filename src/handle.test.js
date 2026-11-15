@@ -6,7 +6,7 @@ import { ClosedError, ConfigError } from './errors.js';
 
 /** An adapter that is never called: the checks run before any SQL */
 const adapter = /** @type {import('./types.js').Adapter<any>} */ ({ dialect: 'mysql' });
-const withKeys = defineJob({ name: 'with_keys', mutexKeys: () => ['k'] });
+const withKeys = defineJob({ name: 'with_keys', globalConcurrencyLimits: () => [] });
 
 /**
  * @param {Partial<import('./types.js').SqlaneOptions<any>>} [options]
@@ -38,7 +38,7 @@ test.each([
     ['a handler that is not a function', () => sqlaneWith().handle('a', /** @type {any} */ ('handler')),
         'the handler must be a function'],
     ['a bad name', () => sqlaneWith().handle('Bad', noop), 'the job must be a job definition or a job name'],
-    ['a definition with mutex keys without a timeout', () => sqlaneWith().handle(withKeys, noop), 'needs a timeout'],
+    ['a definition with global limits without a timeout', () => sqlaneWith().handle(withKeys, noop), 'needs a timeout'],
     ['a second handler of a name', () => {
         const sqlane = sqlaneWith();
 
@@ -83,8 +83,10 @@ test('start() accepts a local limit above the instance\'s cap: the lower one app
     await sqlane.close({ deadline: 0 });
 });
 
-test('a definition with mutex keys takes its timeout from the definition or the defaults', () => {
-    expect(() => sqlaneWith().handle(defineJob({ name: 'k', mutexKeys: () => ['k'], timeout: '1m' }), noop)).not.toThrow();
+test('a definition with global limits takes its timeout from the definition or the defaults', () => {
+    const timed = defineJob({ name: 'k', globalConcurrencyLimits: () => [], timeout: '1m' });
+
+    expect(() => sqlaneWith().handle(timed, noop)).not.toThrow();
     expect(() => sqlaneWith({ defaults: { timeout: '1m' } }).handle(withKeys, noop)).not.toThrow();
 });
 

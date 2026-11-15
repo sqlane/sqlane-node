@@ -1,7 +1,7 @@
 // Type tests of declared payloads, as a TypeScript app writes them: checked by tsc (pnpm typecheck), never run.
 import mysql from 'mysql2/promise';
 import { expectTypeOf } from 'vitest';
-import { createSqlane, defineJob } from '@sqlane/core';
+import { createSqlane, defineConcurrencyLimit, defineJob } from '@sqlane/core';
 import type { Handler } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
@@ -14,9 +14,10 @@ const handler: Handler<Report> = ({ payload }) => payload.reportId;
 export async function typedPayloadsTypes() {
     const pool = mysql.createPool({});
     const sqlane = createSqlane({ adapter: mysql2Adapter(pool) });
+    const reportLimit = defineConcurrencyLimit({ name: 'report', max: 1 });
     const buildReport = defineJob<Report>({
         name: 'build_report',
-        mutexKeys: report => [`report:${report.reportId}`],
+        globalConcurrencyLimits: ({ payload: report }) => [reportLimit.key(report.reportId)],
         timeout: '1m',
     });
 
@@ -37,8 +38,12 @@ export async function typedPayloadsTypes() {
     createSqlane({ adapter: mysql2Adapter(pool), jobs: [buildReport, defineJob({ name: 'other' })] });
     defineJob({ name: 'with_failure_job', failureJob: buildReport });
 
-    // @ts-expect-error the payload of mutexKeys is a Report
-    defineJob<Report>({ name: 'a', mutexKeys: (report: { id: number }) => [String(report.id)], timeout: '1m' });
+    defineJob<Report>({
+        name: 'a',
+        // @ts-expect-error the payload of globalConcurrencyLimits is a Report
+        globalConcurrencyLimits: ({ payload }: { payload: { id: number } }) => [reportLimit.key(payload.id)],
+        timeout: '1m',
+    });
 
     // Without a type argument: as before, any JSON
     const untyped = defineJob({ name: 'untyped' });

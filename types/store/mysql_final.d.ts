@@ -31,7 +31,7 @@ export declare function markTimedOut(executor: Executor, p: string, job: OwnedJo
  */
 export declare function completeJobs(executor: Executor, p: string, jobs: import('./store.js').FinishedJob[]): Promise<number>;
 /**
- * The attempt failed: pending again after the delay, one more attempt used; its keys are freed.
+ * The attempt failed: pending again after the delay, one more attempt used; its slots are freed.
  * @param {Executor} executor
  * @param {string} p
  * @param {OwnedJob} job
@@ -43,7 +43,7 @@ export declare function retryJob(executor: Executor, p: string, job: OwnedJob, {
     error: import('../error_json.js').ErrorJson;
 }): Promise<boolean>;
 /**
- * The job fails for good: failed until its retention ends, with its payload; its keys are freed; its failure job is
+ * The job fails for good: failed until its retention ends, with its payload; its slots are freed; its failure job is
  * added in the same transaction.
  * @param {Executor} executor
  * @param {string} p
@@ -63,7 +63,7 @@ export declare function failJob(executor: Executor, p: string, job: OwnedJob, { 
  * @param {Executor} executor
  * @param {string} p
  * @param {OwnedJob} job
- * @param {{ delayMs: number, lingerMs: number }} params lingerMs: its keys stay held this long (its handler still
+ * @param {{ delayMs: number, lingerMs: number }} params lingerMs: its slots stay held this long (its handler still
  *     runs); 0: they are freed.
  * @returns {Promise<boolean>} False: no change.
  */
@@ -83,7 +83,7 @@ export declare function findStaleJobs(executor: Executor, p: string, limit: numb
 }[]>;
 /**
  * A running job whose lease ended: one more stall, pending again after 30 s × 2^stalls (at most 1 h); after maxStalls,
- * it fails for good. Its keys linger for one lease: its old handler may still run.
+ * it fails for good. Its slots linger for one lease: its old handler may still run.
  * @param {Executor} executor
  * @param {string} p
  * @param {string} id
@@ -95,15 +95,27 @@ export declare function recoverStaleJob(executor: Executor, p: string, id: strin
     buildFailureJob: FailureJobBuilder;
 }): Promise<import('./store.js').StaleJobResult>;
 /**
- * Deletes the ended lingers, and the holds without their running job (from a manual change, or old code).
+ * Makes the jobs blocked on the keys pending again, the oldest first: on each key, as many as it has room for, by the
+ * max of its oldest blocked job. Call it in a queue transaction.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} keys
+ * @returns {Promise<string[]>} The names of the jobs that it made pending.
+ */
+export declare function unblock(executor: Executor, p: string, keys: string[]): Promise<string[]>;
+/**
+ * Deletes the ended lingers, and the slots without their running job (from a manual change, or old code). Then
+ * unblocks the jobs blocked on keys with room: a release that ended in a linger, or a process that stopped before its
+ * unblock.
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit
- * @returns {Promise<{ lingers: number, orphans: number }>}
+ * @returns {Promise<{ lingers: number, orphans: number, unblocked: number }>}
  */
-export declare function sweepMutexes(executor: Executor, p: string, limit: number): Promise<{
+export declare function sweepSlots(executor: Executor, p: string, limit: number): Promise<{
     lingers: number;
     orphans: number;
+    unblocked: number;
 }>;
 /**
  * Deletes a batch of completed and failed jobs whose retention ended, with their payloads. SKIP LOCKED: processes

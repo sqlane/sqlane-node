@@ -17,7 +17,7 @@ import {
     RetryJobError,
     ShutdownError,
 } from './errors.js';
-import { ANY_NAME, KEY_PREFIX } from './hint_channel.js';
+import { ANY_NAME } from './hint_channel.js';
 import { chooseRows, fill, rankNames, replayTie, shareNamesOfRequests } from './fair_share.js';
 import { buildNewJob } from './new_job.js';
 import { scheduledAtOf } from './schedule.js';
@@ -156,7 +156,7 @@ function contextOf(job) {
             attempt: claimed.attempts + 1,
             maxAttempts: claimed.maxAttempts,
             enqueuedAt: claimed.enqueuedAt,
-            mutexKeys: claimed.mutexKeys,
+            globalConcurrencyLimits: claimed.limits,
             scheduledAt: scheduledAtOf(claimed.id),
         },
         signal: job.controller.signal,
@@ -243,16 +243,15 @@ export function createRunner({
     const wakeNames = new Set();
     /** @type {Set<string>} The names of the wakes since the last turn that may have no visible job: probed first */
     const wakeProbeNames = new Set();
-    /** @type {Set<string>} The mutex keys released since the last turn: the jobs that wait for them can start */
-    const wakeKeys = new Set();
     /** @type {Set<string>} The names whose last probe saw due jobs: probed again at each turn, until none is due */
     const backlog = new Set();
     /** @type {Map<string, number>} The next due time of the names with only future pending jobs, by the probes */
     const scheduled = new Map();
     /** The earliest time of `scheduled`; null: to compute again */
     let earliestScheduled = /** @type {number | null} */ (Infinity);
-    /** @type {Set<string>} The handled names whose definition has mutex keys: set by start() */
-    let namesWithKeys = new Set();
+    /** @type {Set<string>} The handled names with global limits: their definition's, set by start(); and the names
+     *     whose jobs got limits from their enqueue options, seen by the claims */
+    let namesWithLimits = new Set();
     /** The time of the next probe of all names: the poll */
     let fullProbeAt = 0;
     /** @type {Map<string, number>} The names of the enqueues of the current series of re-probes: their last enqueue */
@@ -365,29 +364,10 @@ export function createRunner({
     }
 
     /**
-     * Ends the sleep of the dispatcher after a release of mutex keys: the next turn looks at the names of the oldest
-     * due job of each key.
-     * @param {readonly string[]} keys
-     */
-    function wakeUpKeys(keys) {
-        if (!namesWithKeys.size) {
-            return;
-        }
-
-        for (const key of keys) {
-            wakeKeys.add(key);
-        }
-
-        wakeCount++;
-        endSleep?.();
-    }
-
-    /**
      * The names that the next turn looks at. Claimed at once: those of the certain wakes, of the backlog, and those
      * whose next due time came. Probed first: those of the speculative wakes. All names at a wake of all names, and
      * each poll interval.
-     * Keys: the released mutex keys.
-     * @returns {{ claim: Set<string>, probe: Set<string>, keys: Set<string> } | null} Null: all names.
+     * @returns {{ claim: Set<string>, probe: Set<string> } | null} Null: all names.
      */
     function takeScope() {
         const now = Date.now();
@@ -396,14 +376,9 @@ export function createRunner({
             wakeAll = false;
             wakeNames.clear();
             wakeProbeNames.clear();
-            wakeKeys.clear();
 
             return null;
         }
-
-        const keys = new Set(wakeKeys);
-
-        wakeKeys.clear();
 
         const claim = new Set([...wakeNames, ...backlog]);
 
@@ -420,7 +395,7 @@ export function createRunner({
         wakeNames.clear();
         wakeProbeNames.clear();
 
-        return { claim, probe, keys };
+        return { claim, probe };
     }
 
     /**
@@ -539,29 +514,51 @@ export function createRunner({
     }
 
     /**
-     * Takes the locked jobs of names with mutex keys: those whose keys are free, by the share of their names, FIFO
-     * within a name. A passed-over job keeps its keys from the newer ones.
-     * @param {ClaimedJob[]} locked In the order of run_at.
-     * @param {Set<string>} busyKeys
+     * Takes the locked jobs of names with global limits, by the share of their names, FIFO within a name: a job whose
+     * keys all have room, with the jobs that this choice took. A passed-over job stays pending.
+     * @param {ClaimedJob[]} locked In the order of run_at; none of their keys was full.
+     * @param {Map<string, number>} held The held slots of their keys.
      * @returns {ClaimedJob[]}
      */
-    function pick(locked, busyKeys) {
-        const seenKeys = new Set(busyKeys);
-        const startable = locked.filter((job) => {
-            const keysFree = job.mutexKeys.every(key => !seenKeys.has(key));
+    function pick(locked, held) {
+        const taken = new Map(held);
+        const fits = (/** @type {ClaimedJob} */ job) => job.limits.every(({ key, max }) => (taken.get(key) ?? 0) < max);
+        /** @type {Map<string, ClaimedJob[]>} */
+        const rowsByName = new Map();
 
-            for (const key of job.mutexKeys) {
-                seenKeys.add(key);
+        for (const job of locked) {
+            if (registry.getEntry(job.name)) {
+                rowsByName.set(job.name, [...rowsByName.get(job.name) ?? [], job]);
             }
+        }
 
-            return keysFree && registry.getEntry(job.name) !== undefined;
-        });
-        const { chosen, lastTieWinner } = chooseRows({
-            rows: startable,
-            names: shareNamesOf(entriesOf([...new Set(startable.map(job => job.name))])),
+        const names = shareNamesOf(entriesOf([...rowsByName.keys()]));
+
+        for (const name of names) {
+            name.available = /** @type {ClaimedJob[]} */ (rowsByName.get(name.name)).length;
+        }
+
+        const { chosen, lastTieWinner } = fill({
+            names,
             free: freeProcessSlots(),
             base: tiePointer,
             size: tieSpan(),
+            take: (name) => {
+                const rows = /** @type {ClaimedJob[]} */ (rowsByName.get(name.name));
+                const at = rows.findIndex(fits);
+
+                if (at === -1) {
+                    return null;
+                }
+
+                const [job] = rows.splice(at, 1);
+
+                for (const { key } of job.limits) {
+                    taken.set(key, (taken.get(key) ?? 0) + 1);
+                }
+
+                return job;
+            },
         });
 
         movePointer(lastTieWinner);
@@ -762,9 +759,9 @@ export function createRunner({
             }
 
             error = new MissingPayloadError(`The payload of job "${claimed.id}" is missing`);
-        } else if (claimed.mutexKeys.length && entry.timeoutMs === null) {
+        } else if (claimed.limits.length && entry.timeoutMs === null) {
             error = new FatalJobError(
-                'A job with mutex keys needs a timeout: set one in handle(), the definition or "defaults"',
+                'A job with global concurrency limits needs a timeout: set one in the definition or "defaults"',
             );
         } else {
             error = await runHandler(job, payload.payload);
@@ -874,6 +871,12 @@ export function createRunner({
             } catch (error) {
                 reportError('run_job', error);
             } finally {
+                if (claimed.limits.length) {
+                    // Its slots of the global limits are free: the jobs blocked on its keys are due before its slot of
+                    // the instance is, so that the next turn shares that slot with them too
+                    await unblockKeys(claimed.limits.map(limit => limit.key));
+                }
+
                 // A successful keyless completion with spare capacity adds no ready work. The post-claim probe
                 // already scheduled pending jobs. Claims in flight may have captured an older slot count.
                 const mustWake = state !== 'started' || claimsInFlight > 0 || !job.completionConfirmed
@@ -896,17 +899,31 @@ export function createRunner({
                         speculative: true,
                     });
                 }
-
-                if (claimed.mutexKeys.length) {
-                    // Its keys are free: the jobs that wait for them can start, here or elsewhere
-                    wakeUpKeys(claimed.mutexKeys);
-
-                    for (const key of claimed.mutexKeys) {
-                        hintChannel.publish(KEY_PREFIX + key);
-                    }
-                }
             }
         })();
+    }
+
+    /**
+     * Makes the jobs blocked on the keys pending again, as far as the keys have room, and wakes their names here and
+     * in the other processes. It runs after the commit of a release, and after the commit of a claim that blocked
+     * jobs: the later of the two sees both, so a job is not left blocked on a key with room.
+     * @param {readonly string[]} keys
+     * @returns {Promise<void>} Never rejects: an error is reported.
+     */
+    async function unblockKeys(keys) {
+        try {
+            const names = await store.unblock([...new Set(keys)]);
+
+            if (names.length) {
+                wakeUp(names);
+
+                for (const name of names) {
+                    hintChannel.publish(name);
+                }
+            }
+        } catch (error) {
+            reportError('unblock', error);
+        }
     }
 
     // ---- dispatch ----
@@ -969,8 +986,8 @@ export function createRunner({
 
     /**
      * Claims the due jobs of the given names, by share within the free slots, and starts them. The candidates of the
-     * names with mutex keys come first: a plan reserves their share of the free slots, of the instance and of their
-     * groups, the plain claim takes the rest, then the claim of the candidates.
+     * names with global limits come first: a plan reserves their share of the free slots, of the instance and of their
+     * local limits, the plain claim takes the rest, then the claim of the candidates.
      * @param {string[]} dueNames
      * @returns {Promise<{ candidates: number, claimed: number }>}
      */
@@ -985,13 +1002,13 @@ export function createRunner({
             const plainEntries = [];
 
             for (const entry of turn) {
-                (namesWithKeys.has(entry.name) ? keyed : plainEntries).push(entry);
+                (namesWithLimits.has(entry.name) ? keyed : plainEntries).push(entry);
             }
 
-            const candidates = keyed.length ? await findCandidatesOf(keyed) : [];
-            const reserved = reservedForKeys(turn, candidates);
+            const found = keyed.length ? await findCandidatesOf(keyed) : { startable: [], full: [] };
+            const reserved = reservedForKeys(turn, found.startable);
             const plain = await claimAndStartPlain(plainEntries, freeProcessSlots() - reserved.slots, reserved.limits);
-            const withKeys = await claimAndStartWithKeys(candidates);
+            const withKeys = await claimAndStartWithKeys(found);
 
             return { candidates: plain.candidates + withKeys.candidates, claimed: plain.claimed + withKeys.claimed };
         } finally {
@@ -1000,9 +1017,9 @@ export function createRunner({
     }
 
     /**
-     * The candidates of names with mutex keys: the heads of their free keys.
+     * The candidates of names with global limits: their due jobs whose keys have room, and those with a full key.
      * @param {HandlerEntry[]} entries
-     * @returns {Promise<import('./store/store.js').Candidate[]>}
+     * @returns {Promise<import('./store/store.js').FoundCandidates>}
      */
     async function findCandidatesOf(entries) {
         /** @type {Map<string, number>} */
@@ -1013,21 +1030,21 @@ export function createRunner({
             limits.set(entry.name, 2 * freeSlots(entry));
         }
 
-        const candidates = await store.findCandidates(limits, [...namesWithKeys]);
-        const withCandidates = new Set(candidates.map(candidate => candidate.name));
+        const found = await store.findCandidates(limits);
+        const withCandidates = new Set([...found.startable, ...found.full].map(candidate => candidate.name));
 
         for (const { name } of entries) {
             if (!withCandidates.has(name)) {
-                // Its due jobs wait for keys: the release of a key wakes it
+                // No due job: an enqueue, a retry or the release of a key wakes it
                 backlog.delete(name);
             }
         }
 
-        return candidates;
+        return found;
     }
 
     /**
-     * The free slots that the names with mutex keys get by their share, on their candidates: the plain claim leaves
+     * The free slots that the names with global limits get by their share, on their candidates: the plain claim leaves
      * them free, in the instance and in their local limits.
      * @param {HandlerEntry[]} turn
      * @param {import('./store/store.js').Candidate[]} candidates
@@ -1052,7 +1069,7 @@ export function createRunner({
         const byName = new Map(turn.map(entry => [entry.name, entry]));
 
         for (const name of names) {
-            name.available = namesWithKeys.has(name.name) ? candidateCounts.get(name.name) ?? 0 : Infinity;
+            name.available = namesWithLimits.has(name.name) ? candidateCounts.get(name.name) ?? 0 : Infinity;
         }
 
         const { chosen } = fill({
@@ -1065,7 +1082,7 @@ export function createRunner({
         let slots = 0;
 
         for (const entry of chosen) {
-            if (namesWithKeys.has(entry.name)) {
+            if (namesWithLimits.has(entry.name)) {
                 slots++;
 
                 for (const limit of entry.limits) {
@@ -1078,10 +1095,10 @@ export function createRunner({
     }
 
     /**
-     * The due jobs of names without mutex keys: found, chosen by share, claimed and read at once.
+     * The due jobs of names without global limits: found, chosen by share, claimed and read at once.
      * @param {HandlerEntry[]} turn
      * @param {number} free The free slots for them.
-     * @param {Map<LimitState, number>} reservedInLimits The slots of each local limit for the names with mutex keys.
+     * @param {Map<LimitState, number>} reservedInLimits The slots of each local limit for the names with global limits.
      * @returns {Promise<{ candidates: number, claimed: number }>}
      */
     async function claimAndStartPlain(turn, free, reservedInLimits) {
@@ -1106,7 +1123,7 @@ export function createRunner({
             );
 
             if (maxJobs <= 0) {
-                // The names with mutex keys took its free slots: the next turn
+                // The names with global limits took its free slots: the next turn
                 backlog.add(entry.name);
                 continue;
             }
@@ -1133,7 +1150,7 @@ export function createRunner({
         const limitRooms = limits.map(limit => Math.max(0, limitRoom(limit) - (reservedInLimits.get(limit) ?? 0)));
         /** @type {number | null | undefined} */
         let chosenTie;
-        const { jobs, next, unpicked } = await store.claimDue({
+        const { jobs, next, unpicked, limited } = await store.claimDue({
             requests,
             limitRooms,
             free,
@@ -1202,6 +1219,12 @@ export function createRunner({
             }
         }
 
+        for (const name of limited ?? []) {
+            // Its jobs got global limits from their enqueue options: from now on, claimed with their limits
+            namesWithLimits.add(name);
+            backlog.add(name);
+        }
+
         for (const job of jobs) {
             startJob(job, job.payload);
         }
@@ -1211,25 +1234,37 @@ export function createRunner({
     }
 
     /**
-     * The candidates of names with mutex keys: a claim of those whose keys are free, by share, then their payloads.
-     * @param {import('./store/store.js').Candidate[]} candidates
+     * The candidates of names with global limits: a claim of those whose keys have room, by share, then their
+     * payloads. The claim blocks the jobs with a full key: they leave the due jobs until a release of the key.
+     * @param {import('./store/store.js').FoundCandidates} found
      * @returns {Promise<{ candidates: number, claimed: number }>}
      */
-    async function claimAndStartWithKeys(candidates) {
-        if (!candidates.length) {
+    async function claimAndStartWithKeys({ startable, full }) {
+        if (!startable.length && !full.length) {
             return { candidates: 0, claimed: 0 };
         }
 
-        const claimed = await store.claim({
-            candidateIds: candidates.map(candidate => candidate.id),
+        const { jobs: claimed, blockedKeys, blockedNames } = await store.claim({
+            candidateIds: startable.map(candidate => candidate.id),
+            fullIds: full.map(candidate => candidate.id),
             lockToken: lockToken(),
             lockedBy,
             leaseMs: t.leaseMs,
             pick,
         });
 
+        if (blockedKeys.length) {
+            // The due jobs after the blocked ones: the next turn
+            for (const name of blockedNames) {
+                backlog.add(name);
+            }
+
+            // A release that committed during the claim did not see the blocked jobs
+            await unblockKeys(blockedKeys);
+        }
+
         if (!claimed.length) {
-            return { candidates: candidates.length, claimed: 0 };
+            return { candidates: startable.length, claimed: 0 };
         }
 
         let payloads;
@@ -1241,15 +1276,16 @@ export function createRunner({
             await Promise.all(claimed.map(job => store.releaseJob(job, { delayMs: 0, lingerMs: 0 }).catch(
                 releaseError => reportError('release', releaseError),
             )));
+            await unblockKeys(claimed.flatMap(job => job.limits.map(limit => limit.key)));
 
-            return { candidates: candidates.length, claimed: 0 };
+            return { candidates: startable.length, claimed: 0 };
         }
 
         for (const job of claimed) {
             startJob(job, { found: payloads.has(job.id), payload: payloads.get(job.id) });
         }
 
-        return { candidates: candidates.length, claimed: claimed.length };
+        return { candidates: startable.length, claimed: claimed.length };
     }
 
     /** @returns {string[]} The handled names with a free slot. */
@@ -1265,19 +1301,9 @@ export function createRunner({
         const scope = takeScope();
         /** @type {Set<string>} */
         let names;
-        /** @type {string[]} The names with mutex keys with a job at the head of a released key: due, claimed at once */
-        let waiting = [];
 
         if (scope) {
             names = new Set();
-
-            if (scope.keys.size) {
-                waiting = await store.namesWaitingFor([...scope.keys], [...namesWithKeys]);
-
-                for (const name of waiting) {
-                    scope.claim.add(name);
-                }
-            }
 
             for (const name of [...scope.claim, ...scope.probe]) {
                 const entry = registry.getEntry(name);
@@ -1302,15 +1328,9 @@ export function createRunner({
             return nextDelayMs();
         }
 
-        // The names of a certain wake without mutex keys: claimed at once, the claim gives their next due time. The
-        // others: probed first.
-        const known = new Set(waiting);
-        const direct = scope
-            ? [...names].filter(name => scope.claim.has(name) && (!namesWithKeys.has(name) || known.has(name)))
-            : [];
-        const probed = scope
-            ? [...names].filter(name => !scope.claim.has(name) || (namesWithKeys.has(name) && !known.has(name)))
-            : null;
+        // The names of a certain wake: claimed at once, the claim gives their next due time. The others: probed first.
+        const direct = scope ? [...names].filter(name => scope.claim.has(name)) : [];
+        const probed = scope ? [...names].filter(name => !scope.claim.has(name)) : null;
         const probe = probed?.length === 0
             ? []
             : (await store.probe(probed)).filter(row => registry.getEntry(row.name));
@@ -1562,9 +1582,9 @@ export function createRunner({
             }
         }
 
-        const { lingers, orphans } = await store.sweepMutexes(100);
+        const { lingers, orphans, unblocked } = await store.sweepSlots(100);
 
-        if (freedKeys || lingers || orphans) {
+        if (freedKeys || lingers || orphans || unblocked) {
             wakeUp();
             hintChannel.publish(ANY_NAME);
         }
@@ -1675,7 +1695,7 @@ export function createRunner({
         }
 
         registry.validate();
-        namesWithKeys = new Set(registry.namesWithKeys());
+        namesWithLimits = new Set(registry.namesWithLimits());
         handledCount = Math.max(registry.entries().length, 1);
         tiePointer = Math.floor(random() * handledCount);
         state = 'started';
@@ -1691,12 +1711,7 @@ export function createRunner({
             // NOTIFY comes after the commit: the job is visible. Another hint is sent before the commit of its enqueue:
             // re-probe until the job is visible.
             await hintChannel.listen((name) => {
-                if (name.startsWith(KEY_PREFIX)) {
-                    // A release: committed before its message
-                    if (state === 'started') {
-                        wakeUpKeys([name.slice(KEY_PREFIX.length)]);
-                    }
-                } else if (!hintsAfterCommit) {
+                if (!hintsAfterCommit) {
                     onEnqueued([name]);
                 } else if (state === 'started' && handlesAny([name])) {
                     wakeUp([name]);
@@ -1727,7 +1742,7 @@ export function createRunner({
         }
 
         registry.validate();
-        namesWithKeys = new Set(registry.namesWithKeys());
+        namesWithLimits = new Set(registry.namesWithLimits());
         handledCount = Math.max(registry.entries().length, 1);
         tiePointer = Math.floor(random() * handledCount);
         state = 'draining';

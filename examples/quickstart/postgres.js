@@ -1,12 +1,12 @@
 // The quickstart on PostgreSQL: `docker compose up -d --wait postgres`, then `npm run postgres`.
 // 1. A job commits with the business data, and runs right after the commit.
 // 2. A rollback removes the business data and the job.
-// 3. Jobs with a common mutex key run one at a time; other keys run alongside.
+// 3. Jobs of one key of a global limit of 1 run one at a time; other keys run alongside.
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Pool } from 'pg';
-import { createSqlane, defineJob } from '@sqlane/core';
+import { createSqlane, defineConcurrencyLimit, defineJob } from '@sqlane/core';
 import { pgAdapter } from '@sqlane/core/adapter-pg';
 
 const url = process.env.DATABASE_URL ?? 'postgres://postgres@127.0.0.1:15432/app';
@@ -15,9 +15,10 @@ const queuePool = new Pool({ connectionString: url, max: 3 }); // the queue's ow
 
 // The job definitions: producers and workers import them
 const sendReceipt = defineJob({ name: 'send_receipt' });
+const perOrder = defineConcurrencyLimit({ name: 'order', max: 1 }); // one job per order at a time, in the whole cluster
 const syncOrder = defineJob({
     name: 'sync_order',
-    mutexKeys: payload => [`order:${payload.orderId}`], // one sync per order at a time, in the whole cluster
+    globalConcurrencyLimits: ({ payload }) => [perOrder.key(payload.orderId)],
     timeout: '1m',
 });
 

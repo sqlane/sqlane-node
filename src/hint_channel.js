@@ -5,8 +5,6 @@
 const THROTTLE_MS = 100;
 /** The message of a wake of all names: every process probes all its names */
 export const ANY_NAME = '*';
-/** The prefix of the message after a release of a mutex key: `#<key>`. A job name cannot start with it. */
-export const KEY_PREFIX = '#';
 
 /**
  * @typedef {object} HintChannel

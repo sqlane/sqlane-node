@@ -1,4 +1,4 @@
-// Scenarios: a worker of definitions with local limits, weights and timeouts; retry and failure job; mutex keys;
+// Scenarios: a worker of definitions with local and global limits, weights and timeouts; retry and failure job;
 // graceful shutdown.
 import { FatalJobError, RetryJobError } from '@sqlane/core';
 import { buildReport, reportFailed, sendEmail, syncOrder } from './jobs.js';

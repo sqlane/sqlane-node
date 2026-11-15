@@ -1,15 +1,17 @@
 import { describe, expect, test } from 'vitest';
+import { defineConcurrencyLimit } from './define_concurrency_limit.js';
 import { defineJob } from './define_job.js';
 import { resolveDefaults } from './defaults.js';
-import { InvalidMutexKeyError, InvalidOptionsError, PayloadTooLargeError } from './errors.js';
+import { InvalidConcurrencyLimitError, InvalidOptionsError, PayloadTooLargeError } from './errors.js';
 import { buildNewJob } from './new_job.js';
 
 const defaults = resolveDefaults();
+const report = defineConcurrencyLimit({ name: 'report', max: 1 });
 const buildReport = defineJob({
     name: 'build_report',
     maxAttempts: 5,
     retention: { completed: '10m' },
-    mutexKeys: payload => [`report:${payload.reportId}`],
+    globalConcurrencyLimits: ({ payload }) => [report.key(payload.reportId)],
     failureJob: defineJob({ name: 'report_failed' }),
 });
 
@@ -36,7 +38,7 @@ describe('with a definition', () => {
             hasJobId: false,
             name: 'build_report',
             payloadJson: '{"reportId":"r1"}',
-            mutexKeys: ['report:r1'],
+            limits: [{ key: 'report:r1', max: 1 }],
             maxAttempts: 5,
             maxStalls: 2,
             completedRetentionMs: 600_000,
@@ -58,12 +60,12 @@ describe('with a definition', () => {
                 maxStalls: 0,
                 retention: { failed: '1d' },
                 failureJob: 'other_failed',
-                mutexKeys: [],
+                globalConcurrencyLimits: [],
             },
         })).toMatchObject({
             id: 'build_report:r1',
             hasJobId: true,
-            mutexKeys: [],
+            limits: [],
             maxAttempts: 1,
             maxStalls: 0,
             completedRetentionMs: 600_000,
@@ -74,12 +76,17 @@ describe('with a definition', () => {
         });
     });
 
-    test('the mutex keys come from the payload as JSON gives it back', () => {
-        const withKeys = defineJob({ name: 'with_keys', mutexKeys: payload => [String(payload.at)] });
+    test('the global limits come from the payload as JSON gives it back', () => {
+        const withKeys = defineJob({ name: 'with_keys', globalConcurrencyLimits: ({ payload }) => [report.key(payload.at)] });
         const at = new Date('2030-01-01T00:00:00Z');
 
-        expect(build({ name: 'with_keys', definition: withKeys, payload: { at } }).mutexKeys)
-            .toStrictEqual(['2030-01-01T00:00:00.000Z']);
+        expect(build({ name: 'with_keys', definition: withKeys, payload: { at } }).limits)
+            .toStrictEqual([{ key: 'report:2030-01-01T00:00:00.000Z', max: 1 }]);
+    });
+
+    test('the mutexKeys of 5.x: an error that names the new option', () => {
+        expect(() => build({ options: /** @type {any} */ ({ mutexKeys: ['a'] }) }))
+            .toThrow('enqueue("build_report"): "mutexKeys" was removed in 6.0: use "globalConcurrencyLimits"');
     });
 
     test('a delay', () => {
@@ -90,7 +97,7 @@ describe('with a definition', () => {
 test('an unknown name takes the defaults', () => {
     expect(build({ name: 'send_email', definition: null, options: { jobId: 'e1' } })).toMatchObject({
         id: 'send_email:e1',
-        mutexKeys: [],
+        limits: [],
         maxAttempts: 3,
         maxStalls: 2,
         completedRetentionMs: 3_600_000,
@@ -116,7 +123,8 @@ test.each([
     ['the job as its own failure job', { options: { failureJob: 'build_report' } }, InvalidOptionsError],
     ['a payload that is not JSON', { payload: undefined }, InvalidOptionsError],
     ['a payload above the limit', { maxPayloadBytes: 10 }, PayloadTooLargeError],
-    ['a bad mutex key', { options: { mutexKeys: [' a'] } }, InvalidMutexKeyError],
+    ['a bad key of a limit', { options: { globalConcurrencyLimits: [report.key(' a')] } }, InvalidConcurrencyLimitError],
+    ['a key that is not of a limit', { options: { globalConcurrencyLimits: ['report:1'] } }, InvalidConcurrencyLimitError],
     ['a jobId with the reserved prefix', { options: { jobId: 'schedule:2026' } }, InvalidOptionsError],
     ['slot with jobId', { options: { slot: { at: new Date() }, jobId: 'r1' } }, InvalidOptionsError],
     ['a slot without at', { options: { slot: {} } }, InvalidOptionsError],
