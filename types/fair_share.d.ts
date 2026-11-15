@@ -13,15 +13,11 @@ export type ShareName = {
      */
     running: number;
     /**
-     * Its maxConcurrency minus running; Infinity without one. At least 0.
+     * Its local limits, each shared by its names: its max minus its running.
      */
-    room: number;
-    /**
-     * Shared by the names of one group: its maxConcurrency minus its running.
-     */
-    group: {
+    limits: {
         room: number;
-    } | null;
+    }[];
     /**
      * The units that can start: locked rows, candidates, or Infinity in a plan.
      */
@@ -34,7 +30,7 @@ export type Ranked = {
 };
 /**
  * Gives the free slots, one at a time, to the eligible name with the lowest running / weight; ties in the order of
- * (index − base) mod size. The base is fixed for the call. Mutates running, room, available and the group rooms.
+ * (index − base) mod size. The base is fixed for the call. Mutates running, available and the limit rooms.
  * @template T
  * @param {object} params
  * @param {ShareName[]} params.names
@@ -89,17 +85,16 @@ export declare function chooseRows<T extends {
     lastTieWinner: number | null;
 };
 /**
- * The names of the requests of a claim, with the counts and the group rooms that the claim was given. Their own room
- * is not needed: their maxJobs held their locked rows under it.
+ * The names of the requests of a claim, with the counts and the limit rooms that the claim was given.
  * @param {{ index: number }[]} entries Of the requests, in their order: their handlers.
  * @param {import('./store/store.js').DueRequest[]} requests
- * @param {number[]} groupRooms
+ * @param {number[]} limitRooms
  * @param {(request: import('./store/store.js').DueRequest) => boolean} [keep]
  * @returns {ShareName[]}
  */
 export declare function shareNamesOfRequests(entries: {
     index: number;
-}[], requests: import('./store/store.js').DueRequest[], groupRooms: number[], keep?: (request: import('./store/store.js').DueRequest) => boolean): ShareName[];
+}[], requests: import('./store/store.js').DueRequest[], limitRooms: number[], keep?: (request: import('./store/store.js').DueRequest) => boolean): ShareName[];
 /**
  * The last tie of a choice made in SQL: `fill()` over the claimed rows, with one more row of each name that the claim
  * left a locked row of, under the counts and rooms that the claim was given, makes the same choice and the same ties.
@@ -108,19 +103,19 @@ export declare function shareNamesOfRequests(entries: {
  * @param {object} params
  * @param {{ index: number }[]} params.entries Of the requests, in their order: their handlers.
  * @param {import('./store/store.js').DueRequest[]} params.requests
- * @param {number[]} params.groupRooms
+ * @param {number[]} params.limitRooms
  * @param {{ name: string }[]} params.jobs The claimed jobs.
  * @param {string[]} params.unpicked The names with a locked row that the claim did not take.
  * @param {number} params.base
  * @param {number} params.size
  * @returns {number | null}
  */
-export declare function replayTie({ entries, requests, groupRooms, jobs, unpicked, base, size }: {
+export declare function replayTie({ entries, requests, limitRooms, jobs, unpicked, base, size }: {
     entries: {
         index: number;
     }[];
     requests: import('./store/store.js').DueRequest[];
-    groupRooms: number[];
+    limitRooms: number[];
     jobs: {
         name: string;
     }[];

@@ -38,8 +38,8 @@ function storeWith(dialect, claimError) {
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const store = createStore(adapter, 'sqlane_', logger);
     const claimDue = () => store.claimDue({
-        requests: [{ name: 'a', maxJobs: 5, running: 0, weight: 1, group: null, tie: 0 }],
-        groupRooms: [],
+        requests: [{ name: 'a', maxJobs: 5, running: 0, weight: 1, limits: [], tie: 0 }],
+        limitRooms: [],
         free: 10,
         lockToken: 'T',
         lockedBy: 'test:T',

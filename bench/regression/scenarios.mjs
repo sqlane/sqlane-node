@@ -121,7 +121,7 @@ export const SCENARIOS = [
         timing: ROUNDS,
         async run({ lib, create, pool, measure }) {
             const jobs = definitions(lib, NAMES);
-            const sqlane = create({ jobs, maxConcurrency: 1 });
+            const sqlane = create({ jobs, localMaxConcurrency: 1 });
 
             handleAll(sqlane, jobs);
             await sqlane.migrate();
@@ -171,7 +171,7 @@ export const SCENARIOS = [
                 mutexKeys: (/** @type {{ key: number }} */ payload) => [`account:${payload.key}`],
                 timeout: '1m',
             });
-            const sqlane = create({ jobs, maxConcurrency: 1 });
+            const sqlane = create({ jobs, localMaxConcurrency: 1 });
 
             handleAll(sqlane, jobs);
             await sqlane.migrate();

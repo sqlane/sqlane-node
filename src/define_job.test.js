@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+import { defineConcurrencyLimit } from './define_concurrency_limit.js';
 import { defineJob } from './define_job.js';
 import { ConfigError } from './errors.js';
 
@@ -13,6 +14,8 @@ test('gives a frozen copy of the options', () => {
         timeout: '5m',
         mutexKeys: () => ['report:1'],
         failureJob: 'report_failed',
+        fairShareWeight: 3,
+        localConcurrencyLimits: [defineConcurrencyLimit({ name: 'heavy', max: 2 })],
     };
     const definition = defineJob(options);
 
@@ -21,6 +24,8 @@ test('gives a frozen copy of the options', () => {
     expect(Object.isFrozen(definition)).toBe(true);
     expect(Object.isFrozen(definition.backoff)).toBe(true);
     expect(Object.isFrozen(definition.retention)).toBe(true);
+    expect(Object.isFrozen(definition.localConcurrencyLimits)).toBe(true);
+    expect(definition.localConcurrencyLimits).not.toBe(options.localConcurrencyLimits);
 });
 
 test('accepts a definition as the failure job', () => {
@@ -54,6 +59,15 @@ test.each([
     ['mutexKeys as an array', { name: 'a', mutexKeys: ['a'] }],
     ['a bad failure job name', { name: 'a', failureJob: 'Fail' }],
     ['the job as its own failure job', { name: 'a', failureJob: 'a' }],
+    ['fairShareWeight 0', { name: 'a', fairShareWeight: 0 }],
+    ['fairShareWeight 1001', { name: 'a', fairShareWeight: 1001 }],
+    ['fairShareWeight 1.5', { name: 'a', fairShareWeight: 1.5 }],
+    ['a local limit that is not from defineConcurrencyLimit()', { name: 'a', localConcurrencyLimits: [{ name: 'b', max: 1 }] }],
+    ['local limits as one limit', { name: 'a', localConcurrencyLimits: defineConcurrencyLimit({ name: 'b', max: 1 }) }],
+    ['a local limit twice', {
+        name: 'a',
+        localConcurrencyLimits: [defineConcurrencyLimit({ name: 'b', max: 1 }), defineConcurrencyLimit({ name: 'b', max: 2 })],
+    }],
 ])('rejects %s', (_, options) => {
     expect(() => defineJob(/** @type {any} */ (options))).toThrow(ConfigError);
 });

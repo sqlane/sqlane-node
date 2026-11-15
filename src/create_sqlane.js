@@ -13,7 +13,7 @@ import { isMissingTableError } from './transient_error.js';
 import { checkDuration, checkInteger, checkObject, checkTablePrefix, isPlainObject } from './validate.js';
 
 const OPTION_NAMES = [
-    'adapter', 'jobs', 'maxConcurrency', 'defaults', 'unknownJobs', 'hint', 'logger', 'onEvent', 'tablePrefix',
+    'adapter', 'jobs', 'localMaxConcurrency', 'defaults', 'unknownJobs', 'hint', 'logger', 'onEvent', 'tablePrefix',
     'pollInterval', 'maxPayloadBytes', 'cleanup', 'timings',
 ];
 
@@ -89,16 +89,18 @@ function resolveHint(adapter, hint) {
 export function createSqlane(options) {
     const scope = { where: 'createSqlane', ErrorClass: ConfigError };
 
-    // The options of 4.x: an error that names the new API
+    // The options of 4.x and 5.x: an error that names the new API
     const given = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (options));
 
-    if (isPlainObject(given) && given.concurrency !== undefined) {
-        throw new ConfigError('createSqlane: "concurrency" is now "maxConcurrency" (5.0)');
+    if (isPlainObject(given) && (given.concurrency !== undefined || given.maxConcurrency !== undefined)) {
+        const old = given.concurrency === undefined ? 'maxConcurrency' : 'concurrency';
+
+        throw new ConfigError(`createSqlane: "${old}" is now "localMaxConcurrency" (6.0)`);
     }
 
     if (isPlainObject(given) && given.lanes !== undefined) {
-        throw new ConfigError('createSqlane: "lanes" was removed in 5.0: define groups with defineConcurrencyGroup() '
-            + 'and pass them to handle() as "concurrencyGroup"');
+        throw new ConfigError('createSqlane: "lanes" was removed in 5.0: define limits with defineConcurrencyLimit() '
+            + 'and list them in a job definition\'s "localConcurrencyLimits"');
     }
 
     checkObject(options, OPTION_NAMES, 'options', scope);
@@ -121,9 +123,9 @@ export function createSqlane(options) {
         throw new ConfigError(`createSqlane: "unknownJobs" must be 'allow' or 'reject'`);
     }
 
-    const { maxConcurrency = 10, cleanup = true } = options;
+    const { localMaxConcurrency = 10, cleanup = true } = options;
 
-    checkInteger(maxConcurrency, '"maxConcurrency"', scope);
+    checkInteger(localMaxConcurrency, '"localMaxConcurrency"', scope);
 
     if (typeof cleanup !== 'boolean') {
         throw new ConfigError('createSqlane: "cleanup" must be a boolean');
@@ -134,7 +136,6 @@ export function createSqlane(options) {
     const defaults = resolveDefaults(options.defaults);
     const registry = createRegistry({
         jobsByName,
-        maxConcurrency,
         defaultTimeoutMs: defaults.timeoutMs,
     });
     const hint = resolveHint(adapter, options.hint);
@@ -156,7 +157,7 @@ export function createSqlane(options) {
     const runner = createRunner({
         store,
         registry,
-        maxConcurrency,
+        localMaxConcurrency,
         defaults,
         cleanup,
         logger: options.logger,
@@ -293,7 +294,12 @@ export function createSqlane(options) {
 
             return results;
         },
-        handle: (job, handler, handleOptions) => {
+        /**
+         * @param {import('./types.js').JobDefinition | string} job
+         * @param {import('./types.js').Handler} handler
+         * @param {unknown} [oldOptions] The options of 5.x: the registry names where they went.
+         */
+        handle(job, handler, oldOptions) {
             if (runner.isClosed()) {
                 throw new ClosedError('handle() after close()');
             }
@@ -306,7 +312,7 @@ export function createSqlane(options) {
                 throw new ConfigError('handle() during drain(): register all the handlers before drain()');
             }
 
-            registry.handle(job, handler, handleOptions);
+            registry.handle(job, handler, oldOptions);
         },
         schedule: (job, scheduleOptions) => {
             if (runner.isClosed()) {

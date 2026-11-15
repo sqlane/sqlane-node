@@ -52,8 +52,8 @@ export type ClaimParams = {
 export type DueRequest = {
     name: string;
     /**
-     * At most this many of its jobs: the minimum of its room, its group's room and the free
-     * slots.
+     * At most this many of its jobs: the minimum of the rooms of its local limits and the
+     * free slots.
      */
     maxJobs: number;
     /**
@@ -65,9 +65,9 @@ export type DueRequest = {
      */
     weight: number;
     /**
-     * Its group in `groupRooms`; null without one.
+     * Its local limits, as indexes in `limitRooms`.
      */
-    group: number | null;
+    limits: number[];
     /**
      * Its place in the order of the ties.
      */
@@ -76,9 +76,9 @@ export type DueRequest = {
 export type ClaimDueParams = {
     requests: DueRequest[];
     /**
-     * The free slots of each group.
+     * The free slots of each local limit.
      */
-    groupRooms: number[];
+    limitRooms: number[];
     /**
      * The free slots of the instance for this claim.
      */
@@ -282,17 +282,17 @@ export type ScheduleRead = {
  * One request of a claim of due jobs: a job name without mutex keys, and what its share needs.
  * @typedef {object} DueRequest
  * @property {string} name
- * @property {number} maxJobs At most this many of its jobs: the minimum of its room, its group's room and the free
- *     slots.
+ * @property {number} maxJobs At most this many of its jobs: the minimum of the rooms of its local limits and the
+ *     free slots.
  * @property {number} running Its jobs that run in this instance.
  * @property {number} weight Its fairShareWeight.
- * @property {number | null} group Its group in `groupRooms`; null without one.
+ * @property {number[]} limits Its local limits, as indexes in `limitRooms`.
  * @property {number} tie Its place in the order of the ties.
  */
 /**
  * @typedef {object} ClaimDueParams
  * @property {DueRequest[]} requests
- * @property {number[]} groupRooms The free slots of each group.
+ * @property {number[]} limitRooms The free slots of each local limit.
  * @property {number} free The free slots of the instance for this claim.
  * @property {string} lockToken Of this claim.
  * @property {string} lockedBy The process.

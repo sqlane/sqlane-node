@@ -1,8 +1,11 @@
-// The job definitions and the concurrency groups: imported by producers and workers.
-import { defineConcurrencyGroup, defineJob } from '@sqlane/core';
+// The job definitions and their local concurrency limits: imported by producers and workers.
+import { defineConcurrencyLimit, defineJob } from '@sqlane/core';
 
-/** At most 2 heavy jobs at once in one process, across the names of the group */
-export const heavy = defineConcurrencyGroup({ name: 'heavy', maxConcurrency: 2 });
+/** At most 2 heavy jobs at once in one process, across the names that list it */
+export const heavy = defineConcurrencyLimit({ name: 'heavy', max: 2 });
+
+/** At most 4 order syncs at once in one process */
+export const orderSyncs = defineConcurrencyLimit({ name: 'order_syncs', max: 4 });
 
 export const buildReport = defineJob({
     name: 'build_report',
@@ -10,6 +13,8 @@ export const buildReport = defineJob({
     backoff: { type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 },
     retention: { completed: '1h', failed: '30d' },
     failureJob: 'report_failed',
+    timeout: '5m',
+    localConcurrencyLimits: [heavy],
 });
 
 export const reportFailed = defineJob({
@@ -21,12 +26,14 @@ export const syncOrder = defineJob({
     // Two jobs of one order never run at the same time, in the whole cluster
     mutexKeys: payload => [`order:${payload.orderId}`],
     timeout: '2m', // a job with mutex keys needs a timeout
+    localConcurrencyLimits: [orderSyncs],
 });
 
 export const sendEmail = defineJob({
     name: 'send_email',
     maxAttempts: 10,
     backoff: { type: 'fixed', delay: '30s' },
+    fairShareWeight: 3, // 3 times the share of the free slots of a name of weight 1
 });
 
 export const allJobs = [buildReport, reportFailed, syncOrder, sendEmail];

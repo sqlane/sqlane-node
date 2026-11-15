@@ -1,5 +1,6 @@
 export type ClaimedJob = import('./store/store.js').ClaimedJob;
 export type HandlerEntry = import('./registry.js').HandlerEntry;
+export type LimitState = import('./registry.js').LimitState;
 export type Timings = {
     leaseMs: number;
     renewIntervalMs: number;
@@ -59,7 +60,7 @@ export type RunnerParams = {
     /**
      * The instance's cap.
      */
-    maxConcurrency: number;
+    localMaxConcurrency: number;
     defaults: import('./defaults.js').ResolvedDefaults;
     cleanup: boolean;
     logger: import('./types.js').Logger | undefined;
@@ -111,4 +112,4 @@ export type Runner = {
  * @param {RunnerParams} params
  * @returns {Runner}
  */
-export declare function createRunner({ store, registry, maxConcurrency, defaults, cleanup, logger, onEvent, hintChannel, hintsAfterCommit, timings, random, }: RunnerParams): Runner;
+export declare function createRunner({ store, registry, localMaxConcurrency, defaults, cleanup, logger, onEvent, hintChannel, hintsAfterCommit, timings, random, }: RunnerParams): Runner;

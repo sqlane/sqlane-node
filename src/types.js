@@ -53,6 +53,9 @@
  * @property {Retention} [retention]
  * @property {Duration} [timeout] No default. A job with mutex keys needs one.
  * @property {(payload: P) => readonly string[]} [mutexKeys] Sync, from the payload only.
+ * @property {number} [fairShareWeight] 1–1000. The name's share of the free slots of an instance. Default: 1.
+ * @property {readonly ConcurrencyLimit[]} [localConcurrencyLimits] Limits that each instance counts for its own jobs.
+ *     A job starts only while every one of them has room.
  * @property {string | JobDefinition} [failureJob] Added when a job fails for good.
  */
 
@@ -170,24 +173,14 @@
  */
 
 /**
- * The options of `handle()`.
- * @typedef {object} HandleOptions
- * @property {Duration} [timeout]
- * @property {number} [maxConcurrency] The most jobs of this name that run at once in this instance. Default: only the
- *     caps of its group and of the instance.
- * @property {ConcurrencyGroup} [concurrencyGroup] A cap shared with the other names of the group.
- * @property {number} [fairShareWeight] 1–1000. The name's share of the free slots. Default: 1.
- */
-
-/**
- * @typedef {object} ConcurrencyGroupOptions
+ * @typedef {object} ConcurrencyLimitOptions
  * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
- * @property {number} maxConcurrency The most jobs of the names of the group that run at once in one instance.
+ * @property {number} max 1–1000. The most jobs that hold the limit at once.
  */
 
 /**
- * The result of `defineConcurrencyGroup()`. Frozen.
- * @typedef {Readonly<ConcurrencyGroupOptions>} ConcurrencyGroup
+ * The result of `defineConcurrencyLimit()`. Frozen.
+ * @typedef {Readonly<ConcurrencyLimitOptions>} ConcurrencyLimit
  */
 
 /**
@@ -346,7 +339,7 @@
  * @typedef {object} SqlaneOptions
  * @property {Adapter<C>} adapter
  * @property {readonly JobDefinition[]} [jobs] The definitions known by name.
- * @property {number} [maxConcurrency] The handlers that run at the same time in this instance. Default: 10.
+ * @property {number} [localMaxConcurrency] The handlers that run at the same time in this instance. Default: 10.
  * @property {JobDefaults} [defaults]
  * @property {'allow' | 'reject'} [unknownJobs] Default: `'allow'`. `'reject'`: `enqueue` of a name that is not in
  *     `jobs` and not handled throws an `UnknownJobError`.
@@ -415,7 +408,7 @@
  *     connection: C, job: J, items: readonly EnqueueManyItem<J, P>[],
  * ) => Promise<EnqueueResult[]>} enqueueMany The results are in the order of the items.
  * @property {<J extends JobDefinition | string>(
- *     job: J, handler: Handler<HandlerPayload<J>>, options?: HandleOptions,
+ *     job: J, handler: Handler<HandlerPayload<J>>,
  * ) => void} handle
  * @property {<J extends JobDefinition | string, P>(
  *     job: J, options: ScheduleBaseOptions & ScheduleTiming & SchedulePayload<J, P>,

@@ -1,3 +1,4 @@
+export declare const MAX_WEIGHT = 1000;
 /**
  * Defines a job name and its options. Producers and workers import the definition. `defineJob<{ reportId: string }>(…)`
  * declares the payload: `enqueue`, `handle` and `mutexKeys` then check it.

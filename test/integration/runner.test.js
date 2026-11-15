@@ -2,7 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import {
     createSqlane,
-    defineConcurrencyGroup,
+    defineConcurrencyLimit,
     defineJob,
     DrainTimeoutError,
     FatalJobError,
@@ -298,9 +298,10 @@ describe('start()', () => {
 });
 
 describe('concurrency', () => {
-    test('the cap of a name, of a concurrency group and of the instance', async () => {
-        const { sqlane, p } = await freshSqlane({ maxConcurrency: 3 });
-        const shared = defineConcurrencyGroup({ name: 'shared', maxConcurrency: 2 });
+    test('the local limit of a name, a shared local limit and the cap of the instance', async () => {
+        const { sqlane, p } = await freshSqlane({ localMaxConcurrency: 3 });
+        const solo = defineConcurrencyLimit({ name: 'solo', max: 1 });
+        const shared = defineConcurrencyLimit({ name: 'shared', max: 2 });
         const privateMeter = concurrencyMeter();
         const sharedMeter = concurrencyMeter();
         const allMeter = concurrencyMeter();
@@ -316,9 +317,9 @@ describe('concurrency', () => {
             allMeter.leave();
         };
 
-        sqlane.handle('solo', slowHandler(privateMeter), { maxConcurrency: 1 });
-        sqlane.handle('shared_a', slowHandler(sharedMeter), { concurrencyGroup: shared });
-        sqlane.handle('shared_b', slowHandler(sharedMeter), { concurrencyGroup: shared });
+        sqlane.handle(defineJob({ name: 'solo', localConcurrencyLimits: [solo] }), slowHandler(privateMeter));
+        sqlane.handle(defineJob({ name: 'shared_a', localConcurrencyLimits: [shared] }), slowHandler(sharedMeter));
+        sqlane.handle(defineJob({ name: 'shared_b', localConcurrencyLimits: [shared] }), slowHandler(sharedMeter));
         sqlane.handle('free', slowHandler(concurrencyMeter()));
 
         for (const name of ['solo', 'shared_a', 'shared_b', 'free']) {

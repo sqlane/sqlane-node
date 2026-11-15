@@ -342,14 +342,14 @@ function parseClaimedJobs(json, lockToken) {
  * Finds, chooses, claims and reads the due jobs of names without mutex keys, in one statement (a transaction of its
  * own). Each name locks its oldest due jobs that no other claim holds (SKIP LOCKED), up to its `maxJobs`. The locked
  * rows are taken in the order of their share, `(running + rank in the name − 1) / weight`, then the tie order, within
- * the free slots of the groups and of the instance: the order of `fill()` (fair_share.js), row by row. Then the next
- * due time of each requested name, among its pending jobs that this claim did not take.
+ * the free slots of the local limits and of the instance: the order of `fill()` (fair_share.js), row by row. Then the
+ * next due time of each requested name, among its pending jobs that this claim did not take.
  * @param {Executor} executor Outside a transaction.
  * @param {string} p
  * @param {import('./store.js').ClaimDueParams} params
  * @returns {Promise<import('./store.js').ClaimDueResult>} The jobs in the order of run_at.
  */
-export async function claimDue(executor, p, { requests, groupRooms, free, lockToken, lockedBy, leaseMs }) {
+export async function claimDue(executor, p, { requests, limitRooms, free, lockToken, lockedBy, leaseMs }) {
     if (!requests.length || free <= 0) {
         return { jobs: [], next: [], unpicked: [] };
     }
@@ -368,15 +368,51 @@ export async function claimDue(executor, p, { requests, groupRooms, free, lockTo
         return { ...result, unpicked: [] };
     }
 
+    // Without local limits, the free slots of the instance are the only cap: the first rows by share. With them, a
+    // walk row by row, as fill(): a row is taken while the instance and each of its limits have room
+    const pick = requests.some(request => request.limits.length)
+        ? `
+        ordered AS (
+            SELECT id, limits, ROW_NUMBER() OVER (ORDER BY share, tie, run_at, id) AS n FROM locked
+        ),
+        walk AS (
+            SELECT 0::bigint AS n, (SELECT rooms FROM limit_rooms) AS rooms, 0::bigint AS taken, NULL::text COLLATE "C" AS id
+            UNION ALL
+            SELECT o.n,
+                   CASE WHEN step.ok
+                        THEN ARRAY(SELECT u.room - (u.at - 1 = ANY(o.limits))::integer
+                                     FROM unnest(w.rooms) WITH ORDINALITY AS u(room, at) ORDER BY u.at)
+                        ELSE w.rooms END,
+                   w.taken + step.ok::integer,
+                   CASE WHEN step.ok THEN o.id END
+              FROM walk w
+              JOIN ordered o ON o.n = w.n + 1
+             CROSS JOIN LATERAL (
+                 SELECT NOT EXISTS (SELECT 1 FROM unnest(o.limits) AS l(at) WHERE w.rooms[l.at + 1] <= 0) AS ok
+             ) AS step
+             WHERE w.taken < $8
+        ),
+        picked AS (
+            SELECT id FROM walk WHERE id IS NOT NULL
+        ),`
+        : `
+        picked AS (
+            SELECT id FROM locked ORDER BY share, tie, run_at, id LIMIT $8
+        ),`;
     // One row: the claimed jobs, the next due times and the names of the locked rows left, as JSON texts. Bigints: a
-    // maxConcurrency may be above 2^31
+    // localMaxConcurrency may be above 2^31
     const [row] = await executor.query(`
-        WITH request AS (
-            SELECT * FROM unnest($1::text[], $2::bigint[], $3::bigint[], $4::integer[], $5::integer[], $6::integer[])
-                AS r(name, max_jobs, running, weight, grp, tie)
+        WITH RECURSIVE limit_rooms AS (
+            -- Typed here: only the walk reads it
+            SELECT $7::bigint[] AS rooms
+        ),
+        request AS (
+            SELECT r.name, r.max_jobs, r.running, r.weight, r.limits::integer[] AS limits, r.tie
+              FROM unnest($1::text[], $2::bigint[], $3::bigint[], $4::integer[], $5::text[], $6::integer[])
+                AS r(name, max_jobs, running, weight, limits, tie)
         ),
         locked AS (
-            SELECT due.id, due.run_at, request.name, request.grp, request.tie,
+            SELECT due.id, due.run_at, request.name, request.limits, request.tie,
                    (request.running + ROW_NUMBER() OVER (PARTITION BY request.name ORDER BY due.run_at, due.id) - 1)
                        ::float8 / request.weight AS share
               FROM request
@@ -387,18 +423,7 @@ export async function claimDue(executor, p, { requests, groupRooms, free, lockTo
                     FOR UPDATE SKIP LOCKED
              ) AS due
         ),
-        in_groups AS (
-            SELECT id, run_at, name, grp, tie, share,
-                   ROW_NUMBER() OVER (PARTITION BY grp ORDER BY share, tie, run_at, id) AS group_rank
-              FROM locked
-        ),
-        eligible AS (
-            SELECT id, run_at, name, tie, share FROM in_groups
-             WHERE grp IS NULL OR group_rank <= ($7::bigint[])[grp + 1]
-        ),
-        picked AS (
-            SELECT id FROM eligible ORDER BY share, tie, run_at, id LIMIT $8
-        ),
+        ${pick}
         claimed AS (
             UPDATE ${p}jobs AS j
                SET status = 'running', lock_token = $9, locked_by = $10,
@@ -435,9 +460,9 @@ export async function claimDue(executor, p, { requests, groupRooms, free, lockTo
         requests.map(request => request.maxJobs),
         requests.map(request => request.running),
         requests.map(request => request.weight),
-        requests.map(request => request.group),
+        requests.map(request => `{${request.limits.join(',')}}`),
         requests.map(request => request.tie),
-        groupRooms,
+        limitRooms,
         free,
         lockToken,
         lockedBy,

@@ -241,12 +241,12 @@ async function claimDue(store, params) {
  */
 function claimDueWithNext(store, params) {
     const requests = params.requests ?? [];
-    const groupRooms = params.groupRooms ?? [];
+    const limitRooms = params.limitRooms ?? [];
     const free = params.free ?? 100;
 
     return store.claimDue({
         requests,
-        groupRooms,
+        limitRooms,
         free,
         lockToken: 'TOKEN1',
         lockedBy: 'test:TOKEN1',
@@ -254,7 +254,7 @@ function claimDueWithNext(store, params) {
         // MySQL and MariaDB: the choice of the runner, by share
         choose: locked => chooseRows({
             rows: locked,
-            names: shareNamesOf(requests, groupRooms),
+            names: shareNamesOf(requests, limitRooms),
             free,
             base: 0,
             size: Math.max(requests.length, 1),
@@ -266,19 +266,18 @@ function claimDueWithNext(store, params) {
 /**
  * The names of a claim as the runner makes them: the tie order is the index.
  * @param {import('../../src/store/store.js').DueRequest[]} requests
- * @param {number[]} groupRooms
+ * @param {number[]} limitRooms
  * @returns {import('../../src/fair_share.js').ShareName[]}
  */
-function shareNamesOf(requests, groupRooms) {
-    const rooms = groupRooms.map(room => ({ room }));
+function shareNamesOf(requests, limitRooms) {
+    const rooms = limitRooms.map(room => ({ room }));
 
     return requests.map(due => ({
         name: due.name,
         index: due.tie,
         weight: due.weight,
         running: due.running,
-        room: Infinity,
-        group: due.group === null ? null : rooms[due.group],
+        limits: due.limits.map(limit => rooms[limit]),
         available: Infinity,
     }));
 }
@@ -291,7 +290,7 @@ function shareNamesOf(requests, groupRooms) {
  * @returns {import('../../src/store/store.js').DueRequest}
  */
 function request(name, maxJobs, tie, fields = {}) {
-    return { name, maxJobs, running: 0, weight: 1, group: null, tie, ...fields };
+    return { name, maxJobs, running: 0, weight: 1, limits: [], tie, ...fields };
 }
 
 /**
@@ -340,8 +339,8 @@ function seeded(seed) {
 }
 
 /**
- * One random claim: 2–6 names with due jobs, weights, running counts, groups and caps. The claim must take the jobs
- * that fill() takes on the rows that it locks: the oldest maxJobs due jobs of each name.
+ * One random claim: 2–6 names with due jobs, weights, running counts, local limits and caps. The claim must take the
+ * jobs that fill() takes on the rows that it locks: the oldest maxJobs due jobs of each name.
  * @param {import('../../src/types.js').Sqlane<any>} sqlane
  * @param {import('../../src/store/store.js').Store} store
  * @param {() => number} random
@@ -369,26 +368,26 @@ async function compareChoice(sqlane, store, random, round) {
         requests.push(request(name, maxJobs, index, {
             running: int(6),
             weight: [1, 1, 2, 3, 7, 1000][int(5)],
-            group: [null, 0, 1][int(2)],
+            limits: [[], [0], [1], [0, 1]][int(3)],
         }));
     }
 
-    const groupRooms = [int(3), int(6)];
+    const limitRooms = [int(3), int(6)];
     const free = 1 + int(10);
     // The rows of the names in FIFO order; the jobs of a name were enqueued oldest first
     const expected = chooseRows({
         rows,
-        names: shareNamesOf(requests, groupRooms),
+        names: shareNamesOf(requests, limitRooms),
         free,
         base: 0,
         size: count,
     }).chosen.map(row => row.id);
-    const claimed = await claimDue(store, { requests, groupRooms, free, lockToken: `R${round}` });
+    const claimed = await claimDue(store, { requests, limitRooms, free, lockToken: `R${round}` });
     const got = claimed.map(job => job.id);
 
     return expected.toSorted().join(',') === got.toSorted().join(',')
         ? []
-        : [{ round, requests, groupRooms, free, expected, got }];
+        : [{ round, requests, limitRooms, free, expected, got }];
 }
 
 describe('claimDue', () => {
@@ -469,7 +468,7 @@ describe('claimDue', () => {
         expect(rest.next).toStrictEqual([]);
     });
 
-    test('the free slots of each group and of the instance, by share', async () => {
+    test('the free slots of each local limit and of the instance, by share', async () => {
         const { sqlane, store } = await freshTables();
         const a1 = await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(50) });
         const b1 = await sqlane.enqueue(testAdapter.pool, 'b', {}, { runAt: ago(40) });
@@ -478,10 +477,10 @@ describe('claimDue', () => {
         await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(30) });
         await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(20) });
 
-        // a and b share group 0 (1 free slot); c has no group; the instance has 2 free slots
+        // a and b share limit 0 (1 free slot); c has no limit; the instance has 2 free slots
         const claimed = await claimDue(store, {
-            requests: [request('a', 1, 0, { group: 0 }), request('b', 1, 1, { group: 0 }), request('c', 2, 2)],
-            groupRooms: [1],
+            requests: [request('a', 1, 0, { limits: [0] }), request('b', 1, 1, { limits: [0] }), request('c', 2, 2)],
+            limitRooms: [1],
             free: 2,
         });
 

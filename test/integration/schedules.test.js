@@ -803,7 +803,7 @@ describe('schedules end to end', () => {
         /** @type {unknown[]} */
         const failures = [];
 
-        sqlane.handle(job, runs.handler, { maxConcurrency: 5 });
+        sqlane.handle(job, runs.handler);
         sqlane.handle('nightly_failed', ({ payload }) => {
             failures.push(payload);
         });
