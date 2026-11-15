@@ -18,7 +18,7 @@ const { values: args } = parseArgs({
         'dialect': { type: 'string', default: 'postgres' },
         'url': { type: 'string' },
         'names': { type: 'string', default: '1000' },
-        'mutex-keys': { type: 'string', default: '0' },
+        'limit-keys': { type: 'string', default: '0' },
         // producer
         'op': { type: 'string', default: 'enqueue' },
         'rate': { type: 'string', default: '20' },
@@ -48,10 +48,10 @@ const src = String(args.src);
 const dialect = String(args.dialect);
 const role = String(args.role);
 const hintPort = Number(args['hint-port']);
-const mutexKeyCount = Number(args['mutex-keys']);
+const limitKeyCount = Number(args['limit-keys']);
 // The drivers of this checkout, sqlane of the source tree
 const require = createRequire(join(src, 'package.json'));
-const { createSqlane, defineJob } = await import(join(src, 'src/index.js'));
+const { createSqlane, defineConcurrencyLimit, defineJob } = await import(join(src, 'src/index.js'));
 const names = Array.from({ length: Number(args.names) }, (_, index) => `job_${String(index).padStart(4, '0')}`);
 
 /**
@@ -107,13 +107,25 @@ async function connect() {
 }
 
 const { pool, adapter, hint } = await connect();
-// With --mutex-keys: one mutex key per job, `account:<index mod mutex-keys>`
+// With --limit-keys: one key of a global limit of 1 per job, `account:<index mod limit-keys>`; a mutex key before 6.0
+const account = defineConcurrencyLimit?.({ name: 'account', max: 1 });
+/**
+ * @param {number} index
+ * @returns {string} The key of the job.
+ */
+const keyOf = index => String(index % limitKeyCount);
+/**
+ * @param {{ payload: { index: number } }} context
+ * @returns {unknown} The key of the global limit of the job.
+ */
+const limitKeyOf = ({ payload }) => account.key(keyOf(payload.index));
+/** @type {Record<string, unknown>} */
+const limits = account
+    ? { globalConcurrencyLimits: (/** @type {{ payload: { index: number } }} */ context) => [limitKeyOf(context)] }
+    : { mutexKeys: (/** @type {{ index: number }} */ payload) => [`account:${keyOf(payload.index)}`] };
 const definitions = names.map(name => defineJob({
     name,
-    ...mutexKeyCount > 0 && {
-        mutexKeys: (/** @type {{ index: number }} */ payload) => [`account:${payload.index % mutexKeyCount}`],
-        timeout: '1m',
-    },
+    ...limitKeyCount > 0 && { ...limits, timeout: '1m' },
 }));
 const counts = { ops: 0, jobs: 0, completed: 0, fired: 0, errors: 0 };
 

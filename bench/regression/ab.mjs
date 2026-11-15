@@ -120,12 +120,12 @@ const SCENARIOS = [
         align: 'slot',
     },
     {
-        name: 'mutex',
-        unit: 'job with one of 100 mutex keys (20/s)',
+        name: 'global_limits',
+        unit: 'job with one of 100 keys of a global limit of 1 (20/s)',
         op: 'job',
         processes: [
-            { role: 'worker', args: ['--mutex-keys', '100'] },
-            { role: 'producer', args: ['--op', 'enqueue', '--rate', '20', '--mutex-keys', '100'] },
+            { role: 'worker', args: ['--limit-keys', '100'] },
+            { role: 'producer', args: ['--op', 'enqueue', '--rate', '20', '--limit-keys', '100'] },
         ],
         per: 'completed',
         align: 'poll',

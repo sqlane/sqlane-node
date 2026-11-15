@@ -185,9 +185,9 @@
                 }
             }
         },
-        "mutex": {
+        "global_limits": {
             "unit": "job",
-            "description": "job with one of 100 mutex keys (20/s)",
+            "description": "job with one of 100 keys of a global limit of 1 (20/s)",
             "databases": {
                 "postgres": {
                     "instructionsPerOp": 17497829,

@@ -13,7 +13,7 @@ database, and to compare sqlane with other job queues for the [performance page]
 ## Regressions
 
 The six hot paths: `enqueue` in a transaction of its own, `enqueueMany` of 100, a job claimed, run and completed over
-1000 job names, idle with 1000 job names, a schedule firing (1000 schedules), and a job with a mutex key.
+1000 job names, idle with 1000 job names, a schedule firing (1000 schedules), and a job with keys of global concurrency limits.
 
 **`pnpm bench:statements`** runs them as fixed sequences of public calls (`bench/regression/scenarios.mjs`) on each
 supported version in a container, and counts the statements, the rows and the blocks from the database's own
