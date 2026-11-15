@@ -41,7 +41,7 @@ bench/run_linux.sh compare        # ENGINE=docker for Docker
   1 ms. `tc` needs root in the container (`--cap-add NET_ADMIN`) and PostgreSQL refuses root, so the container starts
   as root, adds the delay, and runs the comparison as the image's `bench` user (`setpriv`). `run.mjs` reads the delay
   from `tc qdisc show dev lo` into `machines.<part>.latency`, and warns on Linux without one.
-- **Counters.** `bench/lib/counters.mjs` runs `bench/cpu/proc_usage_linux.py`, which opens a hardware counter on
+- **Counters.** `bench/lib/counters.mjs` runs `bench/lib/proc_usage_linux.py`, which opens a hardware counter on
   every thread of the container (`perf_event_open`). It counts the kernel too with `CAP_PERFMON` in the host's user
   namespace, or with `kernel.perf_event_paranoid` of 1 or less on the host: a rootless container's `CAP_PERFMON` is
   not enough (`sudo sysctl kernel.perf_event_paranoid=1`). Without it, the run warns, counts user space only, and
@@ -53,7 +53,7 @@ On a Ryzen 5 3600 (6 cores, 12 threads), the whole run takes about 10 minutes: t
 ### macOS: for development
 
 Node.js 24 or later and the servers from Homebrew: `postgresql@17` and `redis` (`--pg-bin`, `--redis-bin` for
-others). The counters come from `bench/cpu/proc_usage.py` (`proc_pid_rusage`). No netem: `latency` is null, and the
+others). The counters come from `bench/lib/proc_usage.py` (`proc_pid_rusage`). No netem: `latency` is null, and the
 latencies are those of a bare loopback. Good for comparing two versions of sqlane on one machine; the documents don't
 use these numbers.
 
@@ -140,7 +140,7 @@ Oxen Queue: not compared (it pins mysql2 3.16.3, which has a known high-severity
   the machine. Phase B, for times: one lane at a time, the steady load, for the latency (enqueue to handler start, p50
   and p99) and the CPU time. Its rows have `timing: true`.
 - **Counters.** Instructions retired, cycles and CPU time of each process, the database with all its processes. Compare
-  instructions: see [CPU cost per job](../../docs/contributing/measuring_cpu_cost.md#the-three-numbers).
+  instructions: see [the three numbers](../../docs/contributing/benchmarks.md#the-three-numbers).
 - **Statements per job.** `pg_stat_statements` counts the statements of the window's database (`statements`) and
   `pg_stat_activity` its connections. `queueStatements` leaves out the benchmark's own business work: each job of the
   producer is `BEGIN`, `INSERT INTO orders`, the library's enqueue, `COMMIT`. The statements that name the business

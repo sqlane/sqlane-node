@@ -10,7 +10,7 @@
 #
 # tc needs root in the container and PostgreSQL refuses root, so the container starts as root, adds the delay (if
 # any), and runs the command as the image's `bench` user (uid 1000), with CAP_PERFMON for the counters
-# (bench/cpu/proc_usage_linux.py).
+# (bench/lib/proc_usage_linux.py).
 #
 #   podman build -f bench/compare/linux.dockerfile -t sqlane-bench:linux bench/compare
 #   bench/run_linux.sh compare

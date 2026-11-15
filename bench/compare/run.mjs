@@ -1013,7 +1013,7 @@ function tables(runs) {
  * The performance of jobs: a lane per library on PostgreSQL, and BullMQ's on Redis, each with a server of its own.
  * Phase A, for instructions and statements: the lanes in parallel (in batches of PARALLEL), one workload at a time, the
  * windows started together (steady, idle with 1000 names); instructions do not depend on the load of the machine
- * (see docs/contributing/measuring_cpu_cost.md).
+ * (see docs/contributing/benchmarks.md).
  * Phase B, for times: one lane at a time, the steady load, for the latencies and the CPU time. Its rows have
  * `timing: true`.
  * @param {string[]} libraries
@@ -1089,7 +1089,7 @@ async function runJobs(libraries) {
 /**
  * The firing schedules: a run per library on PostgreSQL, and BullMQ's on Redis, each with a server and a database of
  * its own and CRON_PROCESSES workers. The runs go in parallel (in batches of PARALLEL): instructions do not depend on
- * the load of the machine (see docs/contributing/measuring_cpu_cost.md), and the runs wait for the same minutes.
+ * the load of the machine (see docs/contributing/benchmarks.md), and the runs wait for the same minutes.
  * CRON_REPEATS times; a row has the median of each number, and each run in `samples`.
  * @param {string[]} libraries
  * @returns {Promise<Record<string, any>[]>}

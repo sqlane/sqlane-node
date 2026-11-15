@@ -1,62 +1,56 @@
-# CPU cost per job
+# Benchmarks
 
-How to measure what one job costs in CPU: in the worker, in the process that enqueues it, and in the database. Use it
-to check a change that should make sqlane cheaper, or to find what to optimize next. `pnpm bench` measures latency and
-throughput instead.
+The benchmarks have two jobs: to catch a performance regression of sqlane before it ships, on every supported
+database, and to compare sqlane with other job queues for the [performance page](../performance_vs_other_libs.md).
 
-## Quick start
+| Command               | What it does                                                                                    | Time       |
+| --------------------- | ----------------------------------------------------------------------------------------------- | ---------- |
+| `pnpm bench:snapshot` | Statements, rows and blocks of sqlane's hot paths on each supported version, against a snapshot | 2 min (CI) |
+| `pnpm bench`          | CPU instructions and statements per operation: the working tree against `main`                  | 5–6 min    |
+| `pnpm bench:compare`  | sqlane and seven other queues on PostgreSQL ([bench/compare](../../bench/compare/README.md))    | 10 min     |
+| `pnpm bench:docs`     | The charts and the generated blocks of the performance page and the README, from the results    | a second   |
+
+## Regressions
+
+The six hot paths: `enqueue` in a transaction of its own, `enqueueMany` of 100, a job claimed, run and completed over
+1000 job names, idle with 1000 job names, a schedule firing (1000 schedules), and a job with a mutex key.
+
+**`pnpm bench:snapshot`** runs them as fixed sequences of public calls (`bench/regression/scenarios.mjs`) on each
+supported version in a container, and counts the statements, the rows and the blocks from the database's own
+statistics (`pg_stat_statements`, `performance_schema`). CI fails when a count leaves the range of
+`bench/regression/snapshot.json`, with a margin of 2% for statements and 20% for rows and blocks; one more statement
+per operation leaves it in every scenario. A change of a hot path that adds or removes statements on purpose updates
+the snapshot: `pnpm bench:snapshot --update` runs each scenario 10 times and keeps the range (about 20 minutes).
+`--db mysql-8.4` and `--scenario run` narrow a run.
+
+**`pnpm bench`** runs the same hot paths under steady load in separate processes (`bench/regression/app.mjs`), on
+PostgreSQL, MySQL and MariaDB from binaries, for the working tree and a baseline (`--ref main`, the default; `--ref .`:
+the working tree itself). Per operation it reports the CPU instructions of the sqlane processes and the database
+server, and the statements. A difference beyond ±5% in instructions or ±3% in statements reruns that pair once, and only
+a confirmed slowdown fails. `--db`, `--scenario` and `--window` narrow a run; `--save <file>` writes the numbers.
+
+On macOS, the servers come from Homebrew (`postgresql@17`, `mysql@8.4`, `mariadb@11.8`; `PG_BIN`, `MYSQL_BIN`,
+`MARIADB_BIN` for others), and the counters from `bench/lib/proc_usage.py`. On Linux, `bench/run_linux.sh ab` runs it
+in the container of `bench/compare/linux.dockerfile`, with the counters of `bench/lib/proc_usage_linux.py`.
+
+## Publishing
+
+The performance page and the README's charts come from one Linux machine:
 
 ```sh
-pnpm bench:cpu                                   # main vs the working tree, PostgreSQL, MySQL and MariaDB
-BASE=v2.0.0 DIALECTS=postgres pnpm bench:cpu     # another baseline, one database
-BASES="main v2.0.0" pnpm bench:cpu               # several baselines, against the same database server
+bench/run_linux.sh compare                                           # bench/compare/results.json
+bench/run_linux.sh ab --ref . --save bench/regression/results.json   # sqlane on each backend
+pnpm bench:docs                                                      # the charts and the generated blocks
 ```
 
-It takes about 3 minutes and prints a table:
-
-| Database | Variant      | Jobs | Instructions                       | Cycles                          | CPU ms                          |
-| -------- | ------------ | ---- | ---------------------------------- | ------------------------------- | ------------------------------- |
-| postgres | main         | 399  | 23.21 / 0.96 / 131.89 = **156.06** | 6.78 / 1.19 / 27.32 = **35.29** | 2.83 / 0.55 / 11.53 = **14.91** |
-| postgres | working tree | 400  | 1.18 / 0.61 / 2.21 = **4.00**      | 2.34 / 2.48 / 4.00 = **8.82**   | 1.48 / 1.55 / 2.55 = **5.58**   |
-
-Each cell is worker / producer / database = total, per job: instructions and cycles in millions, CPU in ms.
-
-Requirements: macOS on Apple Silicon, `pnpm install`, and the servers from Homebrew: `postgresql@17`, `mysql@8.4`,
-`mariadb@11.8`. `PG_BIN`, `MYSQL_BIN` and `MARIADB_BIN` point to other server binaries. The script starts private
-instances on ports 55433, 53307 and 53308, with data in a temporary directory, and stops them at the end. Your own
-database services are not touched. `WARMUP`, `MEASURE`, `NAMES`, `HISTORY` and `RATE` change the workload. `COMPLETED=1000000` adds that many
-completed jobs, spread evenly over the names, for the cost with a large table (on PostgreSQL, one `INSERT` in a
-few seconds). With a large table, use `MEASURE=40` or
-more: a 20 s window can catch one periodic task and not the other. `MUTEX_KEYS=100` gives each job one of 100 mutex keys, with
-handlers that hold it for 20 ms; the worker counts the overlaps of a key and the wrong keys, and the table reports
-them. `BLOCKED=10000`, with `MUTEX_KEYS`, adds that many due jobs, spread over the names, that wait for a key held
-for a day: a backlog that each claim of a name with mutex keys reads past. `QUEUED=10000` adds that many due jobs on one free key: a long queue that runs one
-job at a time. On PostgreSQL, `sizes.json` of each run has the sizes of the tables and indexes after the setup.
-
-## What it runs
-
-- **Workload.** 1000 job names. Each has one pending job a year ahead, so every name has pending jobs, as in a busy
-  app. A producer process enqueues 20 jobs/s, from a pool, outside a transaction. 9 of 10 jobs go to 10 hot names, the
-  rest to the others. A worker process runs them with empty handlers, concurrency 8, poll interval 5 s. So the numbers
-  are the cost of the queue itself.
-- **Wake-ups.** PostgreSQL uses NOTIFY. MySQL and MariaDB have none: a hint over UDP on localhost stands in for Redis
-  pub/sub.
-- **Databases.** Default configuration, read no `my.cnf`. MariaDB gets the binary log of MySQL 8.4 (`sync_binlog=1`,
-  row format), as in the benchmarks. TCP only.
-- **Window.** After a 5 s warm-up, the script reads the counters of each process, waits 20 s, reads them again, and
-  divides by the jobs that the worker completed in between. `before.json` and `after.json` of each run also split the
-  database by process title: its connections (`backend`), autovacuum, the checkpointer and so on. The database is its server process with all its
-  descendants (PostgreSQL forks a process per connection).
-- **Baseline.** `git archive <BASE>` gives the sources of the baseline; both variants use the drivers of the working
-  tree. Each variant runs against the same server instance, after fresh tables.
-
-The files: `bench/cpu/measure.sh` (the run), `bench/cpu/app.js` (the setup, worker and producer processes),
-`bench/cpu/proc_usage.py` (the counters).
+`kernel.perf_event_paranoid` must be 1 or less on the host, or the counters see user space only: the results say so
+(`kernelCounted`), and the runs warn.
 
 ## The three numbers
 
-`proc_usage.py` reads two hardware counters per process with `proc_pid_rusage` (no root needed for your own
-processes), and the CPU time from `ps`.
+`bench/lib/proc_usage.py` (macOS) reads two hardware counters per process with `proc_pid_rusage`, and the CPU time from
+`ps`; `bench/lib/proc_usage_linux.py` (Linux) opens them on every thread with `perf_event_open`, and reads the CPU time
+from `/proc`.
 
 - **Instructions retired**: how much work the code does. It does not depend on the core type, the clock or the load of
   the machine, so two runs agree within about 3%. Compare variants with it.
@@ -84,15 +78,15 @@ What made earlier measurements wrong:
    numbers from the host.
 4. **`perf record -a` in Docker** records every container of the VM, also the ones of a test run. Filter by the cgroup
    of the database container (below).
-5. **Processes that exit lose their counters.** The pg pool of the benchmark has no idle timeout, and the worker and
-   producer linger 3 s after the window, so their connections live until the second reading.
+5. **Processes that exit lose their counters.** The pools of the benchmarks have no idle timeout, and the worker and
+   producer live until the second reading, so their connections do too.
 6. **Statement statistics are not CPU.** `pg_stat_statements` gives execution and planning time; the
    `performance_schema` of MySQL and MariaDB gives latency, so its `COMMIT` includes the wait for the disk.
-7. **Unix sockets** in a long temporary path exceed the 104-byte limit of macOS: the script uses TCP.
+7. **Unix sockets** in a long temporary path exceed the 104-byte limit of macOS: the benchmarks use TCP.
 
 ## Finding where the cost is
 
-`measure.sh` says how much. These say where.
+`pnpm bench` says how much. These say where.
 
 **Node.** A CPU profile of the worker or the producer, for the measured window only:
 

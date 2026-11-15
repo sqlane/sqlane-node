@@ -26,7 +26,7 @@ async function capture(func) {
 test('the enqueue statement is pinned: its prepared statement does not change by accident', async () => {
     const { sql } = await capture(executor => insertJobsPostgres(executor, 'sqlane_', [], { enqueueToken: 't' }));
 
-    // Changed on purpose? Measure with `pnpm bench:cpu`, then pin the new hash.
+    // Changed on purpose? Measure with `pnpm bench`, then pin the new hash.
     expect(createHash('sha256').update(sql).digest('hex'))
         .toBe('baab81f8b10f08e35523208c90cc802fce95ca69c44a64dc2c163b7614ec38c8');
 });

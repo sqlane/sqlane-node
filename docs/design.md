@@ -726,5 +726,5 @@ Small helper modules, such as `backoff.js`, `duration.js`, `mutex_keys.js` and `
 - **DST oracle tests** check the cron search against a brute-force oracle, minute by minute, around every DST
   transition of 2026 in 10 zones, from random starts and along chains of slots. They also bound the work of each
   search.
-- **Benchmarks** (`pnpm bench`) do not run in CI. They measure the cost of the probe with 1000 idle names, the latency
-  from enqueue to start, and the throughput, and print the results.
+- **Benchmarks** ([benchmarks](contributing/benchmarks.md)): CI checks the statements of the hot paths on each
+  supported version (`pnpm bench:snapshot`). `pnpm bench` compares the CPU cost of a change with `main`.

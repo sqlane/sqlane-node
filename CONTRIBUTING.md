@@ -7,9 +7,9 @@ src/        the package @sqlane/core: the queue, the SQL of each dialect, migrat
 types/      its declarations: generated from the JSDoc of src/ (`pnpm build:types`), committed
 test/       integration tests (MySQL, MariaDB and PostgreSQL in Docker, testcontainers), type tests, test databases
 examples/   usage examples; examples/quickstart: runs with the published package (CI: with the packed one)
-bench/      the benchmarks
+bench/      the benchmarks: regression/ (sqlane alone), compare/ (with other queues)
 docs/       user docs: api, adapters, design, features and performance vs other libs, performance results, migrations
-docs/contributing/  maintainer docs: measuring CPU cost, releasing
+docs/contributing/  maintainer docs: benchmarks, releasing
 scripts/    CI scripts
 ```
 
@@ -32,19 +32,20 @@ hk install --global --mise   # Git hooks, also for GUI Git clients: lint, format
 
 ## Commands
 
-| Command              | Does                                                                              |
-| -------------------- | --------------------------------------------------------------------------------- |
-| `pnpm test`          | Run the tests (Vitest)                                                            |
-| `pnpm lint`          | Lint, including formatting (oxlint, @stylistic)                                   |
-| `pnpm lint:fix`      | Fix lint and formatting                                                           |
-| `pnpm format`        | Format the other files: JSON, YAML, Markdown, TOML (oxfmt)                        |
-| `pnpm lint:package`  | Check the package that npm would publish (publint)                                |
-| `pnpm typecheck`     | Type-check the JSDoc (`tsc`, no emit)                                             |
-| `pnpm build:types`   | Generate `types/` from the JSDoc of `src/`                                        |
-| `pnpm check`         | Run all hook checks on all files (`hk check --all`)                               |
-| `pnpm bench`         | Run the benchmarks: latency and throughput on each database (Docker)              |
-| `pnpm bench:cpu`     | Measure the [CPU cost per job](docs/contributing/measuring_cpu_cost.md) vs `main` |
-| `pnpm bench:compare` | Run the [comparison](docs/features_vs_other_libs.md) with other queues            |
+| Command               | Does                                                                                                                    |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `pnpm test`           | Run the tests (Vitest)                                                                                                  |
+| `pnpm lint`           | Lint, including formatting (oxlint, @stylistic)                                                                         |
+| `pnpm lint:fix`       | Fix lint and formatting                                                                                                 |
+| `pnpm format`         | Format the other files: JSON, YAML, Markdown, TOML (oxfmt)                                                              |
+| `pnpm lint:package`   | Check the package that npm would publish (publint)                                                                      |
+| `pnpm typecheck`      | Type-check the JSDoc (`tsc`, no emit)                                                                                   |
+| `pnpm build:types`    | Generate `types/` from the JSDoc of `src/`                                                                              |
+| `pnpm check`          | Run all hook checks on all files (`hk check --all`)                                                                     |
+| `pnpm bench:snapshot` | Check the statements of the hot paths on each database ([benchmarks](docs/contributing/benchmarks.md))                  |
+| `pnpm bench`          | Compare the CPU cost and statements of the working tree with `main`                                                     |
+| `pnpm bench:compare`  | Compare with other queues: [features](docs/features_vs_other_libs.md), [performance](docs/performance_vs_other_libs.md) |
+| `pnpm bench:docs`     | Generate the performance page's charts and tables from the results                                                      |
 
 ## Commits and changesets
 

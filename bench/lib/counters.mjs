@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
-const CPU = join(import.meta.dirname, '../cpu');
+const CPU = import.meta.dirname;
 const LINUX = process.platform === 'linux';
 
 /**
