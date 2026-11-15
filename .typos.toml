@@ -1,2 +1,6 @@
 [files]
 extend-exclude = ["pnpm-lock.yaml"]
+
+[default.extend-words]
+# setpriv --inh-caps (bench/compare/run_linux.sh)
+inh = "inh"

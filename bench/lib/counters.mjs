@@ -23,6 +23,8 @@ const LINUX = process.platform === 'linux';
 let linuxDaemon = null;
 /** @type {import('node:child_process').ChildProcess | null} */
 let daemonProcess = null;
+/** @type {boolean | null} Whether the daemon counts the kernel's instructions too */
+let kernel = null;
 
 /**
  * Starts the Linux daemon: the counts of a process that exists before it start at the daemon's start. Call it before
@@ -46,6 +48,15 @@ export function stopCounters() {
 }
 
 /**
+ * @returns {boolean | null} Linux, once startCounters() resolved: whether the counts include the kernel's instructions
+ *     (the daemon needs CAP_PERFMON in the host's user namespace, or `kernel.perf_event_paranoid` of 1 or less; a
+ *     rootless container's CAP_PERFMON does not count). null: macOS, or the daemon not started.
+ */
+export function countsKernel() {
+    return kernel;
+}
+
+/**
  * @returns {Promise<(processes: Record<string, string>) => Promise<Record<string, Counters>>>} A request to the daemon.
  */
 async function startLinuxDaemon() {
@@ -66,6 +77,7 @@ async function startLinuxDaemon() {
         const message = JSON.parse(line);
 
         if (message.ready) {
+            kernel = message.kernel ?? null;
             ready.resolve();
         } else {
             pending.get(message.id)?.(message.result);

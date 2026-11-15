@@ -1,53 +1,45 @@
 // The comparison of docs/features_vs_other_libs.md and docs/performance_vs_other_libs.md: the feature checks, the
-// performance workloads of jobs, and those of schedules, on database servers of this host: macOS with Homebrew, or
-// Linux in the container of linux.dockerfile.
+// performance workloads of jobs, and those of schedules, on PostgreSQL (BullMQ also on Redis) of this host: Linux in
+// the container of linux.dockerfile (run_linux.sh: the published numbers, with 0.5 ms each way on the loopback), or
+// macOS with Homebrew.
 //
-//   pnpm bench:compare                    # checks and perf, about 10.5 minutes
-//   pnpm bench:compare --only checks      # or: perf (the jobs, about 9 minutes), cron (the schedules, about 9)
+//   pnpm bench:compare                    # checks and perf
+//   pnpm bench:compare --only checks      # or: perf (the jobs), cron (the schedules)
 //   pnpm bench:compare --only cron --libs sqlane,river
 //   pnpm bench:compare --parallel 4       # at most 4 runs at once: a machine with fewer cores than 8
 //
-// Options: --pg-bin, --mysql-bin, --mariadb-bin, --redis-bin (the directories of the server binaries; defaults: the
-// PG_BIN, MYSQL_BIN, MARIADB_BIN and REDIS_BIN variables, else Homebrew's). Writes results.json next to this file and
-// prints Markdown tables. See README.md.
+// Options: --pg-bin, --redis-bin (the directories of the server binaries; defaults: the PG_BIN and REDIS_BIN
+// variables, else Homebrew's). Writes results.json next to this file and prints Markdown tables. See README.md.
 /* oxlint-disable no-await-in-loop -- the runs go one after the other: they share the machine */
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { cpus, release as kernelRelease, tmpdir, totalmem } from 'node:os';
-import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs, promisify } from 'node:util';
-import { createConnection } from 'mysql2/promise';
 import { Client } from 'pg';
+import { countersAsync, countsKernel, difference, startCounters, stopCounters } from '../lib/counters.mjs';
+import { postgresTemplate, startPostgres, startRedis } from '../lib/servers.mjs';
 
 const execFileAsync = promisify(execFile);
 const HERE = import.meta.dirname;
 const LINUX = process.platform === 'linux';
-// oxlint-disable-next-line node/no-process-env -- the server binaries and the counters' interpreter (linux.dockerfile)
-const ENV = process.env;
-const { PG_BIN: PG_ENV, MYSQL_BIN: MYSQL_ENV, MARIADB_BIN: MARIADB_ENV, REDIS_BIN: REDIS_ENV } = ENV;
-const { PROC_USAGE_PYTHON } = ENV;
-const PROC_USAGE = join(HERE, '../cpu/proc_usage.py');
-const PROC_USAGE_LINUX = join(HERE, '../cpu/proc_usage_linux.py');
+// oxlint-disable-next-line node/no-process-env -- the server binaries (linux.dockerfile)
+const { PG_BIN: PG_ENV, REDIS_BIN: REDIS_ENV } = process.env;
 const { values: args } = parseArgs({
     options: {
         'only': { type: 'string' },
         'libs': { type: 'string' },
         'pg-bin': { type: 'string', default: PG_ENV ?? '/opt/homebrew/opt/postgresql@17/bin' },
-        'mysql-bin': { type: 'string', default: MYSQL_ENV ?? '/opt/homebrew/opt/mysql@8.4/bin' },
-        'mariadb-bin': { type: 'string', default: MARIADB_ENV ?? '/opt/homebrew/opt/mariadb@11.8/bin' },
         'redis-bin': { type: 'string', default: REDIS_ENV ?? '/opt/homebrew/bin' },
         'parallel': { type: 'string' },
     },
 });
 const PG_BIN = args['pg-bin'];
-const MYSQL_BIN = args['mysql-bin'];
-const MARIADB_BIN = args['mariadb-bin'];
 const REDIS_BIN = args['redis-bin'];
 /**
- * The most runs at once: the lanes of phase A, and the firing schedule runs, go in batches of this size, each batch
- * with its windows started together. Unlimited by default (8 cores): on fewer cores, the runs fall behind the load.
+ * The most runs at once: the lanes of phase A, and the schedule runs, go in batches of this size, each batch with its
+ * windows started together. Unlimited by default (8 cores): on fewer cores, the runs fall behind the load.
  */
 const PARALLEL = args.parallel ? Number(args.parallel) : Number.POSITIVE_INFINITY;
 
@@ -77,12 +69,13 @@ function batches(items, size) {
 const PERF_LIBRARIES = [
     'sqlane', 'pg-boss', 'graphile-worker', 'river', 'bullmq', 'sidequest', 'boring-node-queue', 'izi-queue',
 ];
-/** The schedules: the libraries whose adapters run schedules */
-const CRON_LIBRARIES = new Set([
-    'sqlane', 'pg-boss', 'graphile-worker', 'river', 'bullmq', 'sidequest', 'boring-node-queue', 'izi-queue',
-]);
+/**
+ * The databases of the performance and schedule runs: of those that an adapter lists, PostgreSQL, and Redis (BullMQ).
+ * The feature checks run on PostgreSQL.
+ */
+const PERF_DATABASES = new Set(['postgres', 'redis']);
 const ALL_PARTS = ['checks', 'perf', 'cron'];
-/** The schedules are a part of their own, outside the default: each run stays under 15 minutes */
+/** The schedules are a part of their own, outside the default */
 const PARTS = new Set(args.only ? [args.only] : ['checks', 'perf']);
 
 if (!ALL_PARTS.includes(args.only ?? 'checks')) {
@@ -100,21 +93,12 @@ const WARMUP_S = 5;
 const MEASURE_S = 15;
 const NAMES = 1000;
 const RATE = 20;
-const BACKLOG = 10_000;
-/** A drain that takes longer stops: each run stays under 15 minutes */
-const DRAIN_LIMIT_S = 60;
 const SCHEDULES = 1000;
-/** A sparse cron, which pg-boss's cron parser evaluates far slower than a daily one: a separate idle run */
-const YEARLY_CRON = '0 0 1 1 *';
 const FIRE_CRON = '* * * * *';
-/** The schedule runs repeat: the tables give the median, results.json each run */
-const CRON_REPEATS = 3;
-/**
- * The window of the idle schedules: twice the longest check of a library (sqlane's longest timer sleep and Graphile
- * Worker's minute timer, 60 s; pg-boss's cron pass, 30 s; River's election, 5 s), so each check counts a whole number
- * of times. The schedule runs go in parallel: it ends with the firing ones
- */
-const CRON_IDLE_S = 120;
+/** The worker processes of a schedule run */
+const CRON_PROCESSES = 3;
+/** The schedule runs repeat: a row has the median of each number, and each run in `samples` */
+const CRON_REPEATS = 1;
 /** The schedule runs start together: the first slot comes at least this long after the last worker is ready */
 const CRON_WARMUP_S = 10;
 /** The CPU window of the firing schedules: one period, from 30 s after the first slot to 30 s after the second */
@@ -125,20 +109,21 @@ const CRON_FIRE_S = 60;
  */
 const CRON_LATE_S = 70;
 const MINUTE_MS = 60_000;
+/** The port of the checks' PostgreSQL */
+const CHECKS_PG_PORT = 55_442;
 /**
- * The first ports of the servers of the schedule runs. PostgreSQL: one per library, each run counts the backends of its
- * database; then the one of the business tables of the runs on Redis. Redis and MySQL: one per run, the server's
- * process is the run's database
+ * The first ports of the servers of the schedule runs, one per lane: PostgreSQL (each run counts the backends of its
+ * database), and Redis, whose lane has a PostgreSQL for the business table too
  */
-const CRON_PORT = 55_450;
+const CRON_PG_PORT = 55_450;
 const CRON_REDIS_PORT = 56_450;
-const CRON_MYSQL_PORT = 53_450;
-/** The first ports of the servers of the performance lanes: one per library and database */
+/** The first ports of the servers of the performance lanes, one per lane */
 const PERF_PG_PORT = 55_500;
-const PERF_MYSQL_PORT = 53_320;
 const PERF_REDIS_PORT = 56_380;
-/** The workloads of a lane, one after the other */
-const JOB_WORKLOADS = /** @type {const} */ ([['steady', NAMES], ['idle', 1], ['idle', NAMES], ['drain', NAMES]]);
+/** The workloads of a lane in phase A, one after the other */
+const JOB_WORKLOADS = /** @type {const} */ ([['steady', NAMES], ['idle', NAMES]]);
+/** The PostgreSQL servers' max_connections: the checks run the libraries in parallel on one */
+const PG_CONNECTIONS = 500;
 const tmp = mkdtempSync(join(tmpdir(), 'sqlane-compare-'));
 /** @type {(() => void)[]} */
 const cleanups = [];
@@ -198,206 +183,73 @@ function exited(child) {
 }
 
 /**
- * Linux keeps no running total of a process's instructions: a daemon opens a counter on each thread of the container
- * as it appears (proc_usage_linux.py), from the start of the run. PROC_USAGE_PYTHON: an interpreter with CAP_PERFMON,
- * so the counts include the kernel.
+ * The delay that netem adds on the loopback interface (run_linux.sh: `tc qdisc add dev lo root netem delay 0.5ms`),
+ * from `tc qdisc show dev lo`. A packet goes through the loopback's queue once, so a round trip between a client and
+ * its database costs twice the delay.
+ * @returns {{ oneWayMs: number, roundTripMs: number, qdisc: string } | null} null: macOS (no netem), or no delay.
  */
-const linuxCounters = LINUX ? startLinuxCounters() : null;
-
-/**
- * @returns {Promise<(processes: Record<string, string>) => Promise<Record<string, any>>>} a request to the daemon
- */
-async function startLinuxCounters() {
-    const daemon = spawn(PROC_USAGE_PYTHON ?? 'python3', [PROC_USAGE_LINUX], {
-        stdio: ['pipe', 'pipe', 'inherit'],
-    });
-
-    cleanups.push(() => daemon.kill('SIGKILL'));
-
-    /** @type {Map<number, (result: Record<string, any>) => void>} */
-    const pending = new Map();
-    /** @type {PromiseWithResolvers<void>} */
-    const ready = Promise.withResolvers();
-    let next = 0;
-
-    createInterface({ input: /** @type {import('node:stream').Readable} */ (daemon.stdout) }).on('line', (line) => {
-        const message = JSON.parse(line);
-
-        if (message.ready) {
-            ready.resolve();
-        } else {
-            pending.get(message.id)?.(message.result);
-            pending.delete(message.id);
-        }
-    });
-    daemon.on('exit', code => ready.reject(new Error(`proc_usage_linux.py exited with ${code}`)));
-    await ready.promise;
-
-    return (processes) => {
-        const id = next++;
-        const { promise, resolve } = Promise.withResolvers();
-
-        pending.set(id, resolve);
-        daemon.stdin?.write(`${JSON.stringify({ id, processes })}\n`);
-
-        return promise;
-    };
-}
-
-/**
- * The counters of processes, without blocking the runs that go in parallel.
- * @param {Record<string, string>} processes label: pid, with `+` for the process and its descendants
- * @returns {Promise<Record<string, any>>} label: { instructions, cycles, cpuSeconds, byCommand }
- */
-async function countersAsync(processes) {
-    if (linuxCounters) {
-        return (await linuxCounters)(processes);
+function loopbackDelay() {
+    if (!LINUX) {
+        return null;
     }
 
-    const { stdout } = await execFileAsync('python3', [
-        PROC_USAGE, ...Object.entries(processes).map(([label, pid]) => `${label}=${pid}`),
-    ], { encoding: 'utf8' });
+    for (const tc of ['tc', '/usr/sbin/tc', '/sbin/tc']) {
+        let qdisc;
 
-    return JSON.parse(stdout);
-}
-
-/**
- * Starts PostgreSQL with pg_stat_statements.
- * @param {{ port?: number, template?: string, connections?: number }} [options] template: a data directory to clone
- *     instead of initdb.
- * @returns {Promise<{ url: string, pid: number }>}
- */
-async function startPostgres({ port = 55_442, template, connections = 500 } = {}) {
-    const data = join(tmp, `pg-${port}`);
-
-    if (template) {
-        // A clone on APFS: instant; on Linux, a reflink where the file system has them
-        await execFileAsync('cp', LINUX ? ['-a', '--reflink=auto', template, data] : ['-c', '-R', template, data]);
-    } else {
-        execFileSync(join(PG_BIN, 'initdb'), ['-D', data, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
-    }
-
-    await execFileAsync(join(PG_BIN, 'pg_ctl'), ['-D', data, '-l', join(tmp, `pg-${port}.log`), '-w', 'start', '-o', [
-        `-p ${port} -c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c max_connections=${connections}`,
-        '-c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=top',
-    ].join(' ')]);
-    cleanups.push(() => execFileSync(join(PG_BIN, 'pg_ctl'), ['-D', data, '-m', 'immediate', 'stop'], { stdio: 'ignore' }));
-
-    const url = `postgresql://postgres@127.0.0.1:${port}/postgres`;
-    const admin = new Client({ connectionString: url });
-
-    await admin.connect();
-    await admin.query('CREATE EXTENSION pg_stat_statements');
-    await admin.end();
-
-    return { url, pid: Number(readFileSync(join(data, 'postmaster.pid'), 'utf8').split('\n')[0]) };
-}
-
-/** @type {Promise<void>} The installations of MySQL and MariaDB data directories, one after the other */
-let installs = Promise.resolve();
-
-/**
- * Starts MySQL or MariaDB, as bench/cpu/measure.sh: default configuration; MariaDB with the binary log of MySQL 8.4.
- * @param {'mysql' | 'mariadb'} dialect
- * @param {{ port?: number, name?: string }} [options] name: of its data directory, socket and log.
- * @returns {Promise<{ url: string, pid: number }>}
- */
-async function startMysqlFamily(dialect, { port = dialect === 'mysql' ? 53_317 : 53_318, name = dialect } = {}) {
-    const data = join(tmp, name);
-    const initFile = join(tmp, `${name}-init.sql`);
-
-    writeFileSync(initFile, `CREATE DATABASE IF NOT EXISTS bench;
-CREATE USER IF NOT EXISTS 'bench'@'127.0.0.1';
-GRANT ALL ON *.* TO 'bench'@'127.0.0.1';
-`);
-
-    // One installation at a time: parallel ones share temporary tables in the system's temporary directory
-    const previous = installs;
-    /** @type {PromiseWithResolvers<void>} */
-    const { promise, resolve: done } = Promise.withResolvers();
-
-    installs = promise;
-
-    // A temporary directory of its own, too: the servers name their temporary tables after their process ids
-    const temporary = `${data}-tmp`;
-
-    execFileSync('mkdir', ['-p', temporary]);
-
-    try {
-        await previous;
-
-        if (dialect === 'mysql') {
-            await execFileAsync(join(MYSQL_BIN, 'mysqld'), [
-                '--no-defaults', '--initialize-insecure', `--datadir=${data}`, `--tmpdir=${temporary}`,
-            ]);
-        } else {
-            await execFileAsync(join(MARIADB_BIN, 'mariadb-install-db'), [
-                '--no-defaults', `--datadir=${data}`, '--skip-test-db',
-            ], { env: { ...minimalEnv(), TMPDIR: temporary } });
-        }
-    } finally {
-        done();
-    }
-
-    const server = spawn(dialect === 'mysql' ? join(MYSQL_BIN, 'mysqld') : join(MARIADB_BIN, 'mariadbd'), [
-        '--no-defaults', `--datadir=${data}`, `--port=${port}`, '--bind-address=127.0.0.1', `--socket=${name}.sock`,
-        `--tmpdir=${temporary}`,
-        `--log-error=${join(tmp, `${name}.err`)}`, `--init-file=${initFile}`,
-        ...dialect === 'mysql' ? ['--mysqlx=OFF'] : ['--log-bin=binlog', '--sync-binlog=1', '--binlog-format=ROW'],
-    ], { cwd: tmp, stdio: 'ignore' });
-
-    cleanups.push(() => server.kill('SIGKILL'));
-
-    const url = `mysql://bench@127.0.0.1:${port}/bench`;
-
-    for (let tries = 0; ; tries++) {
         try {
-            await (await createConnection({ uri: url })).end();
-            break;
-        } catch (error) {
-            if (tries > 120) {
-                throw error;
-            }
-
-            await sleep(500);
+            qdisc = execFileSync(tc, ['qdisc', 'show', 'dev', 'lo'], { encoding: 'utf8' }).trim();
+        } catch {
+            continue;
         }
+
+        const match = /\bnetem\b.*?\bdelay ([\d.]+)(us|ms|s)\b/u.exec(qdisc);
+
+        if (!match) {
+            return null;
+        }
+
+        const oneWayMs = Number(match[1]) * { us: 0.001, ms: 1, s: 1000 }[/** @type {'us' | 'ms' | 's'} */ (match[2])];
+
+        return { oneWayMs, roundTripMs: 2 * oneWayMs, qdisc };
     }
 
-    return { url, pid: /** @type {number} */ (server.pid) };
+    return null;
 }
 
+/** @type {string | null} An initialized data directory that each PostgreSQL server clones */
+let template = null;
+
 /**
- * Starts Redis for BullMQ: a private port, data in the temporary directory, the append-only file synced every second
- * (its documented durable setting; no snapshots).
+ * Starts PostgreSQL with pg_stat_statements (bench/lib/servers.mjs), stopped at the end of the run.
  * @param {number} port
- * @returns {Promise<{ url: string, pid: number }>}
+ * @returns {Promise<Server>}
  */
-async function startRedis(port) {
-    const data = join(tmp, `redis-${port}`);
+async function postgresServer(port) {
+    template ??= postgresTemplate({ bin: PG_BIN, dir: tmp });
 
-    execFileSync('mkdir', ['-p', data]);
+    const server = await startPostgres({ bin: PG_BIN, port, dir: tmp, template, connections: PG_CONNECTIONS });
 
-    const server = spawn(join(REDIS_BIN, 'redis-server'), [
-        '--port', String(port), '--bind', '127.0.0.1', '--dir', data, '--save', '', '--appendonly', 'yes',
-        '--appendfsync', 'everysec', '--protected-mode', 'yes', '--logfile', join(data, 'redis.log'),
-    ], { stdio: 'ignore' });
+    cleanups.push(() => server.kill());
 
-    cleanups.push(() => server.kill('SIGKILL'));
+    return { url: server.url, pid: server.pid };
+}
 
-    for (let tries = 0; ; tries++) {
-        try {
-            execFileSync(join(REDIS_BIN, 'redis-cli'), ['-p', String(port), 'PING'], { stdio: 'ignore' });
-            break;
-        } catch (error) {
-            if (tries > 60) {
-                throw error;
-            }
+/**
+ * Starts Redis for BullMQ (bench/lib/servers.mjs): the append-only file synced every second, no snapshots; and a
+ * PostgreSQL for the business table.
+ * @param {number} port
+ * @param {number} businessPort
+ * @returns {Promise<Server>}
+ */
+async function redisServer(port, businessPort) {
+    const [server, business] = await Promise.all([
+        startRedis({ bin: REDIS_BIN, port, dir: tmp }),
+        postgresServer(businessPort),
+    ]);
 
-            await sleep(250);
-        }
-    }
+    cleanups.push(() => server.kill());
 
-    return { url: `redis://127.0.0.1:${port}`, pid: /** @type {number} */ (server.pid) };
+    return { url: server.url, pid: server.pid, business };
 }
 
 /**
@@ -408,56 +260,114 @@ async function startRedis(port) {
 async function freshDatabase(adminUrl, database) {
     const url = new URL(adminUrl);
 
-    if (adminUrl.startsWith('mysql:')) {
-        const connection = await createConnection({ uri: adminUrl });
-
-        await connection.query(`DROP DATABASE IF EXISTS ${database}`);
-        await connection.query(`CREATE DATABASE ${database}`);
-        await connection.end();
-    } else {
-        const admin = new Client({ connectionString: adminUrl });
-
-        await admin.connect();
-        await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
-        await admin.query(`CREATE DATABASE ${database}`);
-        await admin.end();
-    }
-
+    await adminQuery(adminUrl, `DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+    await adminQuery(adminUrl, `CREATE DATABASE ${database}`);
     url.pathname = `/${database}`;
 
     return url.toString();
 }
 
 /**
- * The statements of a PostgreSQL database since the last reset, and its connections.
+ * The statements of the queue: those of the window, without the benchmark's own business work. Each job of the
+ * producer (perf.mjs) is a business transaction on the queue's database: BEGIN, INSERT INTO orders, the library's
+ * enqueue (or none: then the library enqueues after the COMMIT), COMMIT. The INSERT statements are those that name the
+ * business table `orders`, which no library touches; each came with one BEGIN and one COMMIT of the producer, so the
+ * business work is 3 statements per INSERT (pg_stat_statements counts BEGIN and COMMIT: track_utility is on by
+ * default). Any other statement is the queue's: its enqueue in the transaction, its own transactions, its worker. On
+ * BullMQ's Redis lane, the PostgreSQL holds the business table only, and its queue statements come out at 0.
+ * @param {{ query: string, calls: number }[]} byStatement the statements of the window
+ * @returns {{ statements: number, businessStatements: number, queueStatements: number }}
+ */
+function queueStatements(byStatement) {
+    const callsOf = (/** @type {RegExp} */ pattern) => sum(
+        byStatement.filter(({ query }) => pattern.test(query)).map(({ calls }) => calls),
+    );
+    const statements = sum(byStatement.map(({ calls }) => calls));
+    const inserts = callsOf(/\borders\b/iu);
+
+    // A transaction that straddles the reset loses its BEGIN: 1 at most
+    if (callsOf(/^\s*(?:begin|start transaction)\b/iu) < inserts - 1 || callsOf(/^\s*commit\b/iu) < inserts - 1) {
+        process.stderr.write(`warning: fewer BEGINs or COMMITs than business INSERT statements (${inserts}): queueStatements `
+            + 'subtracts statements that did not run\n');
+    }
+
+    return { statements, businessStatements: 3 * inserts, queueStatements: statements - (3 * inserts) };
+}
+
+/**
+ * The statements of a PostgreSQL database since the last reset (queueStatements()), and its connections.
  * @param {string} adminUrl
  * @param {string} database
- * @param {{ reset?: boolean, scoped?: boolean }} [options] scoped: reset the statements of this database only.
- * @returns {Promise<{ statements: number, connections: number }>}
+ * @param {{ reset?: boolean }} [options] reset: then clear the statements of this database.
+ * @returns {Promise<{ statements: number, businessStatements: number, queueStatements: number, connections: number }>}
  */
-async function postgresStats(adminUrl, database, { reset = false, scoped = false } = {}) {
+async function postgresStats(adminUrl, database, { reset = false } = {}) {
     const admin = new Client({ connectionString: adminUrl });
 
     await admin.connect();
 
-    const { rows: [stats] } = await admin.query(`
-        SELECT (SELECT coalesce(sum(s.calls), 0)::bigint FROM pg_stat_statements s JOIN pg_database d ON d.oid = s.dbid
-                 WHERE d.datname = $1) AS statements,
-               (SELECT count(*)::integer FROM pg_stat_activity WHERE datname = $1) AS connections
-    `, [database]);
+    try {
+        const { rows } = await admin.query(`
+            SELECT s.query, sum(s.calls)::bigint AS calls
+            FROM pg_stat_statements s JOIN pg_database d ON d.oid = s.dbid
+            WHERE d.datname = $1
+            GROUP BY s.query`, [database]);
+        const { rows: [{ connections }] } = await admin.query(
+            'SELECT count(*)::integer AS connections FROM pg_stat_activity WHERE datname = $1', [database],
+        );
 
-    if (reset && scoped) {
-        // Only this database's: other runs share the server
-        await admin.query(`
-            SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = $1), 0)
-        `, [database]);
-    } else if (reset) {
-        await admin.query('SELECT pg_stat_statements_reset()');
+        if (reset) {
+            // Only this database's: the admin connection works from another one
+            await admin.query(`
+                SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = $1), 0)
+            `, [database]);
+        }
+
+        return {
+            ...queueStatements(rows.map(row => ({ query: String(row.query), calls: Number(row.calls) }))),
+            connections,
+        };
+    } finally {
+        await admin.end();
+    }
+}
+
+/**
+ * @param {string} url
+ * @returns {Promise<Record<string, number>>} The calls of each command since the start of the Redis server
+ *     (`INFO commandstats`), those that its Lua scripts call included.
+ */
+async function redisCommandStats(url) {
+    const { stdout } = await execFileAsync(join(REDIS_BIN, 'redis-cli'), ['-u', url, 'INFO', 'commandstats'], {
+        encoding: 'utf8',
+    });
+
+    return Object.fromEntries([...stdout.matchAll(/^cmdstat_(\S+):calls=(\d+)/gmu)].map(match => [
+        match[1], Number(match[2]),
+    ]));
+}
+
+/**
+ * The Redis commands of a window: those of the queue. The reading counts a command once it has run, so the first
+ * reading's INFO is in the second, and the second's is in neither: the measuring costs 1 INFO.
+ * @param {Record<string, number>} before
+ * @param {Record<string, number>} after
+ * @returns {{ redisCommands: number, redisByCommand: Record<string, number> }} redisByCommand: the calls of each
+ *     command, those of the Lua scripts (EVALSHA) included.
+ */
+function redisDelta(before, after) {
+    /** @type {Record<string, number>} */
+    const redisByCommand = {};
+
+    for (const [command, calls] of Object.entries(after)) {
+        const count = calls - (before[command] ?? 0) - (command === 'info' ? 1 : 0);
+
+        if (count > 0) {
+            redisByCommand[command] = count;
+        }
     }
 
-    await admin.end();
-
-    return { statements: Number(stats.statements), connections: stats.connections };
+    return { redisCommands: sum(Object.values(redisByCommand)), redisByCommand };
 }
 
 /**
@@ -487,11 +397,8 @@ async function backends(adminUrl, database) {
  */
 function backendDelta(before, after, labels) {
     const zero = { instructions: 0, cycles: 0, cpuSeconds: 0 };
-    const deltas = labels.filter(label => after[label]?.instructions > 0).map(label => ({
-        instructions: after[label].instructions - (before[label] ?? zero).instructions,
-        cycles: after[label].cycles - (before[label] ?? zero).cycles,
-        cpuSeconds: after[label].cpuSeconds - (before[label] ?? zero).cpuSeconds,
-    }));
+    const deltas = labels.filter(label => after[label]?.instructions > 0)
+        .map(label => difference(before[label] ?? zero, after[label]));
 
     return {
         instructions: sum(deltas.map(entry => entry.instructions)),
@@ -508,11 +415,11 @@ function backendDelta(before, after, labels) {
  */
 function delta(before, after, role) {
     // PostgreSQL: the backends of the connections only, not autovacuum or the checkpointer, which earlier runs feed
-    const backend = role === 'db' && after.db.byCommand.backend;
+    const backend = role === 'db' && after.db.byCommand?.backend;
 
     if (backend) {
         const [instructions, cycles, cpuSeconds] = backend;
-        const [instructionsBefore, cyclesBefore, cpuBefore] = before.db.byCommand.backend ?? [0, 0, 0];
+        const [instructionsBefore, cyclesBefore, cpuBefore] = before.db.byCommand?.backend ?? [0, 0, 0];
 
         return {
             instructions: instructions - instructionsBefore,
@@ -521,22 +428,56 @@ function delta(before, after, role) {
         };
     }
 
-    return {
-        instructions: after[role].instructions - before[role].instructions,
-        cycles: after[role].cycles - before[role].cycles,
-        cpuSeconds: after[role].cpuSeconds - before[role].cpuSeconds,
-    };
+    return difference(before[role], after[role]);
 }
 
 /**
- * @typedef {{ url: string, pid: number, business?: { url: string, pid: number } }} Server A database server. Redis:
- *     its PostgreSQL for the business table in `business`.
+ * @typedef {{ url: string, pid: number, business?: Server }} Server A database server. Redis: its PostgreSQL for the
+ *     business table in `business`.
  */
 
 /**
+ * @typedef {{ library: string, database: 'postgres' | 'redis' }} Lane A library on one of its databases.
+ */
+
+/**
+ * @param {string[]} libraries
+ * @returns {Promise<Lane[]>} A lane per library and PostgreSQL or Redis among the databases that its adapter lists.
+ */
+async function lanesOf(libraries) {
+    /** @type {Lane[]} */
+    const lanes = [];
+
+    for (const library of libraries) {
+        const { adapter } = /** @type {{ adapter: import('./libs/common.mjs').Adapter }} */ (
+            await import(`./libs/${library.replaceAll('-', '_')}.mjs`)
+        );
+
+        for (const database of adapter.databases) {
+            if (PERF_DATABASES.has(database)) {
+                lanes.push({ library, database: /** @type {Lane['database']} */ (database) });
+            }
+        }
+    }
+
+    return lanes;
+}
+
+/**
+ * @param {Lane[]} lanes
+ * @param {number} pgPort the first port of PostgreSQL
+ * @param {number} redisPort the first port of Redis
+ * @returns {Promise<Server[]>} A server per lane; Redis with a PostgreSQL for the business table.
+ */
+function laneServers(lanes, pgPort, redisPort) {
+    return Promise.all(lanes.map(({ database }, index) => (
+        database === 'redis' ? redisServer(redisPort + index, pgPort + index) : postgresServer(pgPort + index)
+    )));
+}
+
+/**
  * One workload of one library: prepareWorkload(), measure(), finishWorkload().
- * @param {Parameters<typeof prepareWorkload>[0]} workload cron: the schedules' cron; start: the schedule runs start
- *     their windows together.
+ * @param {Parameters<typeof prepareWorkload>[0]} workload
  * @returns {Promise<Record<string, any>>}
  */
 async function runWorkload(workload) {
@@ -552,17 +493,16 @@ async function runWorkload(workload) {
 /**
  * The database and the setup of one workload of one library.
  * @param {{ library: string, workload: string, names: number, server: Server, dialect?: string, schedules?: number,
- *     processes?: number, cron?: string, start?: Barrier, phase?: string, warmupS?: number, measureS?: number }} args
- *     phase: a suffix of its database; warmupS, measureS: of the steady and idle windows.
+ *     processes?: number, cron?: string, start?: Barrier, phase?: string }} args cron: the schedules' cron; start: the
+ *     runs that start their windows together; phase: a suffix of its database.
  * @returns {Promise<Record<string, any>>} What measure() takes.
  */
 async function prepareWorkload({
     library, workload, names, server, dialect, schedules = 0, processes = 1, cron: spec, start: barrier, phase = '',
-    warmupS = WARMUP_S, measureS = MEASURE_S,
 }) {
     const cron = workload.startsWith('cron-');
     // A name, and an output directory, per database server too: a stale `ready` would start a window early
-    const size = cron ? `${schedules}x${processes}${spec === YEARLY_CRON ? '_yearly' : ''}` : names;
+    const size = cron ? `${schedules}x${processes}` : names;
     const database = `perf_${library}_${dialect ?? 'postgres'}_${workload}_${size}${phase}`.replaceAll(/[-:]/gu, '_');
     // Redis: the queue there, the business table in PostgreSQL
     const sql = server.business ?? server;
@@ -574,14 +514,13 @@ async function prepareWorkload({
 
     const url = server.business ? server.url : businessUrl;
     const out = join(tmp, database);
-    const backlog = workload === 'drain' ? BACKLOG : 0;
     const common = [
         join(HERE, 'perf.mjs'), '--library', library, '--url', url, '--business-url', businessUrl,
-        '--names', String(names), '--out', tmp,
-        '--warmup', String(warmupS), '--measure', String(measureS), '--rate', String(RATE), '--backlog', String(backlog),
+        '--names', String(names), '--out', out,
+        '--warmup', String(WARMUP_S), '--measure', String(MEASURE_S), '--rate', String(RATE),
         ...dialect ? ['--dialect', dialect] : [],
         ...cron ? ['--schedules', String(schedules), '--cron', String(spec)] : [],
-    ].map(arg => (arg === tmp ? out : arg));
+    ];
 
     execFileSync('mkdir', ['-p', out]);
 
@@ -591,7 +530,7 @@ async function prepareWorkload({
 
     return {
         library, workload, names, dialect, url, out, common, db: `${sql.pid}+`, server, database, schedules, processes,
-        spec, barrier, warmupS, measureS,
+        spec, barrier,
     };
 }
 
@@ -616,12 +555,8 @@ async function measure(run) {
  * @returns {Promise<void>}
  */
 async function finishWorkload({ server, database }) {
-    const sql = server.business ?? server;
-
-    if (!sql.url.startsWith('mysql:')) {
-        // No autovacuum of its tables in the next runs
-        await adminQuery(sql.url, `DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
-    }
+    // No autovacuum of its tables in the next runs
+    await adminQuery((server.business ?? server).url, `DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
 }
 
 /**
@@ -649,17 +584,15 @@ async function untilFile(file, child) {
 }
 
 /**
+ * Steady load or idle: a worker, and for steady a producer, with a window of MEASURE_S after WARMUP_S.
  * @param {Record<string, any>} run
  * @returns {Promise<Record<string, any>>}
  */
-async function measureWorkload({
-    library, workload, names, dialect, out, common, db, server, database, barrier, warmupS, measureS,
-}) {
+async function measureWorkload({ library, workload, names, dialect, out, common, db, server, database, barrier }) {
     const sql = server.business ?? server;
-    // pg_stat_statements: PostgreSQL only, and not the queue of a library on Redis
-    const statements = !server.business && !sql.url.startsWith('mysql:');
+    const redis = server.business ? server.url : null;
     // The database of a library on Redis: Redis and the PostgreSQL of the business table
-    const servers = { db, ...server.business && { redis: String(server.pid) } };
+    const servers = { db, ...redis && { redis: String(server.pid) } };
     /**
      * @param {Record<string, any>} before
      * @param {Record<string, any>} after
@@ -667,50 +600,16 @@ async function measureWorkload({
      */
     const dbDelta = (before, after) => {
         const relational = delta(before, after, 'db');
-        const redis = server.business ? delta(before, after, 'redis') : { instructions: 0, cycles: 0, cpuSeconds: 0 };
+        const memory = redis ? delta(before, after, 'redis') : { instructions: 0, cycles: 0, cpuSeconds: 0 };
 
         return {
-            instructions: relational.instructions + redis.instructions,
-            cycles: relational.cycles + redis.cycles,
-            cpuSeconds: relational.cpuSeconds + redis.cpuSeconds,
+            instructions: relational.instructions + memory.instructions,
+            cycles: relational.cycles + memory.cycles,
+            cpuSeconds: relational.cpuSeconds + memory.cpuSeconds,
         };
     };
 
-    if (!sql.url.startsWith('mysql:')) {
-        await adminQuery(sql.url, 'CHECKPOINT');
-    }
-
-    if (workload === 'drain') {
-        // The drains of a phase start together
-        await barrier?.arrive();
-
-        const before = await countersAsync(servers);
-        const worker = start(process.execPath, [...common, '--role', 'worker'], { log: join(out, 'worker.log') });
-
-        const limit = Date.now() + (DRAIN_LIMIT_S * 1000);
-
-        // The worker writes worker.json when the backlog is done, then lingers
-        while (!readJson(join(out, 'worker.json')) && worker.exitCode === null && Date.now() < limit) {
-            await sleep(100);
-        }
-
-        const after = await countersAsync({ ...servers, worker: String(worker.pid) });
-
-        if (!readJson(join(out, 'worker.json'))) {
-            // Too long: it writes what ran, and exits
-            worker.kill('SIGUSR2');
-            await exited(worker);
-        }
-
-        const result = readJson(join(out, 'worker.json'));
-
-        await exited(worker);
-
-        return {
-            library, workload, names, dialect: dialect ?? 'postgres', ...result,
-            worker: after.worker, db: dbDelta(before, after),
-        };
-    }
+    await adminQuery(sql.url, 'CHECKPOINT');
 
     const worker = start(process.execPath, [...common, '--role', 'worker'], { log: join(out, 'worker.log') });
 
@@ -723,21 +622,23 @@ async function measureWorkload({
         : null;
     const pids = { ...servers, worker: String(worker.pid), ...producer && { producer: String(producer.pid) } };
 
-    await sleep(warmupS * 1000);
+    await sleep(WARMUP_S * 1000);
 
     // Without blocking the other lanes; the window is the time between the two readings
     const before = await countersAsync(pids);
     const startedAt = Date.now();
 
-    if (statements) {
-        await postgresStats(sql.url, database, { reset: true });
-    }
+    await postgresStats(sql.url, database, { reset: true });
 
-    await sleep((measureS * 1000) - (Date.now() - startedAt));
+    const redisBefore = redis ? await redisCommandStats(redis) : null;
+
+    await sleep((MEASURE_S * 1000) - (Date.now() - startedAt));
 
     const after = await countersAsync(pids);
     const seconds = (Date.now() - startedAt) / 1000;
-    const stats = statements ? await postgresStats(sql.url, database) : null;
+    const stats = await postgresStats(sql.url, database);
+    const commands = redis && redisDelta(/** @type {Record<string, number>} */ (redisBefore),
+        await redisCommandStats(redis));
 
     await Promise.all([exited(worker), producer && exited(producer)]);
 
@@ -747,8 +648,10 @@ async function measureWorkload({
         library, workload, names, dialect: dialect ?? 'postgres', seconds,
         ...result,
         // Steady: the worker ran the jobs of its window, 95% at least; else its cost per job is not a cost per job
-        ...workload === 'steady' && { keptUp: (result?.completed ?? 0) >= 0.95 * RATE * measureS },
+        ...workload === 'steady' && { keptUp: (result?.completed ?? 0) >= 0.95 * RATE * MEASURE_S },
+        // Redis: the statements of the business table's PostgreSQL
         ...stats,
+        ...commands,
         worker: delta(before, after, 'worker'),
         ...producer && { producer: delta(before, after, 'producer') },
         db: dbDelta(before, after),
@@ -801,20 +704,19 @@ function barrierOf(count) {
 
 /**
  * The schedules: `processes` workers with the schedules of one job name, in a database of its own. The runs start
- * together. cron-idle: a window of CRON_IDLE_S. cron-fire: the first slot comes CRON_WARMUP_S or more after the start;
- * the CPU window is one period, from 30 s after the first slot to 30 s after the second; the jobs of both slots get
- * CRON_LATE_S after the second to start. Each worker notes the scheduled jobs that it started; after they stop, the
- * library's tables give the jobs that it stored.
+ * together: the first slot comes CRON_WARMUP_S or more after the start; the CPU window is one period, from 30 s after
+ * the first slot to 30 s after the second; the jobs of both slots get CRON_LATE_S after the second to start. Each
+ * worker notes the scheduled jobs that it started; after they stop, the library's tables give the jobs that it stored.
  * @param {Record<string, any>} run
  * @returns {Promise<Record<string, any>>}
  */
 async function measureSchedules({
     library, workload, names, dialect, url, out, common, server, database, schedules, processes, spec, barrier,
 }) {
-    // PostgreSQL: a server per library, so the backends of the run's database; Redis, MySQL: a server per run
-    const shared = !server.business && !server.url.startsWith('mysql:');
+    // PostgreSQL: the backends of the run's database; Redis: the server, which is the run's
+    const redis = server.business ? server.url : null;
     /** @returns {Promise<Record<string, string>>} The processes of the database. */
-    const databasePids = async () => (shared ? backends(server.url, database) : { db: String(server.pid) });
+    const databasePids = async () => (redis ? { db: String(server.pid) } : backends(server.url, database));
     const workers = Array.from({ length: processes }, (_, index) => start(process.execPath, [
         ...common, '--role', 'worker', '--index', String(index),
     ], { log: join(out, `worker-${index}.log`) }));
@@ -824,33 +726,33 @@ async function measureSchedules({
     }
 
     const ready = await barrier.arrive();
-    // The database: the backends of its connections, since the libraries' runs share a server
     const pids = Object.fromEntries(workers.map((worker, index) => [`worker${index}`, String(worker.pid)]));
-    const fire = workload === 'cron-fire';
     const firstSlot = Math.ceil((ready + (CRON_WARMUP_S * 1000)) / MINUTE_MS) * MINUTE_MS;
-    const windowStart = fire ? firstSlot + 30_000 : ready + (CRON_WARMUP_S * 1000);
-    const seconds = fire ? CRON_FIRE_S : CRON_IDLE_S;
+    const windowStart = firstSlot + 30_000;
+    const seconds = CRON_FIRE_S;
     const windowEnd = windowStart + (seconds * 1000);
 
     await sleepUntil(windowStart);
 
     const before = await countersAsync({ ...pids, ...await databasePids() });
 
-    if (shared) {
-        await postgresStats(server.url, database, { reset: true, scoped: true });
+    if (!redis) {
+        await postgresStats(server.url, database, { reset: true });
     }
+
+    const redisBefore = redis ? await redisCommandStats(redis) : null;
 
     await sleepUntil(windowEnd);
 
     const ended = await databasePids();
     const after = await countersAsync({ ...pids, ...ended });
-    // Statements and connections: PostgreSQL only
-    const stats = shared ? await postgresStats(server.url, database) : {};
+    // Statements and connections: PostgreSQL; commands: Redis
+    const stats = redis ? {} : await postgresStats(server.url, database);
+    const commands = redis && redisDelta(/** @type {Record<string, number>} */ (redisBefore),
+        await redisCommandStats(redis));
     const slots = [firstSlot, firstSlot + MINUTE_MS];
 
-    if (fire) {
-        await sleepUntil(slots[1] + (CRON_LATE_S * 1000));
-    }
+    await sleepUntil(slots[1] + (CRON_LATE_S * 1000));
 
     for (const worker of workers) {
         worker.kill('SIGUSR2');
@@ -871,14 +773,15 @@ async function measureSchedules({
     const { adapter } = /** @type {{ adapter: import('./libs/common.mjs').Adapter }} */ (
         await import(`./libs/${library.replaceAll('-', '_')}.mjs`)
     );
-    const stored = fire && adapter.scheduledJobs ? await adapter.scheduledJobs(url) : null;
+    const stored = adapter.scheduledJobs ? await adapter.scheduledJobs(url) : null;
 
     return {
         library, workload, names, dialect: dialect ?? 'postgres', schedules, processes, cron: spec, seconds, ...stats,
+        ...commands,
         ...stored && slotCounts({
             scheduled: reports.flatMap(report => report.scheduled), stored, schedules, slots, windowStart, windowEnd,
         }),
-        worker, db: shared ? backendDelta(before, after, Object.keys(ended)) : delta(before, after, 'db'),
+        worker, db: redis ? delta(before, after, 'db') : backendDelta(before, after, Object.keys(ended)),
     };
 }
 
@@ -1047,6 +950,19 @@ function sum(values) {
 }
 
 /**
+ * @param {Record<string, any>} row
+ * @param {number} count the jobs or slots
+ * @returns {string} The queue's statements (PostgreSQL) or commands (Redis) per job or slot.
+ */
+function queueWork(row, count) {
+    if (row.dialect === 'redis') {
+        return row.redisCommands === undefined ? '—' : `${(row.redisCommands / count).toFixed(2)} Redis commands`;
+    }
+
+    return row.queueStatements === undefined ? '—' : (row.queueStatements / count).toFixed(2);
+}
+
+/**
  * @param {Record<string, any>[]} runs
  * @returns {string}
  */
@@ -1054,8 +970,8 @@ function tables(runs) {
     const lines = [];
 
     lines.push('Steady load: 20 jobs/s over 1000 job names, each with an INSERT in a transaction. Per job; (timing): phase B.\n');
-    lines.push('| Library | Database | Jobs | Instructions (M), worker / producer / db = total | CPU ms | Latency p50 / p99 ms |');
-    lines.push('| --- | --- | --- | --- | --- | --- |');
+    lines.push('| Library | Database | Jobs | Instructions (M), worker / producer / db = total | Queue statements | CPU ms | Latency p50 / p99 ms |');
+    lines.push('| --- | --- | --- | --- | --- | --- | --- |');
 
     for (const row of runs.filter(entry => entry.workload === 'steady')) {
         const roles = ['worker', 'producer', 'db'];
@@ -1066,46 +982,19 @@ function tables(runs) {
         // Behind the load: its cost per job that ran is not a cost per job
         const cost = row.keptUp === false ? `— (${row.completed} of ${Math.round(RATE * row.seconds)} ran)` : `${instructions.map(millions).join(' / ')} = **${total}**`;
 
-        lines.push(`| ${library} | ${row.dialect} | ${row.completed} | ${cost} | ${cpu.toFixed(1)} | ${row.latencyP50Ms} / ${row.latencyP99Ms} |`);
+        lines.push(`| ${library} | ${row.dialect} | ${row.completed} | ${cost} | ${queueWork(row, row.completed)} | ${cpu.toFixed(1)} | ${row.latencyP50Ms} / ${row.latencyP99Ms} |`);
     }
 
     lines.push('\nIdle: no jobs. Per second of the window.\n');
-    lines.push('| Library | Database | Job names | Database instructions (M) | Worker instructions (M) | SQL statements | Connections |');
+    lines.push('| Library | Database | Job names | Database instructions (M) | Worker instructions (M) | Queue statements | Connections |');
     lines.push('| --- | --- | --- | --- | --- | --- | --- |');
 
     for (const row of runs.filter(entry => entry.workload === 'idle')) {
-        // Statements and connections: PostgreSQL only
-        const statements = row.statements === undefined ? '—' : (row.statements / row.seconds).toFixed(1);
-
-        lines.push(`| ${row.library} | ${row.dialect} | ${row.names} | ${millions(row.db.instructions / row.seconds)} | ${millions(row.worker.instructions / row.seconds)} | ${statements} | ${row.connections ?? '—'} |`);
+        lines.push(`| ${row.library} | ${row.dialect} | ${row.names} | ${millions(row.db.instructions / row.seconds)} | ${millions(row.worker.instructions / row.seconds)} | ${queueWork(row, row.seconds)} | ${row.connections ?? '—'} |`);
     }
 
-    lines.push(`\nDrain: ${BACKLOG} due jobs over 1000 job names.\n`);
-    lines.push('| Library | Database | Time s | Instructions per job (M), worker / db = total |');
-    lines.push('| --- | --- | --- | --- |');
-
-    for (const row of runs.filter(entry => entry.workload === 'drain')) {
-        const worker = row.worker.instructions / row.completed;
-        const db = row.db.instructions / row.completed;
-
-        const time = row.drainMs === null ? `> ${DRAIN_LIMIT_S} (${row.completed} ran)` : (row.drainMs / 1000).toFixed(1);
-
-        lines.push(`| ${row.library}${row.timing ? ' (timing)' : ''} | ${row.dialect} | ${time} | ${millions(worker)} / ${millions(db)} = **${millions(worker + db)}** |`);
-    }
-
-    lines.push(`\nSchedules, idle: no slot due, 1 job name, 1 worker. Per second; median of ${CRON_REPEATS} runs.\n`);
-    lines.push('| Library | Database | Schedules | Cron | Database instructions (M) | Worker instructions (M) | SQL statements | Connections |');
-    lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
-
-    for (const row of runs.filter(entry => entry.workload === 'cron-idle')) {
-        // Statements and connections: PostgreSQL only
-        const statements = row.statements === undefined ? '—' : (row.statements / row.seconds).toFixed(1);
-
-        lines.push(`| ${row.library} | ${row.dialect} | ${row.schedules} | \`${row.cron}\` | ${millions(row.db.instructions / row.seconds)} | ${millions(row.worker.instructions / row.seconds)} | ${statements} | ${row.connections ?? '—'} |`);
-    }
-
-    lines.push(`\nSchedules, firing: ${SCHEDULES} schedules of \`${FIRE_CRON}\`. CPU per due slot over one minute (range of the runs); jobs and lag of 2 slots. Median of ${CRON_REPEATS} runs.\n`);
-    lines.push('| Library | Database | Processes | Instructions per slot (M), median workers / median db = their sum (range of the totals) | Statements | Started per minute | Decided / started / expected | Duplicates | Lag p50 / p99 ms |');
+    lines.push(`\nSchedules, firing: ${SCHEDULES} schedules of \`${FIRE_CRON}\`. Per due slot over one minute; jobs and lag of 2 slots. Median of ${CRON_REPEATS} run(s).\n`);
+    lines.push('| Library | Database | Processes | Instructions per slot (M), workers / db = total | Queue statements | Started per minute | Decided / started / expected | Duplicates | Lag p50 / p99 ms |');
     lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
 
     for (const row of runs.filter(entry => entry.workload === 'cron-fire')) {
@@ -1113,59 +1002,26 @@ function tables(runs) {
         const slots = row.schedules * row.seconds / 60;
         const worker = row.worker.instructions / slots;
         const db = row.db.instructions / slots;
-        const totals = (row.samples ?? []).map((/** @type {any} */ sample) => (sample.worker + sample.db) / slots);
-        const range = totals.length ? ` (${millions(Math.min(...totals))}–${millions(Math.max(...totals))})` : '';
 
-        const statements = row.statements === undefined ? '—' : (row.statements / slots).toFixed(2);
-
-        lines.push(`| ${row.library}${row.transactional === false ? ' (not transactional)' : ''} | ${row.dialect} | ${row.processes} | ${millions(worker)} / ${millions(db)} = **${millions(worker + db)}**${range} | ${statements} | ${row.startedInWindow}${row.forwardedInWindow === undefined ? '' : ` (forwarded ${row.forwardedInWindow})`} | ${row.decided} / ${row.started} / ${row.expected} | ${row.duplicates} | ${row.lagP50Ms} / ${row.lagP99Ms} |`);
+        lines.push(`| ${row.library}${row.transactional === false ? ' (not transactional)' : ''} | ${row.dialect} | ${row.processes} | ${millions(worker)} / ${millions(db)} = **${millions(worker + db)}** | ${queueWork(row, slots)} | ${row.startedInWindow}${row.forwardedInWindow === undefined ? '' : ` (forwarded ${row.forwardedInWindow})`} | ${row.decided} / ${row.started} / ${row.expected} | ${row.duplicates} | ${row.lagP50Ms} / ${row.lagP99Ms} |`);
     }
 
     return lines.join('\n');
 }
 
 /**
- * The performance of jobs: a lane per library and database that its adapter lists, each with a server of its own.
- * Phase A, for instructions: the lanes in parallel, one workload at a time, the windows started together (steady,
- * idle with 1 and 1000 names, drain); instructions do not depend on the load of the machine
+ * The performance of jobs: a lane per library on PostgreSQL, and BullMQ's on Redis, each with a server of its own.
+ * Phase A, for instructions and statements: the lanes in parallel (in batches of PARALLEL), one workload at a time, the
+ * windows started together (steady, idle with 1000 names); instructions do not depend on the load of the machine
  * (see docs/contributing/measuring_cpu_cost.md).
- * Phase B, for times, on PostgreSQL and Redis: one lane at a time, the drains, then the steady load, for the drain
- * times, the latencies and the CPU time. Its rows have `timing: true`.
+ * Phase B, for times: one lane at a time, the steady load, for the latencies and the CPU time. Its rows have
+ * `timing: true`.
  * @param {string[]} libraries
  * @returns {Promise<Record<string, any>[]>}
  */
 async function runJobs(libraries) {
-    /** @type {{ library: string, database: 'postgres' | 'mysql' | 'mariadb' | 'redis' }[]} */
-    const lanes = [];
-
-    for (const library of libraries) {
-        const { adapter } = /** @type {{ adapter: import('./libs/common.mjs').Adapter }} */ (
-            await import(`./libs/${library.replaceAll('-', '_')}.mjs`)
-        );
-
-        lanes.push(...adapter.databases.map(database => ({ library, database })));
-    }
-
-    const template = join(tmp, 'pg-template');
-
-    if (!existsSync(template)) {
-        execFileSync(join(PG_BIN, 'initdb'), ['-D', template, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
-    }
-
-    /** @type {Server[]} */
-    const servers = await Promise.all(lanes.map(async ({ library, database }, index) => {
-        if (database === 'postgres') {
-            return startPostgres({ port: PERF_PG_PORT + index, template });
-        }
-
-        if (database === 'redis') {
-            const business = await startPostgres({ port: PERF_PG_PORT + index, template });
-
-            return { ...await startRedis(PERF_REDIS_PORT + index), business };
-        }
-
-        return startMysqlFamily(database, { port: PERF_MYSQL_PORT + index, name: `${database}-${library}` });
-    }));
+    const lanes = await lanesOf(libraries);
+    const servers = await laneServers(lanes, PERF_PG_PORT, PERF_REDIS_PORT);
     /**
      * @param {number} index
      * @param {string} workload
@@ -1213,22 +1069,8 @@ async function runJobs(libraries) {
     process.stderr.write(`jobs, phase A: ${Math.round((Date.now() - startedAt) / 1000)} s\n`);
     startedAt = Date.now();
 
-    const timed = lanes.flatMap(({ database }, index) => (database === 'postgres' || database === 'redis' ? [index] : []));
-    // The backlogs in parallel, then the drains one at a time
-    const drains = await Promise.all(timed.map(index => prepare(index, 'drain', NAMES, '_b')));
-
-    for (const run of drains) {
-        process.stderr.write(`jobs, phase B: drain ${run.library} on ${run.dialect ?? 'postgres'}\n`);
-
-        try {
-            rows.push({ ...await measure(run), timing: true });
-        } finally {
-            await finishWorkload(run);
-        }
-    }
-
-    for (const index of timed) {
-        process.stderr.write(`jobs, phase B: steady ${lanes[index].library} on ${lanes[index].database}\n`);
+    for (const [index, { library, database }] of lanes.entries()) {
+        process.stderr.write(`jobs, phase B: steady ${library} on ${database}\n`);
 
         const run = await prepare(index, 'steady', NAMES, '_b');
 
@@ -1245,86 +1087,29 @@ async function runJobs(libraries) {
 }
 
 /**
- * The schedule runs, all in parallel, each with a database of its own: instructions do not depend on the load of the
- * machine (see docs/contributing/measuring_cpu_cost.md), and the runs wait for the same minutes. A lane per library
- * and database that its adapter lists, but MariaDB. PostgreSQL: a server per lane, for all its runs (macOS allows few
- * PostgreSQL servers at once: 32 shared memory segments, kern.sysv.shmmni). Redis and MySQL: a server per run; on
- * MySQL, the runs that fire only. CRON_REPEATS times; a row has the median of each number, and each run in `samples`.
+ * The firing schedules: a run per library on PostgreSQL, and BullMQ's on Redis, each with a server and a database of
+ * its own and CRON_PROCESSES workers. The runs go in parallel (in batches of PARALLEL): instructions do not depend on
+ * the load of the machine (see docs/contributing/measuring_cpu_cost.md), and the runs wait for the same minutes.
+ * CRON_REPEATS times; a row has the median of each number, and each run in `samples`.
  * @param {string[]} libraries
  * @returns {Promise<Record<string, any>[]>}
  */
 async function runSchedules(libraries) {
-    // Idle: a daily cron 12 hours away, which never fires in the window; and a yearly one
-    const daily = `0 ${(new Date().getUTCHours() + 12) % 24} * * *`;
-    const idle = [
-        { workload: 'cron-idle', names: 1, schedules: 1, cron: daily },
-        { workload: 'cron-idle', names: 1, schedules: SCHEDULES, cron: daily },
-        { workload: 'cron-idle', names: 1, schedules: SCHEDULES, cron: YEARLY_CRON },
-    ];
-    const firing = [
-        { workload: 'cron-fire', names: 1, schedules: SCHEDULES, processes: 1, cron: FIRE_CRON },
-        { workload: 'cron-fire', names: 1, schedules: SCHEDULES, processes: 3, cron: FIRE_CRON },
-    ];
-    /** @type {{ library: string, database: 'postgres' | 'mysql' | 'mariadb' | 'redis' }[]} */
-    const lanes = [];
-
-    for (const library of libraries) {
-        const { adapter } = /** @type {{ adapter: import('./libs/common.mjs').Adapter }} */ (
-            await import(`./libs/${library.replaceAll('-', '_')}.mjs`)
-        );
-
-        const databases = adapter.databases.filter(database => database !== 'mariadb');
-
-        lanes.push(...databases.map(database => ({ library, database })));
-    }
-
-    const template = join(tmp, 'pg-template');
-
-    if (!existsSync(template)) {
-        execFileSync(join(PG_BIN, 'initdb'), ['-D', template, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
-    }
-
-    const postgresLanes = lanes.filter(lane => lane.database === 'postgres');
-    const postgres = await Promise.all(postgresLanes.map((_, index) => (
-        startPostgres({ port: CRON_PORT + index, template })
-    )));
-    const business = lanes.some(lane => lane.database === 'redis')
-        ? await startPostgres({ port: CRON_PORT + postgresLanes.length, template })
-        : null;
-    const steps = lanes.flatMap(lane => (lane.database === 'mysql' ? firing : [...idle, ...firing]).map(step => ({
-        lane, step,
-    })));
-    /** @type {Server[]} */
-    const servers = await Promise.all(steps.map(async ({ lane: { library, database } }, index) => {
-        if (database === 'postgres') {
-            return postgres[postgresLanes.findIndex(lane => lane.library === library)];
-        }
-
-        if (database === 'redis') {
-            return { ...await startRedis(CRON_REDIS_PORT + index), business: /** @type {Server} */ (business) };
-        }
-
-        return startMysqlFamily('mysql', { port: CRON_MYSQL_PORT + index, name: `mysql-${library}-${index}` });
-    }));
-    /** @type {Record<string, any>[][]} the runs of each step */
-    const samples = steps.map(() => []);
-
-    // The idle runs barely load the machine: they go together. The firing ones go in batches of PARALLEL.
-    const indices = steps.map((_, index) => index);
-    const idleRuns = indices.filter(index => steps[index].step.workload === 'cron-idle');
-    const firingRuns = indices.filter(index => steps[index].step.workload !== 'cron-idle');
-    const groups = PARALLEL >= steps.length
-        ? [indices]
-        : [idleRuns, ...batches(firingRuns, PARALLEL)].filter(group => group.length);
+    const step = { workload: 'cron-fire', names: 1, schedules: SCHEDULES, processes: CRON_PROCESSES, cron: FIRE_CRON };
+    const lanes = await lanesOf(libraries);
+    const servers = await laneServers(lanes, CRON_PG_PORT, CRON_REDIS_PORT);
+    /** @type {Record<string, any>[][]} the runs of each lane */
+    const samples = lanes.map(() => []);
+    const groups = batches(lanes.map((_, index) => index), PARALLEL);
 
     for (let repeat = 1; repeat <= CRON_REPEATS; repeat++) {
         for (const group of groups) {
             const barrier = barrierOf(group.length);
 
-            process.stderr.write(`schedules ${repeat}/${CRON_REPEATS}: ${group.length} of ${steps.length} runs in parallel\n`);
+            process.stderr.write(`schedules ${repeat}/${CRON_REPEATS}: ${group.length} of ${lanes.length} runs in parallel\n`);
 
             const settled = await Promise.allSettled(group.map(async (index) => {
-                const { lane: { library, database }, step } = steps[index];
+                const { library, database } = lanes[index];
                 const own = barrier();
 
                 try {
@@ -1353,8 +1138,8 @@ async function runSchedules(libraries) {
 
 /** The numbers of a schedule row that its median takes */
 const MEDIAN_FIELDS = [
-    'statements', 'connections', 'decided', 'started', 'startedInWindow', 'forwardedInWindow', 'lagP50Ms', 'lagP99Ms',
-    'lagMaxMs',
+    'statements', 'businessStatements', 'queueStatements', 'redisCommands', 'connections', 'decided', 'started',
+    'startedInWindow', 'forwardedInWindow', 'lagP50Ms', 'lagP99Ms', 'lagMaxMs',
 ];
 
 /**
@@ -1395,9 +1180,38 @@ function medianRow(rows) {
     return row;
 }
 
+process.once('SIGINT', () => {
+    for (const cleanup of cleanups.splice(0).toReversed()) {
+        try {
+            cleanup();
+        } catch {
+            // Already stopped
+        }
+    }
+
+    stopCounters();
+    process.kill(process.pid, 'SIGINT');
+});
+
 try {
+    const runStartedAt = Date.now();
+    const latency = loopbackDelay();
+
+    if (LINUX && !latency) {
+        process.stderr.write('warning: no netem delay on the loopback: the latencies of the documents come with 0.5 ms '
+            + 'each way (run_linux.sh)\n');
+    }
+
+    // Before the servers and the libraries start: the Linux daemon counts a process from its own start
+    await startCounters();
+
+    if (countsKernel() === false) {
+        process.stderr.write('warning: the counters count user space only: the published numbers count the kernel '
+            + 'too (on the host: sysctl kernel.perf_event_paranoid=1)\n');
+    }
+
     // The checks have a server; the jobs and the schedules start servers of their own
-    const postgres = PARTS.has('checks') ? await startPostgres() : null;
+    const postgres = PARTS.has('checks') ? await postgresServer(CHECKS_PG_PORT) : null;
     // A run of one part keeps the other parts' results. The date of each part, and of the last run
     const saved = readJson(join(HERE, 'results.json')) ?? {};
     const date = new Date().toISOString();
@@ -1407,29 +1221,36 @@ try {
         date,
         node: process.version,
         dates: { ...saved.dates, ...Object.fromEntries([...PARTS].map(part => [part, date])) },
-        // The machine of each part: its numbers compare with those of other parts only on the same one
+        // The machine of each part: its numbers compare with those of other parts only on the same one. latency: the
+        // delay of the loopback (netem), null without one; kernelCounted: the instructions include the kernel's (Linux)
         machines: {
             ...saved.machines,
             ...Object.fromEntries([...PARTS].map(part => [part, {
                 platform: process.platform, kernel: kernelRelease(), cpu: cpus()[0]?.model.trim(), cores: cpus().length,
                 memoryGiB: Math.round(totalmem() / 2 ** 30), parallel: Number.isFinite(PARALLEL) ? PARALLEL : null,
+                latency, kernelCounted: countsKernel(),
             }])),
         },
     };
     const libraries = LIBRARIES;
+    /** @type {Record<string, number>} the seconds of each part */
+    const partSeconds = {};
 
     if (PARTS.has('checks')) {
+        const partStartedAt = Date.now();
         const log = join(tmp, 'checks.log');
 
         process.stderr.write(`checks (log: ${log})\n`);
-        const { url } = /** @type {{ url: string }} */ (postgres);
+        const { url } = /** @type {Server} */ (postgres);
 
         await exited(start(process.execPath, [join(HERE, 'checks.mjs'), url], { log }));
         results.checks = readJson(join(HERE, 'checks.json'));
         console.log(readFileSync(log, 'utf8').split('\n').filter(line => line.startsWith('|')).join('\n'));
+        partSeconds.checks = Math.round((Date.now() - partStartedAt) / 1000);
     }
 
     if (PARTS.has('perf')) {
+        const partStartedAt = Date.now();
         const runs = await runJobs(libraries);
 
         // A run of some libraries replaces their rows only
@@ -1438,10 +1259,12 @@ try {
         const kept = previous.filter(row => row.workload.startsWith('cron-') || !libraries.includes(row.library));
 
         results.perf = [...kept, ...runs];
+        partSeconds.perf = Math.round((Date.now() - partStartedAt) / 1000);
     }
 
     if (PARTS.has('cron')) {
-        const runs = await runSchedules(libraries.filter(library => CRON_LIBRARIES.has(library)));
+        const partStartedAt = Date.now();
+        const runs = await runSchedules(libraries);
         /** @type {Record<string, any>[]} */
         const previous = results.perf ?? [];
         const kept = previous.filter(row => (
@@ -1449,6 +1272,11 @@ try {
         ));
 
         results.perf = [...kept, ...runs];
+        partSeconds.cron = Math.round((Date.now() - partStartedAt) / 1000);
+    }
+
+    for (const [part, seconds] of Object.entries(partSeconds)) {
+        results.machines[part].seconds = seconds;
     }
 
     if (results.perf) {
@@ -1456,7 +1284,11 @@ try {
     }
 
     writeFileSync(join(HERE, 'results.json'), `${JSON.stringify(results, null, 4)}\n`);
+    process.stderr.write(`total: ${Math.round((Date.now() - runStartedAt) / 1000)} s (${Object.entries(partSeconds)
+        .map(([part, seconds]) => `${part} ${seconds} s`).join(', ')})\n`);
 } finally {
+    stopCounters();
+
     for (const cleanup of cleanups.toReversed()) {
         try {
             cleanup();

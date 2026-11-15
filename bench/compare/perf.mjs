@@ -26,7 +26,6 @@ const { values: args } = parseArgs({
         'dialect': { type: 'string', default: 'mysql' },
         'names': { type: 'string', default: '1000' },
         'rate': { type: 'string', default: '20' },
-        'backlog': { type: 'string', default: '0' },
         'warmup': { type: 'string', default: '5' },
         'measure': { type: 'string', default: '15' },
         'out': { type: 'string', default: '.' },
@@ -111,8 +110,6 @@ const queue = await adapter.open({
 });
 
 if (role === 'setup') {
-    const backlog = Number(args.backlog);
-
     // A business table for the producer's transactions
     if (mysql) {
         const pool = createPool({ uri: businessUrl });
@@ -124,13 +121,6 @@ if (role === 'setup') {
 
         await pool.query('CREATE TABLE IF NOT EXISTS orders (id bigint PRIMARY KEY)');
         await pool.end();
-    }
-
-    // Due jobs for the drain: spread over the names, 8 enqueues at a time
-    for (let start = 0; start < backlog; start += 8) {
-        await Promise.all(Array.from({ length: Math.min(8, backlog - start) }, (_, offset) => (
-            queue.enqueue(names[(start + offset) % names.length], { index: start + offset })
-        )));
     }
 
     await queue.stop();
@@ -150,43 +140,22 @@ if (role === 'setup') {
 } else if (role === 'worker') {
     const warmupMs = Number(args.warmup) * 1000;
     const measureMs = Number(args.measure) * 1000;
-    const backlog = Number(args.backlog);
-    const startedAt = Date.now();
 
     await queue.start();
     // run.mjs starts the producer and the window once the worker is ready
     writeFileSync(join(String(args.out), 'ready'), '');
+    await sleep(warmupMs);
 
-    if (backlog) {
-        // run.mjs stops a drain that takes too long: what ran by then
-        process.once('SIGUSR2', () => {
-            write({ completed, drainMs: null, stoppedAfterMs: Date.now() - startedAt });
-            // oxlint-disable-next-line unicorn/no-process-exit -- the run is over
-            process.exit(0);
-        });
+    const before = completed;
 
-        // The drain: until the backlog is done (the handler counts)
-        // oxlint-disable-next-line no-unmodified-loop-condition -- the handlers change completed
-        while (completed < backlog) {
-            await sleep(10);
-        }
-
-        write({ completed, drainMs: Date.now() - startedAt });
-    } else {
-        await sleep(warmupMs);
-
-        const before = completed;
-
-        inWindow = true;
-        await sleep(measureMs);
-        inWindow = false;
-        write({
-            completed: completed - before,
-            latencyP50Ms: percentile(latencies, 0.5),
-            latencyP99Ms: percentile(latencies, 0.99),
-        });
-    }
-
+    inWindow = true;
+    await sleep(measureMs);
+    inWindow = false;
+    write({
+        completed: completed - before,
+        latencyP50Ms: percentile(latencies, 0.5),
+        latencyP99Ms: percentile(latencies, 0.99),
+    });
     await sleep(LINGER_MS);
     await queue.stop();
 } else {

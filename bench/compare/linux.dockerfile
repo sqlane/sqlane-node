@@ -1,7 +1,7 @@
 # The Linux image of the comparison (run.mjs): Node.js, pnpm, and the database servers that the harness starts itself.
-# The repository is mounted at /work at run time; nothing of it is copied here.
+# The repository is mounted at /work at run time; nothing of it is copied here. run_linux.sh runs the comparison in it.
 #
-#   docker build -f bench/compare/linux.dockerfile -t sqlane-bench:linux bench/compare
+#   podman build -f bench/compare/linux.dockerfile -t sqlane-bench:linux bench/compare
 #
 # PG_BIN, MYSQL_BIN, MARIADB_BIN and REDIS_BIN name the directories of the server binaries. The versions follow the
 # macOS runs (Homebrew): PostgreSQL 17.11, MySQL 8.4.13, MariaDB 11.8.9, Redis 8.10.3.
@@ -59,11 +59,11 @@ ARG REDIS_VERSION=6:8.10.3-1rl1~trixie1
 ARG DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Base tools, the runtime libraries of the MySQL and MariaDB tarballs (and of Node.js: libatomic), and the apt
-# repositories of PGDG and Redis
+# Base tools (iproute2: tc, for the delay of the loopback; util-linux: setpriv, to leave root after it), the runtime
+# libraries of the MySQL and MariaDB tarballs (and of Node.js: libatomic), and the apt repositories of PGDG and Redis
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl gnupg git procps tar xz-utils python3 libcap2-bin \
+        ca-certificates curl gnupg git procps tar xz-utils python3 libcap2-bin iproute2 util-linux \
         libaio1t64 libnuma1 libncurses6 libtinfo6 libsystemd0 liburing2 libssl3t64 zlib1g libatomic1 \
     && ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 \
     && install -d /usr/share/keyrings \
