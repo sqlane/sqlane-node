@@ -1,5 +1,13 @@
 # @sqlane/core
 
+## 5.0.2
+
+### Patch Changes
+
+- [#110](https://github.com/sqlane/sqlane-node/pull/110) [`aa71aab`](https://github.com/sqlane/sqlane-node/commit/aa71aab6717883c485e69483fa985649d2174031) - README: performance charts from the redesigned benchmarks, with 1 ms of network round trip and SQL statements per job.
+
+- [#108](https://github.com/sqlane/sqlane-node/pull/108) [`f9bbafe`](https://github.com/sqlane/sqlane-node/commit/f9bbafe772bb63d1f1785d9515e3c98fe4b3372f) - Fix the drain chart of the README: its description no longer ends the image tag early.
+
 ## 5.0.1
 
 ### Patch Changes
