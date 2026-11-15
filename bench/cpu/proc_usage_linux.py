@@ -195,7 +195,8 @@ def main():
     counters = Counters()
     counters.attach()
     threading.Thread(target=counters.poll_forever, daemon=True).start()
-    print(json.dumps({'ready': True}), flush=True)
+    # kernel: the counts include the kernel's instructions (CAP_PERFMON, or kernel.perf_event_paranoid of 1 or less)
+    print(json.dumps({'ready': True, 'kernel': not counters.flags & EXCLUDE_KERNEL}), flush=True)
     for line in sys.stdin:
         request = json.loads(line)
         print(json.dumps({'id': request['id'], 'result': snapshot(counters, request['processes'])}), flush=True)

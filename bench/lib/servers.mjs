@@ -1,7 +1,7 @@
-// PostgreSQL, MySQL and MariaDB of this host, started from their binaries with the data in a temporary directory:
-// default configurations, TCP on 127.0.0.1 only (Unix sockets in a long temporary path exceed the 104-byte limit of
-// macOS). The statement statistics are on (db_stats.mjs): pg_stat_statements on PostgreSQL, performance_schema on
-// MySQL and MariaDB. MariaDB gets the binary log of MySQL 8.4, as in the other benchmarks.
+// PostgreSQL, MySQL, MariaDB and Redis of this host, started from their binaries with the data in a temporary
+// directory: default configurations, TCP on 127.0.0.1 only (Unix sockets in a long temporary path exceed the 104-byte
+// limit of macOS). The statement statistics are on (db_stats.mjs): pg_stat_statements on PostgreSQL,
+// performance_schema on MySQL and MariaDB. MariaDB gets the binary log of MySQL 8.4, as in the other benchmarks.
 /* oxlint-disable no-await-in-loop -- the tries of a connection go one after the other */
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -32,6 +32,12 @@ const execFileAsync = promisify(execFile);
  */
 
 /**
+ * @typedef {object} PostgresOptions
+ * @property {string} [template] A data directory of initdb (postgresTemplate()) to clone instead of running initdb.
+ * @property {number} [connections] max_connections. Default: PostgreSQL's, 100.
+ */
+
+/**
  * @param {'postgres' | 'mysql' | 'mariadb'} dialect
  * @param {ServerOptions} options
  * @returns {Promise<Server>}
@@ -41,17 +47,41 @@ export function startServer(dialect, options) {
 }
 
 /**
- * PostgreSQL with pg_stat_statements (top-level statements).
- * @param {ServerOptions} options
- * @returns {Promise<Server>}
+ * An initialized data directory, for the template of startPostgres(): a copy is faster than initdb.
+ * @param {{ bin: string, dir: string }} options dir: the parent directory.
+ * @returns {string} The data directory.
  */
-export async function startPostgres({ bin, port = 55_470, dir = mkdtempSync(join(tmpdir(), 'sqlane-pg-')) }) {
-    const data = join(dir, `pg-${port}`);
+export function postgresTemplate({ bin, dir }) {
+    const data = join(dir, 'pg-template');
 
     execFileSync(join(bin, 'initdb'), ['-D', data, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
+
+    return data;
+}
+
+/**
+ * PostgreSQL with pg_stat_statements (top-level statements).
+ * @param {ServerOptions & PostgresOptions} options
+ * @returns {Promise<Server>}
+ */
+export async function startPostgres({
+    bin, port = 55_470, dir = mkdtempSync(join(tmpdir(), 'sqlane-pg-')), template, connections,
+}) {
+    const data = join(dir, `pg-${port}`);
+
+    if (template) {
+        // A clone on APFS: instant; on Linux, a reflink where the file system has them
+        await execFileAsync('cp', process.platform === 'linux'
+            ? ['-a', '--reflink=auto', template, data]
+            : ['-c', '-R', template, data]);
+    } else {
+        execFileSync(join(bin, 'initdb'), ['-D', data, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
+    }
+
     await execFileAsync(join(bin, 'pg_ctl'), ['-D', data, '-l', join(dir, `pg-${port}.log`), '-w', 'start', '-o', [
         `-p ${port} -c listen_addresses=127.0.0.1 -c unix_socket_directories=''`,
         '-c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=top',
+        ...connections ? [`-c max_connections=${connections}`] : [],
     ].join(' ')]);
 
     const url = `postgresql://postgres@127.0.0.1:${port}/postgres`;
@@ -190,6 +220,63 @@ GRANT ALL ON *.* TO 'admin'@'127.0.0.1' WITH GRANT OPTION;
                 await exited;
                 rmSync(data, { recursive: true, force: true });
                 rmSync(temporary, { recursive: true, force: true });
+            }
+        },
+        kill() {
+            if (!stopped) {
+                stopped = true;
+                server.kill('SIGKILL');
+            }
+        },
+    };
+}
+
+/**
+ * Redis: the append-only file synced every second (its documented durable setting), no snapshots.
+ * @param {ServerOptions} options bin: the directory of redis-server and redis-cli.
+ * @returns {Promise<Server>} url and adminUrl: the same `redis://` URL.
+ */
+export async function startRedis({ bin, port = 56_470, dir = mkdtempSync(join(tmpdir(), 'sqlane-redis-')) }) {
+    const data = join(dir, `redis-${port}`);
+
+    mkdirSync(data, { recursive: true });
+
+    const server = spawn(join(bin, 'redis-server'), [
+        '--port', String(port), '--bind', '127.0.0.1', '--dir', data, '--save', '', '--appendonly', 'yes',
+        '--appendfsync', 'everysec', '--protected-mode', 'yes', '--logfile', join(data, 'redis.log'),
+    ], { stdio: 'ignore' });
+    /** @type {Promise<void>} */
+    const exited = new Promise((resolve) => {
+        server.on('exit', () => resolve());
+    });
+
+    for (let tries = 0; ; tries++) {
+        try {
+            await execFileAsync(join(bin, 'redis-cli'), ['-p', String(port), 'PING']);
+            break;
+        } catch (error) {
+            if (tries > 120 || server.exitCode !== null) {
+                server.kill('SIGKILL');
+                throw new Error(`redis did not start: see ${join(data, 'redis.log')}`, { cause: error });
+            }
+
+            await sleep(250);
+        }
+    }
+
+    const url = `redis://127.0.0.1:${port}`;
+    let stopped = false;
+
+    return {
+        url,
+        adminUrl: url,
+        pid: /** @type {number} */ (server.pid),
+        async stop() {
+            if (!stopped) {
+                stopped = true;
+                server.kill('SIGTERM');
+                await exited;
+                rmSync(data, { recursive: true, force: true });
             }
         },
         kill() {
