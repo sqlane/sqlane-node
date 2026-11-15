@@ -111,7 +111,18 @@ async function runScenario(database, stats, adminUrl, scenario) {
                 return stats.read(name);
             },
         });
-        const { statements, rows, blocks, byStatement } = measured;
+        const timing = scenario.timing;
+        const counted = timing ? measured.byStatement.filter(row => !timing.test(row.text)) : measured.byStatement;
+        const { byStatement } = measured;
+        let statements = 0;
+        let rows = 0;
+        let blocks = 0;
+
+        for (const row of counted) {
+            statements += row.statements;
+            rows += row.rows;
+            blocks += row.blocks;
+        }
 
         return { counts: { operations, statements, rows, blocks }, byStatement };
     } finally {
