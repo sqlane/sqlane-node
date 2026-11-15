@@ -1,5 +1,6 @@
 # The Linux image of the comparison (run.mjs): Node.js, pnpm, and the database servers that the harness starts itself.
-# The repository is mounted at /work at run time; nothing of it is copied here. run_linux.sh runs the comparison in it.
+# The repository is mounted at /work at run time; nothing of it is copied here. bench/run_linux.sh runs the comparison
+# (and the A/B regression run, bench/regression/ab.mjs) in it.
 #
 #   podman build -f bench/compare/linux.dockerfile -t sqlane-bench:linux bench/compare
 #

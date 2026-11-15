@@ -1,0 +1,222 @@
+{
+    "date": "2026-11-15T06:07:01.149Z",
+    "ref": ".",
+    "commit": null,
+    "machine": {
+        "platform": "linux",
+        "cpu": "AMD Ryzen 5 3600 6-Core Processor",
+        "cores": 12,
+        "memoryGiB": 63,
+        "kernel": "7.2.15-1-omarchy"
+    },
+    "kernelCounted": true,
+    "node": "v26.13.0",
+    "servers": {
+        "postgres": "PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+        "mysql": "8.4.13",
+        "mariadb": "11.8.9-MariaDB-log"
+    },
+    "warmupS": 5,
+    "windowS": 15,
+    "totalS": 304,
+    "scenarios": {
+        "enqueue": {
+            "unit": "enqueue",
+            "description": "enqueue, in a transaction of its own (50/s)",
+            "databases": {
+                "postgres": {
+                    "instructionsPerOp": 947758,
+                    "statementsPerOp": 1,
+                    "baseline": {
+                        "instructionsPerOp": 948389,
+                        "statementsPerOp": 1
+                    },
+                    "verdict": "same"
+                },
+                "mysql": {
+                    "instructionsPerOp": 2022873,
+                    "statementsPerOp": 5,
+                    "baseline": {
+                        "instructionsPerOp": 2033957,
+                        "statementsPerOp": 5
+                    },
+                    "verdict": "same"
+                },
+                "mariadb": {
+                    "instructionsPerOp": 1545535,
+                    "statementsPerOp": 5,
+                    "baseline": {
+                        "instructionsPerOp": 1552139,
+                        "statementsPerOp": 5
+                    },
+                    "verdict": "same"
+                }
+            }
+        },
+        "enqueue_many": {
+            "unit": "call of enqueueMany of 100",
+            "description": "`enqueueMany` of 100 jobs (2/s)",
+            "databases": {
+                "postgres": {
+                    "instructionsPerOp": 20282134,
+                    "statementsPerOp": 1,
+                    "baseline": {
+                        "instructionsPerOp": 20004277,
+                        "statementsPerOp": 1
+                    },
+                    "verdict": "same"
+                },
+                "mysql": {
+                    "instructionsPerOp": 31946186,
+                    "statementsPerOp": 5,
+                    "baseline": {
+                        "instructionsPerOp": 32110998,
+                        "statementsPerOp": 5
+                    },
+                    "verdict": "same"
+                },
+                "mariadb": {
+                    "instructionsPerOp": 26841454,
+                    "statementsPerOp": 5,
+                    "baseline": {
+                        "instructionsPerOp": 26814768,
+                        "statementsPerOp": 5
+                    },
+                    "verdict": "same"
+                }
+            }
+        },
+        "run": {
+            "unit": "job",
+            "description": "job enqueued, run and completed (20/s, 1000 handled names)",
+            "databases": {
+                "postgres": {
+                    "instructionsPerOp": 2915999,
+                    "statementsPerOp": 3.01,
+                    "baseline": {
+                        "instructionsPerOp": 2879842,
+                        "statementsPerOp": 3.01
+                    },
+                    "verdict": "same"
+                },
+                "mysql": {
+                    "instructionsPerOp": 9545058,
+                    "statementsPerOp": 18.24,
+                    "baseline": {
+                        "instructionsPerOp": 9537568,
+                        "statementsPerOp": 18.2567
+                    },
+                    "verdict": "same"
+                },
+                "mariadb": {
+                    "instructionsPerOp": 7794017,
+                    "statementsPerOp": 18.2433,
+                    "baseline": {
+                        "instructionsPerOp": 7887430,
+                        "statementsPerOp": 18.2767
+                    },
+                    "verdict": "same"
+                }
+            }
+        },
+        "idle": {
+            "unit": "second",
+            "description": "second of a worker of 1000 names, no job",
+            "databases": {
+                "postgres": {
+                    "instructionsPerOp": 464807,
+                    "statementsPerOp": 0.1999,
+                    "baseline": {
+                        "instructionsPerOp": 473761,
+                        "statementsPerOp": 0.1999
+                    },
+                    "verdict": "same"
+                },
+                "mysql": {
+                    "instructionsPerOp": 2276774,
+                    "statementsPerOp": 0.2,
+                    "baseline": {
+                        "instructionsPerOp": 2242002,
+                        "statementsPerOp": 0.2
+                    },
+                    "verdict": "same"
+                },
+                "mariadb": {
+                    "instructionsPerOp": 649353,
+                    "statementsPerOp": 0.2,
+                    "baseline": {
+                        "instructionsPerOp": 646833,
+                        "statementsPerOp": 0.2
+                    },
+                    "verdict": "same"
+                }
+            }
+        },
+        "schedule": {
+            "unit": "slot",
+            "description": "fired slot of 1000 `every: '10s'` schedules, no handler",
+            "databases": {
+                "postgres": {
+                    "instructionsPerOp": 818670,
+                    "statementsPerOp": 0.0525,
+                    "baseline": {
+                        "instructionsPerOp": 827190,
+                        "statementsPerOp": 0.0525
+                    },
+                    "verdict": "same"
+                },
+                "mysql": {
+                    "instructionsPerOp": 905803,
+                    "statementsPerOp": 0.083,
+                    "baseline": {
+                        "instructionsPerOp": 925446,
+                        "statementsPerOp": 0.083
+                    },
+                    "verdict": "same"
+                },
+                "mariadb": {
+                    "instructionsPerOp": 837805,
+                    "statementsPerOp": 0.083,
+                    "baseline": {
+                        "instructionsPerOp": 839136,
+                        "statementsPerOp": 0.083
+                    },
+                    "verdict": "same"
+                }
+            }
+        },
+        "mutex": {
+            "unit": "job",
+            "description": "job with one of 100 mutex keys (20/s)",
+            "databases": {
+                "postgres": {
+                    "instructionsPerOp": 17497829,
+                    "statementsPerOp": 15,
+                    "baseline": {
+                        "instructionsPerOp": 18236551,
+                        "statementsPerOp": 15.06
+                    },
+                    "verdict": "same"
+                },
+                "mysql": {
+                    "instructionsPerOp": 37884298,
+                    "statementsPerOp": 28.1933,
+                    "baseline": {
+                        "instructionsPerOp": 37730807,
+                        "statementsPerOp": 28.1633
+                    },
+                    "verdict": "same"
+                },
+                "mariadb": {
+                    "instructionsPerOp": 43437236,
+                    "statementsPerOp": 28.0963,
+                    "baseline": {
+                        "instructionsPerOp": 43031316,
+                        "statementsPerOp": 28.0633
+                    },
+                    "verdict": "same"
+                }
+            }
+        }
+    }
+}

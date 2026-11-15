@@ -19,17 +19,20 @@ runs per core, the libraries fall behind the load and the numbers are wrong: on 
 The run starts private servers (`bench/lib/servers.mjs`) on ports from 55442 (PostgreSQL) and 56380 (Redis), with data
 in a temporary directory, and stops them at the end. It writes `results.json` here, with the machine of each part
 (`machines`: also the loopback's delay, `latency`, whether the counters count the kernel, `kernelCounted`, and the
-part's `seconds`), and prints Markdown tables.
+part's `seconds`), and prints Markdown tables. `pnpm bench:docs` ([generate_docs.mjs](../generate_docs.mjs)) then
+draws the documents' charts from it into `docs/images` and rewrites the generated blocks of the documents (between
+`<!-- generated:NAME -->` markers); the prose around them is written by hand.
 
 ### Linux: the published numbers
 
 The documents' numbers come from Linux, in the container of `linux.dockerfile`: Node.js, pnpm, PostgreSQL and Redis at
 pinned versions (MySQL and MariaDB too, which the comparison doesn't use), every download checked against its SHA-256.
-`run_linux.sh` runs the whole comparison there:
+`bench/run_linux.sh compare` runs the whole comparison there (`bench/run_linux.sh ab …`: the A/B regression run of
+`bench/regression/ab.mjs` in the same container, without the delay):
 
 ```sh
 podman build -f bench/compare/linux.dockerfile -t sqlane-bench:linux bench/compare
-bench/compare/run_linux.sh        # ENGINE=docker for Docker
+bench/run_linux.sh compare        # ENGINE=docker for Docker
 ```
 
 - **Network latency.** The servers listen on the loopback, where a round trip takes microseconds; a database is
@@ -88,7 +91,7 @@ hand. Record the output of each check with the change.
 | `check_child.mjs`    | The worker that the stall check kills.                                                                                                               |
 | `perf.mjs`           | One process of a performance workload: setup, worker or producer. With schedules, one of several workers.                                            |
 | `run.mjs`            | Starts the servers, runs the checks and the workloads, reads the counters, prints the tables.                                                        |
-| `run_linux.sh`       | The published run: the whole comparison in the container of `linux.dockerfile`, with 0.5 ms each way on its loopback.                                |
+| `../run_linux.sh`    | The published run (`compare`): the whole comparison in the container of `linux.dockerfile`, with 0.5 ms each way on its loopback.                    |
 
 ## Checks
 
