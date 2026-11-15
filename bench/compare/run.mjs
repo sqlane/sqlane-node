@@ -1,7 +1,7 @@
 // The comparison of docs/features_vs_other_libs.md and docs/performance_vs_other_libs.md: the feature checks, the
 // performance workloads of jobs, and those of schedules, on PostgreSQL (BullMQ also on Redis) of this host: Linux in
-// the container of linux.dockerfile (run_linux.sh: the published numbers, with 0.5 ms each way on the loopback), or
-// macOS with Homebrew.
+// the container of linux.dockerfile (bench/run_linux.sh compare: the published numbers, with 0.5 ms each way on the
+// loopback), or macOS with Homebrew.
 //
 //   pnpm bench:compare                    # checks and perf
 //   pnpm bench:compare --only checks      # or: perf (the jobs), cron (the schedules)
@@ -183,9 +183,9 @@ function exited(child) {
 }
 
 /**
- * The delay that netem adds on the loopback interface (run_linux.sh: `tc qdisc add dev lo root netem delay 0.5ms`),
- * from `tc qdisc show dev lo`. A packet goes through the loopback's queue once, so a round trip between a client and
- * its database costs twice the delay.
+ * The delay that netem adds on the loopback interface (bench/run_linux.sh compare: `tc qdisc add dev lo root netem
+ * delay 0.5ms`), from `tc qdisc show dev lo`. A packet goes through the loopback's queue once, so a round trip
+ * between a client and its database costs twice the delay.
  * @returns {{ oneWayMs: number, roundTripMs: number, qdisc: string } | null} null: macOS (no netem), or no delay.
  */
 function loopbackDelay() {
@@ -1199,7 +1199,7 @@ try {
 
     if (LINUX && !latency) {
         process.stderr.write('warning: no netem delay on the loopback: the latencies of the documents come with 0.5 ms '
-            + 'each way (run_linux.sh)\n');
+            + 'each way (bench/run_linux.sh compare)\n');
     }
 
     // Before the servers and the libraries start: the Linux daemon counts a process from its own start

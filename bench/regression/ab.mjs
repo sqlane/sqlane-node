@@ -1,10 +1,16 @@
 // The A/B performance regression check: `pnpm bench [--ref main] [--db postgres|mysql|mariadb]… [--scenario <name>]…
-// [--window 15] [--warmup 5] [--out <dir>]`. Compares the working tree with a git ref on PostgreSQL, MySQL and
-// MariaDB of this host (started from their binaries: --pg-bin, --mysql-bin, --mariadb-bin, defaults: the PG_BIN,
-// MYSQL_BIN and MARIADB_BIN variables, else Homebrew's), in six scenarios under steady load. Each scenario runs its
-// sqlane processes (app.mjs) on a fresh database, and measures a window: the CPU instructions per operation of these
-// processes and of the database server (with its descendants), and the statements per operation (the server's
+// [--window 15] [--warmup 5] [--out <dir>] [--save <file>]`. Compares the working tree with a git ref on PostgreSQL,
+// MySQL and MariaDB of this host (started from their binaries: --pg-bin, --mysql-bin, --mariadb-bin, defaults: the
+// PG_BIN, MYSQL_BIN and MARIADB_BIN variables, else Homebrew's), in six scenarios under steady load. Each scenario runs
+// its sqlane processes (app.mjs) on a fresh database, and measures a window: the CPU instructions per operation of
+// these processes and of the database server (with its descendants), and the statements per operation (the server's
 // statistics, db_stats.mjs).
+//
+// `--ref .`: the baseline is the working tree itself, without git (a copy with no .git, as on the Linux machine of the
+// published numbers: `bench/run_linux.sh ab --ref . --save bench/regression/results.json`). Every verdict should then
+// be "same"; the run gives the numbers of the tree. `--save <file>`: after the run, writes the numbers of the working
+// tree per scenario and database (with the baseline's and the verdict), the machine, whether the counters count the
+// kernel, and the servers' versions, as JSON. The raw runs go to `results.json` of `--out` either way.
 //
 // A difference beyond ±5% in instructions, or ±3% in statements, reruns the pair in the other order; only a difference
 // of both runs, in the same direction, counts. Exit code 1: a confirmed regression (more instructions or statements);
@@ -19,13 +25,13 @@
 /* oxlint-disable no-await-in-loop -- the runs of a lane go one after the other: they share the server */
 import { execFileSync, fork } from 'node:child_process';
 import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { cpus, tmpdir } from 'node:os';
-import { join, resolve as resolvePath } from 'node:path';
+import { cpus, release, tmpdir, totalmem } from 'node:os';
+import { dirname, join, resolve as resolvePath } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 import { createConnection } from 'mysql2/promise';
 import { Client } from 'pg';
-import { countersAsync, difference, startCounters, stopCounters } from '../lib/counters.mjs';
+import { countersAsync, countsKernel, difference, startCounters, stopCounters } from '../lib/counters.mjs';
 import { statsServer } from '../lib/db_stats.mjs';
 import { startServer } from '../lib/servers.mjs';
 
@@ -43,6 +49,7 @@ const { values: args } = parseArgs({
         'window': { type: 'string', default: '15' },
         'warmup': { type: 'string', default: '5' },
         'out': { type: 'string' },
+        'save': { type: 'string' },
         'pg-bin': { type: 'string', default: PG_BIN ?? '/opt/homebrew/opt/postgresql@17/bin' },
         'mysql-bin': { type: 'string', default: MYSQL_BIN ?? '/opt/homebrew/opt/mysql@8.4/bin' },
         'mariadb-bin': { type: 'string', default: MARIADB_BIN ?? '/opt/homebrew/opt/mariadb@11.8/bin' },
@@ -63,6 +70,7 @@ const WARMUP_MS = Number(args.warmup) * 1000;
  * @typedef {object} Scenario
  * @property {string} name
  * @property {string} unit What one operation is.
+ * @property {string} op The same, short (`--save`).
  * @property {{ role: 'producer' | 'worker' | 'scheduler', args?: string[] }[]} processes Started in this order.
  * @property {'ops' | 'completed' | 'fired' | 'seconds'} per The operations: the producer's calls, the worker's
  *     completed jobs, the scheduler's fired slots, or the seconds of the window.
@@ -74,6 +82,7 @@ const SCENARIOS = [
     {
         name: 'enqueue',
         unit: 'enqueue, in a transaction of its own (50/s)',
+        op: 'enqueue',
         processes: [{ role: 'producer', args: ['--op', 'enqueue', '--rate', '50'] }],
         per: 'ops',
         align: 'none',
@@ -81,6 +90,7 @@ const SCENARIOS = [
     {
         name: 'enqueue_many',
         unit: '`enqueueMany` of 100 jobs (2/s)',
+        op: 'call of enqueueMany of 100',
         processes: [{ role: 'producer', args: ['--op', 'enqueue_many', '--rate', '2', '--batch', '100'] }],
         per: 'ops',
         align: 'none',
@@ -88,6 +98,7 @@ const SCENARIOS = [
     {
         name: 'run',
         unit: 'job enqueued, run and completed (20/s, 1000 handled names)',
+        op: 'job',
         processes: [{ role: 'worker' }, { role: 'producer', args: ['--op', 'enqueue', '--rate', '20'] }],
         per: 'completed',
         align: 'poll',
@@ -95,6 +106,7 @@ const SCENARIOS = [
     {
         name: 'idle',
         unit: 'second of a worker of 1000 names, no job',
+        op: 'second',
         processes: [{ role: 'worker' }],
         per: 'seconds',
         align: 'poll',
@@ -102,6 +114,7 @@ const SCENARIOS = [
     {
         name: 'schedule',
         unit: 'fired slot of 1000 `every: \'10s\'` schedules, no handler',
+        op: 'slot',
         processes: [{ role: 'scheduler', args: ['--every', '10s'] }],
         per: 'fired',
         align: 'slot',
@@ -109,6 +122,7 @@ const SCENARIOS = [
     {
         name: 'mutex',
         unit: 'job with one of 100 mutex keys (20/s)',
+        op: 'job',
         processes: [
             { role: 'worker', args: ['--mutex-keys', '100'] },
             { role: 'producer', args: ['--op', 'enqueue', '--rate', '20', '--mutex-keys', '100'] },
@@ -133,6 +147,8 @@ const BINS = { postgres: args['pg-bin'], mysql: args['mysql-bin'], mariadb: args
 const PORTS = { postgres: 55_470, mysql: 53_470, mariadb: 53_471 };
 const HINT_PORTS = { postgres: 41_470, mysql: 41_471, mariadb: 41_472 };
 const out = args.out ? resolvePath(args.out) : mkdtempSync(join(tmpdir(), 'sqlane-ab-'));
+/** @type {Record<string, string>} The version of each database server, from `SELECT version()` */
+const versions = {};
 /** @type {(() => void)[]} */
 const cleanups = [];
 
@@ -143,11 +159,15 @@ const cleanups = [];
 const sleepUntil = ms => sleep(Math.max(0, ms - Date.now()));
 
 /**
- * The sources of the ref, with the drivers of this checkout.
+ * The sources of the ref, with the drivers of this checkout. `.`: the working tree itself.
  * @param {string} ref
- * @returns {{ dir: string, commit: string }}
+ * @returns {{ dir: string, commit: string | null }}
  */
 function extract(ref) {
+    if (ref === '.') {
+        return { dir: ROOT, commit: null };
+    }
+
     const commit = execFileSync('git', ['-C', ROOT, 'rev-parse', '--verify', `${ref}^{commit}`], { encoding: 'utf8' })
         .trim();
     const dir = join(out, 'baseline');
@@ -662,13 +682,16 @@ async function runServer(dialect, sources) {
         const client = new Client({ connectionString: server.adminUrl });
 
         await client.connect();
+        versions[dialect] = (await client.query('SELECT version() AS version')).rows[0].version;
         admin = async (sql) => {
             await client.query(sql);
         };
         closeAdmin = () => client.end();
     } else {
         const connection = await createConnection({ uri: server.adminUrl });
+        const [rows] = /** @type {[any[], unknown]} */ (await connection.query('SELECT version() AS version'));
 
+        versions[dialect] = rows[0].version;
         admin = async (sql) => {
             await connection.query(sql);
         };
@@ -745,6 +768,63 @@ function table(comparisons) {
     ].join('\n');
 }
 
+/**
+ * @param {number} instructions
+ * @param {number} statements
+ * @returns {{ instructionsPerOp: number, statementsPerOp: number }} Rounded: to a unit, to 4 decimals.
+ */
+function perOp(instructions, statements) {
+    return {
+        instructionsPerOp: Math.round(instructions),
+        statementsPerOp: Math.round(statements * 10_000) / 10_000,
+    };
+}
+
+/**
+ * The numbers of `--save`: the working tree's, per scenario and database, with the baseline's and the verdict. The keys
+ * in a fixed order.
+ * @param {Comparison[]} comparisons
+ * @param {{ commit: string | null, totalS: number }} run
+ * @returns {object}
+ */
+function saved(comparisons, { commit, totalS }) {
+    return {
+        date: new Date().toISOString(),
+        ref: args.ref,
+        commit,
+        machine: {
+            platform: process.platform,
+            cpu: cpus()[0]?.model.trim() ?? null,
+            cores: cpus().length,
+            memoryGiB: Math.round(totalmem() / (2 ** 30)),
+            kernel: release(),
+        },
+        kernelCounted: countsKernel(),
+        node: process.version,
+        servers: Object.fromEntries(dialects.map(dialect => [dialect, versions[dialect] ?? null])),
+        warmupS: WARMUP_MS / 1000,
+        windowS: WINDOW_MS / 1000,
+        totalS: Math.round(totalS),
+        scenarios: Object.fromEntries(scenarios.map(scenario => [scenario.name, {
+            unit: scenario.op,
+            description: scenario.unit,
+            databases: Object.fromEntries(dialects.map((dialect) => {
+                const row = comparisons.find(item => item.scenario === scenario.name && item.dialect === dialect);
+
+                if (!row || row.error) {
+                    return [dialect, { error: row?.error ?? 'missing' }];
+                }
+
+                return [dialect, {
+                    ...perOp(row.instructions.current, row.statements.current),
+                    baseline: perOp(row.instructions.base, row.statements.base),
+                    verdict: row.verdict,
+                }];
+            })),
+        }])),
+    };
+}
+
 const startedAt = Date.now();
 
 /** Kills the processes and the servers that are left */
@@ -766,7 +846,9 @@ process.once('SIGINT', () => {
 try {
     const { dir: base, commit } = extract(args.ref);
 
-    console.error(`Baseline: ${args.ref} (${commit.slice(0, 12)}); results and logs: ${out}`);
+    const baseline = commit ? `${args.ref} (${commit.slice(0, 12)})` : 'the working tree itself';
+
+    console.error(`Baseline: ${baseline}; results and logs: ${out}`);
     await startCounters();
 
     const lanes = await Promise.all(dialects.map(dialect => runLane(
@@ -782,7 +864,15 @@ try {
         thresholds: THRESHOLDS, totalS, comparisons,
     }, null, 4)}\n`);
 
-    console.log(`\nWorking tree vs ${args.ref} (${commit.slice(0, 12)}): per operation, the instructions of the sqlane `
+    if (args.save) {
+        const saveFile = resolvePath(args.save);
+
+        mkdirSync(dirname(saveFile), { recursive: true });
+        writeFileSync(saveFile, `${JSON.stringify(saved(comparisons, { commit, totalS }), null, 4)}\n`);
+        console.error(`Saved: ${saveFile}`);
+    }
+
+    console.log(`\nWorking tree vs ${baseline}: per operation, the instructions of the sqlane `
         + 'processes and of the database server, and the statements of the database. Mean of the runs; a difference '
         + `beyond ±${THRESHOLDS.instructions * 100}% (instructions) or ±${THRESHOLDS.statements * 100}% (statements) `
         + 'is rerun in the other order, and counts if the rerun confirms it.\n');
