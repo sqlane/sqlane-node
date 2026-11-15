@@ -21,10 +21,14 @@ import { setTimeout as sleep } from 'node:timers/promises';
  * @typedef {object} Scenario
  * @property {string} name
  * @property {string} unit What one operation is: the counts are per operation.
+ * @property {RegExp} [timing] The statements whose count depends on timing, left out of the counts: the rounds of a
+ *     drain that look for due jobs. The faster the machine, the fewer rounds; `idle` counts them exactly.
  * @property {(context: Context) => Promise<{ operations: number, stats: StatementStats }>} run
  */
 
 const NAMES = 1000;
+/** The statement that looks for the job names with due jobs: the same `delay_ms` column in every dialect */
+const ROUNDS = /\bdelay_ms\b/;
 const JOBS = 200;
 
 /**
@@ -114,6 +118,7 @@ export const SCENARIOS = [
     {
         name: 'run',
         unit: 'job claimed, run and completed, over 1000 handled names',
+        timing: ROUNDS,
         async run({ lib, create, pool, measure }) {
             const jobs = definitions(lib, NAMES);
             const sqlane = create({ jobs, maxConcurrency: 1 });
@@ -160,6 +165,7 @@ export const SCENARIOS = [
     {
         name: 'mutex',
         unit: 'job with a mutex key, 100 jobs of 2 names over 10 keys',
+        timing: ROUNDS,
         async run({ lib, create, pool, measure }) {
             const jobs = definitions(lib, 2, {
                 mutexKeys: (/** @type {{ key: number }} */ payload) => [`account:${payload.key}`],

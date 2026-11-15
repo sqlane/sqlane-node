@@ -33,16 +33,16 @@
         "run": {
             "operations": 200,
             "statements": {
-                "min": 602,
-                "max": 603
+                "min": 201,
+                "max": 201
             },
             "rows": {
-                "min": 20500,
-                "max": 20500
+                "min": 201,
+                "max": 201
             },
             "blocks": {
-                "min": 433582,
-                "max": 435589
+                "min": 3467,
+                "max": 3490
             }
         },
         "idle": {
@@ -63,16 +63,16 @@
         "mutex": {
             "operations": 100,
             "statements": {
-                "min": 1002,
-                "max": 1005
+                "min": 900,
+                "max": 900
             },
             "rows": {
-                "min": 1387,
-                "max": 1391
+                "min": 1188,
+                "max": 1188
             },
             "blocks": {
-                "min": 20716,
-                "max": 20729
+                "min": 20307,
+                "max": 20311
             }
         },
         "schedule": {
@@ -125,12 +125,12 @@
         "run": {
             "operations": 200,
             "statements": {
-                "min": 2375,
-                "max": 2394
+                "min": 2000,
+                "max": 2000
             },
             "rows": {
-                "min": 2388,
-                "max": 2389
+                "min": 2188,
+                "max": 2188
             },
             "blocks": {
                 "min": 0,
@@ -155,12 +155,12 @@
         "mutex": {
             "operations": 100,
             "statements": {
-                "min": 1901,
-                "max": 1901
+                "min": 1700,
+                "max": 1700
             },
             "rows": {
-                "min": 65607,
-                "max": 107457
+                "min": 65127,
+                "max": 107357
             },
             "blocks": {
                 "min": 0,
@@ -217,12 +217,12 @@
         "run": {
             "operations": 200,
             "statements": {
-                "min": 2325,
-                "max": 2395
+                "min": 2000,
+                "max": 2000
             },
             "rows": {
-                "min": 33059,
-                "max": 41176
+                "min": 2188,
+                "max": 2188
             },
             "blocks": {
                 "min": 0,
@@ -247,12 +247,12 @@
         "mutex": {
             "operations": 100,
             "statements": {
-                "min": 1891,
-                "max": 1901
+                "min": 1700,
+                "max": 1700
             },
             "rows": {
-                "min": 52184,
-                "max": 52314
+                "min": 51712,
+                "max": 51712
             },
             "blocks": {
                 "min": 0,
@@ -309,12 +309,12 @@
         "run": {
             "operations": 200,
             "statements": {
-                "min": 2333,
-                "max": 2363
+                "min": 2000,
+                "max": 2000
             },
             "rows": {
-                "min": 33353,
-                "max": 37121
+                "min": 2188,
+                "max": 2188
             },
             "blocks": {
                 "min": 0,
@@ -339,12 +339,12 @@
         "mutex": {
             "operations": 100,
             "statements": {
-                "min": 1900,
-                "max": 1901
+                "min": 1700,
+                "max": 1700
             },
             "rows": {
-                "min": 52104,
-                "max": 52106
+                "min": 51712,
+                "max": 51712
             },
             "blocks": {
                 "min": 0,
@@ -401,16 +401,16 @@
         "run": {
             "operations": 200,
             "statements": {
-                "min": 602,
-                "max": 603
+                "min": 201,
+                "max": 201
             },
             "rows": {
-                "min": 20500,
-                "max": 20500
+                "min": 201,
+                "max": 201
             },
             "blocks": {
-                "min": 433579,
-                "max": 435613
+                "min": 3477,
+                "max": 3497
             }
         },
         "idle": {
@@ -431,16 +431,16 @@
         "mutex": {
             "operations": 100,
             "statements": {
-                "min": 1002,
-                "max": 1004
+                "min": 900,
+                "max": 900
             },
             "rows": {
-                "min": 1387,
-                "max": 1391
+                "min": 1188,
+                "max": 1188
             },
             "blocks": {
-                "min": 21013,
-                "max": 21022
+                "min": 20604,
+                "max": 20605
             }
         },
         "schedule": {
