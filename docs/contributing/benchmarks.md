@@ -3,34 +3,34 @@
 The benchmarks have two jobs: to catch a performance regression of sqlane before it ships, on every supported
 database, and to compare sqlane with other job queues for the [performance page](../performance_vs_other_libs.md).
 
-| Command               | What it does                                                                                    | Time       |
-| --------------------- | ----------------------------------------------------------------------------------------------- | ---------- |
-| `pnpm bench:snapshot` | Statements, rows and blocks of sqlane's hot paths on each supported version, against a snapshot | 2 min (CI) |
-| `pnpm bench`          | CPU instructions and statements per operation: the working tree against `main`                  | 5–6 min    |
-| `pnpm bench:compare`  | sqlane and seven other queues on PostgreSQL ([bench/compare](../../bench/compare/README.md))    | 10 min     |
-| `pnpm bench:docs`     | The charts and the generated blocks of the performance page and the README, from the results    | a second   |
+| Command                    | What it does                                                                                    | Time       |
+| -------------------------- | ----------------------------------------------------------------------------------------------- | ---------- |
+| `pnpm bench:statements`    | Statements, rows and blocks of sqlane's hot paths on each supported version, against a snapshot | 2 min (CI) |
+| `pnpm bench:regression`    | CPU instructions and statements per operation: the working tree against `main`                  | 5–6 min    |
+| `pnpm bench:vs-other-libs` | sqlane and seven other queues on PostgreSQL ([bench/compare](../../bench/compare/README.md))    | 10 min     |
+| `pnpm bench:generate-docs` | The charts and the generated blocks of the performance page and the README, from the results    | a second   |
 
 ## Regressions
 
 The six hot paths: `enqueue` in a transaction of its own, `enqueueMany` of 100, a job claimed, run and completed over
 1000 job names, idle with 1000 job names, a schedule firing (1000 schedules), and a job with a mutex key.
 
-**`pnpm bench:snapshot`** runs them as fixed sequences of public calls (`bench/regression/scenarios.mjs`) on each
+**`pnpm bench:statements`** runs them as fixed sequences of public calls (`bench/regression/scenarios.mjs`) on each
 supported version in a container, and counts the statements, the rows and the blocks from the database's own
 statistics (`pg_stat_statements`, `performance_schema`). CI fails when a count leaves the range of
 `bench/regression/snapshot.json`, with a margin of 2% for statements and 20% for rows and blocks; one more statement
 per operation leaves it in every scenario. A change of a hot path that adds or removes statements on purpose updates
-the snapshot: `pnpm bench:snapshot --update` runs each scenario 10 times and keeps the range (about 20 minutes).
+the snapshot: `pnpm bench:statements:update` runs each scenario 10 times and keeps the range (about 20 minutes).
 `--db mysql-8.4` and `--scenario run` narrow a run.
 
-**`pnpm bench`** runs the same hot paths under steady load in separate processes (`bench/regression/app.mjs`), on
+**`pnpm bench:regression`** runs the same hot paths under steady load in separate processes (`bench/regression/app.mjs`), on
 PostgreSQL, MySQL and MariaDB from binaries, for the working tree and a baseline (`--ref main`, the default; `--ref .`:
 the working tree itself). Per operation it reports the CPU instructions of the sqlane processes and the database
 server, and the statements. A difference beyond ±5% in instructions or ±3% in statements reruns that pair once, and only
 a confirmed slowdown fails. `--db`, `--scenario` and `--window` narrow a run; `--save <file>` writes the numbers.
 
 On macOS, the servers come from Homebrew (`postgresql@17`, `mysql@8.4`, `mariadb@11.8`; `PG_BIN`, `MYSQL_BIN`,
-`MARIADB_BIN` for others), and the counters from `bench/lib/proc_usage.py`. On Linux, `bench/run_linux.sh ab` runs it
+`MARIADB_BIN` for others), and the counters from `bench/lib/proc_usage.py`. On Linux, `bench/run_linux.sh regression` runs it
 in the container of `bench/compare/linux.dockerfile`, with the counters of `bench/lib/proc_usage_linux.py`.
 
 ## Publishing
@@ -38,9 +38,9 @@ in the container of `bench/compare/linux.dockerfile`, with the counters of `benc
 The performance page and the README's charts come from one Linux machine:
 
 ```sh
-bench/run_linux.sh compare                                           # bench/compare/results.json
-bench/run_linux.sh ab --ref . --save bench/regression/results.json   # sqlane on each backend
-pnpm bench:docs                                                      # the charts and the generated blocks
+bench/run_linux.sh vs-other-libs                                           # bench/compare/results.json
+bench/run_linux.sh regression --ref . --save bench/regression/results.json   # sqlane on each backend
+pnpm bench:generate-docs                                                      # the charts and the generated blocks
 ```
 
 `kernel.perf_event_paranoid` must be 1 or less on the host, or the counters see user space only: the results say so
@@ -86,7 +86,7 @@ What made earlier measurements wrong:
 
 ## Finding where the cost is
 
-`pnpm bench` says how much. These say where.
+`pnpm bench:regression` says how much. These say where.
 
 **Node.** A CPU profile of the worker or the producer, for the measured window only:
 

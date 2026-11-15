@@ -126,7 +126,7 @@ uses 3.3 M (1.8×).
 
 sqlane's hot paths on PostgreSQL, MySQL and MariaDB, under steady load: SQL statements and CPU instructions per
 operation ([pnpm bench](../bench/regression/ab.mjs)). CI also checks the statement counts of each supported version
-([bench:snapshot](../bench/regression/snapshot.json)).
+([bench:statements](../bench/regression/snapshot.json)).
 
 <!-- generated:backends -->
 
@@ -139,8 +139,9 @@ operation ([pnpm bench](../bench/regression/ab.mjs)). CI also checks the stateme
 | A job with one of 100 mutex keys: its enqueue, claim, run and completion | 15.00 · 17.5 M   | 28.19 · 37.9 M | 28.10 · 43.4 M |
 | A schedule firing, one of 1000 `every: '10s'` schedules                  | 0.052 · 0.82 M   | 0.083 · 0.91 M | 0.083 · 0.84 M |
 
-Statements and CPU instructions of the sqlane processes and the database server, under steady load (`pnpm bench`),
-without network delay, 15 November 2026, on an AMD Ryzen 5 3600 (6 cores, 12 threads), 64 GB, Linux 7.2.
+Statements and CPU instructions of the sqlane processes and the database server, under steady load (`pnpm
+bench:regression`), without network delay, 15 November 2026, on an AMD Ryzen 5 3600 (6 cores, 12 threads), 64 GB, Linux
+7.2.
 
 <!-- /generated:backends -->
 

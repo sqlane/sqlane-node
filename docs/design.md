@@ -727,4 +727,4 @@ Small helper modules, such as `backoff.js`, `duration.js`, `mutex_keys.js` and `
   transition of 2026 in 10 zones, from random starts and along chains of slots. They also bound the work of each
   search.
 - **Benchmarks** ([benchmarks](contributing/benchmarks.md)): CI checks the statements of the hot paths on each
-  supported version (`pnpm bench:snapshot`). `pnpm bench` compares the CPU cost of a change with `main`.
+  supported version (`pnpm bench:statements`). `pnpm bench:regression` compares the CPU cost of a change with `main`.

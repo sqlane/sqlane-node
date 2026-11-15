@@ -134,5 +134,5 @@ comparison](performance_vs_other_libs.md#conditions): sqlane 5.0.0, [pg-boss](ht
 6.7.4, [Sidequest](https://github.com/sidequestjs/sidequest) 1.17.0, [River for
 JavaScript](https://github.com/riverqueue/river) 0.3.2, [Boring Node Queue](https://github.com/boringnode/queue) 0.9.1
 and [Izi Queue](https://github.com/IagoCavalcante/izi-queue) 0.10.0. River's Go library and the paid editions (BullMQ
-Pro, River Pro, Graphile Worker Pro) are not compared. To rerun the 🔬 checks: `pnpm bench:compare --only checks`
+Pro, River Pro, Graphile Worker Pro) are not compared. To rerun the 🔬 checks: `pnpm bench:vs-other-libs --only checks`
 ([bench/compare](../bench/compare/README.md)).

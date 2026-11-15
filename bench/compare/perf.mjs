@@ -47,7 +47,7 @@ const LINGER_MS = 3000;
 const CONCURRENCY = 8;
 
 /**
- * Most jobs go to 10 hot names, every 10th to one of the others: as `pnpm bench`.
+ * Most jobs go to 10 hot names, every 10th to one of the others: as `pnpm bench:regression`.
  * @param {number} index
  * @returns {string}
  */
