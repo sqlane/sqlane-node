@@ -176,7 +176,18 @@ function limitRoom(limit) {
  * @returns {number} The lowest room of its local limits; Infinity without one.
  */
 function limitsRoom(entry) {
-    return Math.min(Infinity, ...entry.limits.map(limitRoom));
+    // Each poll checks every handled name: most have no limit, and need no loop
+    if (!entry.limits.length) {
+        return Infinity;
+    }
+
+    let room = Infinity;
+
+    for (const limit of entry.limits) {
+        room = Math.min(room, limitRoom(limit));
+    }
+
+    return room;
 }
 
 /**
