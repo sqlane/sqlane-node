@@ -13,7 +13,7 @@ explains how sqlane works and why.
 - [Durations](#durations)
 - [`defineJob`](#definejob)
 - [`createSqlane`](#createsqlane)
-- [`defineConcurrencyGroup`](#defineconcurrencygroup)
+- [`defineConcurrencyLimit`](#defineconcurrencylimit)
 - [Where job options come from](#where-job-options-come-from)
 - [`enqueue`](#enqueue)
 - [`enqueueMany`](#enqueuemany)
@@ -36,22 +36,23 @@ explains how sqlane works and why.
 
 ## Terms
 
-| Term              | Meaning                                                                                                                                                                          |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Job               | One unit of work. It is one row in the database, with a payload, a state and a number of attempts.                                                                               |
-| Job name          | The kind of a job, for example `build_report`. The job name is also the queue, because sqlane has no separate queue object.                                                      |
-| Job definition    | The name and the options of a job name. You create it with `defineJob`. Producers and workers import the same definition.                                                        |
-| Handler           | The function that runs a job. Only workers register handlers.                                                                                                                    |
-| Concurrency group | A limit on the handlers of several job names that run at the same time in one instance. You create it with `defineConcurrencyGroup`.                                             |
-| Fair share weight | The share of the free slots that a job name gets, against the other due names: `fairShareWeight`, default 1.                                                                     |
-| Lease             | The time for which a process owns a running job. The process renews the lease while the handler runs. If the process stops, the lease ends and another process can take the job. |
-| Stall             | A stall happens when the lease of a running job ends because its process stopped or blocked. sqlane then puts the job back in the queue.                                         |
-| Mutex key         | A string such as `order:42`. Two jobs that share a mutex key never run at the same time in the whole cluster, as long as handlers stop when their `signal` aborts.               |
-| Failure job       | A job that sqlane adds when another job fails for good. It lets you react to the failure, for example by sending an alert.                                                       |
-| Adapter           | The object that connects sqlane to your database driver or ORM.                                                                                                                  |
-| Hint              | A message that tells other processes that jobs of a name are ready. Hints only make jobs start sooner. If a hint is lost, the job still runs at the next poll.                   |
-| Schedule          | A cron or an interval that adds a job of a name at each of its times. You add it with `schedule()`.                                                                              |
-| Slot              | One time of a schedule. Each slot adds at most one job, whose id is `<job name>:schedule:[<key>:]<ISO time>`.                                                                    |
+| Term              | Meaning                                                                                                                                                                                                                      |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Job               | One unit of work. It is one row in the database, with a payload, a state and a number of attempts.                                                                                                                           |
+| Job name          | The kind of a job, for example `build_report`. The job name is also the queue, because sqlane has no separate queue object.                                                                                                  |
+| Job definition    | The name and the options of a job name. You create it with `defineJob`. Producers and workers import the same definition.                                                                                                    |
+| Handler           | The function that runs a job. Only workers register handlers.                                                                                                                                                                |
+| Concurrency limit | The most jobs that run at once. A definition lists it as a local limit, which each instance counts, or as a global limit, which the whole cluster counts per key. You create it with `defineConcurrencyLimit`.               |
+| Fair share weight | The share of the free slots that a job name gets, against the other due names: `fairShareWeight`, default 1.                                                                                                                 |
+| Lease             | The time for which a process owns a running job. The process renews the lease while the handler runs. If the process stops, the lease ends and another process can take the job.                                             |
+| Stall             | A stall happens when the lease of a running job ends because its process stopped or blocked. sqlane then puts the job back in the queue.                                                                                     |
+| Key               | A string such as `order:42`: a global limit counts the jobs of each of its keys. Two jobs with one key of a limit of 1 never run at the same time in the whole cluster, as long as handlers stop when their `signal` aborts. |
+| Blocked job       | A due job with a full key. It waits out of the due jobs until a job of the key ends.                                                                                                                                         |
+| Failure job       | A job that sqlane adds when another job fails for good. It lets you react to the failure, for example by sending an alert.                                                                                                   |
+| Adapter           | The object that connects sqlane to your database driver or ORM.                                                                                                                                                              |
+| Hint              | A message that tells other processes that jobs of a name are ready. Hints only make jobs start sooner. If a hint is lost, the job still runs at the next poll.                                                               |
+| Schedule          | A cron or an interval that adds a job of a name at each of its times. You add it with `schedule()`.                                                                                                                          |
+| Slot              | One time of a schedule. Each slot adds at most one job, whose id is `<job name>:schedule:[<key>:]<ISO time>`.                                                                                                                |
 
 ## Durations
 
@@ -78,27 +79,35 @@ defineJob<P = any>(options: JobOptions<P>): JobDefinition<P>
 The definition is a frozen object. Keep it in a small module that both producers and workers import. A producer then
 does not need to import the handler and its dependencies.
 
-| Option        | Type                                          | Default                                                             | Description                                                                                                                                                                                                                                                                                                                                                      |
-| ------------- | --------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`        | `string`                                      | Required                                                            | The job name. It must match `^[a-z][a-z0-9_.-]{0,127}$`, so it cannot contain `:`. It is case-sensitive.                                                                                                                                                                                                                                                         |
-| `maxAttempts` | integer, at least 1                           | `3`                                                                 | The number of times a job runs before it fails for good.                                                                                                                                                                                                                                                                                                         |
-| `maxStalls`   | integer, at least 0                           | `2`                                                                 | The number of stalls that a job survives. The next stall after this number fails the job for good.                                                                                                                                                                                                                                                               |
-| `backoff`     | [`Backoff`](#backoff)                         | `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }` | The wait before the next attempt after a failed attempt.                                                                                                                                                                                                                                                                                                         |
-| `retention`   | `{ completed?: Duration, failed?: Duration }` | `{ completed: '1h', failed: '30d' }`                                | How long sqlane keeps a completed or a failed job before it deletes the row. A `jobId` blocks duplicates while the row exists. That is while the job is pending or running, then during this retention, until the next cleanup. A started process runs the cleanup every 5 minutes. If every process sets `cleanup: false`, the rows stay until you delete them. |
-| `timeout`     | positive duration                             | None                                                                | The time after which sqlane aborts the handler. A definition with `mutexKeys` needs a timeout, either here, in the `handle()` options or in the instance `defaults`.                                                                                                                                                                                             |
-| `mutexKeys`   | `(payload: P) => readonly string[]`           | None                                                                | A function that returns the mutex keys of a job. It must be synchronous and use only the payload. sqlane calls it at enqueue, with the payload as JSON gives it back.                                                                                                                                                                                            |
-| `failureJob`  | `string` or `JobDefinition`                   | None                                                                | The job name that sqlane adds when a job of this name fails for good. A job cannot be its own failure job. The failure job cannot have a `failureJob` of its own. Its payload is a [`FailedJobPayload`](#failedjobpayload).                                                                                                                                      |
+| Option                    | Type                                                                    | Default                                                             | Description                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                    | `string`                                                                | Required                                                            | The job name. It must match `^[a-z][a-z0-9_.-]{0,127}$`, so it cannot contain `:`. It is case-sensitive.                                                                                                                                                                                                                                                         |
+| `maxAttempts`             | integer, at least 1                                                     | `3`                                                                 | The number of times a job runs before it fails for good.                                                                                                                                                                                                                                                                                                         |
+| `maxStalls`               | integer, at least 0                                                     | `2`                                                                 | The number of stalls that a job survives. The next stall after this number fails the job for good.                                                                                                                                                                                                                                                               |
+| `backoff`                 | [`Backoff`](#backoff)                                                   | `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }` | The wait before the next attempt after a failed attempt.                                                                                                                                                                                                                                                                                                         |
+| `retention`               | `{ completed?: Duration, failed?: Duration }`                           | `{ completed: '1h', failed: '30d' }`                                | How long sqlane keeps a completed or a failed job before it deletes the row. A `jobId` blocks duplicates while the row exists. That is while the job is pending or running, then during this retention, until the next cleanup. A started process runs the cleanup every 5 minutes. If every process sets `cleanup: false`, the rows stay until you delete them. |
+| `timeout`                 | positive duration                                                       | None                                                                | The time after which sqlane aborts the handler. A definition with `globalConcurrencyLimits` needs a timeout, here or in the instance `defaults`.                                                                                                                                                                                                                 |
+| `globalConcurrencyLimits` | `({ payload }) => readonly (ConcurrencyLimit \| ConcurrencyLimitKey)[]` | None                                                                | A function that returns the global limits of a job: [limits and their keys](#defineconcurrencylimit). It must be synchronous and use only its argument. sqlane calls it at enqueue, with the payload as JSON gives it back, and stores the keys with their maxes in the job.                                                                                     |
+| `localConcurrencyLimits`  | `readonly ConcurrencyLimit[]`                                           | None                                                                | Limits that each instance counts for its own jobs. A job starts while each of them has room.                                                                                                                                                                                                                                                                     |
+| `fairShareWeight`         | integer, 1 to 1000                                                      | `1`                                                                 | The name's share of the free slots of an instance, against the other due names. See [How free slots are shared](#how-free-slots-are-shared).                                                                                                                                                                                                                     |
+| `failureJob`              | `string` or `JobDefinition`                                             | None                                                                | The job name that sqlane adds when a job of this name fails for good. A job cannot be its own failure job. The failure job cannot have a `failureJob` of its own. Its payload is a [`FailedJobPayload`](#failedjobpayload).                                                                                                                                      |
 
 `defineJob` throws a `ConfigError` if an option is unknown or has a bad value. It does not check whether a
-definition with mutex keys has a timeout, because `handle()` checks that.
+definition with global limits has a timeout, because `handle()` checks that.
+
+The options of a definition apply at two times. `maxAttempts`, `maxStalls`, `retention`, `failureJob` and the global
+limits are stored in the job at enqueue: a change applies to the jobs enqueued after it. `backoff`, `timeout`,
+`fairShareWeight` and the local limits are read by the worker that runs the job.
 
 ```js
-import { defineJob } from '@sqlane/core';
+import { defineConcurrencyLimit, defineJob } from '@sqlane/core';
+
+export const order = defineConcurrencyLimit({ name: 'order', max: 1 });
 
 export const syncOrder = defineJob({
     name: 'sync_order',
     maxAttempts: 5,
-    mutexKeys: (payload) => [`order:${payload.orderId}`],
+    globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
     timeout: '2m',
     failureJob: 'sync_order_failed',
 });
@@ -121,7 +130,7 @@ sqlane does not merge its fields with the default.
 ### Typed payloads
 
 A definition can declare the type of its payload. `enqueue` and `enqueueMany` then check the payload against this
-type. The handler's `payload` and the argument of `mutexKeys` also get this type.
+type. The handler's `payload` and the `payload` of `globalConcurrencyLimits` also get this type.
 
 In TypeScript, pass the type to `defineJob`:
 
@@ -149,23 +158,23 @@ createSqlane<C>(options: SqlaneOptions<C>): Sqlane<C>
 
 The type `C` is the connection type that `enqueue` accepts, and it comes from the adapter. `createSqlane` does not
 connect, migrate or start anything. It throws a `ConfigError` if an option is unknown or has a bad value. The options
-of 4.x throw a `ConfigError` that names the new one: `concurrency` is now `maxConcurrency`, and `lanes` became
-[concurrency groups](#defineconcurrencygroup).
+of 4.x and 5.x throw a `ConfigError` that names the new one: `concurrency` and `maxConcurrency` are now
+`localMaxConcurrency`, and `lanes` became [local limits](#defineconcurrencylimit).
 
-| Option            | Type                           | Default     | Description                                                                                                                                                                                           |
-| ----------------- | ------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `adapter`         | `Adapter<C>`                   | Required    | The adapter of your driver or ORM, created over the queue's own pool. sqlane uses this pool to claim jobs, renew leases and write results. See [Adapters](#adapters).                                 |
-| `jobs`            | `readonly JobDefinition[]`     | `[]`        | The definitions that this instance knows by name. List every definition here, so that an enqueue by name finds its options. Two different definitions with one name throw a `ConfigError`.            |
-| `maxConcurrency`  | integer, at least 1            | `10`        | The highest number of handlers that run at the same time in this instance. The free slots are [shared by weight](#how-free-slots-are-shared).                                                         |
-| `defaults`        | `JobDefaults`                  | See below   | Defaults for `maxAttempts`, `maxStalls`, `backoff`, `retention` and `timeout`. A definition overrides them.                                                                                           |
-| `unknownJobs`     | `'allow'` or `'reject'`        | `'allow'`   | With `'reject'`, `enqueue` rejects with an `UnknownJobError` for a job name that is neither in `jobs` nor handled.                                                                                    |
-| `hint`            | [`Hint`](#hint) or `null`      | `null`      | A publish/subscribe service that wakes other processes after an enqueue. With `null`, other processes find new jobs at their next poll. You cannot combine it with the `notify` option of an adapter. |
-| `logger`          | `Logger`                       | None        | A pino-compatible logger with `debug`, `info`, `warn` and `error` methods. Each method takes an object and an optional message. Without a logger, sqlane writes no logs.                              |
-| `onEvent`         | `(event: SqlaneEvent) => void` | None        | A function that receives the [events](#events) of the job lifecycle. If it throws, sqlane logs the error and goes on.                                                                                 |
-| `tablePrefix`     | `string`                       | `'sqlane_'` | The prefix of the table names. It must match `^[a-z][a-z0-9_]{0,31}$`.                                                                                                                                |
-| `pollInterval`    | positive duration              | `'5s'`      | How often a started process checks the database for due jobs when nothing wakes it.                                                                                                                   |
-| `maxPayloadBytes` | integer, at least 1            | `262144`    | The largest payload, in bytes of JSON. The default is 256 KiB.                                                                                                                                        |
-| `cleanup`         | `boolean`                      | `true`      | When it is `true`, a started process deletes the completed and failed jobs after their retention.                                                                                                     |
+| Option                | Type                           | Default     | Description                                                                                                                                                                                           |
+| --------------------- | ------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `adapter`             | `Adapter<C>`                   | Required    | The adapter of your driver or ORM, created over the queue's own pool. sqlane uses this pool to claim jobs, renew leases and write results. See [Adapters](#adapters).                                 |
+| `jobs`                | `readonly JobDefinition[]`     | `[]`        | The definitions that this instance knows by name. List every definition here, so that an enqueue by name finds its options. Two different definitions with one name throw a `ConfigError`.            |
+| `localMaxConcurrency` | integer, at least 1            | `10`        | The highest number of handlers that run at the same time in this instance. The free slots are [shared by weight](#how-free-slots-are-shared).                                                         |
+| `defaults`            | `JobDefaults`                  | See below   | Defaults for `maxAttempts`, `maxStalls`, `backoff`, `retention` and `timeout`. A definition overrides them.                                                                                           |
+| `unknownJobs`         | `'allow'` or `'reject'`        | `'allow'`   | With `'reject'`, `enqueue` rejects with an `UnknownJobError` for a job name that is neither in `jobs` nor handled.                                                                                    |
+| `hint`                | [`Hint`](#hint) or `null`      | `null`      | A publish/subscribe service that wakes other processes after an enqueue. With `null`, other processes find new jobs at their next poll. You cannot combine it with the `notify` option of an adapter. |
+| `logger`              | `Logger`                       | None        | A pino-compatible logger with `debug`, `info`, `warn` and `error` methods. Each method takes an object and an optional message. Without a logger, sqlane writes no logs.                              |
+| `onEvent`             | `(event: SqlaneEvent) => void` | None        | A function that receives the [events](#events) of the job lifecycle. If it throws, sqlane logs the error and goes on.                                                                                 |
+| `tablePrefix`         | `string`                       | `'sqlane_'` | The prefix of the table names. It must match `^[a-z][a-z0-9_]{0,31}$`.                                                                                                                                |
+| `pollInterval`        | positive duration              | `'5s'`      | How often a started process checks the database for due jobs when nothing wakes it.                                                                                                                   |
+| `maxPayloadBytes`     | integer, at least 1            | `262144`    | The largest payload, in bytes of JSON. The default is 256 KiB.                                                                                                                                        |
+| `cleanup`             | `boolean`                      | `true`      | When it is `true`, a started process deletes the completed and failed jobs after their retention.                                                                                                     |
 
 The built-in job defaults are `maxAttempts: 3`, `maxStalls: 2`, the default [backoff](#backoff),
 `retention: { completed: '1h', failed: '30d' }` and no timeout.
@@ -177,41 +186,61 @@ import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 const sqlane = createSqlane({
     adapter: mysql2Adapter(queuePool),
     jobs: [buildReport, syncOrder],
-    maxConcurrency: 10,
+    localMaxConcurrency: 10,
     defaults: { timeout: '10m' },
     unknownJobs: 'reject',
 });
 ```
 
-## `defineConcurrencyGroup`
+## `defineConcurrencyLimit`
 
-`defineConcurrencyGroup` defines a cap shared by the handlers of several job names.
+`defineConcurrencyLimit` defines a limit: the most jobs that run at once.
 
 ```ts
-defineConcurrencyGroup(options: { name: string, maxConcurrency: number }): ConcurrencyGroup
+defineConcurrencyLimit(options: { name: string, max: number }): ConcurrencyLimit
 ```
 
-Pass the group to `handle()` as `concurrencyGroup`. The jobs of all its names that run at the same time in one instance
-stay at or below its `maxConcurrency`. Each instance counts its own handlers: a group is not a limit in the whole
-cluster. Define the group at module level, like a job definition, and use the same object in every `handle()` call.
-The group is a frozen object.
+| Option | Type               | Description                                                     |
+| ------ | ------------------ | --------------------------------------------------------------- |
+| `name` | `string`           | It must match `^[a-z][a-z0-9_.-]{0,127}$`.                      |
+| `max`  | integer, 1 to 1000 | The most jobs that hold the limit, or one of its keys, at once. |
 
-| Option           | Type                | Description                                               |
-| ---------------- | ------------------- | --------------------------------------------------------- |
-| `name`           | `string`            | It must match `^[a-z][a-z0-9_.-]{0,127}$`.                |
-| `maxConcurrency` | integer, at least 1 | The most jobs of the names of the group that run at once. |
+Define a limit once, at module level, like a job definition. The limit is a frozen object. A definition uses it in
+one of two ways:
 
-`defineConcurrencyGroup` throws a `ConfigError` for an unknown option, a bad name or a bad `maxConcurrency`.
-`handle()` throws a `ConfigError` for two different groups with one name in one instance. `start()` and `drain()`
-throw one for a group whose `maxConcurrency` is above the instance's.
+- **Local**, in `localConcurrencyLimits`: each instance counts its own jobs of all the names that list the limit, in
+  memory. It costs no database work. A local limit above the instance's `localMaxConcurrency` is allowed: the lower
+  one applies, so one definition fits large and small machines.
+- **Global**, returned from `globalConcurrencyLimits`: the whole cluster counts the jobs, in the database. The limit
+  itself is one key, `<name>`. `limit.key(value)` gives one key per value, `<name>:<value>`, each with its own count:
+  `perClient.key('42')` counts the jobs of client 42. A value is a string or an integer.
+
+A job with global limits starts while each of its keys has fewer running jobs than its max. A job whose key is full is
+blocked on it: it leaves the due jobs, so it does not hold back the jobs of other keys, and it is due again when a
+job of the key ends. Jobs of a key start in FIFO order among those that can start; a job with several keys waits only
+for its full keys. The maxes are stored in the job at enqueue, with the keys: after a deploy that changes a max, the
+jobs enqueued before it keep the old one.
+
+A job has at most 10 global keys. A key, with the limit name, has at most 255 printable ASCII characters, without
+spaces at the ends. Duplicate keys count once. Two limits with one name and different maxes in one job throw an
+`InvalidConcurrencyLimitError` at enqueue; in the local limits of one instance, `handle()` throws a `ConfigError`.
+
+`defineConcurrencyLimit` throws a `ConfigError` for an unknown option, a bad name or a bad `max`.
 
 ```js
-import { defineConcurrencyGroup } from '@sqlane/core';
+import { defineConcurrencyLimit, defineJob } from '@sqlane/core';
 
-export const heavy = defineConcurrencyGroup({ name: 'heavy', maxConcurrency: 2 });
+export const heavy = defineConcurrencyLimit({ name: 'heavy', max: 2 });
+export const perClient = defineConcurrencyLimit({ name: 'client', max: 2 });
+export const allMessages = defineConcurrencyLimit({ name: 'messages', max: 100 });
 
-sqlane.handle(transcode, work, { concurrencyGroup: heavy, maxConcurrency: 1, fairShareWeight: 2 });
-sqlane.handle(render, work, { concurrencyGroup: heavy });
+export const transcode = defineJob({ name: 'transcode', timeout: '5m', localConcurrencyLimits: [heavy] });
+export const sendMessage = defineJob({
+    name: 'send_message',
+    timeout: '1m',
+    // At most 100 messages at once in the cluster, and 2 of each client
+    globalConcurrencyLimits: ({ payload }) => [allMessages, perClient.key(payload.clientId)],
+});
 ```
 
 ## Where job options come from
@@ -224,12 +253,12 @@ A job gets each option from the first place that sets it, in this order:
 3. The `defaults` of `createSqlane`.
 4. The built-in defaults.
 
-`retention` is merged field by field, so you can override only `completed` or only `failed`. `backoff` and `timeout`
-are not enqueue options. The backoff comes from the definition of the handler, else from `defaults`. The timeout
-comes from the `handle()` options, else from the definition, else from `defaults`.
+`retention` is merged field by field, so you can override only `completed` or only `failed`. `backoff`, `timeout`,
+`fairShareWeight` and the local limits are not enqueue options: the worker reads them from the definition of the
+handler, else from `defaults`.
 
-sqlane fixes the options of a job when you enqueue it. A later change to a definition does not change the jobs that
-already exist.
+sqlane fixes the other options of a job, the global limits with their maxes included, when you enqueue it. A later
+change to a definition does not change the jobs that already exist.
 
 ## `enqueue`
 
@@ -244,28 +273,28 @@ connection or a transaction client, it must be in a transaction, because sqlane 
 pool, sqlane runs the insert in a transaction of its own, outside of any transaction of yours.
 
 The `job` is a definition or a job name. If you pass a name, sqlane looks for its definition in `jobs` and in the
-handled names. If it finds none, the job gets the defaults, and `mutexKeys` and `failureJob` come only from the
-enqueue options.
+handled names. If it finds none, the job gets the defaults, and `globalConcurrencyLimits` and `failureJob` come only
+from the enqueue options.
 
 The `payload` must be JSON. sqlane rejects a payload that `JSON.stringify` cannot write, a string that is not
 well-formed UTF-16, and a NUL character (`\u0000`), because PostgreSQL refuses it. The handler gets the payload as
 JSON gives it back, so a `Date` would arrive as a string. The TypeScript types reject a `Date`, a `Map`, a `Set`, a
 function, a `bigint` and a class instance with methods.
 
-| Option        | Type                                          | Default                        | Description                                                                                                                                                                                                                                                                 |
-| ------------- | --------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `jobId`       | `string`                                      | None                           | An id that prevents duplicates. It has 1 to 120 printable ASCII characters, without spaces at the ends. While a job with this id and name exists, a second enqueue adds nothing. It cannot start with `schedule:`, which is reserved for the slots of schedules.            |
-| `slot`        | `{ at: Date, key?: string }`                  | None                           | Runs a slot of a [schedule](#schedule) by hand: the job gets the id that the scheduler gives the slot. `at` is in the years 1970 to 9999, and `key` is the key of the schedule. You cannot combine it with `jobId`. The job is due now, unless you give `delay` or `runAt`. |
-| `delay`       | `Duration`                                    | `0`                            | The wait before the job becomes due. You cannot combine it with `runAt`.                                                                                                                                                                                                    |
-| `runAt`       | `Date`                                        | None                           | The time at which the job becomes due. You cannot combine it with `delay`.                                                                                                                                                                                                  |
-| `maxAttempts` | integer, at least 1                           | From the definition            | Overrides `maxAttempts` for this job.                                                                                                                                                                                                                                       |
-| `maxStalls`   | integer, at least 0                           | From the definition            | Overrides `maxStalls` for this job.                                                                                                                                                                                                                                         |
-| `retention`   | `{ completed?: Duration, failed?: Duration }` | From the definition            | Overrides the retention for this job, field by field.                                                                                                                                                                                                                       |
-| `failureJob`  | `string` or `JobDefinition`                   | From the definition            | Overrides the failure job for this job.                                                                                                                                                                                                                                     |
-| `mutexKeys`   | `readonly string[]`                           | From the definition's function | Replaces the keys that the definition computes. An empty array removes all keys.                                                                                                                                                                                            |
+| Option                    | Type                                                   | Default                        | Description                                                                                                                                                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------ | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jobId`                   | `string`                                               | None                           | An id that prevents duplicates. It has 1 to 120 printable ASCII characters, without spaces at the ends. While a job with this id and name exists, a second enqueue adds nothing. It cannot start with `schedule:`, which is reserved for the slots of schedules.            |
+| `slot`                    | `{ at: Date, key?: string }`                           | None                           | Runs a slot of a [schedule](#schedule) by hand: the job gets the id that the scheduler gives the slot. `at` is in the years 1970 to 9999, and `key` is the key of the schedule. You cannot combine it with `jobId`. The job is due now, unless you give `delay` or `runAt`. |
+| `delay`                   | `Duration`                                             | `0`                            | The wait before the job becomes due. You cannot combine it with `runAt`.                                                                                                                                                                                                    |
+| `runAt`                   | `Date`                                                 | None                           | The time at which the job becomes due. You cannot combine it with `delay`.                                                                                                                                                                                                  |
+| `maxAttempts`             | integer, at least 1                                    | From the definition            | Overrides `maxAttempts` for this job.                                                                                                                                                                                                                                       |
+| `maxStalls`               | integer, at least 0                                    | From the definition            | Overrides `maxStalls` for this job.                                                                                                                                                                                                                                         |
+| `retention`               | `{ completed?: Duration, failed?: Duration }`          | From the definition            | Overrides the retention for this job, field by field.                                                                                                                                                                                                                       |
+| `failureJob`              | `string` or `JobDefinition`                            | From the definition            | Overrides the failure job for this job.                                                                                                                                                                                                                                     |
+| `globalConcurrencyLimits` | `readonly (ConcurrencyLimit \| ConcurrencyLimitKey)[]` | From the definition's function | Replaces the global limits that the definition computes. An empty array removes them all.                                                                                                                                                                                   |
 
-A job can have at most 10 mutex keys. Each key has 1 to 255 printable ASCII characters, without spaces at the ends.
-sqlane removes duplicate keys before it counts them. Keys are global, so jobs of different names can share a key.
+The global limits follow the rules of [`defineConcurrencyLimit`](#defineconcurrencylimit). Keys are global, so jobs
+of different names can share a key.
 
 `enqueue` resolves to an `EnqueueResult`:
 
@@ -279,7 +308,7 @@ sqlane removes duplicate keys before it counts them. Keys are global, so jobs of
 - `InvalidOptionsError` for a bad job, a bad option, `delay` together with `runAt`, `slot` together with `jobId`, a
   `jobId` that starts with `schedule:`, or a payload that is not JSON.
 - `PayloadTooLargeError` if the payload is larger than `maxPayloadBytes`.
-- `InvalidMutexKeyError` if a mutex key breaks the rules above.
+- `InvalidConcurrencyLimitError` if a global limit breaks the rules of `defineConcurrencyLimit`.
 - `UnknownJobError` for an unknown name when `unknownJobs` is `'reject'`.
 
 `enqueue` and `enqueueMany` still work after `close()`, because they use only your connection.
@@ -319,32 +348,21 @@ const results = await sqlane.enqueueMany(connection, sendEmail, [
 `handle` registers the handler of a job name in this process.
 
 ```ts
-sqlane.handle(job: JobDefinition | string, handler: (context: HandlerContext<P>) => unknown, options?: HandleOptions): void
+sqlane.handle(job: JobDefinition | string, handler: (context: HandlerContext<P>) => unknown): void
 ```
 
 Register all the handlers before you call `start()`. The return value of the handler is ignored. sqlane does not wrap
-the handler in a transaction, so a handler that needs one opens it with its own connection.
-
-| Option             | Type                                          | Default                    | Description                                                                                                                     |
-| ------------------ | --------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `maxConcurrency`   | integer, at least 1                           | None                       | The most jobs of this name that run at once in this instance. Without it, only the caps of its group and of the instance apply. |
-| `concurrencyGroup` | [`ConcurrencyGroup`](#defineconcurrencygroup) | None                       | A cap shared with the other names of the group. One group per handler. It combines with `maxConcurrency`.                       |
-| `fairShareWeight`  | integer, 1 to 1000                            | `1`                        | The name's share of the free slots, against the other due names. See [How free slots are shared](#how-free-slots-are-shared).   |
-| `timeout`          | positive duration                             | The definition's `timeout` | The time after which sqlane aborts the handler. It overrides the timeout of the definition and of `defaults`.                   |
+the handler in a transaction, so a handler that needs one opens it with its own connection. All the options of a job
+name are in its definition: `handle()` takes none.
 
 `handle` throws a `ConfigError` in these cases:
 
-- The options are unknown or bad, or the group is not from `defineConcurrencyGroup()`. The options of 4.x name the new
-  ones: `concurrency` is now `maxConcurrency`, and `lane` is now `concurrencyGroup`.
-- Another concurrency group has the same name in this instance.
+- It gets options: those of 5.x moved to the definition, and the error says where.
 - The job name already has a handler.
 - `jobs` holds a different definition with the same name.
-- The definition has `mutexKeys`, but no timeout is set in the `handle()` options, the definition or `defaults`.
+- Two local limits with one name have different maxes in this instance.
+- The definition has `globalConcurrencyLimits`, but no timeout is set in the definition or `defaults`.
 - `start()` was called before, or `drain()` runs.
-
-`start()` and `drain()` throw a `ConfigError` for a handler whose `maxConcurrency` is above the instance's, for
-example `start(): the maxConcurrency of handle("transcode") (16) is above the instance's maxConcurrency (10)`. They
-check all the handlers together, so the order of the `handle()` calls does not matter.
 
 `handle` throws a `ClosedError` after `close()`.
 
@@ -360,15 +378,15 @@ The handler receives one object with three fields:
 
 The `job` object has these fields:
 
-| Field         | Type                | Description                                                                                  |
-| ------------- | ------------------- | -------------------------------------------------------------------------------------------- |
-| `id`          | `string`            | The job id.                                                                                  |
-| `name`        | `string`            | The job name.                                                                                |
-| `attempt`     | `number`            | The current attempt. It is 1 for the first run.                                              |
-| `maxAttempts` | `number`            | The highest number of attempts for this job.                                                 |
-| `enqueuedAt`  | `Date`              | The time of the enqueue.                                                                     |
-| `mutexKeys`   | `readonly string[]` | The mutex keys of the job, sorted.                                                           |
-| `scheduledAt` | `Date` or `null`    | The slot of a job of a [schedule](#schedule), also when it runs late. `null` for other jobs. |
+| Field                     | Type                                      | Description                                                                                  |
+| ------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `id`                      | `string`                                  | The job id.                                                                                  |
+| `name`                    | `string`                                  | The job name.                                                                                |
+| `attempt`                 | `number`                                  | The current attempt. It is 1 for the first run.                                              |
+| `maxAttempts`             | `number`                                  | The highest number of attempts for this job.                                                 |
+| `enqueuedAt`              | `Date`                                    | The time of the enqueue.                                                                     |
+| `globalConcurrencyLimits` | `readonly { key: string, max: number }[]` | The keys of the global limits of the job, sorted, with their maxes.                          |
+| `scheduledAt`             | `Date` or `null`                          | The slot of a job of a [schedule](#schedule), also when it runs late. `null` for other jobs. |
 
 The `signal.reason` tells you why the signal aborted:
 
@@ -378,7 +396,7 @@ The `signal.reason` tells you why the signal aborted:
   the database is unreachable. The process then also emits `lease_lost`. Another process may now run the job.
 - A `ShutdownError` means that `close()` reached its deadline.
 
-JavaScript cannot stop a running function. After a timeout, the job keeps its mutex keys and its slot until the
+JavaScript cannot stop a running function. After a timeout, the job keeps its keys and its slot until the
 handler settles, but for at most one more lease (4 minutes). Your handler should therefore stop soon after the signal
 aborts.
 
@@ -393,30 +411,31 @@ A handler finishes in one of these ways:
 ```js
 sqlane.handle(buildReport, async ({ payload, job, signal }) => {
     await generateReport(payload.reportId, { signal });
-}, { concurrencyGroup: heavy, timeout: '5m' });
+});
 ```
 
 ## How free slots are shared
 
-A process runs at most `maxConcurrency` handlers at once. When slots are free and several job names have due jobs, a
-free slot goes to the due name with the lowest `running / fairShareWeight`. `running` counts the jobs of the name that
-run in this instance, retries included. The name must be under its own `maxConcurrency`, its group's and the
-instance's. Ties go round-robin.
+A process runs at most `localMaxConcurrency` handlers at once. When slots are free and several job names have due
+jobs, a free slot goes to the due name with the lowest `running / fairShareWeight`. `running` counts the jobs of the
+name that run in this instance, retries included. The name must be under each of its local limits and the instance's
+cap. Ties go round-robin.
 
-- **Within a name**, jobs start in FIFO order: `run_at`, then the id. The FIFO per mutex key stays as before.
-- **A name is not in the race, and banks nothing,** while it has no due job, its due jobs wait for mutex keys, or it is
-  at one of its caps. The rule keeps no history: only the running counts of the moment.
+- **Within a name**, jobs start in FIFO order: `run_at`, then the id. Jobs of a key of a global limit start in FIFO
+  order among those that can start.
+- **A name is not in the race, and banks nothing,** while it has no due job, its due jobs have full keys, or it is at
+  one of its local limits. The rule keeps no history: only the running counts of the moment.
 - **The shares are per instance.** Each process shares its own slots.
 - **Not oldest first across names.** In 4.x, the oldest due job across names started first. Now a busy name cannot
   crowd out the others.
-- **A name woken by the release of a mutex key** competes by its share, like any other name. If it loses the slot, its
-  job keeps its place in the FIFO of the key.
+- **A name woken by the end of a job of a key** competes by its share, like any other name. The jobs blocked on the key
+  are due again before the slot of the ended job is free, so they compete for it too.
 
 With weights 3 and 1 on 8 slots, and both names busy, 6 jobs of the first name and 2 of the second run. When a job
 ends, its slot goes back to its own name.
 
 **The rule equalizes the running counts, not the order of the starts.** Take A's 10 jobs, then B's 3, with equal
-weights and `maxConcurrency: 4`. A1 to A4 start first.
+weights and `localMaxConcurrency: 4`. A1 to A4 start first.
 
 - When the 4 jobs end together, the next claims take `{A5, B1, A6, B2}`, then `{B3, A7, A8, A9}`.
 - When the slots free one at a time, B first catches up to its share: `B1 B2 A5 A6 B3 …`.
@@ -429,12 +448,13 @@ below one slot. With 4 or 8 slots, each name gets exactly half.
 **Very short jobs.** Shares count running handlers. A name whose jobs take a few milliseconds loses the short gap
 between a completion and the next claim, so its measured slot time is a little below its share.
 
-**Groups.** Take T (weight 2, `maxConcurrency: 1`) and R (weight 1) in a group `heavy` of 2, and E (weight 3), on 10
-slots. T and R each run 1 job, and E runs 8. With `heavy` at 4, R and E share the 9 slots that T leaves by 1:3.
+**Local limits.** Take T (weight 2, with a local limit of 1 of its own) and R (weight 1), which share a local limit
+`heavy` of 2, and E (weight 3), on 10 slots. T and R each run 1 job, and E runs 8. With `heavy` at 4, R and E share
+the 9 slots that T leaves by 1:3. A name can have several local limits: it takes a slot while each of them has room.
 
-**The slots of names with mutex keys.** A claim first finds the jobs of names with mutex keys whose keys are free, and
-leaves them their share of the free slots, of the instance and of their groups. If another process takes those jobs
-first, the slots stay free until the next turn, which comes at once.
+**The slots of names with global limits.** A claim first finds the jobs of names with global limits whose keys have
+room, and leaves them their share of the free slots, of the instance and of their local limits. If another process
+takes those jobs first, the slots stay free until the next turn, which comes at once.
 
 ## `schedule`
 
@@ -447,7 +467,7 @@ sqlane.schedule(job: JobDefinition | string, options: ScheduleOptions): void
 Each time of a schedule is a **slot**. At each slot, every started process that has the schedule tries to add the
 job. A row per schedule in the table `sqlane_schedules` lets one of them add it. So each slot adds at most one job in
 the whole cluster, with no leader. A scheduled job is an ordinary job: its definition gives its retries, backoff,
-timeout, mutex keys, failure job and retention.
+timeout, global limits, failure job and retention.
 
 | Option     | Type                  | Default   | Description                                                                                                                                                                                      |
 | ---------- | --------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -482,7 +502,7 @@ two services must not use one id for two different schedules.
 fires within 50 years. It throws a `ConfigError` after `start()`, and a `ClosedError` after `close()`.
 
 `start()` checks each schedule further: an unknown name with `unknownJobs: 'reject'`, a payload that is not JSON or is
-above `maxPayloadBytes`, and bad mutex keys of the definition throw a `ConfigError`. So a bad payload fails at deploy
+above `maxPayloadBytes`, and bad global limits of the definition throw a `ConfigError`. So a bad payload fails at deploy
 time, not at 03:00. With schedules, `start()` also needs the table of migration `0004_schedules`: run `migrate()`.
 
 ### Cron syntax
@@ -553,11 +573,11 @@ runs.
 
 ### Overlap
 
-| Need                                             | How                                                                                                                                                                                    |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runs may overlap                                 | The default, `overlap: 'allow'`.                                                                                                                                                       |
-| Skip a slot while the previous run is not done   | `overlap: 'skip'`. "Not done" means that the last job of the schedule is pending or running, retries included.                                                                         |
-| Queue the slot and run it after the previous one | A constant mutex key in the definition, such as `mutexKeys: () => ['nightly_report']`, with a `timeout`. The runs wait in line. They pile up if every run is slower than the interval. |
+| Need                                             | How                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runs may overlap                                 | The default, `overlap: 'allow'`.                                                                                                                                                                                                                                      |
+| Skip a slot while the previous run is not done   | `overlap: 'skip'`. "Not done" means that the last job of the schedule is pending or running, retries included.                                                                                                                                                        |
+| Queue the slot and run it after the previous one | A global limit of 1 in the definition, such as `globalConcurrencyLimits: () => [nightly]` with `nightly = defineConcurrencyLimit({ name: 'nightly_report', max: 1 })`, and a `timeout`. The runs wait in line. They pile up if every run is slower than the interval. |
 
 ### Jitter
 
@@ -699,7 +719,7 @@ the `signal` of each unfinished handler with a `ShutdownError`.
 | ---------- | -------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `deadline` | `Duration`                 | `'30s'`                                                           | How long `close` waits for the running handlers, counted from the call.                                                                                                                                        |
 | `mode`     | `'release'` or `'abandon'` | `'release'`                                                       | What happens to an unfinished job at the deadline. With `'release'`, the job goes back to the queue without using an attempt. With `'abandon'`, sqlane writes nothing, and the job stalls when its lease ends. |
-| `exitsBy`  | `Duration`                 | The deadline plus one lease (`'4m30s'` with the default deadline) | The latest time at which the process exits, counted from the call. A released job whose handler still runs waits until this time plus 2 seconds before it runs again, and its mutex keys stay held until then. |
+| `exitsBy`  | `Duration`                 | The deadline plus one lease (`'4m30s'` with the default deadline) | The latest time at which the process exits, counted from the call. A released job whose handler still runs waits until this time plus 2 seconds before it runs again, and its keys stay held until then.       |
 
 Set `exitsBy` lower if your process exits sooner, so released jobs can run again sooner. `close` never rejects
 because of its options, so a shutdown always releases its jobs. Instead, each invalid option logs a warning, and sqlane
@@ -799,22 +819,22 @@ nothing.
 All the errors of sqlane extend `SqlaneError`. Each error has a stable `code` that you can check. All the classes are
 exported from `@sqlane/core`.
 
-| Class                       | `code`                   | When                                                                                                                                                                                                                                                   |
-| --------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ConfigError`               | `CONFIG`                 | The options of `createSqlane`, `defineJob`, `handle()`, `schedule()`, an adapter or `getMigrations` are bad. `start()` and `drain()` also throw it for a bad failure job. `start()` throws it for a bad schedule, or a missing table of the schedules. |
-| `InvalidOptionsError`       | `INVALID_OPTIONS`        | The arguments of `enqueue` or `enqueueMany` are bad, for example a bad name or `jobId`, a `jobId` with the reserved prefix `schedule:`, `slot` with `jobId`, `delay` with `runAt`, or a payload that is not JSON.                                      |
-| `PayloadTooLargeError`      | `PAYLOAD_TOO_LARGE`      | The payload is larger than `maxPayloadBytes`.                                                                                                                                                                                                          |
-| `InvalidMutexKeyError`      | `INVALID_MUTEX_KEY`      | A job has more than 10 mutex keys, or a key breaks the rules.                                                                                                                                                                                          |
-| `UnknownJobError`           | `UNKNOWN_JOB`            | `enqueue` got an unknown job name, and `unknownJobs` is `'reject'`.                                                                                                                                                                                    |
-| `ClosedError`               | `CLOSED`                 | `start`, `handle`, `schedule` or `drain` was called after `close()`.                                                                                                                                                                                   |
-| `DrainTimeoutError`         | `DRAIN_TIMEOUT`          | `drain()` did not finish within its `timeout`.                                                                                                                                                                                                         |
-| `JobTimeoutError`           | `JOB_TIMEOUT`            | The handler's `signal` aborted because the timeout passed. It is also the error of the attempt.                                                                                                                                                        |
-| `ShutdownError`             | `SHUTDOWN`               | The handler's `signal` aborted because `close()` reached its deadline.                                                                                                                                                                                 |
-| `LeaseLostError`            | `LEASE_LOST`             | The handler's `signal` aborted because the process could not renew the lease until 30 s before it ends, for example because the database is unreachable.                                                                                               |
-| `MissingPayloadError`       | `MISSING_PAYLOAD`        | sqlane did not find the payload of a job. The job fails for good with this error.                                                                                                                                                                      |
-| `MigrationLockTimeoutError` | `MIGRATION_LOCK_TIMEOUT` | `migrate()` did not get the migration lock within its `lockTimeout`.                                                                                                                                                                                   |
-| `FatalJobError`             | `FATAL_JOB`              | A handler threw it to fail the job at once. See below.                                                                                                                                                                                                 |
-| `RetryJobError`             | `RETRY_JOB`              | A handler threw it to retry the job after a given delay. See below.                                                                                                                                                                                    |
+| Class                          | `code`                      | When                                                                                                                                                                                                                                                   |
+| ------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ConfigError`                  | `CONFIG`                    | The options of `createSqlane`, `defineJob`, `handle()`, `schedule()`, an adapter or `getMigrations` are bad. `start()` and `drain()` also throw it for a bad failure job. `start()` throws it for a bad schedule, or a missing table of the schedules. |
+| `InvalidOptionsError`          | `INVALID_OPTIONS`           | The arguments of `enqueue` or `enqueueMany` are bad, for example a bad name or `jobId`, a `jobId` with the reserved prefix `schedule:`, `slot` with `jobId`, `delay` with `runAt`, or a payload that is not JSON.                                      |
+| `PayloadTooLargeError`         | `PAYLOAD_TOO_LARGE`         | The payload is larger than `maxPayloadBytes`.                                                                                                                                                                                                          |
+| `InvalidConcurrencyLimitError` | `INVALID_CONCURRENCY_LIMIT` | A job has more than 10 global keys, a key breaks the rules, a key has two maxes, or a global limit is not from `defineConcurrencyLimit`.                                                                                                               |
+| `UnknownJobError`              | `UNKNOWN_JOB`               | `enqueue` got an unknown job name, and `unknownJobs` is `'reject'`.                                                                                                                                                                                    |
+| `ClosedError`                  | `CLOSED`                    | `start`, `handle`, `schedule` or `drain` was called after `close()`.                                                                                                                                                                                   |
+| `DrainTimeoutError`            | `DRAIN_TIMEOUT`             | `drain()` did not finish within its `timeout`.                                                                                                                                                                                                         |
+| `JobTimeoutError`              | `JOB_TIMEOUT`               | The handler's `signal` aborted because the timeout passed. It is also the error of the attempt.                                                                                                                                                        |
+| `ShutdownError`                | `SHUTDOWN`                  | The handler's `signal` aborted because `close()` reached its deadline.                                                                                                                                                                                 |
+| `LeaseLostError`               | `LEASE_LOST`                | The handler's `signal` aborted because the process could not renew the lease until 30 s before it ends, for example because the database is unreachable.                                                                                               |
+| `MissingPayloadError`          | `MISSING_PAYLOAD`           | sqlane did not find the payload of a job. The job fails for good with this error.                                                                                                                                                                      |
+| `MigrationLockTimeoutError`    | `MIGRATION_LOCK_TIMEOUT`    | `migrate()` did not get the migration lock within its `lockTimeout`.                                                                                                                                                                                   |
+| `FatalJobError`                | `FATAL_JOB`                 | A handler threw it to fail the job at once. See below.                                                                                                                                                                                                 |
+| `RetryJobError`                | `RETRY_JOB`                 | A handler threw it to retry the job after a given delay. See below.                                                                                                                                                                                    |
 
 ```js
 import { SqlaneError } from '@sqlane/core';
