@@ -999,7 +999,7 @@ const HOT_PATHS = {
     run: 'A job: its enqueue, claim, run and completion, over 1000 job names',
     idle: 'A second of a worker with 1000 job names and no job',
     schedule: 'A schedule firing, one of 1000 `every: \'10s\'` schedules',
-    mutex: 'A job with one of 100 mutex keys: its enqueue, claim, run and completion',
+    global_limits: 'A job with one of 100 keys of a global limit of 1: its enqueue, claim, run and completion',
 };
 
 /**

@@ -41,8 +41,8 @@
                 "max": 201
             },
             "blocks": {
-                "min": 3467,
-                "max": 3490
+                "min": 3460,
+                "max": 3487
             }
         },
         "idle": {
@@ -60,21 +60,6 @@
                 "max": 4000
             }
         },
-        "mutex": {
-            "operations": 100,
-            "statements": {
-                "min": 900,
-                "max": 900
-            },
-            "rows": {
-                "min": 1188,
-                "max": 1188
-            },
-            "blocks": {
-                "min": 20307,
-                "max": 20311
-            }
-        },
         "schedule": {
             "operations": 1000,
             "statements": {
@@ -87,7 +72,22 @@
             },
             "blocks": {
                 "min": 23035,
-                "max": 23359
+                "max": 23035
+            }
+        },
+        "global_limits": {
+            "operations": 100,
+            "statements": {
+                "min": 1000,
+                "max": 1000
+            },
+            "rows": {
+                "min": 1288,
+                "max": 1288
+            },
+            "blocks": {
+                "min": 6218,
+                "max": 6224
             }
         }
     },
@@ -152,21 +152,6 @@
                 "max": 0
             }
         },
-        "mutex": {
-            "operations": 100,
-            "statements": {
-                "min": 1700,
-                "max": 1700
-            },
-            "rows": {
-                "min": 65127,
-                "max": 107357
-            },
-            "blocks": {
-                "min": 0,
-                "max": 0
-            }
-        },
         "schedule": {
             "operations": 1000,
             "statements": {
@@ -176,6 +161,21 @@
             "rows": {
                 "min": 3000,
                 "max": 3000
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "global_limits": {
+            "operations": 100,
+            "statements": {
+                "min": 1700,
+                "max": 1700
+            },
+            "rows": {
+                "min": 32481,
+                "max": 32481
             },
             "blocks": {
                 "min": 0,
@@ -244,21 +244,6 @@
                 "max": 0
             }
         },
-        "mutex": {
-            "operations": 100,
-            "statements": {
-                "min": 1700,
-                "max": 1700
-            },
-            "rows": {
-                "min": 51712,
-                "max": 51712
-            },
-            "blocks": {
-                "min": 0,
-                "max": 0
-            }
-        },
         "schedule": {
             "operations": 1000,
             "statements": {
@@ -268,6 +253,21 @@
             "rows": {
                 "min": 3000,
                 "max": 3000
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "global_limits": {
+            "operations": 100,
+            "statements": {
+                "min": 1700,
+                "max": 1700
+            },
+            "rows": {
+                "min": 78986,
+                "max": 78986
             },
             "blocks": {
                 "min": 0,
@@ -336,21 +336,6 @@
                 "max": 0
             }
         },
-        "mutex": {
-            "operations": 100,
-            "statements": {
-                "min": 1700,
-                "max": 1700
-            },
-            "rows": {
-                "min": 51712,
-                "max": 51712
-            },
-            "blocks": {
-                "min": 0,
-                "max": 0
-            }
-        },
         "schedule": {
             "operations": 1000,
             "statements": {
@@ -360,6 +345,21 @@
             "rows": {
                 "min": 3000,
                 "max": 3000
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "global_limits": {
+            "operations": 100,
+            "statements": {
+                "min": 1700,
+                "max": 1700
+            },
+            "rows": {
+                "min": 78986,
+                "max": 78986
             },
             "blocks": {
                 "min": 0,
@@ -409,8 +409,8 @@
                 "max": 201
             },
             "blocks": {
-                "min": 3477,
-                "max": 3497
+                "min": 3474,
+                "max": 3493
             }
         },
         "idle": {
@@ -428,21 +428,6 @@
                 "max": 4000
             }
         },
-        "mutex": {
-            "operations": 100,
-            "statements": {
-                "min": 900,
-                "max": 900
-            },
-            "rows": {
-                "min": 1188,
-                "max": 1188
-            },
-            "blocks": {
-                "min": 20604,
-                "max": 20605
-            }
-        },
         "schedule": {
             "operations": 1000,
             "statements": {
@@ -455,7 +440,22 @@
             },
             "blocks": {
                 "min": 23035,
-                "max": 23523
+                "max": 23035
+            }
+        },
+        "global_limits": {
+            "operations": 100,
+            "statements": {
+                "min": 1000,
+                "max": 1000
+            },
+            "rows": {
+                "min": 1288,
+                "max": 1288
+            },
+            "blocks": {
+                "min": 6569,
+                "max": 6572
             }
         }
     }

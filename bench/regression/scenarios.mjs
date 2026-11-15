@@ -163,12 +163,17 @@ export const SCENARIOS = [
         },
     },
     {
-        name: 'mutex',
-        unit: 'job with a mutex key, 100 jobs of 2 names over 10 keys',
+        name: 'global_limits',
+        unit: 'job with 2 global limits (a key of 1 of 10, and one shared of 5), 100 jobs of 2 names',
         timing: ROUNDS,
         async run({ lib, create, pool, measure }) {
+            const account = lib.defineConcurrencyLimit({ name: 'account', max: 1 });
+            const accounts = lib.defineConcurrencyLimit({ name: 'accounts', max: 5 });
             const jobs = definitions(lib, 2, {
-                mutexKeys: (/** @type {{ key: number }} */ payload) => [`account:${payload.key}`],
+                globalConcurrencyLimits: (/** @type {{ payload: { key: number } }} */ { payload }) => [
+                    accounts,
+                    account.key(payload.key),
+                ],
                 timeout: '1m',
             });
             const sqlane = create({ jobs, localMaxConcurrency: 1 });
@@ -184,7 +189,7 @@ export const SCENARIOS = [
                 const { completed } = await sqlane.drain({ timeout: '60s' });
 
                 if (completed !== 100) {
-                    throw new Error(`mutex: ${completed} of 100 jobs completed`);
+                    throw new Error(`global_limits: ${completed} of 100 jobs completed`);
                 }
             });
 
