@@ -97,35 +97,39 @@ Supported databases, from each library's documentation:
 
 ## Performance
 
+<!-- generated:readme -->
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cpu_per_job_dark.svg">
-  <img alt="CPU instructions per job at steady load on PostgreSQL: sqlane 3.4 M, Graphile Worker 9.9 M, River 13.4 M, pg-boss 23.9 M, Izi Queue 6.3 M, Boring Node Queue 10.0 M, BullMQ 9.6 M (after the commit), Sidequest 16.2 M (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cpu_per_job_light.svg">
+  <img alt="CPU instructions per job at steady load on PostgreSQL with a 1 ms round trip: sqlane 3.4 M, Graphile Worker 9.8 M, River 13.8 M, pg-boss 24.9 M, Izi Queue 6.0 M, Boring Node Queue 9.9 M, BullMQ 9.5 M (after the commit), Sidequest 15.6 M (after the commit), BullMQ on Redis 4.1 M (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cpu_per_job_light.svg">
 </picture>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_idle_dark.svg">
-  <img alt="Database instructions per second while idle with 1000 job names on PostgreSQL: sqlane 0.03 M/s, Graphile Worker 1.8 M/s, River 1.4 M/s, pg-boss 256 M/s, Izi Queue 12.7 M/s, Boring Node Queue 0.8 M/s, BullMQ 0.8 M/s (after the commit), Sidequest 1.6 M/s (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_idle_light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_statements_dark.svg">
+  <img alt="SQL statements per job at steady load on PostgreSQL, each a 1 ms round trip, without the business INSERT: sqlane 3.0, Graphile Worker 4.1, River 3.7, pg-boss 14.3, Izi Queue 5.1, Boring Node Queue 13.6, BullMQ 8.0 (after the commit), Sidequest 9.4 (after the commit), BullMQ on Redis 60 Redis commands (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_statements_light.svg">
 </picture>
 
 <details>
-<summary>More charts: latency, drain and cron</summary>
+<summary>More charts: idle, latency and schedules</summary>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_latency_dark.svg">
-  <img alt="Median time from enqueue to handler start on PostgreSQL, one library at a time: sqlane 1 ms, p99 1 ms, Graphile Worker 1 ms, p99 2 ms, River 2 ms, p99 3 ms, pg-boss 2 ms, p99 27 ms, Izi Queue 1 ms, p99 2 ms, Boring Node Queue 999 ms, p99 1985 ms, BullMQ 1 ms, p99 2 ms (after the commit), Sidequest 53 ms, p99 103 ms (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_latency_light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_idle_dark.svg">
+  <img alt="Database instructions per second while idle with 1000 job names on PostgreSQL: sqlane 0.2 M/s, Graphile Worker 1.9 M/s, River 1.3 M/s, pg-boss 261 M/s, Izi Queue 12.7 M/s, Boring Node Queue 0.8 M/s, BullMQ 0.7 M/s (after the commit), Sidequest 1.8 M/s (after the commit), BullMQ on Redis 2.9 M/s (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_idle_light.svg">
 </picture>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_drain_dark.svg">
-  <img alt="Time to drain 10,000 jobs, one library at a time: sqlane 1.9 s, Graphile Worker 2.8 s, River 6.0 s, pg-boss 0.5 s, up to 8,000 at once, Izi Queue over 60 s, stopped, Boring Node Queue 12.3 s, BullMQ 1.2 s (after the commit), Sidequest 15.4 s (after the commit), BullMQ (Redis) 0.6 s (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_drain_light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_latency_dark.svg">
+  <img alt="Time from enqueue to handler start on PostgreSQL with a 1 ms round trip, one library at a time, p50 and p99: sqlane 4 ms, p99 5 ms, Graphile Worker 4 ms, p99 5 ms, River 6 ms, p99 7 ms, pg-boss 5 ms, p99 202 ms, Izi Queue 6 ms, p99 7 ms, Boring Node Queue 862 ms, p99 2010 ms, BullMQ 3 ms, p99 4 ms (after the commit), Sidequest 59 ms, p99 112 ms (after the commit), BullMQ on Redis 4 ms, p99 4 ms (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_latency_light.svg">
 </picture>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cron_dark.svg">
-  <img alt="CPU instructions per fired job of 1000 schedules due every minute, 3 worker processes, on PostgreSQL: sqlane 1.8 M, Graphile Worker 8.4 M, River 5.5 M, pg-boss 11.2 M, Izi Queue 14.3 M, Boring Node Queue 15.7 M, BullMQ 5.9 M (after the commit), Sidequest 26.0 M (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cron_light.svg">
+  <img alt="CPU instructions per fired slot of 1000 schedules due every minute, 3 worker processes, on PostgreSQL with a 1 ms round trip: sqlane 1.9 M, Graphile Worker 8.5 M, River 5.4 M, pg-boss 10.8 M, Izi Queue 23.7 M, Boring Node Queue 15.5 M, BullMQ 7.5 M (after the commit), Sidequest 24.5 M (after the commit), BullMQ on Redis 3.3 M (after the commit)" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_cron_light.svg">
 </picture>
 
 </details>
+
+<!-- /generated:readme -->
 
 [Performance details →](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_vs_other_libs.md)
 
