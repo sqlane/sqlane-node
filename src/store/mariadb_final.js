@@ -359,13 +359,15 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
 
 /**
  * Makes the jobs blocked on the keys pending again, the oldest first: on each key, as many as it has room for, by the
- * max of its oldest blocked job. Call it in a queue transaction.
+ * max of its oldest blocked job. A read first; the writes in a transaction, only when a key has room.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
+ * @param {<T>(func: (executor: Executor) => Promise<T>) => Promise<T>} [inTransaction] Runs the writes. Default: on
+ *     `executor`, which is in a transaction already.
  * @returns {Promise<string[]>} The names of the jobs that it made pending.
  */
-export async function unblock(executor, p, keys) {
+export async function unblock(executor, p, keys, inTransaction = func => func(executor)) {
     // The oldest blocked job of each key: its keys and maxes; and the held slots of the key
     /**
      * @param {string} column
@@ -400,6 +402,16 @@ export async function unblock(executor, p, keys) {
         return [];
     }
 
+    return inTransaction(transaction => unblockRooms(transaction, p, rooms));
+}
+
+/**
+ * @param {Executor} executor In a transaction.
+ * @param {string} p
+ * @param {{ key: string, room: number }[]} rooms
+ * @returns {Promise<string[]>} The names of the jobs that it made pending.
+ */
+async function unblockRooms(executor, p, rooms) {
     const picked = await executor.query(rooms.map(() => `(
         SELECT id, job_name FROM ${p}jobs FORCE INDEX (${p}jobs_blocked)
          WHERE status = 'blocked' AND blocked_on = ? ORDER BY run_at, id LIMIT ?

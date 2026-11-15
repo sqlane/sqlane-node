@@ -96,13 +96,15 @@ export declare function recoverStaleJob(executor: Executor, p: string, id: strin
 }): Promise<import('./store.js').StaleJobResult>;
 /**
  * Makes the jobs blocked on the keys pending again, the oldest first: on each key, as many as it has room for, by the
- * max of its oldest blocked job. Call it in a queue transaction.
+ * max of its oldest blocked job. A read first; the writes in a transaction, only when a key has room.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
+ * @param {<T>(func: (executor: Executor) => Promise<T>) => Promise<T>} [inTransaction] Runs the writes. Default: on
+ *     `executor`, which is in a transaction already.
  * @returns {Promise<string[]>} The names of the jobs that it made pending.
  */
-export declare function unblock(executor: Executor, p: string, keys: string[]): Promise<string[]>;
+export declare function unblock(executor: Executor, p: string, keys: string[], inTransaction?: <T>(func: (executor: Executor) => Promise<T>) => Promise<T>): Promise<string[]>;
 /**
  * Deletes the ended lingers, and the slots without their running job (from a manual change, or old code). Then
  * unblocks the jobs blocked on keys with room: a release that ended in a linger, or a process that stopped before its
