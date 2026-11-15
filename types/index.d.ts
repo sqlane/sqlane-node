@@ -1,5 +1,5 @@
 export { createSqlane } from './create_sqlane.js';
-export { defineConcurrencyGroup } from './define_concurrency_group.js';
+export { defineConcurrencyLimit } from './define_concurrency_limit.js';
 export { defineJob } from './define_job.js';
 export { ClosedError, ConfigError, DrainTimeoutError, FatalJobError, InvalidMutexKeyError, InvalidOptionsError, JobTimeoutError, LeaseLostError, MigrationLockTimeoutError, MissingPayloadError, PayloadTooLargeError, RetryJobError, ShutdownError, SqlaneError, UnknownJobError, } from './errors.js';
 export { getMigrations } from './migrations.js';
@@ -9,8 +9,8 @@ export type SqlaneOptions<C> = import('./types.js').SqlaneOptions<C>;
 export type Jsonable<T> = import('./types.js').Jsonable<T>;
 export type Backoff = import('./types.js').Backoff;
 export type CloseOptions = import('./types.js').CloseOptions;
-export type ConcurrencyGroup = import('./types.js').ConcurrencyGroup;
-export type ConcurrencyGroupOptions = import('./types.js').ConcurrencyGroupOptions;
+export type ConcurrencyLimit = import('./types.js').ConcurrencyLimit;
+export type ConcurrencyLimitOptions = import('./types.js').ConcurrencyLimitOptions;
 export type Dialect = import('./types.js').Dialect;
 export type DrainOptions = import('./types.js').DrainOptions;
 export type DrainResult = import('./types.js').DrainResult;
@@ -21,7 +21,6 @@ export type Executor = import('./types.js').Executor;
 export type FailedJobPayload = import('./types.js').FailedJobPayload;
 export type Handler<P = any> = import('./types.js').Handler<P>;
 export type HandlerContext<P = any> = import('./types.js').HandlerContext<P>;
-export type HandleOptions = import('./types.js').HandleOptions;
 export type Hint = import('./types.js').Hint;
 export type JobDefaults = import('./types.js').JobDefaults;
 export type JobDefinition<P = any> = import('./types.js').JobDefinition<P>;
@@ -55,8 +54,8 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  */
 /** @typedef {import('./types.js').Backoff} Backoff */
 /** @typedef {import('./types.js').CloseOptions} CloseOptions */
-/** @typedef {import('./types.js').ConcurrencyGroup} ConcurrencyGroup */
-/** @typedef {import('./types.js').ConcurrencyGroupOptions} ConcurrencyGroupOptions */
+/** @typedef {import('./types.js').ConcurrencyLimit} ConcurrencyLimit */
+/** @typedef {import('./types.js').ConcurrencyLimitOptions} ConcurrencyLimitOptions */
 /** @typedef {import('./types.js').Dialect} Dialect */
 /** @typedef {import('./types.js').DrainOptions} DrainOptions */
 /** @typedef {import('./types.js').DrainResult} DrainResult */
@@ -73,7 +72,6 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  * @typedef {import('./types.js').HandlerContext<P>} HandlerContext
  * @template [P=any]
  */
-/** @typedef {import('./types.js').HandleOptions} HandleOptions */
 /** @typedef {import('./types.js').Hint} Hint */
 /** @typedef {import('./types.js').JobDefaults} JobDefaults */
 /**

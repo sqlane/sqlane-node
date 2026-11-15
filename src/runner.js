@@ -25,6 +25,7 @@ import { isQuickRetryError, isTransientDbError } from './transient_error.js';
 
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
+/** @typedef {import('./registry.js').LimitState} LimitState */
 
 /** A turn that fails with a deadlock-like error is retried at once this many times, then reported and backed off */
 const MAX_TRANSIENT_DISPATCH_RETRIES = 3;
@@ -88,7 +89,7 @@ const MAX_COMPLETE_BATCH = 100;
  * @typedef {object} RunnerParams
  * @property {import('./store/store.js').Store} store
  * @property {import('./registry.js').Registry} registry
- * @property {number} maxConcurrency The instance's cap.
+ * @property {number} localMaxConcurrency The instance's cap.
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {boolean} cleanup
  * @property {import('./types.js').Logger | undefined} logger
@@ -163,49 +164,44 @@ function contextOf(job) {
 }
 
 /**
- * @param {HandlerEntry} entry
- * @returns {number} Its maxConcurrency minus its running jobs; Infinity without one.
+ * @param {LimitState} limit
+ * @returns {number} Its max minus its running jobs.
  */
-function nameRoom(entry) {
-    return entry.maxConcurrency === null ? Infinity : entry.maxConcurrency - entry.running;
+function limitRoom(limit) {
+    return limit.limit.max - limit.running;
 }
 
 /**
  * @param {HandlerEntry} entry
- * @returns {number} The room of its concurrency group; Infinity without one.
+ * @returns {number} The lowest room of its local limits; Infinity without one.
  */
-function groupRoom(entry) {
-    return entry.group ? entry.group.group.maxConcurrency - entry.group.running : Infinity;
+function limitsRoom(entry) {
+    return Math.min(Infinity, ...entry.limits.map(limitRoom));
 }
 
 /**
- * The names of a choice, with their counts now. The names of one group share one room object.
+ * The names of a choice, with their counts now. The names of one limit share one room object.
  * @param {HandlerEntry[]} entries
  * @returns {import('./fair_share.js').ShareName[]}
  */
 function shareNamesOf(entries) {
-    /** @type {Map<import('./registry.js').GroupState, { room: number }>} */
+    /** @type {Map<LimitState, { room: number }>} */
     const rooms = new Map();
 
-    return entries.map((entry) => {
-        /** @type {{ room: number } | null} */
-        let group = null;
+    return entries.map(entry => ({
+        name: entry.name,
+        index: entry.index,
+        weight: entry.weight,
+        running: entry.running,
+        limits: entry.limits.map((limit) => {
+            const room = rooms.get(limit) ?? { room: Math.max(0, limitRoom(limit)) };
 
-        if (entry.group) {
-            group = rooms.get(entry.group) ?? { room: Math.max(0, groupRoom(entry)) };
-            rooms.set(entry.group, group);
-        }
+            rooms.set(limit, room);
 
-        return {
-            name: entry.name,
-            index: entry.index,
-            weight: entry.weight,
-            running: entry.running,
-            room: Math.max(0, nameRoom(entry)),
-            group,
-            available: Infinity,
-        };
-    });
+            return room;
+        }),
+        available: Infinity,
+    }));
 }
 
 /**
@@ -215,7 +211,7 @@ function shareNamesOf(entries) {
 export function createRunner({
     store,
     registry,
-    maxConcurrency,
+    localMaxConcurrency,
     defaults,
     cleanup,
     logger,
@@ -497,15 +493,15 @@ export function createRunner({
 
     /** @returns {number} */
     function freeProcessSlots() {
-        return maxConcurrency - running.size;
+        return localMaxConcurrency - running.size;
     }
 
     /**
      * @param {HandlerEntry} entry
-     * @returns {number} The jobs of the name that can start now: under its cap, its group's and the instance's.
+     * @returns {number} The jobs of the name that can start now: under its local limits and the instance's cap.
      */
     function freeSlots(entry) {
-        return Math.max(0, Math.min(nameRoom(entry), groupRoom(entry), freeProcessSlots()));
+        return Math.max(0, Math.min(limitsRoom(entry), freeProcessSlots()));
     }
 
     /** @returns {number} The handled names: the span of the tie order. Fixed from start() or drain(). */
@@ -865,8 +861,8 @@ export function createRunner({
 
         entry.running++;
 
-        if (entry.group) {
-            entry.group.running++;
+        for (const limit of entry.limits) {
+            limit.running++;
         }
 
         running.set(job.key, job);
@@ -882,21 +878,23 @@ export function createRunner({
                 // already scheduled pending jobs. Claims in flight may have captured an older slot count.
                 const mustWake = state !== 'started' || claimsInFlight > 0 || !job.completionConfirmed
                     || job.released || job.leaseLost || freeSlots(entry) === 0;
-                // A full group: its other names were left out of the turns, and may have due jobs
-                const fullGroup = entry.group && groupRoom(entry) <= 0 ? entry.group : null;
+                // Its full limits: their other names were left out of the turns, and may have due jobs
+                const fullLimits = entry.limits.filter(limit => limitRoom(limit) <= 0);
 
                 entry.running--;
 
-                if (entry.group) {
-                    entry.group.running--;
+                for (const limit of entry.limits) {
+                    limit.running--;
                 }
 
                 running.delete(job.key);
                 finishedCount++;
 
                 if (mustWake) {
-                    // Its own name (with its group's, if it was full), and the backlog
-                    wakeUp(fullGroup ? fullGroup.names : [claimed.name], { speculative: true });
+                    // Its own name (with the names of its limits that were full), and the backlog
+                    wakeUp([...new Set([claimed.name, ...fullLimits.flatMap(limit => limit.names)])], {
+                        speculative: true,
+                    });
                 }
 
                 if (claimed.mutexKeys.length) {
@@ -915,7 +913,7 @@ export function createRunner({
 
     /**
      * The names of this turn: the due names with a free slot, the furthest under their share first, at most 4 per free
-     * slot, and at most 4 per free slot of their group. The others stay in the backlog, for the next turns.
+     * slot, and at most 4 per free slot of each of their limits. The others stay in the backlog, for the next turns.
      * @param {string[]} dueNames
      * @returns {HandlerEntry[]}
      */
@@ -940,8 +938,8 @@ export function createRunner({
             return withRoom;
         }
 
-        /** @type {Map<import('./registry.js').GroupState, number>} */
-        const inGroups = new Map();
+        /** @type {Map<LimitState, number>} */
+        const inLimits = new Map();
         /** @type {HandlerEntry[]} */
         const turn = [];
 
@@ -950,16 +948,18 @@ export function createRunner({
 
         for (const entry of withRoom) {
             const { name } = entry;
-            const inGroup = entry.group ? inGroups.get(entry.group) ?? 0 : 0;
+            // A full limit takes no more names: the names after it get their turn
+            const limitFull = entry.limits.some(
+                each => (inLimits.get(each) ?? 0) >= CLAIM_NAMES_PER_SLOT * limitRoom(each),
+            );
 
-            // A full group takes no more names: the names after it get their turn
-            if (turn.length >= limit || (entry.group && inGroup >= CLAIM_NAMES_PER_SLOT * groupRoom(entry))) {
+            if (turn.length >= limit || limitFull) {
                 backlog.add(name);
             } else {
                 turn.push(entry);
 
-                if (entry.group) {
-                    inGroups.set(entry.group, inGroup + 1);
+                for (const each of entry.limits) {
+                    inLimits.set(each, (inLimits.get(each) ?? 0) + 1);
                 }
             }
         }
@@ -990,7 +990,7 @@ export function createRunner({
 
             const candidates = keyed.length ? await findCandidatesOf(keyed) : [];
             const reserved = reservedForKeys(turn, candidates);
-            const plain = await claimAndStartPlain(plainEntries, freeProcessSlots() - reserved.slots, reserved.groups);
+            const plain = await claimAndStartPlain(plainEntries, freeProcessSlots() - reserved.slots, reserved.limits);
             const withKeys = await claimAndStartWithKeys(candidates);
 
             return { candidates: plain.candidates + withKeys.candidates, claimed: plain.claimed + withKeys.claimed };
@@ -1028,18 +1028,17 @@ export function createRunner({
 
     /**
      * The free slots that the names with mutex keys get by their share, on their candidates: the plain claim leaves
-     * them free, in the instance and in their groups.
+     * them free, in the instance and in their local limits.
      * @param {HandlerEntry[]} turn
      * @param {import('./store/store.js').Candidate[]} candidates
-     * @returns {{ slots: number, groups: Map<import('./registry.js').GroupState, number> }} The slots of the instance,
-     *     and of each group.
+     * @returns {{ slots: number, limits: Map<LimitState, number> }} The slots of the instance, and of each limit.
      */
     function reservedForKeys(turn, candidates) {
-        /** @type {Map<import('./registry.js').GroupState, number>} */
-        const groups = new Map();
+        /** @type {Map<LimitState, number>} */
+        const limits = new Map();
 
         if (!candidates.length) {
-            return { slots: 0, groups };
+            return { slots: 0, limits };
         }
 
         /** @type {Map<string, number>} */
@@ -1069,24 +1068,23 @@ export function createRunner({
             if (namesWithKeys.has(entry.name)) {
                 slots++;
 
-                if (entry.group) {
-                    groups.set(entry.group, (groups.get(entry.group) ?? 0) + 1);
+                for (const limit of entry.limits) {
+                    limits.set(limit, (limits.get(limit) ?? 0) + 1);
                 }
             }
         }
 
-        return { slots, groups };
+        return { slots, limits };
     }
 
     /**
      * The due jobs of names without mutex keys: found, chosen by share, claimed and read at once.
      * @param {HandlerEntry[]} turn
      * @param {number} free The free slots for them.
-     * @param {Map<import('./registry.js').GroupState, number>} reservedInGroups The slots of each group for the names
-     *     with mutex keys.
+     * @param {Map<LimitState, number>} reservedInLimits The slots of each local limit for the names with mutex keys.
      * @returns {Promise<{ candidates: number, claimed: number }>}
      */
-    async function claimAndStartPlain(turn, free, reservedInGroups) {
+    async function claimAndStartPlain(turn, free, reservedInLimits) {
         if (!turn.length) {
             return { candidates: 0, claimed: 0 };
         }
@@ -1095,8 +1093,8 @@ export function createRunner({
         const size = tieSpan();
         /** @type {HandlerEntry[]} */
         const entries = [];
-        /** @type {import('./registry.js').GroupState[]} */
-        const groups = [];
+        /** @type {LimitState[]} */
+        const limits = [];
         /** @type {import('./store/store.js').DueRequest[]} */
         const requests = [];
 
@@ -1104,7 +1102,7 @@ export function createRunner({
             const maxJobs = Math.min(
                 freeSlots(entry),
                 free,
-                entry.group ? groupRoom(entry) - (reservedInGroups.get(entry.group) ?? 0) : Infinity,
+                ...entry.limits.map(limit => limitRoom(limit) - (reservedInLimits.get(limit) ?? 0)),
             );
 
             if (maxJobs <= 0) {
@@ -1113,21 +1111,17 @@ export function createRunner({
                 continue;
             }
 
-            /** @type {number | null} */
-            let group = null;
-
-            if (entry.group) {
-                group = groups.indexOf(entry.group);
-                group = group === -1 ? groups.push(entry.group) - 1 : group;
-            }
-
             entries.push(entry);
             requests.push({
                 name: entry.name,
                 maxJobs,
                 running: entry.running,
                 weight: entry.weight,
-                group,
+                limits: entry.limits.map((limit) => {
+                    const at = limits.indexOf(limit);
+
+                    return at === -1 ? limits.push(limit) - 1 : at;
+                }),
                 tie: (((entry.index - base) % size) + size) % size,
             });
         }
@@ -1136,15 +1130,12 @@ export function createRunner({
             return { candidates: 0, claimed: 0 };
         }
 
-        const groupRooms = groups.map(group => Math.max(
-            0,
-            group.group.maxConcurrency - group.running - (reservedInGroups.get(group) ?? 0),
-        ));
+        const limitRooms = limits.map(limit => Math.max(0, limitRoom(limit) - (reservedInLimits.get(limit) ?? 0)));
         /** @type {number | null | undefined} */
         let chosenTie;
         const { jobs, next, unpicked } = await store.claimDue({
             requests,
-            groupRooms,
+            limitRooms,
             free,
             lockToken: lockToken(),
             lockedBy,
@@ -1161,7 +1152,7 @@ export function createRunner({
                 // The counts and the rooms of the requests: the locked rows kept under them
                 const result = chooseRows({
                     rows: locked,
-                    names: shareNamesOfRequests(entries, requests, groupRooms),
+                    names: shareNamesOfRequests(entries, requests, limitRooms),
                     free,
                     base,
                     size,
@@ -1178,7 +1169,7 @@ export function createRunner({
         if (chosenTie !== undefined) {
             movePointer(chosenTie);
         } else if (entries.length > 1 && jobs.length) {
-            movePointer(replayTie({ entries, requests, groupRooms, jobs, unpicked: unpicked ?? [], base, size }));
+            movePointer(replayTie({ entries, requests, limitRooms, jobs, unpicked: unpicked ?? [], base, size }));
         }
 
         const requested = new Set(requests.map(request => request.name));
@@ -1683,7 +1674,7 @@ export function createRunner({
             return;
         }
 
-        registry.validate('start()');
+        registry.validate();
         namesWithKeys = new Set(registry.namesWithKeys());
         handledCount = Math.max(registry.entries().length, 1);
         tiePointer = Math.floor(random() * handledCount);
@@ -1735,7 +1726,7 @@ export function createRunner({
             throw new InvalidOptionsError('drain(): "timeout" must be a duration');
         }
 
-        registry.validate('drain()');
+        registry.validate();
         namesWithKeys = new Set(registry.namesWithKeys());
         handledCount = Math.max(registry.entries().length, 1);
         tiePointer = Math.floor(random() * handledCount);

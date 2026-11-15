@@ -8,15 +8,15 @@ import { chooseRows, fill, rankNames, replayTie, shareNamesOfRequests } from './
  * @property {string} name
  * @property {number} [weight]
  * @property {number} [running]
- * @property {number} [room]
- * @property {string} [group]
+ * @property {number} [room] The room of a limit of its own.
+ * @property {string[]} [groups] Its shared limits.
  * @property {number} [available]
  */
 
 /**
  * @param {Spec[]} specs
  * @param {Record<string, number>} [groupRooms]
- * @returns {ShareName[]} Their indexes in the given order; one room object per group.
+ * @returns {ShareName[]} Their indexes in the given order; one room object per shared limit.
  */
 function shareNames(specs, groupRooms = {}) {
     const groups = new Map(Object.entries(groupRooms).map(([name, room]) => [name, { room }]));
@@ -26,8 +26,10 @@ function shareNames(specs, groupRooms = {}) {
         index,
         weight: spec.weight ?? 1,
         running: spec.running ?? 0,
-        room: spec.room ?? Infinity,
-        group: spec.group === undefined ? null : /** @type {{ room: number }} */ (groups.get(spec.group)),
+        limits: [
+            ...spec.room === undefined ? [] : [{ room: spec.room }],
+            ...(spec.groups ?? []).map(group => /** @type {{ room: number }} */ (groups.get(group))),
+        ],
         available: spec.available ?? Infinity,
     }));
 }
@@ -75,8 +77,7 @@ function referenceChoose(names, free, state) {
         for (let step = 0; step < names.length; step++) {
             const index = (base + step) % names.length;
             const candidate = names[index];
-            const eligible = candidate.room > 0 && candidate.available > 0
-                && (candidate.group === null || candidate.group.room > 0);
+            const eligible = candidate.available > 0 && candidate.limits.every(limit => limit.room > 0);
 
             if (!eligible) {
                 continue;
@@ -106,12 +107,11 @@ function referenceChoose(names, free, state) {
 
         chosen.push(winner.name);
         winner.running++;
-        winner.room--;
         winner.available--;
         left--;
 
-        if (winner.group) {
-            winner.group.room--;
+        for (const limit of winner.limits) {
+            limit.room--;
         }
 
         if (tie) {
@@ -142,7 +142,7 @@ function seeded(seed) {
 }
 
 /**
- * A random input of the chooser: 1–20 names, weights 1–1000, rooms, shared group rooms, units.
+ * A random input of the chooser: 1–20 names, weights 1–1000, rooms, 0–2 shared limits per name, units.
  * @param {() => number} random
  * @returns {{ specs: Spec[], groupRooms: Record<string, number>, free: number }}
  */
@@ -152,14 +152,14 @@ function randomInput(random) {
     const groupRooms = { g0: int(6), g1: int(12) };
     /** @type {Spec[]} */
     const specs = Array.from({ length: count }, (_, index) => {
-        const group = [undefined, 'g0', 'g1'][int(2)];
+        const groups = [[], ['g0'], ['g1'], ['g0', 'g1']][int(3)];
 
         return {
             name: `n${index}`,
             weight: random() < 0.3 ? 1 + int(999) : 1 + int(4),
             running: int(8),
-            room: random() < 0.3 ? Infinity : int(6),
-            ...group === undefined ? {} : { group },
+            ...random() < 0.3 ? {} : { room: int(6) },
+            groups,
             available: random() < 0.3 ? Infinity : int(8),
         };
     });
@@ -174,7 +174,11 @@ function randomInput(random) {
  */
 function checkProperties({ specs, groupRooms, free }) {
     const names = shareNames(specs, groupRooms);
-    const before = structuredClone(names.map(({ running, room, available }) => ({ running, room, available })));
+    const before = structuredClone(names.map(({ running, available }, index) => ({
+        running,
+        room: specs[index].room ?? Infinity,
+        available,
+    })));
     const chosen = fillNames(names, free, { pointer: 0 });
     const broken = [];
     const got = new Map(names.map(name => [name.name, chosen.filter(chosenName => chosenName === name.name).length]));
@@ -190,12 +194,12 @@ function checkProperties({ specs, groupRooms, free }) {
     for (const [group, room] of Object.entries(groupRooms)) {
         let taken = 0;
 
-        for (const spec of specs.filter(member => member.group === group)) {
+        for (const spec of specs.filter(member => member.groups?.includes(group))) {
             taken += /** @type {number} */ (got.get(spec.name));
         }
 
         if (taken > Math.max(room, 0)) {
-            broken.push(`group cap ${group}`);
+            broken.push(`limit cap ${group}`);
         }
     }
 
@@ -203,8 +207,7 @@ function checkProperties({ specs, groupRooms, free }) {
         broken.push('instance cap');
     }
 
-    const canTake = names.filter(name => name.room > 0 && name.available > 0
-        && (name.group === null || name.group.room > 0));
+    const canTake = names.filter(name => name.available > 0 && name.limits.every(limit => limit.room > 0));
 
     if (chosen.length < free && canTake.length) {
         broken.push('work conserving');
@@ -240,7 +243,7 @@ function compareWithReference(random) {
 }
 
 /**
- * Without groups and name caps, as a plan over the names of a claim: the served names are a prefix of the ranking.
+ * Without limits, as a plan over the names of a claim: the served names are a prefix of the ranking.
  * @param {() => number} random
  * @returns {object[]} The case if not.
  */
@@ -277,8 +280,8 @@ describe('fill: the examples of the design', () => {
 
     test('6.5: the first claims with the group heavy at 2 and at 4', () => {
         const specs = /** @type {Spec[]} */ ([
-            { name: 'T', weight: 2, room: 1, group: 'heavy' },
-            { name: 'R', weight: 1, group: 'heavy' },
+            { name: 'T', weight: 2, room: 1, groups: ['heavy'] },
+            { name: 'R', weight: 1, groups: ['heavy'] },
             { name: 'E', weight: 3 },
         ]);
 
@@ -343,7 +346,7 @@ describe('fill: properties', () => {
  * An event simulation of one instance with the chooser, as in the design: the slot time of each name.
  * @param {object} params
  * @param {number} params.free The slots of the instance.
- * @param {{ name: string, weight: number, duration: number, room?: number, group?: string }[]} params.specs Each
+ * @param {{ name: string, weight: number, duration: number, room?: number, groups?: string[] }[]} params.specs Each
  *     with a backlog larger than the run.
  * @param {Record<string, number>} [params.groupCaps]
  * @param {number} params.until
@@ -362,10 +365,12 @@ function simulate({ free, specs, groupCaps = {}, until }) {
         const groupRooms = { ...groupCaps };
 
         for (const job of running) {
-            const { group } = /** @type {{ group?: string }} */ (specOf.get(job.name));
+            const { groups } = /** @type {{ groups?: string[] }} */ (specOf.get(job.name));
 
             counts.set(job.name, /** @type {number} */ (counts.get(job.name)) + 1);
-            groupRooms[group ?? ''] = (groupRooms[group ?? ''] ?? 0) - 1;
+            for (const group of groups ?? []) {
+                groupRooms[group] -= 1;
+            }
         }
 
         const names = shareNames(specs.map(spec => ({
@@ -373,7 +378,7 @@ function simulate({ free, specs, groupCaps = {}, until }) {
             weight: spec.weight,
             running: counts.get(spec.name),
             room: (spec.room ?? Infinity) - /** @type {number} */ (counts.get(spec.name)),
-            ...spec.group === undefined ? {} : { group: spec.group },
+            groups: spec.groups,
         })), groupRooms);
         const startedAt = now;
 
@@ -428,8 +433,8 @@ describe('fill: convergence of the slot time', () => {
 
     test('6.5: groups, within one slot of the water-filling target', () => {
         const specs = [
-            { name: 'T', weight: 2, duration: 1, room: 1, group: 'heavy' },
-            { name: 'R', weight: 1, duration: 1, group: 'heavy' },
+            { name: 'T', weight: 2, duration: 1, room: 1, groups: ['heavy'] },
+            { name: 'R', weight: 1, duration: 1, groups: ['heavy'] },
             { name: 'E', weight: 3, duration: 1 },
         ];
 
@@ -459,7 +464,7 @@ describe('chooseRows', () => {
 });
 
 /**
- * A random claim: 2–9 requested names of up to 10 handled ones, 0–2 groups, weights 1–1000, running counts, and locked
+ * A random claim: 2–9 requested names of up to 10 handled ones, 0–3 limits, weights 1–1000, running counts, and locked
  * rows up to each maxJobs. The claim takes what `chooseRows()` takes over all the locked rows; `replayTie()`, from the
  * claimed rows and the names with rows left only, must give its last tie.
  * @param {() => number} random
@@ -478,7 +483,7 @@ function checkReplay(random) {
     }
 
     const entries = indexes.slice(0, 2 + int(size - 2)).map(index => ({ index }));
-    const groupRooms = Array.from({ length: int(2) }, () => 1 + int(3));
+    const limitRooms = Array.from({ length: int(3) }, () => 1 + int(3));
     const free = 1 + int(7);
     const base = int(size - 1);
     const requests = entries.map((entry, at) => ({
@@ -486,7 +491,8 @@ function checkReplay(random) {
         maxJobs: 1 + int(free - 1),
         running: int(3),
         weight: random() < 0.3 ? 1 + int(999) : [1, 1, 2, 3, 5, 1000][int(5)],
-        group: groupRooms.length && random() < 0.6 ? int(groupRooms.length - 1) : null,
+        // Each limit with a chance of 0.5: names with several limits
+        limits: limitRooms.flatMap((_, limit) => (random() < 0.5 ? [limit] : [])),
         tie: (((entry.index - base) % size) + size) % size,
     }));
     const rows = requests.flatMap(request => Array.from({ length: int(request.maxJobs) }, (_, k) => ({
@@ -495,7 +501,7 @@ function checkReplay(random) {
     })));
     const full = chooseRows({
         rows,
-        names: shareNamesOfRequests(entries, requests, [...groupRooms]),
+        names: shareNamesOfRequests(entries, requests, limitRooms),
         free,
         base,
         size,
@@ -507,12 +513,12 @@ function checkReplay(random) {
 
     const chosenIds = new Set(full.chosen.map(row => row.id));
     const unpicked = [...new Set(rows.filter(row => !chosenIds.has(row.id)).map(row => row.name))];
-    const replayed = replayTie({ entries, requests, groupRooms, jobs: full.chosen, unpicked, base, size });
+    const replayed = replayTie({ entries, requests, limitRooms, jobs: full.chosen, unpicked, base, size });
 
     return {
         broken: replayed === full.lastTieWinner
             ? []
-            : [{ entries, requests, groupRooms, free, base, size, rows, expected: full.lastTieWinner, replayed }],
+            : [{ entries, requests, limitRooms, free, base, size, rows, expected: full.lastTieWinner, replayed }],
         tied: full.lastTieWinner !== null,
     };
 }

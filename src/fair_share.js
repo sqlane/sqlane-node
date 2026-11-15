@@ -1,5 +1,5 @@
-// How free slots are shared between job names: the lowest running / fairShareWeight first, under the caps of the
-// name, its concurrency group and the instance; ties round-robin. See docs/api.md › How free slots are shared.
+// How free slots are shared between job names: the lowest running / fairShareWeight first, under the local
+// concurrency limits of the name and the instance's cap; ties round-robin. See docs/api.md › How free slots are shared.
 
 /**
  * A job name in a choice.
@@ -8,8 +8,7 @@
  * @property {number} index Its position in the order of the handle() calls: the order of the ties.
  * @property {number} weight 1–1000.
  * @property {number} running Its jobs that run in this instance.
- * @property {number} room Its maxConcurrency minus running; Infinity without one. At least 0.
- * @property {{ room: number } | null} group Shared by the names of one group: its maxConcurrency minus its running.
+ * @property {{ room: number }[]} limits Its local limits, each shared by its names: its max minus its running.
  * @property {number} available The units that can start: locked rows, candidates, or Infinity in a plan.
  */
 
@@ -32,7 +31,7 @@ function compareShares(a, b) {
  * @returns {boolean} It can take a slot now.
  */
 function isEligible(name) {
-    return name.room > 0 && name.available > 0 && (name.group === null || name.group.room > 0);
+    return name.available > 0 && name.limits.every(limit => limit.room > 0);
 }
 
 /**
@@ -135,7 +134,7 @@ function tieOrderOf(base, size) {
 
 /**
  * Gives the free slots, one at a time, to the eligible name with the lowest running / weight; ties in the order of
- * (index − base) mod size. The base is fixed for the call. Mutates running, room, available and the group rooms.
+ * (index − base) mod size. The base is fixed for the call. Mutates running, available and the limit rooms.
  * @template T
  * @param {object} params
  * @param {ShareName[]} params.names
@@ -160,7 +159,7 @@ export function fill({ names, free, base, size, take }) {
         }
     }
 
-    /** Drops the names at the top whose group filled up since they were pushed: they cannot take a slot again */
+    /** Drops the names at the top whose limit filled up since they were pushed: they cannot take a slot again */
     const dropFull = () => {
         while (heap.size && !isEligible(/** @type {ShareName} */ (heap.peek()))) {
             heap.pop();
@@ -186,11 +185,10 @@ export function fill({ names, free, base, size, take }) {
         chosen.push(unit);
         left--;
         best.running++;
-        best.room--;
         best.available--;
 
-        if (best.group) {
-            best.group.room--;
+        for (const limit of best.limits) {
+            limit.room--;
         }
 
         if (tied) {
@@ -257,17 +255,16 @@ export function chooseRows({ rows, names, free, base, size }) {
 }
 
 /**
- * The names of the requests of a claim, with the counts and the group rooms that the claim was given. Their own room
- * is not needed: their maxJobs held their locked rows under it.
+ * The names of the requests of a claim, with the counts and the limit rooms that the claim was given.
  * @param {{ index: number }[]} entries Of the requests, in their order: their handlers.
  * @param {import('./store/store.js').DueRequest[]} requests
- * @param {number[]} groupRooms
+ * @param {number[]} limitRooms
  * @param {(request: import('./store/store.js').DueRequest) => boolean} [keep]
  * @returns {ShareName[]}
  */
-export function shareNamesOfRequests(entries, requests, groupRooms, keep) {
-    /** @type {({ room: number } | undefined)[]} */
-    const groups = [];
+export function shareNamesOfRequests(entries, requests, limitRooms, keep) {
+    /** @type {{ room: number }[]} */
+    const limits = limitRooms.map(room => ({ room }));
     /** @type {ShareName[]} */
     const names = [];
 
@@ -276,21 +273,12 @@ export function shareNamesOfRequests(entries, requests, groupRooms, keep) {
             continue;
         }
 
-        /** @type {{ room: number } | null} */
-        let group = null;
-
-        if (request.group !== null) {
-            group = groups[request.group] ?? { room: groupRooms[request.group] };
-            groups[request.group] = group;
-        }
-
         names.push({
             name: request.name,
             index: entries[at].index,
             weight: request.weight,
             running: request.running,
-            room: Infinity,
-            group,
+            limits: request.limits.map(limit => limits[limit]),
             available: Infinity,
         });
     }
@@ -306,14 +294,14 @@ export function shareNamesOfRequests(entries, requests, groupRooms, keep) {
  * @param {object} params
  * @param {{ index: number }[]} params.entries Of the requests, in their order: their handlers.
  * @param {import('./store/store.js').DueRequest[]} params.requests
- * @param {number[]} params.groupRooms
+ * @param {number[]} params.limitRooms
  * @param {{ name: string }[]} params.jobs The claimed jobs.
  * @param {string[]} params.unpicked The names with a locked row that the claim did not take.
  * @param {number} params.base
  * @param {number} params.size
  * @returns {number | null}
  */
-export function replayTie({ entries, requests, groupRooms, jobs, unpicked, base, size }) {
+export function replayTie({ entries, requests, limitRooms, jobs, unpicked, base, size }) {
     /** @type {Map<string, number>} Of each name: 2 × its claimed rows, + 1 with rows left */
     const rowsOf = new Map();
 
@@ -339,7 +327,7 @@ export function replayTie({ entries, requests, groupRooms, jobs, unpicked, base,
     }
 
     // A name with only rows left, above the top share: it never took a slot nor tied
-    const names = shareNamesOfRequests(entries, requests, groupRooms, (request) => {
+    const names = shareNamesOfRequests(entries, requests, limitRooms, (request) => {
         const rows = rowsOf.get(request.name) ?? 0;
 
         return rows > 1 || (rows === 1 && request.running * topWeight <= topRunning * request.weight);

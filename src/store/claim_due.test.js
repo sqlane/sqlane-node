@@ -56,8 +56,8 @@ async function claimWith(claimDue, rows, payloads, choose = locked => locked) {
         },
         run: async () => 0,
     }, 'sqlane_', {
-        requests: [{ name: 'a', maxJobs: 5, running: 0, weight: 1, group: null, tie: 0 }],
-        groupRooms: [],
+        requests: [{ name: 'a', maxJobs: 5, running: 0, weight: 1, limits: [], tie: 0 }],
+        limitRooms: [],
         free: 10,
         lockToken: 'T',
         lockedBy: 'test:T',
@@ -137,8 +137,8 @@ async function sentBy(claimDue, options) {
         },
         run: async () => 0,
     }, 'sqlane_', {
-        requests: [{ name: 'a', maxJobs: 5, running: 0, weight: 1, group: null, tie: 0 }],
-        groupRooms: [],
+        requests: [{ name: 'a', maxJobs: 5, running: 0, weight: 1, limits: [], tie: 0 }],
+        limitRooms: [],
         free: 10,
         lockToken: 'T',
         lockedBy: 'test:T',

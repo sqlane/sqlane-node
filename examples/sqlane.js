@@ -13,7 +13,7 @@ const queuePool = mysql.createPool({ uri: 'mysql://app@localhost/app', connectio
 export const sqlane = createSqlane({
     adapter: mysql2Adapter(queuePool),
     jobs: allJobs,
-    maxConcurrency: 10,
+    localMaxConcurrency: 10,
     defaults: { timeout: '10m' },
     unknownJobs: 'reject',
     onEvent: (event) => {

@@ -1,9 +1,12 @@
+import { isConcurrencyLimit } from './define_concurrency_limit.js';
 import { ConfigError } from './errors.js';
 import { checkFailureJob, checkJobFields, checkObject, JOB_NAME_REGEXP } from './validate.js';
 
 const JOB_OPTION_NAMES = [
     'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'mutexKeys', 'failureJob',
+    'fairShareWeight', 'localConcurrencyLimits',
 ];
+export const MAX_WEIGHT = 1000;
 
 /**
  * Defines a job name and its options. Producers and workers import the definition. `defineJob<{ reportId: string }>(…)`
@@ -34,8 +37,25 @@ export function defineJob(options) {
         checkFailureJob(options.failureJob, name, scope);
     }
 
+    const weight = options.fairShareWeight;
+
+    if (weight !== undefined && (!Number.isSafeInteger(weight) || weight < 1 || weight > MAX_WEIGHT)) {
+        throw new ConfigError(`${where}: "fairShareWeight" must be an integer from 1 to ${MAX_WEIGHT}`);
+    }
+
+    const local = options.localConcurrencyLimits;
+
+    if (local !== undefined && (!Array.isArray(local) || !local.every(isConcurrencyLimit))) {
+        throw new ConfigError(`${where}: "localConcurrencyLimits" must be an array of limits from defineConcurrencyLimit()`);
+    }
+
+    if (local && new Set(local.map(limit => limit.name)).size !== local.length) {
+        throw new ConfigError(`${where}: "localConcurrencyLimits" names a limit twice`);
+    }
+
     return Object.freeze({
         ...options,
+        ...(local && { localConcurrencyLimits: Object.freeze([...local]) }),
         ...(options.backoff && { backoff: Object.freeze({ ...options.backoff }) }),
         ...(options.retention && { retention: Object.freeze({ ...options.retention }) }),
     });

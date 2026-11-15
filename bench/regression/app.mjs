@@ -118,16 +118,21 @@ const definitions = names.map(name => defineJob({
 const counts = { ops: 0, jobs: 0, completed: 0, fired: 0, errors: 0 };
 
 /**
- * The instance, with its cap as the version of `--src` names it: `maxConcurrency` from 5.0, `concurrency` before.
+ * The instance, with its cap as the version of `--src` names it: `localMaxConcurrency` from 6.0, `maxConcurrency` in
+ * 5.x, `concurrency` before.
  * @param {Record<string, unknown>} options
  * @returns {any}
  */
 function createInstance(options) {
-    try {
-        return createSqlane({ ...options, maxConcurrency: 8 });
-    } catch {
-        return createSqlane({ ...options, concurrency: 8 });
+    for (const cap of ['localMaxConcurrency', 'maxConcurrency']) {
+        try {
+            return createSqlane({ ...options, [cap]: 8 });
+        } catch {
+            // An older version: the next name
+        }
     }
+
+    return createSqlane({ ...options, concurrency: 8 });
 }
 
 const sqlane = createInstance({

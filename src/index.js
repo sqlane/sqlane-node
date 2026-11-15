@@ -1,7 +1,7 @@
 // The public API of sqlane. See docs/design.md.
 
 export { createSqlane } from './create_sqlane.js';
-export { defineConcurrencyGroup } from './define_concurrency_group.js';
+export { defineConcurrencyLimit } from './define_concurrency_limit.js';
 export { defineJob } from './define_job.js';
 export {
     ClosedError,
@@ -40,8 +40,8 @@ export { getMigrations } from './migrations.js';
  */
 /** @typedef {import('./types.js').Backoff} Backoff */
 /** @typedef {import('./types.js').CloseOptions} CloseOptions */
-/** @typedef {import('./types.js').ConcurrencyGroup} ConcurrencyGroup */
-/** @typedef {import('./types.js').ConcurrencyGroupOptions} ConcurrencyGroupOptions */
+/** @typedef {import('./types.js').ConcurrencyLimit} ConcurrencyLimit */
+/** @typedef {import('./types.js').ConcurrencyLimitOptions} ConcurrencyLimitOptions */
 /** @typedef {import('./types.js').Dialect} Dialect */
 /** @typedef {import('./types.js').DrainOptions} DrainOptions */
 /** @typedef {import('./types.js').DrainResult} DrainResult */
@@ -58,7 +58,6 @@ export { getMigrations } from './migrations.js';
  * @typedef {import('./types.js').HandlerContext<P>} HandlerContext
  * @template [P=any]
  */
-/** @typedef {import('./types.js').HandleOptions} HandleOptions */
 /** @typedef {import('./types.js').Hint} Hint */
 /** @typedef {import('./types.js').JobDefaults} JobDefaults */
 /**
