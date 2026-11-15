@@ -1,9 +1,9 @@
 // The generated parts of docs/performance_vs_other_libs.md and README.md: the charts (a light and a dark SVG each, in
 // docs/images, which the documents show with <picture>) and the blocks between `<!-- generated:NAME -->` and
-// `<!-- /generated:NAME -->`. The prose around the blocks is written by hand. Run: pnpm bench:docs
+// `<!-- /generated:NAME -->`. The prose around the blocks is written by hand. Run: pnpm bench:generate-docs
 //
 // Inputs: bench/compare/results.json (the comparison, bench/compare/run.mjs), bench/regression/results.json
-// (statements and instructions per operation of sqlane's hot paths, `pnpm bench --save`; optional) and
+// (statements and instructions per operation of sqlane's hot paths, `pnpm bench:regression --save`; optional) and
 // bench/compare/linux.dockerfile (the server versions).
 // It writes a file only when its content changes: a second run changes nothing.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -88,7 +88,8 @@ function readDockerfile(file) {
 }
 
 /**
- * @typedef {object} Regression The instructions per operation of sqlane's hot paths, from `pnpm bench --save`
+ * @typedef {object} Regression The instructions per operation of sqlane's hot paths, from
+ *     `pnpm bench:regression --save`
  * @property {string | undefined} date
  * @property {string | undefined} machine
  * @property {string[]} servers The versions of the database servers, when the file has them: "PostgreSQL 17.11"…
@@ -988,8 +989,8 @@ function conditions() {
 }
 
 /**
- * The rows of the backends table: one operation of each scenario of `pnpm bench` (bench/regression/ab.mjs), at its
- * steady load. Statements and instructions come from the same run, so they describe the same operation.
+ * The rows of the backends table: one operation of each scenario of `pnpm bench:regression` (bench/regression/ab.mjs),
+ * at its steady load. Statements and instructions come from the same run, so they describe the same operation.
  * @type {Record<string, string>}
  */
 const HOT_PATHS = {
@@ -1040,7 +1041,7 @@ function backends() {
     ));
     const header = ['Per operation: statements · instructions', ...servers.map(server => server.title)];
     let source = 'Statements and CPU instructions of the sqlane processes and the database server, under steady load '
-        + '(`pnpm bench`), without network delay';
+        + '(`pnpm bench:regression`), without network delay';
 
     if (regression) {
         const when = regression.date ? `, ${day(regression.date)}` : '';

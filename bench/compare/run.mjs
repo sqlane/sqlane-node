@@ -1,12 +1,12 @@
 // The comparison of docs/features_vs_other_libs.md and docs/performance_vs_other_libs.md: the feature checks, the
 // performance workloads of jobs, and those of schedules, on PostgreSQL (BullMQ also on Redis) of this host: Linux in
-// the container of linux.dockerfile (bench/run_linux.sh compare: the published numbers, with 0.5 ms each way on the
-// loopback), or macOS with Homebrew.
+// the container of linux.dockerfile (bench/run_linux.sh vs-other-libs: the published numbers, with 0.5 ms each way on
+// the loopback), or macOS with Homebrew.
 //
-//   pnpm bench:compare                    # checks and perf
-//   pnpm bench:compare --only checks      # or: perf (the jobs), cron (the schedules)
-//   pnpm bench:compare --only cron --libs sqlane,river
-//   pnpm bench:compare --parallel 4       # at most 4 runs at once: a machine with fewer cores than 8
+//   pnpm bench:vs-other-libs                    # checks and perf
+//   pnpm bench:vs-other-libs --only checks      # or: perf (the jobs), cron (the schedules)
+//   pnpm bench:vs-other-libs --only cron --libs sqlane,river
+//   pnpm bench:vs-other-libs --parallel 4       # at most 4 runs at once: a machine with fewer cores than 8
 //
 // Options: --pg-bin, --redis-bin (the directories of the server binaries; defaults: the PG_BIN and REDIS_BIN
 // variables, else Homebrew's). Writes results.json next to this file and prints Markdown tables. See README.md.
@@ -183,8 +183,8 @@ function exited(child) {
 }
 
 /**
- * The delay that netem adds on the loopback interface (bench/run_linux.sh compare: `tc qdisc add dev lo root netem
- * delay 0.5ms`), from `tc qdisc show dev lo`. A packet goes through the loopback's queue once, so a round trip
+ * The delay that netem adds on the loopback interface (bench/run_linux.sh vs-other-libs: `tc qdisc add dev lo root
+ * netem delay 0.5ms`), from `tc qdisc show dev lo`. A packet goes through the loopback's queue once, so a round trip
  * between a client and its database costs twice the delay.
  * @returns {{ oneWayMs: number, roundTripMs: number, qdisc: string } | null} null: macOS (no netem), or no delay.
  */
@@ -1199,7 +1199,7 @@ try {
 
     if (LINUX && !latency) {
         process.stderr.write('warning: no netem delay on the loopback: the latencies of the documents come with 0.5 ms '
-            + 'each way (bench/run_linux.sh compare)\n');
+            + 'each way (bench/run_linux.sh vs-other-libs)\n');
     }
 
     // Before the servers and the libraries start: the Linux daemon counts a process from its own start

@@ -84,7 +84,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # The statements of the hot paths on each supported database, against bench/regression/snapshot.json
       - name: Statements per operation, against the snapshot
-        run: pnpm bench:snapshot
+        run: pnpm bench:statements
 
   quickstart:
     name: Quickstart

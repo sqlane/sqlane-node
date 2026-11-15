@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 # The published runs on Linux, in the container of bench/compare/linux.dockerfile (the repository mounted at /work):
 #
-#   compare            The comparison (bench/compare): the checks, the jobs and the schedules, with a delay of 0.5 ms
-#                      each way on the container's loopback (netem): a round trip between a client and its database
-#                      costs about 1 ms, as over a network.
-#   ab [<args>…]       The A/B regression run (`pnpm bench <args>`, bench/regression/ab.mjs), without a delay: it
-#                      measures instructions and statements, not latencies. The published numbers:
-#                      `bench/run_linux.sh ab --ref . --save bench/regression/results.json`.
+#   vs-other-libs
+#       The comparison (bench/compare): the checks, the jobs and the schedules, with a delay of 0.5 ms each way on the
+#       container's loopback (netem): a round trip between a client and its database costs about 1 ms, as over a
+#       network.
+#   regression [<args>…]
+#       The A/B regression run (`pnpm bench:regression <args>`, bench/regression/ab.mjs), without a delay: it measures
+#       instructions and statements, not latencies. The published numbers:
+#       `bench/run_linux.sh regression --ref . --save bench/regression/results.json`.
 #
 # tc needs root in the container and PostgreSQL refuses root, so the container starts as root, adds the delay (if
 # any), and runs the command as the image's `bench` user (uid 1000), with CAP_PERFMON for the counters
 # (bench/lib/proc_usage_linux.py).
 #
 #   podman build -f bench/compare/linux.dockerfile -t sqlane-bench:linux bench/compare
-#   bench/run_linux.sh compare
+#   bench/run_linux.sh vs-other-libs
 #
 # ENGINE: podman (default, rootless) or docker (rootful: no user namespace). DELAY: the one-way delay (default 0.5ms
-# for compare, none for ab; `none`: no netem).
+# for vs-other-libs, none for regression; `none`: no netem).
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -25,22 +27,22 @@ mode="${1:-}"
 userns=()
 
 case "$mode" in
-    compare)
+    vs-other-libs)
         delay="${DELAY:-0.5ms}"
-        commands='pnpm bench:compare --parallel 8
-            pnpm bench:compare --only cron --parallel 9'
+        commands='pnpm bench:vs-other-libs --parallel 8
+            pnpm bench:vs-other-libs --only cron --parallel 9'
         ;;
-    ab)
+    regression)
         shift
         delay="${DELAY:-none}"
-        commands="pnpm bench"
+        commands="pnpm bench:regression"
 
         if [ $# -gt 0 ]; then
             commands+="$(printf ' %q' "$@")"
         fi
         ;;
     *)
-        echo "usage: $0 compare | ab [<args of pnpm bench>…]" >&2
+        echo "usage: $0 vs-other-libs | regression [<args of pnpm bench:regression>…]" >&2
         exit 64
         ;;
 esac

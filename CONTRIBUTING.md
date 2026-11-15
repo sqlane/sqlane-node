@@ -32,20 +32,20 @@ hk install --global --mise   # Git hooks, also for GUI Git clients: lint, format
 
 ## Commands
 
-| Command               | Does                                                                                                                    |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `pnpm test`           | Run the tests (Vitest)                                                                                                  |
-| `pnpm lint`           | Lint, including formatting (oxlint, @stylistic)                                                                         |
-| `pnpm lint:fix`       | Fix lint and formatting                                                                                                 |
-| `pnpm format`         | Format the other files: JSON, YAML, Markdown, TOML (oxfmt)                                                              |
-| `pnpm lint:package`   | Check the package that npm would publish (publint)                                                                      |
-| `pnpm typecheck`      | Type-check the JSDoc (`tsc`, no emit)                                                                                   |
-| `pnpm build:types`    | Generate `types/` from the JSDoc of `src/`                                                                              |
-| `pnpm check`          | Run all hook checks on all files (`hk check --all`)                                                                     |
-| `pnpm bench:snapshot` | Check the statements of the hot paths on each database ([benchmarks](docs/contributing/benchmarks.md))                  |
-| `pnpm bench`          | Compare the CPU cost and statements of the working tree with `main`                                                     |
-| `pnpm bench:compare`  | Compare with other queues: [features](docs/features_vs_other_libs.md), [performance](docs/performance_vs_other_libs.md) |
-| `pnpm bench:docs`     | Generate the performance page's charts and tables from the results                                                      |
+| Command                    | Does                                                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `pnpm test`                | Run the tests (Vitest)                                                                                                  |
+| `pnpm lint`                | Lint, including formatting (oxlint, @stylistic)                                                                         |
+| `pnpm lint:fix`            | Fix lint and formatting                                                                                                 |
+| `pnpm format`              | Format the other files: JSON, YAML, Markdown, TOML (oxfmt)                                                              |
+| `pnpm lint:package`        | Check the package that npm would publish (publint)                                                                      |
+| `pnpm typecheck`           | Type-check the JSDoc (`tsc`, no emit)                                                                                   |
+| `pnpm build:types`         | Generate `types/` from the JSDoc of `src/`                                                                              |
+| `pnpm check`               | Run all hook checks on all files (`hk check --all`)                                                                     |
+| `pnpm bench:statements`    | Check the statements of the hot paths on each database ([benchmarks](docs/contributing/benchmarks.md))                  |
+| `pnpm bench:regression`    | Compare the CPU cost and statements of the working tree with `main`                                                     |
+| `pnpm bench:vs-other-libs` | Compare with other queues: [features](docs/features_vs_other_libs.md), [performance](docs/performance_vs_other_libs.md) |
+| `pnpm bench:generate-docs` | Generate the performance page's charts and tables from the results                                                      |
 
 ## Commits and changesets
 

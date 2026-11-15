@@ -1,6 +1,6 @@
 // The hot paths of sqlane, as deterministic scenarios: each runs a fixed sequence of public calls on an empty
 // database, and the database's statement statistics count what it cost. No timers decide the work, so the counts are
-// the same on every run; bench:snapshot keeps them in snapshot.json. A scenario gets sqlane's module, so a run can
+// the same on every run; bench:statements keeps them in snapshot.json. A scenario gets sqlane's module, so a run can
 // load another source tree.
 /* oxlint-disable no-await-in-loop -- the steps of a scenario go one after the other */
 import { setTimeout as sleep } from 'node:timers/promises';

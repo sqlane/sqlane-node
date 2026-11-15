@@ -1,16 +1,16 @@
-// The A/B performance regression check: `pnpm bench [--ref main] [--db postgres|mysql|mariadb]… [--scenario <name>]…
-// [--window 15] [--warmup 5] [--out <dir>] [--save <file>]`. Compares the working tree with a git ref on PostgreSQL,
-// MySQL and MariaDB of this host (started from their binaries: --pg-bin, --mysql-bin, --mariadb-bin, defaults: the
-// PG_BIN, MYSQL_BIN and MARIADB_BIN variables, else Homebrew's), in six scenarios under steady load. Each scenario runs
-// its sqlane processes (app.mjs) on a fresh database, and measures a window: the CPU instructions per operation of
-// these processes and of the database server (with its descendants), and the statements per operation (the server's
-// statistics, db_stats.mjs).
+// The A/B performance regression check: `pnpm bench:regression [--ref main] [--db postgres|mysql|mariadb]… [--scenario
+// <name>]… [--window 15] [--warmup 5] [--out <dir>] [--save <file>]`. Compares the working tree with a git ref on
+// PostgreSQL, MySQL and MariaDB of this host (started from their binaries: --pg-bin, --mysql-bin, --mariadb-bin,
+// defaults: the PG_BIN, MYSQL_BIN and MARIADB_BIN variables, else Homebrew's), in six scenarios under steady load. Each
+// scenario runs its sqlane processes (app.mjs) on a fresh database, and measures a window: the CPU instructions per
+// operation of these processes and of the database server (with its descendants), and the statements per operation (the
+// server's statistics, db_stats.mjs).
 //
 // `--ref .`: the baseline is the working tree itself, without git (a copy with no .git, as on the Linux machine of the
-// published numbers: `bench/run_linux.sh ab --ref . --save bench/regression/results.json`). Every verdict should then
-// be "same"; the run gives the numbers of the tree. `--save <file>`: after the run, writes the numbers of the working
-// tree per scenario and database (with the baseline's and the verdict), the machine, whether the counters count the
-// kernel, and the servers' versions, as JSON. The raw runs go to `results.json` of `--out` either way.
+// published numbers: `bench/run_linux.sh regression --ref . --save bench/regression/results.json`). Every verdict
+// should then be "same"; the run gives the numbers of the tree. `--save <file>`: after the run, writes the numbers of
+// the working tree per scenario and database (with the baseline's and the verdict), the machine, whether the counters
+// count the kernel, and the servers' versions, as JSON. The raw runs go to `results.json` of `--out` either way.
 //
 // A difference beyond ±5% in instructions, or ±3% in statements, reruns the pair in the other order; only a difference
 // of both runs, in the same direction, counts. Exit code 1: a confirmed regression (more instructions or statements);

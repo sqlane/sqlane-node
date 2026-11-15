@@ -5,12 +5,12 @@ The harness behind [docs/features_vs_other_libs.md](../../docs/features_vs_other
 documents report what they did.
 
 ```sh
-pnpm bench:compare                                # checks and performance of jobs
-pnpm bench:compare --only checks                  # the feature checks, about 1.5 minutes
-pnpm bench:compare --only perf                    # the jobs
-pnpm bench:compare --only perf --libs sqlane,river
-pnpm bench:compare --only cron                    # the schedules
-pnpm bench:compare --parallel 8                   # at most 8 runs at once
+pnpm bench:vs-other-libs                                # checks and performance of jobs
+pnpm bench:vs-other-libs --only checks                  # the feature checks, about 1.5 minutes
+pnpm bench:vs-other-libs --only perf                    # the jobs
+pnpm bench:vs-other-libs --only perf --libs sqlane,river
+pnpm bench:vs-other-libs --only cron                    # the schedules
+pnpm bench:vs-other-libs --parallel 8                   # at most 8 runs at once
 ```
 
 `--only` and `--libs` select runs: the other rows of `results.json` stay. `--parallel` caps the runs that share the
@@ -19,7 +19,7 @@ runs per core, the libraries fall behind the load and the numbers are wrong: on 
 The run starts private servers (`bench/lib/servers.mjs`) on ports from 55442 (PostgreSQL) and 56380 (Redis), with data
 in a temporary directory, and stops them at the end. It writes `results.json` here, with the machine of each part
 (`machines`: also the loopback's delay, `latency`, whether the counters count the kernel, `kernelCounted`, and the
-part's `seconds`), and prints Markdown tables. `pnpm bench:docs` ([generate_docs.mjs](../generate_docs.mjs)) then
+part's `seconds`), and prints Markdown tables. `pnpm bench:generate-docs` ([generate_docs.mjs](../generate_docs.mjs)) then
 draws the documents' charts from it into `docs/images` and rewrites the generated blocks of the documents (between
 `<!-- generated:NAME -->` markers); the prose around them is written by hand.
 
@@ -27,12 +27,12 @@ draws the documents' charts from it into `docs/images` and rewrites the generate
 
 The documents' numbers come from Linux, in the container of `linux.dockerfile`: Node.js, pnpm, PostgreSQL and Redis at
 pinned versions (MySQL and MariaDB too, which the comparison doesn't use), every download checked against its SHA-256.
-`bench/run_linux.sh compare` runs the whole comparison there (`bench/run_linux.sh ab …`: the A/B regression run of
+`bench/run_linux.sh vs-other-libs` runs the whole comparison there (`bench/run_linux.sh regression …`: the A/B regression run of
 `bench/regression/ab.mjs` in the same container, without the delay):
 
 ```sh
 podman build -f bench/compare/linux.dockerfile -t sqlane-bench:linux bench/compare
-bench/run_linux.sh compare        # ENGINE=docker for Docker
+bench/run_linux.sh vs-other-libs        # ENGINE=docker for Docker
 ```
 
 - **Network latency.** The servers listen on the loopback, where a round trip takes microseconds; a database is
