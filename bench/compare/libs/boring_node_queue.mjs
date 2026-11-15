@@ -53,7 +53,7 @@ export const adapter = {
 
         const mysql = url.startsWith('mysql:');
         // No idle timeout: a closed connection takes its CPU counters with it
-        // (see docs/contributing/measuring_cpu_cost.md, pitfall 5)
+        // (see docs/contributing/benchmarks.md, pitfall 5)
         const db = knex({
             client: mysql ? 'mysql2' : 'pg',
             connection: url,

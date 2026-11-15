@@ -10,7 +10,8 @@ import { queryRows, scheduleKeys, UnsupportedError } from './common.mjs';
 
 /**
  * Hints over UDP on localhost: they stand in for the Redis pub/sub that sqlane recommends on MySQL and MariaDB, which
- * have no NOTIFY (as bench/cpu/app.js). One port per database server, 10000 below its own: the lanes run in parallel.
+ * have no NOTIFY (as bench/regression/app.mjs). One port per database server, 10000 below its own: the lanes run in
+ * parallel.
  * @param {number} port
  * @returns {import('../../../src/types.js').Hint}
  */
@@ -63,7 +64,7 @@ export const adapter = {
     }) {
         const mysql = url.startsWith('mysql:');
         // MySQL and MariaDB: the pool of mysql2 (from the root package). No idle timeout: a closed connection takes its
-        // CPU counters with it (see docs/contributing/measuring_cpu_cost.md, pitfall 5)
+        // CPU counters with it (see docs/contributing/benchmarks.md, pitfall 5)
         const pool = mysql
             ? createPool({ uri: url, connectionLimit: 5 })
             : new Pool({ connectionString: url, max: 5, idleTimeoutMillis: 0 });
