@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Client } from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
-import { ConfigError, createSqlane, defineJob } from '../../src/index.js';
+import { ConfigError, createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { pgAdapter } from '../../src/adapters/pg.js';
 import { resolveDefaults } from '../../src/defaults.js';
 import { buildNewJob } from '../../src/new_job.js';
@@ -788,14 +788,14 @@ describe('schedules end to end', () => {
         await expect(readJobs(p)).resolves.toHaveLength(1);
     });
 
-    test('a scheduled job is an ordinary job: the payload, scheduledAt, a retry, a mutex key, a failure job', async () => {
+    test('a scheduled job is an ordinary job: the payload, scheduledAt, a retry, a global limit, a failure job', async () => {
         const job = defineJob({
             name: 'nightly',
             timeout: '10s',
             maxAttempts: 2,
             backoff: { type: 'fixed', delay: 10, jitter: 0 },
             // One run at a time: the next slot waits for the key
-            mutexKeys: () => ['nightly'],
+            globalConcurrencyLimits: () => [defineConcurrencyLimit({ name: 'nightly', max: 1 })],
             failureJob: 'nightly_failed',
         });
         const { sqlane } = await freshSqlane();

@@ -12,7 +12,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from '
 import { connectTestDatabase } from '../support/test_database.js';
 import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { drizzleAdapter } from '../../src/adapters/drizzle.js';
-import { createSqlane, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
 
 /** @typedef {import('../../src/adapters/drizzle.js').DrizzleConnection} DrizzleConnection */
@@ -177,8 +177,13 @@ describe.each([
         await expect(statuses(p)).resolves.toStrictEqual(['pending', 'pending']);
     });
 
-    test('drain: retries, mutex keys and a failure job', async () => {
-        const report = defineJob({ name: 'report', mutexKeys: payload => [`r:${payload.id}`], timeout: '5s' });
+    test('drain: retries, global limits and a failure job', async () => {
+        const reportLimit = defineConcurrencyLimit({ name: 'r', max: 1 });
+        const report = defineJob({
+            name: 'report',
+            globalConcurrencyLimits: ({ payload }) => [reportLimit.key(payload.id)],
+            timeout: '5s',
+        });
         const reportFailed = defineJob({ name: 'report_failed' });
         const failing = defineJob({
             name: 'failing',

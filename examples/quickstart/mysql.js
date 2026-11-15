@@ -1,12 +1,12 @@
 // The quickstart on MySQL: `docker compose up -d --wait mysql`, then `npm run mysql`.
 // 1. A job commits with the business data, and runs right after the commit.
 // 2. A rollback removes the business data and the job.
-// 3. Jobs with a common mutex key run one at a time; other keys run alongside.
+// 3. Jobs of one key of a global limit of 1 run one at a time; other keys run alongside.
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 import mysql from 'mysql2/promise';
-import { createSqlane, defineJob } from '@sqlane/core';
+import { createSqlane, defineConcurrencyLimit, defineJob } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
 const url = process.env.DATABASE_URL ?? 'mysql://root@127.0.0.1:13306/app';
@@ -15,9 +15,10 @@ const queuePool = mysql.createPool({ uri: url, connectionLimit: 3 }); // the que
 
 // The job definitions: producers and workers import them
 const sendReceipt = defineJob({ name: 'send_receipt' });
+const perOrder = defineConcurrencyLimit({ name: 'order', max: 1 }); // one job per order at a time, in the whole cluster
 const syncOrder = defineJob({
     name: 'sync_order',
-    mutexKeys: payload => [`order:${payload.orderId}`], // one sync per order at a time, in the whole cluster
+    globalConcurrencyLimits: ({ payload }) => [perOrder.key(payload.orderId)],
     timeout: '1m',
 });
 

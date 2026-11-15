@@ -1,7 +1,7 @@
 // The scheduler of an instance: one timer for the earliest slot of its schedules, and the fire of the due slots. No
 // leader: every started process with a schedule tries its slots, and the cursor row of the schedule lets one of them
 // add the job. See docs/design.md › Schedules.
-import { ConfigError, InvalidMutexKeyError, InvalidOptionsError, PayloadTooLargeError } from './errors.js';
+import { ConfigError, InvalidConcurrencyLimitError, InvalidOptionsError, PayloadTooLargeError } from './errors.js';
 import { buildNewJob } from './new_job.js';
 import { dueOf, latestSlot, nextSlot, pendingSlots, previousSlot } from './schedule.js';
 import { isConnectionError, isMissingTableError, isTransientDbError } from './transient_error.js';
@@ -847,7 +847,7 @@ export function createScheduler({
                     buildJob(candidateOf(entry, 0), true);
                 } catch (error) {
                     if (error instanceof InvalidOptionsError || error instanceof PayloadTooLargeError
-                        || error instanceof InvalidMutexKeyError) {
+                        || error instanceof InvalidConcurrencyLimitError) {
                         throw new ConfigError(`${where}: ${error.message}`, { cause: error });
                     }
 

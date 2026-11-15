@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { ClosedError, ConfigError } from './errors.js';
 import { createSqlane } from './create_sqlane.js';
+import { defineConcurrencyLimit } from './define_concurrency_limit.js';
 import { defineJob } from './define_job.js';
 
 test('createSqlane needs an adapter', () => {
@@ -77,8 +78,9 @@ describe('schedule() and start()', () => {
         await sqlane.close({ deadline: 0 });
     });
 
-    test('start() checks the mutex keys of the definition', async () => {
-        const job = defineJob({ name: 'keyed', timeout: '1m', mutexKeys: () => [' bad'] });
+    test('start() checks the global limits of the definition', async () => {
+        const bad = defineConcurrencyLimit({ name: 'bad', max: 1 });
+        const job = defineJob({ name: 'keyed', timeout: '1m', globalConcurrencyLimits: () => [bad.key(' bad')] });
         const sqlane = createSqlane({ adapter: fakeAdapter().adapter });
 
         sqlane.schedule(job, { every: '1m' });

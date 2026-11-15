@@ -16,9 +16,43 @@ const LOCK_SQL = {
 };
 
 /** The migrations of the dialect, in order */
+const SIX = ['0005_concurrency_limits', '0006_concurrency_slots'];
 const ALL_MIGRATIONS = inject('databaseDialect') === 'postgres'
-    ? ['0001_initial', '0002_pending_order', '0003_job_keys', '0004_schedules']
-    : ['0001_initial', '0002_job_keys', '0004_schedules'];
+    ? ['0001_initial', '0002_pending_order', '0003_job_keys', '0004_schedules', ...SIX]
+    : ['0001_initial', '0002_job_keys', '0004_schedules', ...SIX];
+
+/** @type {Record<'mysql' | 'postgres', { time: string, now: string }>} */
+const TIME_SQL = {
+    mysql: { time: 'datetime(3)', now: 'UTC_TIMESTAMP(3)' },
+    postgres: { time: 'timestamptz(3)', now: 'now()' },
+};
+
+/**
+ * @param {unknown} value A JSON column: a text on MySQL and MariaDB, parsed on PostgreSQL.
+ * @returns {unknown}
+ */
+function parsedJson(value) {
+    return typeof value === 'string' ? JSON.parse(value) : value;
+}
+
+/** @type {Record<'mysql' | 'postgres', (p: string) => string[]>} A job of 5.x with 2 mutex keys, a hold of one */
+const FIVE_X_ROWS_SQL = {
+    mysql: p => [
+        `INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, mutex_keys, enqueue_token,
+            completed_retention_ms, failed_retention_ms, created_at, updated_at)
+         VALUES ('j1', 'sync', 'pending', UTC_TIMESTAMP(3), 3, 2, JSON_ARRAY('order:1', 'order:2'), 't', 0, 0,
+            UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))`,
+        `INSERT INTO ${p}mutexes (mutex_key, job_id, lock_token, held_until, created_at)
+         VALUES ('order:1', 'j0', 'old', NULL, UTC_TIMESTAMP(3))`,
+    ],
+    postgres: p => [
+        `INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, mutex_keys, enqueue_token,
+            completed_retention_ms, failed_retention_ms, created_at, updated_at)
+         VALUES ('j1', 'sync', 'pending', now(), 3, 2, ARRAY['order:1', 'order:2'], 't', 0, 0, now(), now())`,
+        `INSERT INTO ${p}mutexes (mutex_key, job_id, lock_token, held_until, created_at)
+         VALUES ('order:1', 'j0', 'old', NULL, now())`,
+    ],
+};
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
@@ -79,7 +113,7 @@ test('applies the migrations once', async () => {
 
     await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
     await expect(listTables(tablePrefix)).resolves.toStrictEqual(
-        ['job_keys', 'jobs', 'migrations', 'mutexes', 'payloads', 'schedules']
+        ['concurrency_slots', 'jobs', 'migrations', 'payloads', 'schedules']
             .map(table => `${tablePrefix}${table}`).toSorted(),
     );
     await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [] });
@@ -99,6 +133,41 @@ test('a database of 3.x applies only 0004_schedules, and keeps its jobs', async 
     await expect(database.query(`SELECT job_name FROM ${tablePrefix}jobs`))
         .resolves.toStrictEqual([{ job_name: 'nightly_report' }]);
     await expect(database.query(`SELECT id FROM ${tablePrefix}schedules`)).resolves.toStrictEqual([]);
+});
+
+test('a database of 5.x: mutex keys become global limits with max 1, a hold becomes slot 0', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+    const migrations = getMigrations({ dialect: database.dialect, tablePrefix });
+
+    for (const sql of migrations.slice(0, -2).flatMap(migration => migration.statements)) {
+        // oxlint-disable-next-line no-await-in-loop -- DDL in order
+        await database.query(sql);
+    }
+
+    for (const sql of FIVE_X_ROWS_SQL[database.family](tablePrefix)) {
+        // oxlint-disable-next-line no-await-in-loop -- in order
+        await database.query(sql);
+    }
+
+    const { time, now } = TIME_SQL[database.family];
+
+    await database.query(`CREATE TABLE IF NOT EXISTS ${tablePrefix}migrations (id varchar(64) NOT NULL PRIMARY KEY, `
+        + `applied_at ${time} NOT NULL)`);
+
+    for (const migration of migrations.slice(0, -2)) {
+        // oxlint-disable-next-line no-await-in-loop -- in order
+        await database.query(`INSERT INTO ${tablePrefix}migrations (id, applied_at) VALUES ('${migration.id}', ${now})`);
+    }
+
+    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: SIX });
+
+    const [job] = await database.query(`SELECT limit_keys, limit_maxes, blocked_on FROM ${tablePrefix}jobs`);
+
+    expect([job.limit_keys, job.limit_maxes, job.blocked_on].map(parsedJson))
+        .toStrictEqual([['order:1', 'order:2'], [1, 1], null]);
+    await expect(database.query(`SELECT limit_key, slot, job_id FROM ${tablePrefix}concurrency_slots`))
+        .resolves.toStrictEqual([{ limit_key: 'order:1', slot: 0, job_id: 'j0' }]);
 });
 
 test('concurrent migrations apply each version once', async () => {

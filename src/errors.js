@@ -51,15 +51,15 @@ export class PayloadTooLargeError extends SqlaneError {
     }
 }
 
-/** More than 10 mutex keys, or a key that breaks the rules. */
-export class InvalidMutexKeyError extends SqlaneError {
+/** More than 10 global concurrency limits, a key that breaks the rules, or one key with two maxes. */
+export class InvalidConcurrencyLimitError extends SqlaneError {
     /**
      * @param {string} message
      * @param {ErrorOptions} [options]
      */
     constructor(message, options) {
-        super('INVALID_MUTEX_KEY', message, options);
-        this.name = 'InvalidMutexKeyError';
+        super('INVALID_CONCURRENCY_LIMIT', message, options);
+        this.name = 'InvalidConcurrencyLimitError';
     }
 }
 

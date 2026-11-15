@@ -4,7 +4,7 @@ import postgres3 from 'postgres-3';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
 import { postgresJsAdapter } from '../../src/adapters/postgres_js.js';
-import { createSqlane, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 
 /** @typedef {import('../../src/adapters/postgres_js.js').PostgresJsConnection} PostgresJsConnection */
 /** @typedef {import('../../src/types.js').Sqlane<PostgresJsConnection>} Sqlane */
@@ -141,8 +141,13 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
         await expect(statuses(p)).resolves.toStrictEqual(['pending', 'pending']);
     });
 
-    test('drain: retries, mutex keys, a failure job and the stats', async () => {
-        const report = defineJob({ name: 'report', mutexKeys: payload => [`r:${payload.id}`], timeout: '5s' });
+    test('drain: retries, global limits, a failure job and the stats', async () => {
+        const reportLimit = defineConcurrencyLimit({ name: 'r', max: 1 });
+        const report = defineJob({
+            name: 'report',
+            globalConcurrencyLimits: ({ payload }) => [reportLimit.key(payload.id)],
+            timeout: '5s',
+        });
         const reportFailed = defineJob({ name: 'report_failed' });
         const failing = defineJob({
             name: 'failing',

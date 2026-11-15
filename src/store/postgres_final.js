@@ -18,6 +18,7 @@ const NOW = 'clock_timestamp()';
 const runAt = offset => `date_trunc('milliseconds', ${NOW} + ${offset})`;
 const MS = 'interval \'1 millisecond\'';
 const CLEAR_LOCK = 'lock_token = NULL, locked_by = NULL, locked_until = NULL, timed_out_at = NULL';
+const HELD = `(s.held_until IS NULL OR s.held_until >= ${NOW})`;
 const enqueueToken = createMonotonicUlid();
 
 /**
@@ -69,14 +70,17 @@ export async function markTimedOut(executor, p, job) {
  * @returns {Promise<void>}
  */
 async function deleteHolds(executor, p, job) {
-    await executor.run(`DELETE FROM ${p}mutexes WHERE job_id = $1 AND lock_token = $2`, [job.id, job.lockToken]);
+    await executor.run(`DELETE FROM ${p}concurrency_slots WHERE job_id = $1 AND lock_token = $2`, [
+        job.id,
+        job.lockToken,
+    ]);
 }
 
 /**
  * @param {Executor} executor
  * @param {string} p
  * @param {OwnedJob} job
- * @param {number} lingerMs The keys stay held this long. 0: deleted.
+ * @param {number} lingerMs The slots stay held this long. 0: deleted.
  * @returns {Promise<void>}
  */
 async function lingerHolds(executor, p, job, lingerMs) {
@@ -87,7 +91,7 @@ async function lingerHolds(executor, p, job, lingerMs) {
     }
 
     await executor.run(`
-        UPDATE ${p}mutexes SET held_until = ${NOW} + $3 * ${MS}
+        UPDATE ${p}concurrency_slots SET held_until = ${NOW} + $3 * ${MS}
          WHERE job_id = $1 AND lock_token = $2 AND held_until IS NULL
     `, [job.id, job.lockToken, lingerMs]);
 }
@@ -113,7 +117,7 @@ async function completeJob(executor, p, job) {
             DELETE FROM ${p}payloads WHERE id = $1 AND EXISTS (SELECT FROM done)
         ),
         holds AS (
-            DELETE FROM ${p}mutexes WHERE job_id = $1 AND lock_token = $2
+            DELETE FROM ${p}concurrency_slots WHERE job_id = $1 AND lock_token = $2
         )
         SELECT count(*)::integer AS changed FROM done
     `, [job.id, job.lockToken]);
@@ -122,7 +126,7 @@ async function completeJob(executor, p, job) {
 }
 
 /**
- * The jobs are done: completed until their retention ends, without their payloads; their keys are freed. One
+ * The jobs are done: completed until their retention ends, without their payloads; their slots are freed. One
  * statement for many jobs.
  * @param {Executor} executor
  * @param {string} p
@@ -151,7 +155,7 @@ export async function completeJobs(executor, p, jobs) {
             DELETE FROM ${p}payloads WHERE id IN (SELECT id FROM done)
         ),
         holds AS (
-            DELETE FROM ${p}mutexes m USING owned WHERE m.job_id = owned.id AND m.lock_token = owned.lock_token
+            DELETE FROM ${p}concurrency_slots s USING owned WHERE s.job_id = owned.id AND s.lock_token = owned.lock_token
         )
         SELECT count(*)::integer AS changed FROM done
     `, [jobs.map(job => job.id), jobs.map(job => job.lockToken)]);
@@ -160,30 +164,7 @@ export async function completeJobs(executor, p, jobs) {
 }
 
 /**
- * Runs an UPDATE that makes jobs pending again, and adds their job_keys: one statement.
- * @param {Executor} executor
- * @param {string} p
- * @param {string} update An UPDATE of the jobs, without RETURNING.
- * @param {unknown[]} params
- * @returns {Promise<number>} The jobs that it changed.
- */
-async function pendingAgain(executor, p, update, params) {
-    const [row] = await executor.query(`
-        WITH pending AS (${update} RETURNING id, run_at, job_name, mutex_keys),
-        job_keys AS (
-            INSERT INTO ${p}job_keys (mutex_key, run_at, job_id, job_name)
-            SELECT k.mutex_key, pending.run_at, pending.id, pending.job_name
-              FROM pending CROSS JOIN LATERAL unnest(pending.mutex_keys) AS k(mutex_key)
-            ON CONFLICT DO NOTHING
-        )
-        SELECT count(*)::integer AS changed FROM pending
-    `, params);
-
-    return Number(row?.changed ?? 0);
-}
-
-/**
- * The attempt failed: pending again after the delay, one more attempt used; its keys are freed.
+ * The attempt failed: pending again after the delay, one more attempt used; its slots are freed.
  * @param {Executor} executor
  * @param {string} p
  * @param {OwnedJob} job
@@ -191,7 +172,7 @@ async function pendingAgain(executor, p, update, params) {
  * @returns {Promise<boolean>} False: no change.
  */
 export async function retryJob(executor, p, job, { delayMs, error }) {
-    const changed = await pendingAgain(executor, p, `
+    const changed = await executor.run(`
         UPDATE ${p}jobs
            SET status = 'pending', run_at = ${runAt(`$3 * ${MS}`)}, attempts = attempts + 1, ${CLEAR_LOCK},
                last_error = $4::text::jsonb, updated_at = ${NOW}
@@ -264,7 +245,7 @@ async function lockJob(executor, p, where, params) {
 }
 
 /**
- * The job fails for good: failed until its retention ends, with its payload; its keys are freed; its failure job is
+ * The job fails for good: failed until its retention ends, with its payload; its slots are freed; its failure job is
  * added in the same transaction.
  * @param {Executor} executor
  * @param {string} p
@@ -299,12 +280,12 @@ export async function failJob(executor, p, job, { error, buildFailureJob }) {
  * @param {Executor} executor
  * @param {string} p
  * @param {OwnedJob} job
- * @param {{ delayMs: number, lingerMs: number }} params lingerMs: its keys stay held this long (its handler still
+ * @param {{ delayMs: number, lingerMs: number }} params lingerMs: its slots stay held this long (its handler still
  *     runs); 0: they are freed.
  * @returns {Promise<boolean>} False: no change.
  */
 export async function releaseJob(executor, p, job, { delayMs, lingerMs }) {
-    const changed = await pendingAgain(executor, p, `
+    const changed = await executor.run(`
         UPDATE ${p}jobs SET status = 'pending', run_at = ${runAt(`$3 * ${MS}`)}, ${CLEAR_LOCK}, updated_at = ${NOW}
          WHERE id = $1 AND lock_token = $2
     `, [job.id, job.lockToken, delayMs]);
@@ -341,7 +322,7 @@ function stalledRun(row) {
 
 /**
  * A running job whose lease ended: one more stall, pending again after 30 s × 2^stalls (at most 1 h); after maxStalls,
- * it fails for good. Its keys linger for one lease: its old handler may still run.
+ * it fails for good. Its slots linger for one lease: its old handler may still run.
  * @param {Executor} executor
  * @param {string} p
  * @param {string} id
@@ -360,7 +341,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
     await lingerHolds(executor, p, { id, lockToken: String(row.lock_token) }, leaseMs);
 
     if (Number(row.stalls) < Number(row.max_stalls)) {
-        await pendingAgain(executor, p, `
+        await executor.run(`
             UPDATE ${p}jobs
                SET status = 'pending', run_at = ${runAt(`LEAST(30000 * power(2, stalls), 3600000) * ${MS}`)},
                    stalls = stalls + 1, ${CLEAR_LOCK}, last_error = $2::text::jsonb, updated_at = ${NOW}
@@ -386,29 +367,104 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
 }
 
 /**
- * Deletes the ended lingers, and the holds without their running job (from a manual change, or old code).
+ * Makes the jobs blocked on the keys pending again, the oldest first: on each key, as many as it has room for, by the
+ * max of its oldest blocked job. One statement.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} keys
+ * @returns {Promise<string[]>} The names of the jobs that it made pending.
+ */
+export async function unblock(executor, p, keys) {
+    const rows = await executor.query(`
+        WITH k AS (
+            SELECT DISTINCT unnest($1::text[]) AS limit_key
+        ),
+        room AS (
+            SELECT k.limit_key,
+                   head.max - (SELECT count(*) FROM ${p}concurrency_slots s WHERE s.limit_key = k.limit_key AND ${HELD})
+                       AS room
+              FROM k
+             CROSS JOIN LATERAL (
+                 SELECT j.limit_maxes[array_position(j.limit_keys, k.limit_key)] AS max FROM ${p}jobs j
+                  WHERE j.status = 'blocked' AND j.blocked_on = k.limit_key
+                  ORDER BY j.run_at, j.id LIMIT 1
+             ) AS head
+        ),
+        picked AS (
+            SELECT b.id FROM room
+             CROSS JOIN LATERAL (
+                 SELECT j.id FROM ${p}jobs j
+                  WHERE j.status = 'blocked' AND j.blocked_on = room.limit_key
+                  ORDER BY j.run_at, j.id LIMIT GREATEST(room.room, 0)
+                    FOR UPDATE SKIP LOCKED
+             ) AS b
+        ),
+        unblocked AS (
+            UPDATE ${p}jobs j SET status = 'pending', blocked_on = NULL, updated_at = ${NOW}
+              FROM picked WHERE j.id = picked.id
+            RETURNING j.job_name
+        )
+        SELECT DISTINCT job_name FROM unblocked
+    `, [keys]);
+
+    return rows.map(row => String(row.job_name));
+}
+
+/**
+ * Deletes the ended lingers, and the slots without their running job (from a manual change, or old code). Then
+ * unblocks the jobs blocked on keys with room: a release that ended in a linger, or a process that stopped before its
+ * unblock.
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit
- * @returns {Promise<{ lingers: number, orphans: number }>}
+ * @returns {Promise<{ lingers: number, orphans: number, unblocked: number }>}
  */
-export async function sweepMutexes(executor, p, limit) {
+export async function sweepSlots(executor, p, limit) {
     const lingers = await executor.run(`
-        DELETE FROM ${p}mutexes WHERE mutex_key IN (
-            SELECT mutex_key FROM ${p}mutexes WHERE held_until < ${NOW} LIMIT $1 FOR UPDATE SKIP LOCKED
+        DELETE FROM ${p}concurrency_slots WHERE (limit_key, slot) IN (
+            SELECT limit_key, slot FROM ${p}concurrency_slots WHERE held_until < ${NOW} LIMIT $1 FOR UPDATE SKIP LOCKED
         )
     `, [limit]);
     const orphans = await executor.run(`
-        DELETE FROM ${p}mutexes WHERE mutex_key IN (
-            SELECT m.mutex_key FROM ${p}mutexes m
-             WHERE m.held_until IS NULL AND NOT EXISTS (
-                 SELECT 1 FROM ${p}jobs j WHERE j.id = m.job_id AND j.status = 'running' AND j.lock_token = m.lock_token
+        DELETE FROM ${p}concurrency_slots WHERE (limit_key, slot) IN (
+            SELECT s.limit_key, s.slot FROM ${p}concurrency_slots s
+             WHERE s.held_until IS NULL AND NOT EXISTS (
+                 SELECT 1 FROM ${p}jobs j WHERE j.id = s.job_id AND j.status = 'running' AND j.lock_token = s.lock_token
              )
              LIMIT $1 FOR UPDATE SKIP LOCKED
         )
     `, [limit]);
+    let unblocked = 0;
 
-    return { lingers, orphans };
+    // The keys with blocked jobs, a batch at a time: a loose index scan of the blocked jobs
+    for (let after = ''; ;) {
+        // oxlint-disable-next-line no-await-in-loop -- batches one after the other
+        const keys = (await executor.query(`
+            WITH RECURSIVE keys AS (
+                (SELECT blocked_on FROM ${p}jobs WHERE status = 'blocked' AND blocked_on > $1 ORDER BY blocked_on LIMIT 1)
+                UNION ALL
+                SELECT (
+                    SELECT j.blocked_on FROM ${p}jobs j
+                     WHERE j.status = 'blocked' AND j.blocked_on > keys.blocked_on ORDER BY j.blocked_on LIMIT 1
+                ) FROM keys WHERE keys.blocked_on IS NOT NULL
+            )
+            SELECT blocked_on FROM keys WHERE blocked_on IS NOT NULL LIMIT $2
+        `, [after, limit])).map(row => String(row.blocked_on));
+
+        if (!keys.length) {
+            break;
+        }
+
+        // oxlint-disable-next-line no-await-in-loop -- batches one after the other
+        unblocked += (await unblock(executor, p, keys)).length;
+        after = /** @type {string} */ (keys.at(-1));
+
+        if (keys.length < limit) {
+            break;
+        }
+    }
+
+    return { lingers, orphans, unblocked };
 }
 
 /**
@@ -445,12 +501,8 @@ export async function deleteExpiredJobs(executor, p, limit) {
  */
 export async function makeDue(executor, p, names) {
     await executor.run(`
-        WITH moved AS (
-            UPDATE ${p}jobs SET run_at = ${runAt('interval \'0\'')}
-             WHERE status = 'pending' AND job_name = ANY($1::text[]) AND run_at > ${NOW}
-            RETURNING id, run_at
-        )
-        UPDATE ${p}job_keys jk SET run_at = moved.run_at FROM moved WHERE jk.job_id = moved.id
+        UPDATE ${p}jobs SET run_at = ${runAt('interval \'0\'')}
+         WHERE status = 'pending' AND job_name = ANY($1::text[]) AND run_at > ${NOW}
     `, [names]);
 }
 
@@ -463,7 +515,7 @@ export async function makeDue(executor, p, names) {
 export async function getStats(executor, p) {
     const rows = await executor.query(`
         SELECT job_name,
-               count(*) FILTER (WHERE status = 'pending') AS pending,
+               count(*) FILTER (WHERE status IN ('pending', 'blocked')) AS pending,
                count(*) FILTER (WHERE status = 'pending' AND run_at <= ${NOW}) AS due,
                count(*) FILTER (WHERE status = 'running') AS running,
                count(*) FILTER (WHERE status = 'running' AND timed_out_at IS NOT NULL) AS stuck,
@@ -471,7 +523,7 @@ export async function getStats(executor, p) {
                (EXTRACT(EPOCH FROM ${NOW} - min(run_at) FILTER (WHERE status = 'pending' AND run_at <= ${NOW}))
                    * 1000)::bigint AS oldest_due_age_ms
           FROM ${p}jobs
-         WHERE status IN ('pending', 'running', 'failed')
+         WHERE status IN ('pending', 'blocked', 'running', 'failed')
          GROUP BY job_name
          ORDER BY job_name
     `, []);

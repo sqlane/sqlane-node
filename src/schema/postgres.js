@@ -96,6 +96,45 @@ export function postgresMigrations(p) {
                 )`,
             ],
         },
+        {
+            // 6.0: global concurrency limits replace mutex keys. A job's keys get their maxes; a job with a full key
+            // is `blocked` on it, out of the due jobs, until a release of the key.
+            id: '0005_concurrency_limits',
+            statements: [
+                `ALTER TABLE ${p}jobs DROP CONSTRAINT IF EXISTS ${p}jobs_status`,
+                `ALTER TABLE ${p}jobs DROP CONSTRAINT IF EXISTS ${p}jobs_states`,
+                `ALTER TABLE ${p}jobs ADD CONSTRAINT ${p}jobs_states
+                    CHECK (status IN ('pending', 'blocked', 'running', 'completed', 'failed'))`,
+                `ALTER TABLE ${p}jobs RENAME COLUMN mutex_keys TO limit_keys`,
+                `ALTER TABLE ${p}jobs ADD COLUMN IF NOT EXISTS limit_maxes integer[]`,
+                `ALTER TABLE ${p}jobs ADD COLUMN IF NOT EXISTS blocked_on varchar(255) COLLATE "C"`,
+                `CREATE INDEX IF NOT EXISTS ${p}jobs_blocked ON ${p}jobs (blocked_on, run_at, id)
+                  WHERE status = 'blocked'`,
+            ],
+        },
+        {
+            // A mutex key of 5.x gets the max 1; its hold becomes slot 0 of its key. The job_keys and their FIFO go.
+            id: '0006_concurrency_slots',
+            statements: [
+                `CREATE TABLE IF NOT EXISTS ${p}concurrency_slots (
+                    limit_key varchar(255) COLLATE "C" NOT NULL,
+                    slot integer NOT NULL,
+                    job_id varchar(255) COLLATE "C" NOT NULL,
+                    lock_token varchar(26) COLLATE "C" NOT NULL,
+                    held_until timestamptz(3),
+                    created_at timestamptz(3) NOT NULL,
+                    PRIMARY KEY (limit_key, slot)
+                )`,
+                `CREATE INDEX IF NOT EXISTS ${p}concurrency_slots_job_id ON ${p}concurrency_slots (job_id)`,
+                `UPDATE ${p}jobs SET limit_maxes = array_fill(1, ARRAY[cardinality(limit_keys)])
+                  WHERE limit_keys IS NOT NULL AND limit_maxes IS NULL`,
+                `INSERT INTO ${p}concurrency_slots (limit_key, slot, job_id, lock_token, held_until, created_at)
+                SELECT mutex_key, 0, job_id, lock_token, held_until, created_at FROM ${p}mutexes
+                ON CONFLICT DO NOTHING`,
+                `DROP TABLE IF EXISTS ${p}job_keys`,
+                `DROP TABLE IF EXISTS ${p}mutexes`,
+            ],
+        },
     ];
 }
 

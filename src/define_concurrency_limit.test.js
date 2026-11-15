@@ -5,11 +5,11 @@ import { ConfigError } from './errors.js';
 test('a frozen limit, known to defineJob()', () => {
     const heavy = defineConcurrencyLimit({ name: 'heavy', max: 2 });
 
-    expect(heavy).toStrictEqual({ name: 'heavy', max: 2 });
+    expect(heavy).toMatchObject({ name: 'heavy', max: 2 });
     expect(Object.isFrozen(heavy)).toBe(true);
     expect(isConcurrencyLimit(heavy)).toBe(true);
     // Not frozen: not from defineConcurrencyLimit()
-    expect(isConcurrencyLimit({ name: 'heavy', max: 2 })).toBe(false);
+    expect(isConcurrencyLimit({ name: 'heavy', max: 2, key: heavy.key })).toBe(false);
     expect(isConcurrencyLimit('heavy')).toBe(false);
 });
 

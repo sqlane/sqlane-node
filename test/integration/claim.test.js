@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, inject, test } from 'vitest';
 import { chooseRows } from '../../src/fair_share.js';
-import { createSqlane, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { probeSql } from '../../src/store/mysql_worker.js';
 import { createStore } from '../../src/store/store.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
@@ -11,10 +11,10 @@ import { connectTestDatabase } from '../support/test_database.js';
 
 /** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
 const LINGER_SQL = {
-    mysql: p => `INSERT INTO ${p}mutexes (mutex_key, job_id, lock_token, held_until, created_at)
-                 VALUES (?, 'old', 'old', UTC_TIMESTAMP(3) + INTERVAL ? SECOND, UTC_TIMESTAMP(3))`,
-    postgres: p => `INSERT INTO ${p}mutexes (mutex_key, job_id, lock_token, held_until, created_at)
-                    VALUES ($1, 'old', 'old', clock_timestamp() + $2 * interval '1 second', clock_timestamp())`,
+    mysql: p => `INSERT INTO ${p}concurrency_slots (limit_key, slot, job_id, lock_token, held_until, created_at)
+                 VALUES (?, 0, 'old', 'old', UTC_TIMESTAMP(3) + INTERVAL ? SECOND, UTC_TIMESTAMP(3))`,
+    postgres: p => `INSERT INTO ${p}concurrency_slots (limit_key, slot, job_id, lock_token, held_until, created_at)
+                    VALUES ($1, 0, 'old', 'old', clock_timestamp() + $2 * interval '1 second', clock_timestamp())`,
 };
 
 const LEASE_MS = 240_000;
@@ -72,22 +72,40 @@ function ago(secondsAgo) {
 }
 
 /**
- * Picks the locked jobs whose keys are free, oldest first; a passed-over job keeps its keys from the newer ones.
+ * Picks the locked jobs whose keys have room, oldest first, counting the picked ones.
  * @param {ClaimedJob[]} locked
- * @param {Set<string>} busyKeys
+ * @param {Map<string, number>} held
  * @returns {ClaimedJob[]}
  */
-function pickFree(locked, busyKeys) {
-    const seen = new Set(busyKeys);
+function pickFits(locked, held) {
+    const counts = new Map(held);
 
     return locked.filter((job) => {
-        const free = job.mutexKeys.every(key => !seen.has(key));
+        const fits = job.limits.every(({ key, max }) => (counts.get(key) ?? 0) < max);
 
-        for (const key of job.mutexKeys) {
-            seen.add(key);
+        for (const { key } of fits ? job.limits : []) {
+            counts.set(key, (counts.get(key) ?? 0) + 1);
         }
 
-        return free;
+        return fits;
+    });
+}
+
+/**
+ * @param {import('../../src/store/store.js').Store} store
+ * @param {string[]} candidateIds
+ * @param {string} lockToken
+ * @param {string[]} [fullIds]
+ * @returns {Promise<import('../../src/store/store.js').ClaimResult>}
+ */
+function claimWithBlocks(store, candidateIds, lockToken, fullIds = []) {
+    return store.claim({
+        candidateIds,
+        fullIds,
+        lockToken,
+        lockedBy: `test:${lockToken}`,
+        leaseMs: LEASE_MS,
+        pick: pickFits,
     });
 }
 
@@ -97,8 +115,8 @@ function pickFree(locked, busyKeys) {
  * @param {string} lockToken
  * @returns {Promise<ClaimedJob[]>}
  */
-function claimAll(store, candidateIds, lockToken) {
-    return store.claim({ candidateIds, lockToken, lockedBy: `test:${lockToken}`, leaseMs: LEASE_MS, pick: pickFree });
+async function claimAll(store, candidateIds, lockToken) {
+    return (await claimWithBlocks(store, candidateIds, lockToken)).jobs;
 }
 
 /**
@@ -175,9 +193,10 @@ describe('findCandidates', () => {
         await sqlane.enqueue(testAdapter.pool, 'a', {}, { delay: '1h' });
         await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(40) });
 
-        const candidates = await store.findCandidates(new Map([['a', 2], ['b', 5]]), []);
+        const { startable, full } = await store.findCandidates(new Map([['a', 2], ['b', 5]]));
 
-        expect(candidates.map(candidate => candidate.id)).toStrictEqual([a1.id, b1.id, a2.id]);
+        expect(startable.map(candidate => candidate.id)).toStrictEqual([a1.id, b1.id, a2.id]);
+        expect(full).toStrictEqual([]);
     });
 });
 
@@ -191,7 +210,7 @@ describe('claim', () => {
         expect(claimed).toMatchObject({
             id,
             name: 'build',
-            mutexKeys: [],
+            limits: [],
             attempts: 0,
             maxAttempts: 4,
             stalls: 0,
@@ -413,7 +432,7 @@ describe('claimDue', () => {
         ]);
         expect(claimed[0]).toMatchObject({
             name: 'a',
-            mutexKeys: [],
+            limits: [],
             attempts: 0,
             maxAttempts: 4,
             failureJob: 'a_failed',
@@ -613,133 +632,155 @@ describe('claimDue', () => {
     });
 });
 
-describe('mutex keys', () => {
-    const syncOrder = defineJob({ name: 'sync_order', mutexKeys: payload => [`order:${payload.orderId}`], timeout: '1m' });
-    const other = defineJob({ name: 'ship_order', mutexKeys: payload => [`order:${payload.orderId}`], timeout: '1m' });
+/**
+ * @param {string} p
+ * @returns {Promise<Record<string, unknown>[]>} The jobs: their status and the key that they are blocked on.
+ */
+function statuses(p) {
+    return database.query(`SELECT id, status, blocked_on FROM ${p}jobs ORDER BY run_at`);
+}
 
-    test('a held key: the job waits; a free key: it runs', async () => {
-        const { sqlane, store } = await freshTables();
+/**
+ * @param {string} p
+ * @returns {Promise<Record<string, unknown>[]>} The held slots.
+ */
+function slotsOf(p) {
+    return database.query(`SELECT limit_key, slot, job_id FROM ${p}concurrency_slots ORDER BY limit_key, slot`);
+}
+
+describe('global concurrency limits', () => {
+    const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+    const client = defineConcurrencyLimit({ name: 'client', max: 2 });
+    const syncOrder = defineJob({
+        name: 'sync_order',
+        globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
+        timeout: '1m',
+    });
+    const send = defineJob({
+        name: 'send',
+        globalConcurrencyLimits: ({ payload }) => [client.key(payload.clientId)],
+        timeout: '1m',
+    });
+
+    test('a full key: the job is blocked on it, out of the due jobs; a key with room: it runs', async () => {
+        const { p, sqlane, store } = await freshTables();
         const first = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(30) });
 
         await claimAll(store, [first.id], 'T1');
 
-        const blocked = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
+        const waiting = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
         const free = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 2 }, { runAt: ago(10) });
-        const candidates = await store.findCandidates(new Map([['sync_order', 10]]), ['sync_order']);
+        const found = await store.findCandidates(new Map([['sync_order', 10]]));
 
-        expect(candidates.map(candidate => candidate.id)).toStrictEqual([free.id]);
-        await expect(claimAll(store, [blocked.id, free.id], 'T2')).resolves.toMatchObject([{ id: free.id }]);
+        expect(found.startable.map(candidate => candidate.id)).toStrictEqual([free.id]);
+        expect(found.full.map(candidate => candidate.id)).toStrictEqual([waiting.id]);
+        await expect(claimWithBlocks(store, [free.id], 'T2', [waiting.id])).resolves.toMatchObject({
+            jobs: [{ id: free.id, limits: [{ key: 'order:2', max: 1 }] }],
+            blockedKeys: ['order:1'],
+            blockedNames: ['sync_order'],
+        });
+        await expect(statuses(p)).resolves.toStrictEqual([
+            { id: first.id, status: 'running', blocked_on: null },
+            { id: waiting.id, status: 'blocked', blocked_on: 'order:1' },
+            { id: free.id, status: 'running', blocked_on: null },
+        ]);
+        // A blocked job is not due: the next search does not read it
+        await expect(store.findCandidates(new Map([['sync_order', 10]])))
+            .resolves.toStrictEqual({ startable: [], full: [] });
     });
 
-    test('FIFO per key, across the names with mutex keys: a newer job waits behind an older one with its key', async () => {
-        const { sqlane, store } = await freshTables();
-        const older = await sqlane.enqueue(testAdapter.pool, other, { orderId: 1 }, { runAt: ago(30) });
-        const newer = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
-        const namesWithKeys = ['sync_order', 'ship_order'];
-
-        await expect(store.findCandidates(new Map([['sync_order', 10]]), namesWithKeys)).resolves.toStrictEqual([]);
-        await expect(store.findCandidates(new Map([['ship_order', 10]]), namesWithKeys))
-            .resolves.toMatchObject([{ id: older.id }]);
-        // A name that this process does not handle does not block
-        await expect(store.findCandidates(new Map([['sync_order', 10]]), ['sync_order']))
-            .resolves.toMatchObject([{ id: newer.id }]);
-    });
-
-    test('a release of keys: the names of the oldest due job of each key, among the names with mutex keys', async () => {
-        const { sqlane, store } = await freshTables();
-        const namesWithKeys = ['sync_order', 'ship_order'];
-
-        await sqlane.enqueue(testAdapter.pool, other, { orderId: 1 }, { runAt: ago(30) });
-        await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
-        await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 2 }, { runAt: ago(10) });
-        // Not due: it waits for its time, not for the key
-        await sqlane.enqueue(testAdapter.pool, other, { orderId: 3 }, { delay: '1h' });
-
-        await expect(store.namesWaitingFor(['order:1'], namesWithKeys)).resolves.toStrictEqual(['ship_order']);
-        await expect(store.namesWaitingFor(['order:1'], ['sync_order'])).resolves.toStrictEqual(['sync_order']);
-        await expect(store.namesWaitingFor(['order:1', 'order:2'], namesWithKeys).then(names => names.toSorted()))
-            .resolves.toStrictEqual(['ship_order', 'sync_order']);
-        await expect(store.namesWaitingFor(['order:3', 'order:4'], namesWithKeys)).resolves.toStrictEqual([]);
-    });
-
-    test('FIFO per key with two keys: a job waits behind an older one with either key', async () => {
-        const { sqlane, store } = await freshTables();
-        const older = await sqlane.enqueue(testAdapter.pool, 'both', {}, { mutexKeys: ['b'], runAt: ago(30) });
-
-        // The second waits for the first (key b), the third for the second (key a)
-        await sqlane.enqueue(testAdapter.pool, 'both', {}, { mutexKeys: ['a', 'b'], runAt: ago(20) });
-        await sqlane.enqueue(testAdapter.pool, 'both', {}, { mutexKeys: ['a'], runAt: ago(10) });
-        const candidates = await store.findCandidates(new Map([['both', 10]]), ['both']);
-
-        expect(candidates.map(candidate => candidate.id)).toStrictEqual([older.id]);
-    });
-
-    test('job_keys: a row per key of each pending job', async () => {
+    test('a max of 2: two jobs of a key run, the third is blocked; a release unblocks it', async () => {
         const { p, sqlane, store } = await freshTables();
-        const listKeys = () => database.query(`SELECT mutex_key, job_id FROM ${p}job_keys ORDER BY mutex_key, job_id`);
-        const retried = await sqlane.enqueue(testAdapter.pool, 'both', {}, { mutexKeys: ['a', 'b'], runAt: ago(30) });
-        const released = await sqlane.enqueue(testAdapter.pool, 'one', {}, { mutexKeys: ['c'], runAt: ago(20) });
-        const plain = await sqlane.enqueue(testAdapter.pool, 'plain', {}, { mutexKeys: ['d'], runAt: ago(10) });
+        /** @type {{ id: string }[]} */
+        const jobs = [];
 
-        await sqlane.enqueue(testAdapter.pool, 'plain', {}, { runAt: ago(5) });
-        await expect(listKeys()).resolves.toStrictEqual([
-            { mutex_key: 'a', job_id: retried.id },
-            { mutex_key: 'b', job_id: retried.id },
-            { mutex_key: 'c', job_id: released.id },
-            { mutex_key: 'd', job_id: plain.id },
+        for (const secondsAgo of [30, 20, 10]) {
+            // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
+            jobs.push(await sqlane.enqueue(testAdapter.pool, send, { clientId: 'c1' }, { runAt: ago(secondsAgo) }));
+        }
+
+        const other = await sqlane.enqueue(testAdapter.pool, send, { clientId: 'c2' }, { runAt: ago(5) });
+        // One claim: the third has room by the held slots, but not with the first two
+        const claimed = await claimAll(store, [...jobs, other].map(job => job.id), 'T1');
+
+        expect(claimed.map(job => job.id)).toStrictEqual([jobs[0].id, jobs[1].id, other.id]);
+        await expect(slotsOf(p)).resolves.toStrictEqual([
+            { limit_key: 'client:c1', slot: 0, job_id: jobs[0].id },
+            { limit_key: 'client:c1', slot: 1, job_id: jobs[1].id },
+            { limit_key: 'client:c2', slot: 0, job_id: other.id },
         ]);
 
-        // A claim deletes them: the claim of jobs with mutex keys, and the claim of a name without keys
-        const claimed = await claimAll(store, [retried.id, released.id], 'T1');
+        // The next search: the third is full; the claim blocks it
+        const found = await store.findCandidates(new Map([['send', 10]]));
 
-        await claimDue(store, { requests: [request('plain', 2, 0)] });
-        await expect(listKeys()).resolves.toStrictEqual([]);
+        expect(found.full.map(candidate => candidate.id)).toStrictEqual([jobs[2].id]);
+        await claimWithBlocks(store, [], 'T2', [jobs[2].id]);
 
-        // Pending again: they are back
-        await expect(store.retryJob(claimed[0], { delayMs: 0, error: { name: 'Error', message: 'again' } }))
-            .resolves.toBe(true);
-        await expect(store.releaseJob(claimed[1], { delayMs: 0, lingerMs: 0 })).resolves.toBe(true);
-        await expect(listKeys()).resolves.toStrictEqual([
-            { mutex_key: 'a', job_id: retried.id },
-            { mutex_key: 'b', job_id: retried.id },
-            { mutex_key: 'c', job_id: released.id },
+        // Nothing to unblock while the key is full
+        await expect(store.unblock(['client:c1'])).resolves.toStrictEqual([]);
+        await expect(store.completeJobs([claimed[0]])).resolves.toBe(1);
+        await expect(store.unblock(['client:c1', 'client:c2'])).resolves.toStrictEqual(['send']);
+        await expect(statuses(p).then(rows => rows.find(row => row.id === jobs[2].id)))
+            .resolves.toStrictEqual({ id: jobs[2].id, status: 'pending', blocked_on: null });
+        await expect(claimAll(store, [jobs[2].id], 'T3')).resolves.toMatchObject([{ id: jobs[2].id }]);
+        // The slot that the completed job freed
+        await expect(slotsOf(p)).resolves.toStrictEqual([
+            { limit_key: 'client:c1', slot: 0, job_id: jobs[2].id },
+            { limit_key: 'client:c1', slot: 1, job_id: jobs[1].id },
+            { limit_key: 'client:c2', slot: 0, job_id: other.id },
         ]);
-        await expect(store.namesWaitingFor(['a', 'c'], ['both', 'one']).then(names => names.toSorted()))
-            .resolves.toStrictEqual(['both', 'one']);
     });
 
-    test('concurrent claims of two jobs with a common key: one gets it', async () => {
+    test('the jobs blocked on a key are unblocked in FIFO order, as many as its free slots', async () => {
         const { p, sqlane, store } = await freshTables();
-        const a = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 7 }, { runAt: ago(20) });
-        const b = await sqlane.enqueue(testAdapter.pool, other, { orderId: 7 }, { runAt: ago(10) });
+        const running = await sqlane.enqueue(testAdapter.pool, send, { clientId: 'c1' }, { runAt: ago(60) });
+        const second = await sqlane.enqueue(testAdapter.pool, send, { clientId: 'c1' }, { runAt: ago(50) });
+        const [first, done] = await claimAll(store, [running.id, second.id], 'T1');
+        /** @type {{ id: string }[]} */
+        const blocked = [];
+
+        for (const secondsAgo of [30, 20, 10]) {
+            // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
+            blocked.push(await sqlane.enqueue(testAdapter.pool, send, { clientId: 'c1' }, { runAt: ago(secondsAgo) }));
+        }
+
+        await claimWithBlocks(store, [], 'T2', blocked.map(job => job.id));
+        await store.completeJobs([done]);
+        await store.unblock(['client:c1']);
+        await expect(statuses(p).then(rows => rows.map(row => row.status))).resolves.toStrictEqual([
+            'running', 'completed', 'pending', 'blocked', 'blocked',
+        ]);
+
+        // The room counts the held slots: an unblocked job that no claim took yet is not counted, and a claim blocks
+        // it again if the key is full by then
+        await store.completeJobs([first]);
+        await store.unblock(['client:c1']);
+        await expect(statuses(p).then(rows => rows.map(row => row.status))).resolves.toStrictEqual([
+            'completed', 'completed', 'pending', 'pending', 'pending',
+        ]);
+    });
+
+    test('concurrent claims of jobs that share one of their keys: one gets the key, no partial slots', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const both = defineConcurrencyLimit({ name: 'both', max: 1 });
+        const a = await sqlane.enqueue(testAdapter.pool, 'two', {}, {
+            globalConcurrencyLimits: [both.key('a'), both.key('b')],
+            runAt: ago(20),
+        });
+        const b = await sqlane.enqueue(testAdapter.pool, 'two', {}, {
+            globalConcurrencyLimits: [both.key('b'), both.key('c')],
+            runAt: ago(10),
+        });
         const claims = await Promise.all([claimAll(store, [a.id], 'T1'), claimAll(store, [b.id], 'T2')]);
+        const [winner] = claims.flat();
 
         expect(claims.flat()).toHaveLength(1);
-        await expect(database.query(`SELECT mutex_key, job_id FROM ${p}mutexes`))
-            .resolves.toStrictEqual([{ mutex_key: 'order:7', job_id: claims.flat()[0].id }]);
+        await expect(slotsOf(p)).resolves.toStrictEqual(
+            winner.limits.map(({ key }) => ({ limit_key: key, slot: 0, job_id: winner.id })),
+        );
     });
 
-    test('a job takes all its keys or none', async () => {
-        const { p, sqlane, store } = await freshTables();
-        const holder = await sqlane.enqueue(testAdapter.pool, 'holder', {}, { mutexKeys: ['b'], runAt: ago(30) });
-
-        await claimAll(store, [holder.id], 'T1');
-
-        const both = await sqlane.enqueue(testAdapter.pool, 'both', {}, { mutexKeys: ['a', 'b'], runAt: ago(20) });
-
-        // pick ignores the busy keys: the claim itself refuses the job
-        await expect(store.claim({
-            candidateIds: [both.id],
-            lockToken: 'T2',
-            lockedBy: 'test',
-            leaseMs: LEASE_MS,
-            pick: locked => locked,
-        })).resolves.toStrictEqual([]);
-        await expect(database.query(`SELECT mutex_key, lock_token FROM ${p}mutexes`))
-            .resolves.toStrictEqual([{ mutex_key: 'b', lock_token: 'T1' }]);
-    });
-
-    test('a linger blocks the key until held_until, then a claim takes it over', async () => {
+    test('a linger holds its slot until held_until, then a claim takes it over', async () => {
         const { p, sqlane, store } = await freshTables();
 
         await database.query(LINGER_SQL[database.family](p), ['order:1', 3600]);
@@ -747,14 +788,62 @@ describe('mutex keys', () => {
 
         const lingering = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
         const ended = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 2 }, { runAt: ago(10) });
-        const candidates = await store.findCandidates(new Map([['sync_order', 10]]), ['sync_order']);
+        const found = await store.findCandidates(new Map([['sync_order', 10]]));
 
-        expect(candidates.map(candidate => candidate.id)).toStrictEqual([ended.id]);
+        expect(found.startable.map(candidate => candidate.id)).toStrictEqual([ended.id]);
+        expect(found.full.map(candidate => candidate.id)).toStrictEqual([lingering.id]);
         await expect(claimAll(store, [lingering.id, ended.id], 'T1')).resolves.toMatchObject([{ id: ended.id }]);
-        await expect(database.query(`SELECT mutex_key, lock_token FROM ${p}mutexes ORDER BY mutex_key`))
-            .resolves.toStrictEqual([
-                { mutex_key: 'order:1', lock_token: 'old' },
-                { mutex_key: 'order:2', lock_token: 'T1' },
-            ]);
+        await expect(slotsOf(p)).resolves.toStrictEqual([
+            { limit_key: 'order:1', slot: 0, job_id: 'old' },
+            { limit_key: 'order:2', slot: 0, job_id: ended.id },
+        ]);
+    });
+
+    test('the sweep deletes the ended lingers and unblocks the jobs of keys with room', async () => {
+        const { p, sqlane, store } = await freshTables();
+
+        await database.query(LINGER_SQL[database.family](p), ['order:1', 3600]);
+
+        const waiting = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
+
+        await claimWithBlocks(store, [], 'T1', [waiting.id]);
+        await expect(store.sweepSlots(100)).resolves.toStrictEqual({ lingers: 0, orphans: 0, unblocked: 0 });
+
+        // The linger ends
+        await database.query(`DELETE FROM ${p}concurrency_slots`);
+        await database.query(LINGER_SQL[database.family](p), ['order:1', -1]);
+        await expect(store.sweepSlots(100)).resolves.toStrictEqual({ lingers: 1, orphans: 0, unblocked: 1 });
+        await expect(statuses(p)).resolves.toStrictEqual([{ id: waiting.id, status: 'pending', blocked_on: null }]);
+    });
+
+    test('the claim of names without limits leaves the jobs with limits from their enqueue options', async () => {
+        const { sqlane, store } = await freshTables();
+
+        await sqlane.enqueue(testAdapter.pool, 'plain', {}, { globalConcurrencyLimits: [order.key(1)], runAt: ago(20) });
+
+        const plain = await sqlane.enqueue(testAdapter.pool, 'plain', {}, { runAt: ago(10) });
+
+        await expect(claimDueWithNext(store, { requests: [request('plain', 5, 0)] })).resolves.toMatchObject({
+            jobs: [{ id: plain.id }],
+            limited: ['plain'],
+        });
+        await sqlane.enqueue(testAdapter.pool, 'other', {}, { globalConcurrencyLimits: [order], runAt: ago(5) });
+        const both = await claimDueWithNext(store, { requests: [request('other', 5, 0), request('plain', 5, 1)] });
+
+        expect(both.jobs).toStrictEqual([]);
+        expect(both.limited.toSorted()).toStrictEqual(['other', 'plain']);
+    });
+
+    test('getStats counts the blocked jobs as pending', async () => {
+        const { sqlane, store } = await freshTables();
+        const first = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
+        const waiting = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(10) });
+
+        await claimAll(store, [first.id], 'T1');
+        await claimWithBlocks(store, [], 'T2', [waiting.id]);
+
+        await expect(sqlane.getStats()).resolves.toMatchObject([
+            { name: 'sync_order', pending: 1, due: 0, running: 1 },
+        ]);
     });
 });

@@ -10,7 +10,7 @@ const sqlane = createSqlane({ adapter: mysql2Adapter(pool) });
 
 /**
  * Re-sends the emails of the given users. The name is not known here: the job gets the instance defaults, and
- * mutexKeys and failureJob come only from the options.
+ * globalConcurrencyLimits and failureJob come only from the options.
  * @param {string[]} userIds
  * @returns {Promise<void>}
  */

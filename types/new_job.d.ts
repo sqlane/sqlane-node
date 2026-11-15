@@ -7,9 +7,10 @@ export type NewJob = {
     name: string;
     payloadJson: string;
     /**
-     * Sorted, without duplicates.
+     * Its global limits: sorted by key, without
+     * duplicates.
      */
-    mutexKeys: readonly string[];
+    limits: readonly import('./concurrency_keys.js').GlobalLimit[];
     maxAttempts: number;
     maxStalls: number;
     completedRetentionMs: number;

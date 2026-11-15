@@ -36,28 +36,23 @@ export async function insertScheduledJobsPostgres(executor, p, jobs, { enqueueTo
     const rows = await executor.query(`
         WITH input AS (
             SELECT * FROM jsonb_to_recordset($1::text::jsonb) AS r(
-                  id text, job_name text, payload jsonb, mutex_keys text[], max_attempts integer,
+                  id text, job_name text, payload jsonb, limit_keys text[], limit_maxes integer[], max_attempts integer,
                   max_stalls integer, completed_retention_ms bigint, failed_retention_ms bigint, failure_job text,
                   delay_ms bigint, run_at timestamptz
             )
         ),
         inserted AS (
-            INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, mutex_keys, enqueue_token,
-                completed_retention_ms, failed_retention_ms, failure_job, created_at, updated_at)
+            INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, limit_keys, limit_maxes,
+                enqueue_token, completed_retention_ms, failed_retention_ms, failure_job, created_at, updated_at)
             SELECT id, job_name, 'pending',
                    -- Truncated: timestamptz(3) rounds, and a rounded-up time is not due for the claim
                    COALESCE(run_at, date_trunc('milliseconds', clock_timestamp() + delay_ms * interval '1 millisecond')),
-                   max_attempts, max_stalls, mutex_keys, $2, completed_retention_ms, failed_retention_ms, failure_job,
+                   max_attempts, max_stalls, limit_keys, limit_maxes, $2, completed_retention_ms, failed_retention_ms,
+                   failure_job,
                    clock_timestamp(), clock_timestamp()
               FROM input ORDER BY id
             ON CONFLICT (id) DO NOTHING
-            RETURNING id, run_at, job_name, mutex_keys
-        ),
-        job_keys AS (
-            INSERT INTO ${p}job_keys (mutex_key, run_at, job_id, job_name)
-            SELECT k.mutex_key, inserted.run_at, inserted.id, inserted.job_name
-              FROM inserted CROSS JOIN LATERAL unnest(inserted.mutex_keys) AS k(mutex_key)
-            ON CONFLICT DO NOTHING
+            RETURNING id, job_name
         ),
         payloads AS (
             INSERT INTO ${p}payloads (id, payload)

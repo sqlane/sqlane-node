@@ -1,19 +1,19 @@
 import { afterAll, beforeAll, expect, test } from 'vitest';
-import { createSqlane, defineJob, InvalidOptionsError, UnknownJobError } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineJob, InvalidOptionsError, UnknownJobError } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
 
 /** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
 const READ_JOB_SQL = {
     mysql: p => `
-        SELECT j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.mutex_keys,
-               j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
+        SELECT j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
+               j.limit_maxes, j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
                TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(3), j.run_at) DIV 1000 AS run_in_ms,
                TIMESTAMPDIFF(MICROSECOND, '1970-01-01', j.run_at) DIV 1000 AS run_at_ms
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id WHERE j.id = ?`,
     postgres: p => `
-        SELECT j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.mutex_keys,
-               j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
+        SELECT j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
+               j.limit_maxes, j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
                (EXTRACT(EPOCH FROM j.run_at - clock_timestamp()) * 1000)::bigint AS run_in_ms,
                (EXTRACT(EPOCH FROM j.run_at) * 1000)::bigint AS run_at_ms
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id WHERE j.id = $1`,
@@ -25,11 +25,13 @@ const SET_TIME_ZONE_SQL = {
     postgres: 'SET TIME ZONE \'Asia/Tokyo\'',
 };
 
+const report = defineConcurrencyLimit({ name: 'report', max: 1 });
+const reports = defineConcurrencyLimit({ name: 'reports', max: 3 });
 const buildReport = defineJob({
     name: 'build_report',
     maxAttempts: 5,
     retention: { completed: '10m' },
-    mutexKeys: payload => [`report:${payload.reportId}`, 'reports'],
+    globalConcurrencyLimits: ({ payload }) => [reports, report.key(payload.reportId)],
     failureJob: 'report_failed',
 });
 
@@ -110,7 +112,8 @@ test('adds the job in the caller\'s transaction, with the values frozen at enque
         max_attempts: 5,
         stalls: 0,
         max_stalls: 2,
-        mutex_keys: ['report:r1', 'reports'],
+        limit_keys: ['report:r1', 'reports'],
+        limit_maxes: [1, 3],
         failure_job: 'report_failed',
         completed_retention_ms: 600_000,
         failed_retention_ms: 2_592_000_000,
@@ -130,7 +133,7 @@ test('a jobId adds one job while its row exists: a duplicate changes nothing', a
     const first = await sqlane.enqueue(testAdapter.pool, buildReport, { reportId: 'r3' }, { jobId: 'r3' });
     const second = await sqlane.enqueue(testAdapter.pool, buildReport, { reportId: 'other' }, {
         jobId: 'r3',
-        mutexKeys: ['other'],
+        globalConcurrencyLimits: [report.key('other')],
     });
 
     expect([first, second]).toStrictEqual([
@@ -139,7 +142,8 @@ test('a jobId adds one job while its row exists: a duplicate changes nothing', a
     ]);
     await expect(readJob('build_report:r3')).resolves.toMatchObject({
         payload: { reportId: 'r3' },
-        mutex_keys: ['report:r3', 'reports'],
+        limit_keys: ['report:r3', 'reports'],
+        limit_maxes: [1, 3],
     });
 });
 

@@ -96,6 +96,45 @@ export function mysqlMigrations(p) {
                 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_bin`,
             ],
         },
+        {
+            // 6.0: global concurrency limits replace mutex keys. A job's keys get their maxes; a job with a full key
+            // is `blocked` on it, out of the due jobs, until a release of the key. One statement: atomic.
+            id: '0005_concurrency_limits',
+            statements: [
+                `ALTER TABLE ${p}jobs
+                    DROP CONSTRAINT ${p}jobs_status,
+                    ADD CONSTRAINT ${p}jobs_states
+                        CHECK (status IN ('pending', 'blocked', 'running', 'completed', 'failed')),
+                    RENAME COLUMN mutex_keys TO limit_keys,
+                    ADD COLUMN limit_maxes JSON NULL AFTER limit_keys,
+                    ADD COLUMN blocked_on VARCHAR(255) ${ASCII} NULL,
+                    ADD KEY ${p}jobs_blocked (status, blocked_on, run_at, id)`,
+            ],
+        },
+        {
+            // A mutex key of 5.x gets the max 1; its hold becomes slot 0 of its key. The job_keys and their FIFO go.
+            id: '0006_concurrency_slots',
+            statements: [
+                `CREATE TABLE IF NOT EXISTS ${p}concurrency_slots (
+                    limit_key VARCHAR(255) ${ASCII} NOT NULL,
+                    slot INT NOT NULL,
+                    job_id VARCHAR(255) ${ASCII} NOT NULL,
+                    lock_token VARCHAR(26) ${ASCII} NOT NULL,
+                    held_until DATETIME(3) NULL,
+                    created_at DATETIME(3) NOT NULL,
+                    PRIMARY KEY (limit_key, slot),
+                    KEY ${p}concurrency_slots_job_id (job_id)
+                ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_bin`,
+                `UPDATE ${p}jobs
+                    SET limit_maxes = CONCAT('[', SUBSTRING(REPEAT(',1', JSON_LENGTH(limit_keys)), 2), ']')
+                  WHERE limit_keys IS NOT NULL AND limit_maxes IS NULL`,
+                `INSERT INTO ${p}concurrency_slots (limit_key, slot, job_id, lock_token, held_until, created_at)
+                SELECT mutex_key, 0, job_id, lock_token, held_until, created_at FROM ${p}mutexes
+                ON DUPLICATE KEY UPDATE slot = slot`,
+                `DROP TABLE IF EXISTS ${p}job_keys`,
+                `DROP TABLE IF EXISTS ${p}mutexes`,
+            ],
+        },
     ];
 }
 

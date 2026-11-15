@@ -1,7 +1,7 @@
 export { createSqlane } from './create_sqlane.js';
 export { defineConcurrencyLimit } from './define_concurrency_limit.js';
 export { defineJob } from './define_job.js';
-export { ClosedError, ConfigError, DrainTimeoutError, FatalJobError, InvalidMutexKeyError, InvalidOptionsError, JobTimeoutError, LeaseLostError, MigrationLockTimeoutError, MissingPayloadError, PayloadTooLargeError, RetryJobError, ShutdownError, SqlaneError, UnknownJobError, } from './errors.js';
+export { ClosedError, ConfigError, DrainTimeoutError, FatalJobError, InvalidConcurrencyLimitError, InvalidOptionsError, JobTimeoutError, LeaseLostError, MigrationLockTimeoutError, MissingPayloadError, PayloadTooLargeError, RetryJobError, ShutdownError, SqlaneError, UnknownJobError, } from './errors.js';
 export { getMigrations } from './migrations.js';
 export type Adapter<C> = import('./types.js').Adapter<C>;
 export type Sqlane<C> = import('./types.js').Sqlane<C>;
@@ -11,6 +11,7 @@ export type Backoff = import('./types.js').Backoff;
 export type CloseOptions = import('./types.js').CloseOptions;
 export type ConcurrencyLimit = import('./types.js').ConcurrencyLimit;
 export type ConcurrencyLimitOptions = import('./types.js').ConcurrencyLimitOptions;
+export type ConcurrencyLimitKey = import('./types.js').ConcurrencyLimitKey;
 export type Dialect = import('./types.js').Dialect;
 export type DrainOptions = import('./types.js').DrainOptions;
 export type DrainResult = import('./types.js').DrainResult;
@@ -56,6 +57,7 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /** @typedef {import('./types.js').CloseOptions} CloseOptions */
 /** @typedef {import('./types.js').ConcurrencyLimit} ConcurrencyLimit */
 /** @typedef {import('./types.js').ConcurrencyLimitOptions} ConcurrencyLimitOptions */
+/** @typedef {import('./types.js').ConcurrencyLimitKey} ConcurrencyLimitKey */
 /** @typedef {import('./types.js').Dialect} Dialect */
 /** @typedef {import('./types.js').DrainOptions} DrainOptions */
 /** @typedef {import('./types.js').DrainResult} DrainResult */

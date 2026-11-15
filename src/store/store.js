@@ -24,11 +24,17 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
  */
 
 /**
+ * The due jobs of names with global limits: those whose keys have room, at most the asked number per name, and those
+ * with a full key, which a claim blocks.
+ * @typedef {{ startable: Candidate[], full: Candidate[] }} FoundCandidates
+ */
+
+/**
  * A job that a claim locked, and then claimed: it runs.
  * @typedef {object} ClaimedJob
  * @property {string} id
  * @property {string} name
- * @property {string[]} mutexKeys
+ * @property {import('../concurrency_keys.js').GlobalLimit[]} limits Its global limits, sorted by key.
  * @property {number} attempts The failed attempts so far.
  * @property {number} maxAttempts
  * @property {number} stalls
@@ -42,15 +48,24 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
 /**
  * @typedef {object} ClaimParams
  * @property {string[]} candidateIds
+ * @property {string[]} fullIds Due jobs with a full key: blocked, if a key is still full.
  * @property {string} lockToken Of this claim.
  * @property {string} lockedBy The process.
  * @property {number} leaseMs
- * @property {(locked: ClaimedJob[], busyKeys: Set<string>) => ClaimedJob[]} pick The jobs to take among the locked
- *     ones (in the order of run_at): the free slots, the free keys. The keys of the picked jobs must be distinct.
+ * @property {(locked: ClaimedJob[], held: Map<string, number>) => ClaimedJob[]} pick The jobs to take among the
+ *     locked ones whose keys have room (in the order of run_at), given the held slots of their keys: the free slots,
+ *     and fewer jobs on each key than its max, with the picked ones.
  */
 
 /**
- * One request of a claim of due jobs: a job name without mutex keys, and what its share needs.
+ * @typedef {object} ClaimResult
+ * @property {ClaimedJob[]} jobs The claimed jobs, in the order of run_at.
+ * @property {string[]} blockedKeys The keys on which the claim blocked jobs.
+ * @property {string[]} blockedNames The names of the blocked jobs.
+ */
+
+/**
+ * One request of a claim of due jobs: a job name without global limits, and what its share needs.
  * @typedef {object} DueRequest
  * @property {string} name
  * @property {number} maxJobs At most this many of its jobs: the minimum of the rooms of its local limits and the
@@ -86,6 +101,8 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
  *     process slots and did not read them.
  * @property {string[]} [unpicked] PostgreSQL: the requested names with a locked row that the claim did not take, under
  *     any cap. The runner replays the choice with them, to move the tie pointer as the choice did.
+ * @property {string[]} limited The requested names with a locked row with global limits (from its enqueue options):
+ *     not taken, they need the claim of names with global limits.
  */
 
 /**
@@ -96,8 +113,8 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
  */
 
 /**
- * A job that this process ran, with its keys.
- * @typedef {OwnedJob & { mutexKeys: readonly string[] }} FinishedJob
+ * A job that this process ran, with its global limits.
+ * @typedef {OwnedJob & { limits?: readonly import('../concurrency_keys.js').GlobalLimit[] }} FinishedJob
  */
 
 /**
@@ -131,13 +148,14 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
  * @typedef {object} Store
  * @property {(names: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given name with
  *     pending jobs; null: of each name. It may give other names too.
- * @property {(limitsByName: Map<string, number>, namesWithKeys: string[]) => Promise<Candidate[]>} findCandidates
- * @property {(keys: string[], namesWithKeys: string[]) => Promise<string[]>} namesWaitingFor The names whose jobs may
- *     start after a release of the keys: of the oldest due job of each key, among the names with mutex keys.
- * @property {(params: ClaimParams) => Promise<ClaimedJob[]>} claim In a queue transaction of its own.
+ * @property {(limitsByName: Map<string, number>) => Promise<FoundCandidates>} findCandidates Of names with global
+ *     limits: their oldest due jobs, at most 500 per name.
+ * @property {(params: ClaimParams) => Promise<ClaimResult>} claim In a queue transaction of its own.
  * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, chooses by share, claims and reads
- *     the due jobs of names without mutex keys, at once: one statement on PostgreSQL. The keys of their rows are not
- *     taken: the definition of this process decides.
+ *     the due jobs of names without global limits, at once: one statement on PostgreSQL. It leaves the rows with
+ *     limits.
+ * @property {(keys: string[]) => Promise<string[]>} unblock Makes the jobs blocked on the keys pending again, the
+ *     oldest first, as many as each key has room for: their names.
  * @property {(ids: string[]) => Promise<Map<string, unknown>>} readPayloads
  * @property {(jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>} renewLeases
  * @property {(job: OwnedJob) => Promise<boolean>} markTimedOut
@@ -153,7 +171,8 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
  * @property {(limit: number) => Promise<{ id: string, name: string }[]>} findStaleJobs
  * @property {(id: string, params: { leaseMs: number, buildFailureJob: FailureJobBuilder })
  *     => Promise<StaleJobResult>} recoverStaleJob
- * @property {(limit: number) => Promise<{ lingers: number, orphans: number }>} sweepMutexes
+ * @property {(limit: number) => Promise<{ lingers: number, orphans: number, unblocked: number }>} sweepSlots Deletes
+ *     the ended lingers and the orphan slots, then unblocks the jobs blocked on keys with room.
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
  * @property {(names: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
  * @property {() => Promise<import('../types.js').JobStats[]>} getStats
@@ -222,13 +241,7 @@ export function createStore(adapter, tablePrefix, logger) {
 
     return {
         probe: names => sql.probe(adapter.queue, tablePrefix, names),
-        findCandidates: (limitsByName, namesWithKeys) => sql.findCandidates(
-            adapter.queue,
-            tablePrefix,
-            limitsByName,
-            namesWithKeys,
-        ),
-        namesWaitingFor: (keys, namesWithKeys) => sql.namesWaitingFor(adapter.queue, tablePrefix, keys, namesWithKeys),
+        findCandidates: limitsByName => sql.findCandidates(adapter.queue, tablePrefix, limitsByName),
         claim: params => adapter.queueTransaction(executor => sql.claim(executor, tablePrefix, params)),
         claimDue: params => (adapter.dialect === 'postgres'
             // One statement: a transaction of its own
@@ -245,7 +258,17 @@ export function createStore(adapter, tablePrefix, logger) {
         releaseJob: (job, params) => inQueue(executor => final.releaseJob(executor, p, job, params)),
         findStaleJobs: limit => final.findStaleJobs(adapter.queue, p, limit),
         recoverStaleJob: (id, params) => inQueue(executor => final.recoverStaleJob(executor, p, id, params)),
-        sweepMutexes: limit => inQueue(executor => final.sweepMutexes(executor, p, limit)),
+        unblock: (keys) => {
+            if (!keys.length) {
+                return Promise.resolve([]);
+            }
+
+            // One statement on PostgreSQL; a read, then the writes, on MySQL and MariaDB
+            return adapter.dialect === 'postgres'
+                ? postgresFinal.unblock(adapter.queue, p, keys)
+                : inQueue(executor => final.unblock(executor, p, keys));
+        },
+        sweepSlots: limit => inQueue(executor => final.sweepSlots(executor, p, limit)),
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
         makeDue: names => inQueue(executor => final.makeDue(executor, p, names)),
         getStats: () => final.getStats(adapter.queue, p),

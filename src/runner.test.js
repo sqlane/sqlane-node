@@ -32,7 +32,7 @@ function runnerWith(makeDueErrors) {
         probe: async () => [{ name: 'ping', delayMs: 0 }],
         claimDue: async () => ({ jobs: [], next: [] }),
         findStaleJobs: async () => [],
-        sweepMutexes: async () => ({ lingers: 0, orphans: 0 }),
+        sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0 }),
     }));
 
     registry.handle('ping', () => {});
@@ -231,8 +231,8 @@ test('close() leaves no timer that keeps the process alive', async () => {
 });
 
 /**
- * A runner with spare slots and held handlers. A plain claim takes all due jobs; a claim with mutex keys takes only
- * one.
+ * A runner with spare slots and held handlers. A plain claim takes all due jobs; a claim with global limits takes
+ * only one.
  * @param {boolean} withKeys
  * @param {{
  *     claimDelayMs?: number,
@@ -286,7 +286,7 @@ function runnerWithHeldJobs(withKeys, {
         id: `job-${index + 1}`,
         name: index > 0 && futureDelayMs !== undefined ? 'later' : 'ping',
         runAtMs: index > 0 ? Date.now() + (sameNameFutureMs ?? futureDelayMs ?? 0) : 0,
-        mutexKeys: withKeys ? [`key-${index + 1}`] : [],
+        limits: withKeys ? [{ key: `key-${index + 1}`, max: 1 }] : [],
         attempts: 0,
         maxAttempts: 3,
         stalls: 0,
@@ -338,18 +338,22 @@ function runnerWithHeldJobs(withKeys, {
                 pending.splice(pending.indexOf(job), 1);
             }
 
-            return { jobs: due, next: nextDueTimes(names) };
+            return { jobs: due, next: nextDueTimes(names), limited: [] };
         },
-        findCandidates: async () => pending.map(job => ({ id: job.id, name: job.name, runAtMs: 0 })),
-        namesWaitingFor: async (/** @type {string[]} */ keys) => {
+        findCandidates: async () => {
+            lookupTimes.push(Date.now());
+
+            return { startable: pending.map(job => ({ id: job.id, name: job.name, runAtMs: 0 })), full: [] };
+        },
+        unblock: async (/** @type {string[]} */ keys) => {
             lookupTimes.push(Date.now());
             releasedKeys.push(keys);
 
-            const waiting = pending.filter(job => job.mutexKeys.some(key => keys.includes(key)));
+            const waiting = pending.filter(job => job.limits.some(({ key }) => keys.includes(key)));
 
             return [...new Set(waiting.map(job => job.name))];
         },
-        claim: async () => pending.splice(0, 1),
+        claim: async () => ({ jobs: pending.splice(0, 1), blockedKeys: [], blockedNames: [] }),
         readPayloads: async (/** @type {string[]} */ ids) => new Map(ids.map(id => [id, null])),
         completeJobs: async (/** @type {unknown[]} */ jobs) => completeCount ?? jobs.length,
         renewLeases: async (/** @type {import('./store/store.js').OwnedJob[]} */ jobs) => (
@@ -360,7 +364,7 @@ function runnerWithHeldJobs(withKeys, {
     }));
     const lane = defineConcurrencyLimit({ name: 'lane', max: laneConcurrency });
     const definition = withKeys
-        ? defineJob({ name: 'ping', mutexKeys: () => ['key'], timeout: '1m', localConcurrencyLimits: [lane] })
+        ? defineJob({ name: 'ping', globalConcurrencyLimits: () => [], timeout: '1m', localConcurrencyLimits: [lane] })
         : defineJob({ name: 'ping', localConcurrencyLimits: [lane] });
     let nextError = handlerError;
 
@@ -432,7 +436,7 @@ test('dispatch: a plain claim gives its next due times, then a successful comple
     }
 });
 
-test('dispatch: a partial claim of jobs with mutex keys refills spare slots before a handler completes', async () => {
+test('dispatch: a partial claim of jobs with global limits refills spare slots before a handler completes', async () => {
     const { runner, lookups, started, events, release } = runnerWithHeldJobs(true);
 
     try {
@@ -487,9 +491,9 @@ test('dispatch: a delayed job of the same name starts while its earlier handler 
 
 test.each([
     { reason: 'a full process', withKeys: false, options: { processConcurrency: 1, laneConcurrency: 1 } },
-    { reason: 'a name at its maxConcurrency', withKeys: false, options: { laneConcurrency: 1 } },
+    { reason: 'a name at its local limit', withKeys: false, options: { laneConcurrency: 1 } },
     { reason: 'an unconfirmed completion', withKeys: false, options: { completeCount: 0 } },
-    { reason: 'mutex keys', withKeys: true, options: {} },
+    { reason: 'global limits', withKeys: true, options: {} },
 ])('dispatch: completion still wakes for $reason', async ({ withKeys, options }) => {
     const { runner, lookups, started, events, release } = runnerWithHeldJobs(withKeys, options);
 
@@ -511,7 +515,7 @@ test.each([
     }
 });
 
-test('dispatch: a completion with mutex keys looks up the jobs that wait for its keys, not all names', async () => {
+test('dispatch: a completion with global limits unblocks the jobs of its keys, not a probe of all names', async () => {
     const { runner, started, events, probedNames, releasedKeys, release } = runnerWithHeldJobs(true);
 
     try {
@@ -571,7 +575,7 @@ test('dispatch: completion during an awaited claim wakes a refill after that cla
             claimStarted = true;
             await claiming.promise;
 
-            return { jobs: [], next: [] };
+            return { jobs: [], next: [], limited: [] };
         };
         runner.wake();
         await waitFor(() => claimStarted, 1000);
@@ -629,7 +633,7 @@ async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
     const job = {
         id: 'job-1',
         name: 'ping',
-        mutexKeys: [],
+        limits: [],
         attempts: 0,
         maxAttempts: 3,
         stalls: 0,
@@ -862,7 +866,7 @@ test.each([
             return found;
         },
         recoverStaleJob: async () => ({ result, failureJob: null, attempt: 2, runMs: 250_000 }),
-        sweepMutexes: async () => ({ lingers: 0, orphans: 0 }),
+        sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0 }),
     }));
 
     registry.handle('ping', () => {});
@@ -939,7 +943,7 @@ function dueJobOf(name) {
     return {
         id: name,
         name,
-        mutexKeys: [],
+        limits: [],
         attempts: 0,
         maxAttempts: 1,
         stalls: 0,
@@ -1083,7 +1087,7 @@ test('the handler gets the slot of a job of a schedule as job.scheduledAt; null 
 });
 
 /**
- * A runner over a store that records its calls: one plain name and one name with mutex keys, each with due jobs.
+ * A runner over a store that records its calls: one plain name and one name with global limits, each with due jobs.
  * @param {{ maxConcurrency?: number, names?: number, pointer?: number }} [options] `pointer`: where the ties start.
  * @returns {{ runner: import('./runner.js').Runner, calls: string[], requested: string[][] }}
  */
@@ -1102,24 +1106,24 @@ function recordingRunner({ maxConcurrency = 4, names = 2, pointer = 0 } = {}) {
         findCandidates: async () => {
             calls.push('findCandidates');
 
-            return [{ id: 'keyed-1', name: 'keyed', runAtMs: 0 }];
+            return { startable: [{ id: 'keyed-1', name: 'keyed', runAtMs: 0 }], full: [] };
         },
         claimDue: async (/** @type {import('./store/store.js').ClaimDueParams} */ { requests }) => {
             calls.push('claimDue');
             requested.push(requests.map(request => request.name));
 
-            return { jobs: [], next: [] };
+            return { jobs: [], next: [], limited: [] };
         },
         claim: async () => {
             calls.push('claim');
 
-            return [];
+            return { jobs: [], blockedKeys: [], blockedNames: [] };
         },
         findStaleJobs: async () => [],
         renewLeases: async () => new Set(),
     }));
 
-    registry.handle(defineJob({ name: 'keyed', mutexKeys: () => ['k'], timeout: '1m' }), () => {});
+    registry.handle(defineJob({ name: 'keyed', globalConcurrencyLimits: () => [], timeout: '1m' }), () => {});
 
     for (let index = 0; index < names - 1; index++) {
         registry.handle(`plain_${index}`, () => {});
@@ -1172,7 +1176,7 @@ test('fair share: a claim requests at most 4 names per free slot, the furthest u
 
 /**
  * A started runner over a store whose due jobs never run out: the test's handlers hold them. A plain name and a name
- * with mutex keys in one group, and an ungrouped name.
+ * with global limits in one local limit, and a name without limits.
  * @param {{ maxConcurrency?: number, random?: () => number, groupCap?: number }} [options]
  * @returns {{ runner: import('./runner.js').Runner, registry: import('./registry.js').Registry,
  *     claims: import('./store/store.js').ClaimDueParams[], release: () => void }}
@@ -1194,17 +1198,21 @@ function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}
 
         return {
             id: `${name}-${id}`, name, attempts: 0, maxAttempts: 1, stalls: 0, maxStalls: 1, failureJob: null,
-            enqueuedAt: new Date(0), waitedMs: 0, mutexKeys: name === 'keyed' ? [`k${id}`] : [], lockToken: 't',
+            enqueuedAt: new Date(0), waitedMs: 0, limits: name === 'keyed' ? [{ key: `k${id}`, max: 1 }] : [],
+            lockToken: 't',
             payload: { found: true, payload: {} },
         };
     };
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
         probe: async (/** @type {string[] | null} */ names) => (names ?? registry.entries().map(entry => entry.name))
             .map(name => ({ name, delayMs: -1 })),
-        findCandidates: async (/** @type {Map<string, number>} */ limits) => Array.from(
-            { length: limits.get('keyed') ?? 0 },
-            (_, index) => ({ id: `c${index}`, name: 'keyed', runAtMs: 0 }),
-        ),
+        findCandidates: async (/** @type {Map<string, number>} */ limits) => ({
+            startable: Array.from(
+                { length: limits.get('keyed') ?? 0 },
+                (_, index) => ({ id: `c${index}`, name: 'keyed', runAtMs: 0 }),
+            ),
+            full: [],
+        }),
         claimDue: async (/** @type {import('./store/store.js').ClaimDueParams} */ params) => {
             const { choose: _choose, ...copied } = params;
 
@@ -1223,12 +1231,14 @@ function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}
                 })
                 .map(request => jobOf(request.name));
 
-            return { jobs, next: [], unpicked: [] };
+            return { jobs, next: [], unpicked: [], limited: [] };
         },
-        claim: async (/** @type {import('./store/store.js').ClaimParams} */ { candidateIds, pick }) => pick(
-            candidateIds.map(() => jobOf('keyed')),
-            new Set(),
-        ),
+        claim: async (/** @type {import('./store/store.js').ClaimParams} */ { candidateIds, pick }) => ({
+            jobs: pick(candidateIds.map(() => jobOf('keyed')), new Map()),
+            blockedKeys: [],
+            blockedNames: [],
+        }),
+        unblock: async () => [],
         readPayloads: async (/** @type {string[]} */ ids) => new Map(ids.map(jobId => [jobId, {}])),
         completeJobs: async (/** @type {unknown[]} */ jobs) => jobs.length,
         findStaleJobs: async () => [],
@@ -1240,7 +1250,12 @@ function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}
     });
 
     registry.handle(defineJob({ name: 'plain', localConcurrencyLimits: [pair] }), hold);
-    registry.handle(defineJob({ name: 'keyed', mutexKeys: () => ['k'], timeout: '1m', localConcurrencyLimits: [pair] }), hold);
+    registry.handle(defineJob({
+        name: 'keyed',
+        globalConcurrencyLimits: () => [],
+        timeout: '1m',
+        localConcurrencyLimits: [pair],
+    }), hold);
     registry.handle('free', hold);
 
     const runner = createRunner({
@@ -1269,7 +1284,7 @@ function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}
     };
 }
 
-test('fair share: the plain claim leaves the share of the names with mutex keys in their group', async () => {
+test('fair share: the plain claim leaves the share of the names with global limits in their local limit', async () => {
     const { runner, registry, claims, release } = groupRunner({ maxConcurrency: 4, groupCap: 2 });
 
     try {
@@ -1370,7 +1385,7 @@ async function runnerWithClaims(errors) {
         probe: async () => [{ name: 'ping', delayMs: 0 }],
         // The recovery timer: its first run comes at recoveryIntervalMs × Math.random(), so at times during the test
         findStaleJobs: async () => [],
-        sweepMutexes: async () => ({ lingers: 0, orphans: 0 }),
+        sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0 }),
         claimDue: async () => {
             const error = errors[claimTimes.length] ?? null;
 
