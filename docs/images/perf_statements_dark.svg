@@ -36,5 +36,5 @@
 <path d="M158,310H448.8A4,4 0 0 1 452.8,314V324A4,4 0 0 1 448.8,328H158Z" fill="#3987e5"/>
 <text x="458.8" y="323" font-size="13" fill="#f0f6fc">9.4</text>
 <text x="150" y="357" font-size="13" fill="#f0f6fc" text-anchor="end">BullMQ* (Redis)</text>
-<text x="158.0" y="357" font-size="13" fill="#9198a1">60 Redis commands per job: another unit</text>
+<text x="166.0" y="357" font-size="13" fill="#9198a1">60 Redis commands per job: another unit</text>
 </svg>

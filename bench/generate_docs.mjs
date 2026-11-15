@@ -416,8 +416,7 @@ function day(iso) {
  * @property {Lane} lane
  * @property {number[]} parts The stacked segments; none: a row with a note instead of a bar (another unit).
  * @property {string} value The text after the bar.
- * @property {string} alt The value in the alt text.
- */
+ * @property {string} alt The value in the alt text. */
 
 /**
  * @typedef {object} Chart
@@ -426,6 +425,7 @@ function day(iso) {
  * @property {string} subtitle
  * @property {string[]} [legend] The series of the stacked parts.
  * @property {string} unit Of the axis.
+ * @property {boolean} [log] A log axis, for values far apart; single-part bars only.
  * @property {string} alt The start of the alt text, before the values.
  * @property {Bar[]} bars
  */
@@ -473,19 +473,35 @@ function escape(text) {
 
 /**
  * @param {number} max
- * @returns {number[]} round axis ticks from 0 to at least max
+ * @returns {number[]} round axis ticks from 0 to at least max: 3 to 7 steps, the last tick as close to max as possible
  */
 function ticks(max) {
-    const raw = max / 4;
-    const mag = 10 ** Math.floor(Math.log10(raw));
-    const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) ?? 10 * mag;
+    const mag = 10 ** Math.floor(Math.log10(max / 4));
+    const candidates = [0.5, 1, 2, 2.5, 5, 10, 20].map(m => m * mag).flatMap((step) => {
+        const steps = Math.ceil((max / step) - 1e-9);
+
+        return steps >= 3 && steps <= 7 ? [{ step, end: steps * step }] : [];
+    });
+    // The closest end; on a tie, the larger step: fewer labels
+    const { step, end } = candidates.toSorted((a, b) => a.end - b.end || b.step - a.step)[0];
     const out = [];
 
-    for (let v = 0; v < max + step; v += step) {
+    for (let v = 0; v <= end + (step / 2); v += step) {
         out.push(Math.round(v * 1000) / 1000);
     }
 
     return out;
+}
+
+/**
+ * @param {number[]} values the totals of the bars, all above 0
+ * @returns {number[]} the ticks of a log axis: the powers of 10 around the values
+ */
+function decades(values) {
+    const from = Math.floor(Math.log10(Math.min(...values)));
+    const to = Math.ceil(Math.log10(Math.max(...values)));
+
+    return Array.from({ length: to - from + 1 }, (_, i) => Number((10 ** (from + i)).toPrecision(1)));
 }
 
 /**
@@ -524,7 +540,7 @@ function barShape({ x, y, w, color, round }) {
  * @param {keyof typeof THEMES} theme
  * @returns {string} the SVG document
  */
-function svg({ title, subtitle, legend, bars, unit }, theme) {
+function svg({ title, subtitle, legend, bars, unit, log }, theme) {
     const c = THEMES[theme];
     /**
      * @param {number} part
@@ -532,12 +548,17 @@ function svg({ title, subtitle, legend, bars, unit }, theme) {
      */
     const color = part => c.series[legend ? SERIES[/** @type {keyof typeof SERIES} */ (legend[part])] : 0];
     const drawn = bars.filter(bar => bar.parts.length);
-    const tk = ticks(axisMax(drawn.map(bar => sum(bar.parts))));
+    const lengths = drawn.map(bar => sum(bar.parts));
+    const tk = log ? decades(lengths) : ticks(axisMax(lengths));
+    const start = /** @type {number} */ (tk[0]);
     const end = /** @type {number} */ (tk.at(-1));
+    const axisUnit = log ? `${unit}, log` : unit;
     // The plot ends where the longest value after a bar, and the unit after the last tick, still fit
-    const room = Math.max(...drawn.map(bar => bar.value.length * CHAR_W), 22 + (unit.length * 6));
+    const room = Math.max(...drawn.map(bar => bar.value.length * CHAR_W), 22 + (axisUnit.length * 6));
     const x1 = W - Math.ceil(room) - 12;
-    const scale = (/** @type {number} */ v) => ((x1 - X0) * Math.min(v, end)) / end;
+    const scale = log
+        ? (/** @type {number} */ v) => ((x1 - X0) * Math.log10(Math.max(v, start) / start)) / Math.log10(end / start)
+        : (/** @type {number} */ v) => ((x1 - X0) * Math.min(v, end)) / end;
     const top = legend ? 84 : 64;
     const plotH = bars.length * ROW;
     const H = top + plotH + 34;
@@ -562,12 +583,12 @@ function svg({ title, subtitle, legend, bars, unit }, theme) {
         const x = (X0 + scale(t)).toFixed(1);
 
         out.push(
-            `<line x1="${x}" y1="${top - 4}" x2="${x}" y2="${top + plotH}" stroke="${t === 0 ? c.axis : c.grid}"/>`,
+            `<line x1="${x}" y1="${top - 4}" x2="${x}" y2="${top + plotH}" stroke="${t === start ? c.axis : c.grid}"/>`,
             `<text x="${x}" y="${top + plotH + 18}" font-size="11" fill="${c.muted}" text-anchor="middle">${t}</text>`,
         );
     }
 
-    out.push(`<text x="${x1 + 22}" y="${top + plotH + 18}" font-size="11" fill="${c.muted}">${escape(unit)}</text>`);
+    out.push(`<text x="${x1 + 22}" y="${top + plotH + 18}" font-size="11" fill="${c.muted}">${escape(axisUnit)}</text>`);
 
     for (const [i, bar] of bars.entries()) {
         const y = top + (i * ROW) + ((ROW - BAR) / 2);
@@ -597,9 +618,9 @@ function svg({ title, subtitle, legend, bars, unit }, theme) {
             }
         }
 
-        // A row without a bar: its value is a note, in another unit
+        // A row without a bar: its value is a note, in another unit, clear of the axis line
         const ink = bar.parts.length ? c.text : c.muted;
-        const vx = (bar.parts.length ? Math.max(x, X0 + 2) + 6 : X0).toFixed(1);
+        const vx = (bar.parts.length ? Math.max(x, X0 + 2) + 6 : X0 + 8).toFixed(1);
 
         out.push(`<text x="${vx}" y="${y + 13}" font-size="13" fill="${ink}"${bold}>${escape(bar.value)}</text>`);
     }
@@ -710,6 +731,7 @@ const idleChart = {
     title: 'Database instructions per second, idle',
     subtitle: `${pg}, 1000 job names, no jobs. *: enqueue after the COMMIT.`,
     unit: 'M/s',
+    log: true,
     alt: 'Database instructions per second while idle with 1000 job names on PostgreSQL',
     bars: barsOf('idle', (_, row) => {
         const perSecond = mega(row.db.instructions) / row.seconds;
@@ -724,6 +746,7 @@ const latencyChart = {
     title: 'From enqueue to handler start, median',
     subtitle: `${pg}, ${jobsTrip}, steady load, one library at a time. *: enqueue after the COMMIT.`,
     unit: 'ms',
+    log: true,
     alt: `Time from enqueue to handler start on PostgreSQL with a ${jobsTrip}, one library at a time, p50 and p99`,
     bars: barsOf('steady', (_, row) => ({
         parts: [row.latencyP50Ms],

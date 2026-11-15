@@ -8,47 +8,51 @@
 <text x="97" y="65" font-size="12" fill="#59636e">Database</text>
 <line x1="158.0" y1="80" x2="158.0" y2="390" stroke="#c3c2b7"/>
 <text x="158.0" y="408" font-size="11" fill="#59636e" text-anchor="middle">0</text>
-<line x1="318.0" y1="80" x2="318.0" y2="390" stroke="#e1e0d9"/>
-<text x="318.0" y="408" font-size="11" fill="#59636e" text-anchor="middle">10</text>
-<line x1="478.0" y1="80" x2="478.0" y2="390" stroke="#e1e0d9"/>
-<text x="478.0" y="408" font-size="11" fill="#59636e" text-anchor="middle">20</text>
+<line x1="254.0" y1="80" x2="254.0" y2="390" stroke="#e1e0d9"/>
+<text x="254.0" y="408" font-size="11" fill="#59636e" text-anchor="middle">5</text>
+<line x1="350.0" y1="80" x2="350.0" y2="390" stroke="#e1e0d9"/>
+<text x="350.0" y="408" font-size="11" fill="#59636e" text-anchor="middle">10</text>
+<line x1="446.0" y1="80" x2="446.0" y2="390" stroke="#e1e0d9"/>
+<text x="446.0" y="408" font-size="11" fill="#59636e" text-anchor="middle">15</text>
+<line x1="542.0" y1="80" x2="542.0" y2="390" stroke="#e1e0d9"/>
+<text x="542.0" y="408" font-size="11" fill="#59636e" text-anchor="middle">20</text>
 <line x1="638.0" y1="80" x2="638.0" y2="390" stroke="#e1e0d9"/>
-<text x="638.0" y="408" font-size="11" fill="#59636e" text-anchor="middle">30</text>
+<text x="638.0" y="408" font-size="11" fill="#59636e" text-anchor="middle">25</text>
 <text x="660" y="408" font-size="11" fill="#59636e">M instr.</text>
 <text x="150" y="105" font-size="13" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
-<rect x="158" y="92" width="14.6" height="18" fill="#2a78d6"/>
-<path d="M174.551866304,92H183.7A4,4 0 0 1 187.7,96V106A4,4 0 0 1 183.7,110H174.551866304Z" fill="#1baf7a"/>
-<text x="193.7" y="105" font-size="13" fill="#1f2328" font-weight="600">1.9 M</text>
+<rect x="158" y="92" width="17.9" height="18" fill="#2a78d6"/>
+<path d="M177.8622395648,92H189.6A4,4 0 0 1 193.6,96V106A4,4 0 0 1 189.6,110H177.8622395648Z" fill="#1baf7a"/>
+<text x="199.6" y="105" font-size="13" fill="#1f2328" font-weight="600">1.9 M</text>
 <text x="150" y="139" font-size="13" fill="#1f2328" text-anchor="end">Graphile Worker</text>
-<rect x="158" y="126" width="16.3" height="18" fill="#2a78d6"/>
-<path d="M176.25050545599998,126H289.3A4,4 0 0 1 293.3,130V140A4,4 0 0 1 289.3,144H176.25050545599998Z" fill="#1baf7a"/>
-<text x="299.3" y="139" font-size="13" fill="#1f2328">8.5 M</text>
+<rect x="158" y="126" width="19.9" height="18" fill="#2a78d6"/>
+<path d="M179.9006065472,126H316.4A4,4 0 0 1 320.4,130V140A4,4 0 0 1 316.4,144H179.9006065472Z" fill="#1baf7a"/>
+<text x="326.4" y="139" font-size="13" fill="#1f2328">8.5 M</text>
 <text x="150" y="173" font-size="13" fill="#1f2328" text-anchor="end">River</text>
-<rect x="158" y="160" width="46.3" height="18" fill="#2a78d6"/>
-<path d="M206.253987472,160H240.5A4,4 0 0 1 244.5,164V174A4,4 0 0 1 240.5,178H206.253987472Z" fill="#1baf7a"/>
-<text x="250.5" y="173" font-size="13" fill="#1f2328">5.4 M</text>
+<rect x="158" y="160" width="55.9" height="18" fill="#2a78d6"/>
+<path d="M215.9047849664,160H257.8A4,4 0 0 1 261.8,164V174A4,4 0 0 1 257.8,178H215.9047849664Z" fill="#1baf7a"/>
+<text x="267.8" y="173" font-size="13" fill="#1f2328">5.4 M</text>
 <text x="150" y="207" font-size="13" fill="#1f2328" text-anchor="end">pg-boss</text>
-<rect x="158" y="194" width="43.3" height="18" fill="#2a78d6"/>
-<path d="M203.263323952,194H327.3A4,4 0 0 1 331.3,198V208A4,4 0 0 1 327.3,212H203.263323952Z" fill="#1baf7a"/>
-<text x="337.3" y="207" font-size="13" fill="#1f2328">10.8 M</text>
+<rect x="158" y="194" width="52.3" height="18" fill="#2a78d6"/>
+<path d="M212.3159887424,194H362.0A4,4 0 0 1 366.0,198V208A4,4 0 0 1 362.0,212H212.3159887424Z" fill="#1baf7a"/>
+<text x="372.0" y="207" font-size="13" fill="#1f2328">10.8 M</text>
 <text x="150" y="241" font-size="13" fill="#1f2328" text-anchor="end">Izi Queue</text>
-<rect x="158" y="228" width="118.5" height="18" fill="#2a78d6"/>
-<path d="M278.50534592,228H532.4A4,4 0 0 1 536.4,232V242A4,4 0 0 1 532.4,246H278.50534592Z" fill="#1baf7a"/>
-<text x="542.4" y="241" font-size="13" fill="#1f2328">23.7 M</text>
+<rect x="158" y="228" width="142.6" height="18" fill="#2a78d6"/>
+<path d="M302.606415104,228H608.1A4,4 0 0 1 612.1,232V242A4,4 0 0 1 608.1,246H302.606415104Z" fill="#1baf7a"/>
+<text x="618.1" y="241" font-size="13" fill="#1f2328">23.7 M</text>
 <text x="150" y="275" font-size="13" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
-<rect x="158" y="262" width="104.5" height="18" fill="#2a78d6"/>
-<path d="M264.49272744,262H402.4A4,4 0 0 1 406.4,266V276A4,4 0 0 1 402.4,280H264.49272744Z" fill="#1baf7a"/>
-<text x="412.4" y="275" font-size="13" fill="#1f2328">15.5 M</text>
+<rect x="158" y="262" width="125.8" height="18" fill="#2a78d6"/>
+<path d="M285.791272928,262H452.1A4,4 0 0 1 456.1,266V276A4,4 0 0 1 452.1,280H285.791272928Z" fill="#1baf7a"/>
+<text x="462.1" y="275" font-size="13" fill="#1f2328">15.5 M</text>
 <text x="150" y="309" font-size="13" fill="#1f2328" text-anchor="end">BullMQ*</text>
-<rect x="158" y="296" width="23.8" height="18" fill="#2a78d6"/>
-<path d="M183.760516496,296H273.5A4,4 0 0 1 277.5,300V310A4,4 0 0 1 273.5,314H183.760516496Z" fill="#1baf7a"/>
-<text x="283.5" y="309" font-size="13" fill="#1f2328">7.5 M</text>
+<rect x="158" y="296" width="28.9" height="18" fill="#2a78d6"/>
+<path d="M188.9126197952,296H297.4A4,4 0 0 1 301.4,300V310A4,4 0 0 1 297.4,314H188.9126197952Z" fill="#1baf7a"/>
+<text x="307.4" y="309" font-size="13" fill="#1f2328">7.5 M</text>
 <text x="150" y="343" font-size="13" fill="#1f2328" text-anchor="end">Sidequest*</text>
-<rect x="158" y="330" width="169.0" height="18" fill="#2a78d6"/>
-<path d="M328.967366384,330H545.8A4,4 0 0 1 549.8,334V344A4,4 0 0 1 545.8,348H328.967366384Z" fill="#1baf7a"/>
-<text x="555.8" y="343" font-size="13" fill="#1f2328">24.5 M</text>
+<rect x="158" y="330" width="203.2" height="18" fill="#2a78d6"/>
+<path d="M363.1608396608,330H624.2A4,4 0 0 1 628.2,334V344A4,4 0 0 1 624.2,348H363.1608396608Z" fill="#1baf7a"/>
+<text x="634.2" y="343" font-size="13" fill="#1f2328">24.5 M</text>
 <text x="150" y="377" font-size="13" fill="#1f2328" text-anchor="end">BullMQ* (Redis)</text>
-<rect x="158" y="364" width="33.9" height="18" fill="#2a78d6"/>
-<path d="M193.922206768,364H206.8A4,4 0 0 1 210.8,368V378A4,4 0 0 1 206.8,382H193.922206768Z" fill="#1baf7a"/>
-<text x="216.8" y="377" font-size="13" fill="#1f2328">3.3 M</text>
+<rect x="158" y="364" width="41.1" height="18" fill="#2a78d6"/>
+<path d="M201.1066481216,364H217.3A4,4 0 0 1 221.3,368V378A4,4 0 0 1 217.3,382H201.1066481216Z" fill="#1baf7a"/>
+<text x="227.3" y="377" font-size="13" fill="#1f2328">3.3 M</text>
 </svg>

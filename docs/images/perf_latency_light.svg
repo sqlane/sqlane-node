@@ -3,43 +3,39 @@
 <text x="0" y="20" font-size="16" font-weight="600" fill="#1f2328">From enqueue to handler start, median</text>
 <text x="0" y="42" font-size="13" fill="#59636e">PostgreSQL 17, 1 ms round trip, steady load, one library at a time. *: enqueue after the COMMIT.</text>
 <line x1="158.0" y1="60" x2="158.0" y2="370" stroke="#c3c2b7"/>
-<text x="158.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">0</text>
-<line x1="259.5" y1="60" x2="259.5" y2="370" stroke="#e1e0d9"/>
-<text x="259.5" y="388" font-size="11" fill="#59636e" text-anchor="middle">20</text>
-<line x1="361.0" y1="60" x2="361.0" y2="370" stroke="#e1e0d9"/>
-<text x="361.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">40</text>
-<line x1="462.5" y1="60" x2="462.5" y2="370" stroke="#e1e0d9"/>
-<text x="462.5" y="388" font-size="11" fill="#59636e" text-anchor="middle">60</text>
+<text x="158.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">1</text>
+<line x1="293.3" y1="60" x2="293.3" y2="370" stroke="#e1e0d9"/>
+<text x="293.3" y="388" font-size="11" fill="#59636e" text-anchor="middle">10</text>
+<line x1="428.7" y1="60" x2="428.7" y2="370" stroke="#e1e0d9"/>
+<text x="428.7" y="388" font-size="11" fill="#59636e" text-anchor="middle">100</text>
 <line x1="564.0" y1="60" x2="564.0" y2="370" stroke="#e1e0d9"/>
-<text x="564.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">80</text>
-<text x="586" y="388" font-size="11" fill="#59636e">ms</text>
+<text x="564.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">1000</text>
+<text x="586" y="388" font-size="11" fill="#59636e">ms, log</text>
 <text x="150" y="85" font-size="13" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
-<path d="M158,72H174.3A4,4 0 0 1 178.3,76V86A4,4 0 0 1 174.3,90H158Z" fill="#2a78d6"/>
-<text x="184.3" y="85" font-size="13" fill="#1f2328" font-weight="600">4 ms · p99 5 ms</text>
+<path d="M158,72H235.5A4,4 0 0 1 239.5,76V86A4,4 0 0 1 235.5,90H158Z" fill="#2a78d6"/>
+<text x="245.5" y="85" font-size="13" fill="#1f2328" font-weight="600">4 ms · p99 5 ms</text>
 <text x="150" y="119" font-size="13" fill="#1f2328" text-anchor="end">Graphile Worker</text>
-<path d="M158,106H174.3A4,4 0 0 1 178.3,110V120A4,4 0 0 1 174.3,124H158Z" fill="#2a78d6"/>
-<text x="184.3" y="119" font-size="13" fill="#1f2328">4 ms · p99 5 ms</text>
+<path d="M158,106H235.5A4,4 0 0 1 239.5,110V120A4,4 0 0 1 235.5,124H158Z" fill="#2a78d6"/>
+<text x="245.5" y="119" font-size="13" fill="#1f2328">4 ms · p99 5 ms</text>
 <text x="150" y="153" font-size="13" fill="#1f2328" text-anchor="end">River</text>
-<path d="M158,140H184.4A4,4 0 0 1 188.4,144V154A4,4 0 0 1 184.4,158H158Z" fill="#2a78d6"/>
-<text x="194.4" y="153" font-size="13" fill="#1f2328">6 ms · p99 7 ms</text>
+<path d="M158,140H259.3A4,4 0 0 1 263.3,144V154A4,4 0 0 1 259.3,158H158Z" fill="#2a78d6"/>
+<text x="269.3" y="153" font-size="13" fill="#1f2328">6 ms · p99 7 ms</text>
 <text x="150" y="187" font-size="13" fill="#1f2328" text-anchor="end">pg-boss</text>
-<path d="M158,174H179.4A4,4 0 0 1 183.4,178V188A4,4 0 0 1 179.4,192H158Z" fill="#2a78d6"/>
-<text x="189.4" y="187" font-size="13" fill="#1f2328">5 ms · p99 202 ms</text>
+<path d="M158,174H248.6A4,4 0 0 1 252.6,178V188A4,4 0 0 1 248.6,192H158Z" fill="#2a78d6"/>
+<text x="258.6" y="187" font-size="13" fill="#1f2328">5 ms · p99 202 ms</text>
 <text x="150" y="221" font-size="13" fill="#1f2328" text-anchor="end">Izi Queue</text>
-<path d="M158,208H184.4A4,4 0 0 1 188.4,212V222A4,4 0 0 1 184.4,226H158Z" fill="#2a78d6"/>
-<text x="194.4" y="221" font-size="13" fill="#1f2328">6 ms · p99 7 ms</text>
+<path d="M158,208H259.3A4,4 0 0 1 263.3,212V222A4,4 0 0 1 259.3,226H158Z" fill="#2a78d6"/>
+<text x="269.3" y="221" font-size="13" fill="#1f2328">6 ms · p99 7 ms</text>
 <text x="150" y="255" font-size="13" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
-<rect x="158" y="242" width="406.0" height="18" fill="#2a78d6"/>
-<path d="M548.0,262l6,-22" stroke="#ffffff" stroke-width="2.5"/>
-<path d="M555.0,262l6,-22" stroke="#ffffff" stroke-width="2.5"/>
-<text x="570.0" y="255" font-size="13" fill="#1f2328">862 ms · p99 2010 ms</text>
+<path d="M158,242H551.3A4,4 0 0 1 555.3,246V256A4,4 0 0 1 551.3,260H158Z" fill="#2a78d6"/>
+<text x="561.3" y="255" font-size="13" fill="#1f2328">862 ms · p99 2010 ms</text>
 <text x="150" y="289" font-size="13" fill="#1f2328" text-anchor="end">BullMQ*</text>
-<path d="M158,276H169.2A4,4 0 0 1 173.2,280V290A4,4 0 0 1 169.2,294H158Z" fill="#2a78d6"/>
-<text x="179.2" y="289" font-size="13" fill="#1f2328">3 ms · p99 4 ms</text>
+<path d="M158,276H218.6A4,4 0 0 1 222.6,280V290A4,4 0 0 1 218.6,294H158Z" fill="#2a78d6"/>
+<text x="228.6" y="289" font-size="13" fill="#1f2328">3 ms · p99 4 ms</text>
 <text x="150" y="323" font-size="13" fill="#1f2328" text-anchor="end">Sidequest*</text>
-<path d="M158,310H453.4A4,4 0 0 1 457.4,314V324A4,4 0 0 1 453.4,328H158Z" fill="#2a78d6"/>
-<text x="463.4" y="323" font-size="13" fill="#1f2328">59 ms · p99 112 ms</text>
+<path d="M158,310H393.7A4,4 0 0 1 397.7,314V324A4,4 0 0 1 393.7,328H158Z" fill="#2a78d6"/>
+<text x="403.7" y="323" font-size="13" fill="#1f2328">59 ms · p99 112 ms</text>
 <text x="150" y="357" font-size="13" fill="#1f2328" text-anchor="end">BullMQ* (Redis)</text>
-<path d="M158,344H174.3A4,4 0 0 1 178.3,348V358A4,4 0 0 1 174.3,362H158Z" fill="#2a78d6"/>
-<text x="184.3" y="357" font-size="13" fill="#1f2328">4 ms · p99 4 ms</text>
+<path d="M158,344H235.5A4,4 0 0 1 239.5,348V358A4,4 0 0 1 235.5,362H158Z" fill="#2a78d6"/>
+<text x="245.5" y="357" font-size="13" fill="#1f2328">4 ms · p99 4 ms</text>
 </svg>
