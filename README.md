@@ -52,9 +52,10 @@ sqlane claims jobs through its own small pool, so the queue and your app never w
 ## Why sqlane
 
 - **Atomic with your data.** Enqueue in your existing transaction; the job commits or rolls back with it.
-- **Multiple mutex keys per job.** Jobs that share a key, such as `order:42`, never run at the same time, across job
-  names and processes. A job can hold up to 10 keys, for example an order and its customer. Handlers must stop when
-  their `signal` aborts ([guarantees](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#guarantees)).
+- **Concurrency limits per key, across the cluster.** "At most 2 jobs per client, and 100 in total": a job returns its
+  keys, such as `client:42`, and each key runs at most its max of jobs, across job names and processes. A flood on one
+  key never holds back the others, and a limit of 1 is a mutex. Handlers must stop when their `signal` aborts
+  ([guarantees](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#guarantees)).
 - **Idle job names are free.** One query per poll finds the names with pending jobs, so 1000 mostly idle names cost
   about what one does.
 - **Fits your stack.** Adapters for mysql2, pg, postgres.js, Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM and
@@ -65,7 +66,7 @@ sqlane claims jobs through its own small pool, so the queue and your app never w
 [delayed and unique jobs](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue),
 [cron](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedule),
 [failure jobs](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#failedjobpayload),
-[concurrency limits](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#handle),
+[per-process limits](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineconcurrencylimit),
 [typed payloads](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#typed-payloads),
 [crash recovery](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#leases-and-stalls),
 [graceful shutdown](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#close),
@@ -175,11 +176,16 @@ The steps below rebuild the example above. With another library, only the adapte
 producers and workers both import; in TypeScript, `defineJob<{ orderId: number }>(…)` types the payload.
 
 ```js
-export const sendReceipt = defineJob({ name: 'send_receipt', maxAttempts: 5 });
-export const syncOrder = defineJob({ name: 'sync_order', mutexKeys: (order) => [`order:${order.orderId}`], timeout: '2m' });
+export const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+export const sendReceipt = defineJob({ name: 'send_receipt', maxAttempts: 5, timeout: '1m' });
+export const syncOrder = defineJob({
+    name: 'sync_order',
+    globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
+    timeout: '2m',
+});
 ```
 
-Two `sync_order` jobs for the same order never run at the same time. A job with mutex keys needs a `timeout`.
+Two `sync_order` jobs for the same order never run at the same time. A job with global limits needs a `timeout`.
 
 **2. Create the instance and the tables.** Give sqlane its own pool of 2–3 connections. `migrate()` is safe to run
 from several processes at once; to use your own migration tool, take the SQL from `getMigrations()`.
@@ -206,7 +212,7 @@ await db.transaction(async (trx) => {
 ```js
 sqlane.handle(sendReceipt, async ({ payload, signal }) => {
     await sendReceiptEmail(payload.orderId, { signal }); // your code
-}, { maxConcurrency: 5, timeout: '1m' });
+});
 await sqlane.start();
 process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));
 ```
@@ -227,8 +233,8 @@ const { completed, failed } = await sqlane.drain();
 - The [design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md) explains how sqlane works inside.
 - The [examples folder](https://github.com/sqlane/sqlane-node/tree/main/examples) has more examples.
 - The [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists the changes of each version, and
-  the [migration guide to 5.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/5.md) the changes of
-  your code from 4.x.
+  the [migration guide to 6.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/6.md) the changes of
+  your code from 5.x ([to 5.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/5.md) from 4.x).
 - The [contributing guide](https://github.com/sqlane/sqlane-node/blob/main/CONTRIBUTING.md) explains the project setup.
 
 ## Versioning

@@ -154,6 +154,7 @@ export const buildReport = defineJob({
     name: 'build_report',
     maxAttempts: 5,
     backoff: { type: 'exponential', delay: '5s', maxDelay: '1h' },
+    timeout: '5m',
 });
 
 const appPool = mysql.createPool({ uri: process.env.DATABASE_URL }); // your app's connection pool
@@ -182,7 +183,7 @@ export async function orderReport(reportId) {
 // Worker: in the same process or in another one
 sqlane.handle(buildReport, async ({ payload, signal }) => {
     await generateReport(payload.reportId, { signal }); // your code: it stops when the signal aborts
-}, { maxConcurrency: 2, timeout: '5m' });
+});
 await sqlane.start();
 
 process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));
@@ -432,7 +433,7 @@ export default defineConfig({
     schema: 'prisma/schema.prisma',
     datasource: { url: env('DATABASE_URL') },
     experimental: { externalTables: true },
-    tables: { external: ['public.sqlane_jobs', 'public.sqlane_payloads', 'public.sqlane_mutexes', 'public.sqlane_migrations'] },
+    tables: { external: ['public.sqlane_jobs', 'public.sqlane_payloads', 'public.sqlane_concurrency_slots', 'public.sqlane_migrations'] },
 });
 ```
 

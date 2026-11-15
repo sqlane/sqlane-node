@@ -19,8 +19,8 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
    default. See [Wake-up after the commit](#wake-up-after-the-commit).
 4. **At-least-once execution.** A committed job runs at least once, also after a crash, a stall or a deploy.
 5. **MySQL, MariaDB and PostgreSQL.** All three databases get the same features and the same API.
-6. **Mutex keys.** Two jobs with a common key do not run at the same time in the cluster. [Guarantees](#guarantees)
-   gives the exact condition.
+6. **Concurrency limits.** At most `max` jobs of a key of a global limit run at the same time in the cluster, and a
+   flood on one key does not hold back the others. [Guarantees](#guarantees) gives the exact condition.
 7. **Failure jobs.** When a job fails for good, sqlane adds a job of another name, in the same transaction that marks the job as failed.
 8. **Library hygiene.** sqlane has no global state, does not read `process.env`, writes nothing to the console and never
    exits the process. The app injects the connections, the logger and the metrics.
@@ -30,27 +30,28 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 - Exactly-once execution. Handlers must be idempotent.
 - A dashboard. `getStats()` gives the counts per job name, and the tables are plain SQL (see [Data](#data)).
 - Priorities, or a strict order across processes.
-- A cluster-wide concurrency limit per job name (mutex keys cover the per-entity case).
 - Workflows, batches, job dependencies.
 - SQLite, other databases.
 - An ORM. Adapters wrap the transaction objects of the drivers and ORMs.
 
 ## Terms
 
-| Term                  | Meaning                                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------- |
-| **Job**               | One row: a payload, a state, attempts, a lease.                                             |
-| **Job name**          | The kind of a job, e.g. `build_report`. It is also the "queue": there is no separate queue. |
-| **Job definition**    | The name and the options of a job name. Producers and workers import it.                    |
-| **Handler**           | The function that runs a job. Only workers register it.                                     |
-| **Concurrency group** | A per-process cap shared by the handlers of several names. Costs no connection.             |
-| **Fair share weight** | A name's share of the free slots against the other due names.                               |
-| **Mutex key**         | A string (`order:42`). Jobs with a common key run one at a time, in the cluster.            |
-| **Failure job**       | A job that sqlane adds when another job fails for good.                                     |
-| **Adapter**           | Wraps a driver: the dialect, the queue's pool, and the raw connections given to `enqueue`.  |
-| **Hint**              | A message "jobs of this name are ready" between processes. Only an optimization.            |
-| **Schedule**          | A cron in a time zone, or a fixed interval, that adds a job at each of its times.           |
-| **Slot**              | One time of a schedule. It adds at most one job.                                            |
+| Term                  | Meaning                                                                                             |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| **Job**               | One row: a payload, a state, attempts, a lease.                                                     |
+| **Job name**          | The kind of a job, e.g. `build_report`. It is also the "queue": there is no separate queue.         |
+| **Job definition**    | The name and the options of a job name. Producers and workers import it.                            |
+| **Handler**           | The function that runs a job. Only workers register it.                                             |
+| **Concurrency limit** | The most jobs that run at once: local (per process, in memory) or global (per key, in the cluster). |
+| **Fair share weight** | A name's share of the free slots against the other due names.                                       |
+| **Key**               | A string (`order:42`): a global limit counts the running jobs of each key.                          |
+| **Slot of a key**     | One of the `max` places of a key. A running job holds one slot of each of its keys.                 |
+| **Blocked job**       | A due job with a full key: out of the due jobs until a slot of the key frees.                       |
+| **Failure job**       | A job that sqlane adds when another job fails for good.                                             |
+| **Adapter**           | Wraps a driver: the dialect, the queue's pool, and the raw connections given to `enqueue`.          |
+| **Hint**              | A message "jobs of this name are ready" between processes. Only an optimization.                    |
+| **Schedule**          | A cron in a time zone, or a fixed interval, that adds a job at each of its times.                   |
+| **Slot**              | One time of a schedule. It adds at most one job.                                                    |
 
 ## API
 
@@ -60,7 +61,7 @@ reasons behind the shape of the API.
 - **Definition apart from the handler.** Producers import a small job definition, not the handler and its
   dependencies. So `enqueue` and `handle` take a definition or a name.
 - **Payload types, no validation.** A definition can declare its payload type, so the compiler checks `enqueue`, the
-  handler and `mutexKeys`. sqlane does not validate payloads at runtime, because the app knows its own rules. A
+  handler and `globalConcurrencyLimits`. sqlane does not validate payloads at runtime, because the app knows its own rules. A
   payload is plain JSON without revivers. sqlane refuses a NUL character on both databases, because PostgreSQL `jsonb`
   refuses it.
 - **Enqueue by name.** A producer without the definition, such as another service or a script, can enqueue by name.
@@ -74,19 +75,23 @@ reasons behind the shape of the API.
   Instead, an adapter checks the ORM it gets and throws a `ConfigError` with the supported versions. CI tests each
   supported major version. An ORM adapter runs sqlane's SQL on the driver connection under the ORM, or through its
   raw-SQL API, so there is one SQL per dialect. [Adapters](adapters.md) describes each one.
-- **Worker settings in worker code.** `maxConcurrency`, `concurrencyGroup` and `fairShareWeight` are `handle()`
-  options, not definition fields, because they are per process.
-- **Groups are objects.** `defineConcurrencyGroup()` returns a frozen object, which `handle()` takes. A typo in a
-  string cannot create a new group, and producers never import them.
+- **All the options of a name in its definition.** `handle()` takes none: the local limits, the weight and the timeout
+  are definition fields too, read by the worker, so one module describes a job name. A machine that needs other caps
+  computes them in that module, from its own environment.
+- **Limits are objects.** `defineConcurrencyLimit()` returns a frozen object, which a definition lists or keys. A typo
+  in a string cannot create a new limit, and the max is declared once, so two names cannot disagree on it.
+- **Maxes frozen with the keys.** A worker cannot see the limit behind the key of a row: the definition's function
+  runs at enqueue. So the row stores each key with its max, as it stores `maxAttempts`. Jobs enqueued by name work, and
+  a deploy that changes a max applies to the new jobs.
 - **Handlers own their transactions.** sqlane does not wrap a handler in a transaction or any other app wrapper. It
   stores no result.
 - **AbortSignal** for timeouts and close, instead of a hidden race. The lease is renewed while the handler runs, so a
-  long job needs no timeout. A job with mutex keys needs one (see [Mutex keys](#mutex-keys)).
+  long job needs no timeout. A job with global limits needs one (see [Global limits](#global-limits)).
 - **No implicit work.** `createSqlane` connects, migrates and starts nothing.
 
 ## Data
 
-Each table prefix (default `sqlane_`) has six tables: the five tables below and `sqlane_migrations`. The names of
+Each table prefix (default `sqlane_`) has five tables: the four tables below and `sqlane_migrations`. The names of
 the tables and columns use snake_case. All times come from the database clock (`UTC_TIMESTAMP(3)` on MySQL,
 `clock_timestamp()` on PostgreSQL), so clock skew between processes does not matter. Schedules compute their slots in
 the process, but they decide each slot with the database clock ([Schedules](#schedules)).
@@ -99,51 +104,48 @@ not depend on the `timezone` or `dateStrings` settings of the pool.
 
 ### `sqlane_jobs`
 
-| Column                                                                | Type               | Notes                                                                                                               |
-| --------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `id`                                                                  | varchar(255), PK   | `<job_name>:<job_id>`, or a new ULID without `jobId`. `<job_name>:schedule:[<key>:]<ISO>` for a slot of a schedule. |
-| `job_name`                                                            | varchar(128)       |                                                                                                                     |
-| `status`                                                              | varchar(16)        | `pending`, `running`, `completed`, `failed`.                                                                        |
-| `run_at`                                                              | ts(3)              | Due time.                                                                                                           |
-| `attempts`, `max_attempts`                                            | int                |                                                                                                                     |
-| `stalls`, `max_stalls`                                                | int                |                                                                                                                     |
-| `mutex_keys`                                                          | json / text[] null | Frozen at enqueue, sorted. Written with the job row.                                                                |
-| `enqueue_token`                                                       | char(26)           | Per enqueue call: tells created rows from duplicates.                                                               |
-| `lock_token`                                                          | char(26) null      | Set by the claim. Every final write checks it.                                                                      |
-| `locked_by`                                                           | varchar(255) null  | `<host>:<pid>:<ULID>`.                                                                                              |
-| `locked_until`                                                        | ts(3) null         | The lease.                                                                                                          |
-| `timed_out_at`                                                        | ts(3) null         | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`.                       |
-| `last_error`                                                          | json null          |                                                                                                                     |
-| `completed_retention_ms`, `failed_retention_ms`                       | bigint             | Frozen at enqueue.                                                                                                  |
-| `failure_job`                                                         | varchar(128) null  | Frozen at enqueue.                                                                                                  |
-| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)              |                                                                                                                     |
+| Column                                                                | Type              | Notes                                                                                                               |
+| --------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `id`                                                                  | varchar(255), PK  | `<job_name>:<job_id>`, or a new ULID without `jobId`. `<job_name>:schedule:[<key>:]<ISO>` for a slot of a schedule. |
+| `job_name`                                                            | varchar(128)      |                                                                                                                     |
+| `status`                                                              | varchar(16)       | `pending`, `blocked`, `running`, `completed`, `failed`.                                                             |
+| `run_at`                                                              | ts(3)             | Due time.                                                                                                           |
+| `attempts`, `max_attempts`                                            | int               |                                                                                                                     |
+| `stalls`, `max_stalls`                                                | int               |                                                                                                                     |
+| `limit_keys`, `limit_maxes`                                           | json / array null | The keys of the global limits and their maxes, frozen at enqueue, sorted by key. Written with the job row.          |
+| `blocked_on`                                                          | varchar(255) null | The full key of a `blocked` job.                                                                                    |
+| `enqueue_token`                                                       | char(26)          | Per enqueue call: tells created rows from duplicates.                                                               |
+| `lock_token`                                                          | char(26) null     | Set by the claim. Every final write checks it.                                                                      |
+| `locked_by`                                                           | varchar(255) null | `<host>:<pid>:<ULID>`.                                                                                              |
+| `locked_until`                                                        | ts(3) null        | The lease.                                                                                                          |
+| `timed_out_at`                                                        | ts(3) null        | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`.                       |
+| `last_error`                                                          | json null         |                                                                                                                     |
+| `completed_retention_ms`, `failed_retention_ms`                       | bigint            | Frozen at enqueue.                                                                                                  |
+| `failure_job`                                                         | varchar(128) null | Frozen at enqueue.                                                                                                  |
+| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)             |                                                                                                                     |
 
-`id`, `job_name`, the mutex keys and `mutex_key` (below) are case-sensitive: `ascii_bin` on MySQL, `COLLATE "C"` on PostgreSQL.
+`id`, `job_name` and the keys are case-sensitive: `ascii_bin` on MySQL, `COLLATE "C"` on PostgreSQL.
 
 Indexes:
 
-- MySQL: `(status, job_name, run_at)`, `(expires_at)`.
-- PostgreSQL: partial `(job_name, run_at) WHERE status = 'pending'`, partial `(locked_until) WHERE status = 'running'`,
-  `(expires_at)`.
+- MySQL: `(status, job_name, run_at)`, `(status, blocked_on, run_at, id)`, `(expires_at)`.
+- PostgreSQL: partial `(job_name, run_at, id) WHERE status = 'pending'`, partial `(locked_until) WHERE status =
+  'running'`, partial `(blocked_on, run_at, id) WHERE status = 'blocked'`, `(expires_at)`.
 
 ### `sqlane_payloads`
 
 `id` (PK), `payload` (json). Apart from the hot table: the claim and the probe do not read it. Deleted when the job
 completes; kept for a failed job.
 
-The keys are a column of the job row: they commit with the job even in autocommit, and a duplicate cannot add keys to
-an existing job. `sqlane_job_keys` indexes them for the FIFO.
+The keys are columns of the job row: they commit with the job even in autocommit, and a duplicate cannot add keys to
+an existing job.
 
-### `sqlane_job_keys`
+### `sqlane_concurrency_slots`
 
-`mutex_key`, `run_at`, `job_id` (PK in this order), `job_name`; an index on `job_id`. One row per key of each pending
-job: the enqueue adds them, a claim deletes them, and a return to `pending` (retry, release, stall) adds them again, in
-the same statement or transaction. So the oldest due job of a key is the first row of one index range.
-
-### `sqlane_mutexes`
-
-`mutex_key` (PK), `job_id`, `lock_token`, `held_until` (null: held by a running job), `created_at`. One row per key
-that a job holds, or that lingers after a release on close or a stall.
+`limit_key`, `slot` (PK in this order), `job_id`, `lock_token`, `held_until` (null: held by a running job),
+`created_at`; an index on `job_id`. One row per slot that a job holds, or that lingers after a release on close or a
+stall. The primary key keeps two jobs out of one slot; there is no counter row, so the claims of a busy key do not
+queue on one row. The held slots of a key are one range of the primary key.
 
 ### `sqlane_schedules`
 
@@ -179,18 +181,21 @@ sqlane ships its schema as versioned SQL for each dialect. You can apply it in t
       `void`, and Prisma cannot read this type.
 - `getMigrations({ dialect, tablePrefix })` returns the SQL, for the app's own migration tool.
 
-The migration ids are matched, never counted. MySQL and MariaDB have `0001_initial`, `0002_job_keys` and
-`0004_schedules`. PostgreSQL has `0001_initial`, `0002_pending_order`, `0003_job_keys` and `0004_schedules`. The
-schedules migration has the same id on every dialect. It is needed only with schedules: `start()` throws a
+The migration ids are matched, never counted. MySQL and MariaDB have `0001_initial`, `0002_job_keys`,
+`0004_schedules`, `0005_concurrency_limits` and `0006_concurrency_slots`. PostgreSQL has `0001_initial`,
+`0002_pending_order`, `0003_job_keys`, `0004_schedules`, `0005_concurrency_limits` and `0006_concurrency_slots`. The
+migrations of 6.0 drop the tables of 5.x, `sqlane_job_keys` and `sqlane_mutexes`. On MySQL and MariaDB,
+`0005_concurrency_limits` is one `ALTER TABLE`, which is atomic. The schedules migration has the same id on every
+dialect. It is needed only with schedules: `start()` throws a
 `ConfigError` that asks for `migrate()` when a process has schedules and the table is missing.
 
 ## Job states
 
 ```text
-pending ──claim──▶ running ──OK──▶ completed ──retention──▶ (deleted)
-   ▲                  │
-   └── retry, stall, ─┤
-       release        └──no attempts / stalls left──▶ failed (+ failure job) ──retention──▶ (deleted)
+blocked ◀─claim: a full key── pending ──claim──▶ running ──OK──▶ completed ──retention──▶ (deleted)
+   └──a slot of the key frees──▶  ▲                  │
+                                  └── retry, stall, ─┤
+                                      release        └──no attempts / stalls left──▶ failed (+ failure job) ──▶ …
 ```
 
 ## How it works
@@ -200,8 +205,9 @@ pending ──claim──▶ running ──OK──▶ completed ──retention
 In the caller's transaction, with its connection (with a pool: in a transaction of sqlane):
 
 1. Check the payload (JSON, at most `maxPayloadBytes`, default 256 KiB) and the options (`jobId`, `delay` or `runAt`,
-   `maxAttempts`, `maxStalls`, `retention`, `failureJob`, `mutexKeys`).
-2. The mutex keys: the enqueue option if given, else the definition's function of the payload.
+   `maxAttempts`, `maxStalls`, `retention`, `failureJob`, `globalConcurrencyLimits`).
+2. The global limits: the enqueue option if given, else the definition's function of the payload; as keys, sorted,
+   with their maxes.
 3. `INSERT` the jobs, with their keys, in the order of their ids. This order prevents deadlocks between concurrent
    enqueues. Then `INSERT` the payloads of the rows that have this call's `enqueue_token`. With a `jobId`, an existing
    row means a duplicate. In this case, the enqueue returns `{ id, created: false }` and changes nothing, so it also
@@ -210,9 +216,9 @@ In the caller's transaction, with its connection (with a pool: in a transaction 
    statement (a CTE), which is atomic even outside a transaction.
 4. PostgreSQL with the NOTIFY hint: `pg_notify` in the same transaction, delivered on commit.
 
-Frozen in the row at enqueue: `maxAttempts`, `maxStalls`, both retentions, `failureJob`, the mutex keys. Any process
-can then retry, stall or fail the job without its definition. Read from the worker's definition at run time: `backoff`
-and `timeout`.
+Frozen in the row at enqueue: `maxAttempts`, `maxStalls`, both retentions, `failureJob`, the keys and their maxes. Any
+process can then retry, stall or fail the job without its definition. Read from the worker's definition at run time:
+`backoff`, `timeout`, `fairShareWeight` and the local limits.
 
 `enqueueMany` inserts many jobs in one statement per table and returns `{ id, created }[]` in input order. `created`
 comes from the call's `enqueue_token` (MySQL has no `RETURNING`): the payloads are inserted only for the rows with
@@ -226,20 +232,21 @@ many as the free slots allow, and starts their handlers. The pseudo-code below s
 
 ```text
 loop while started
-  names = registered job names with a free slot (under the caps of the name, its group and the instance)
+  names = registered job names with a free slot (under each of its local limits and the instance's cap)
   if no names: wait for a wake
   probe: the next run_at of each job name that has pending jobs (one statement)
   if nothing due: wait until the next run_at (at most the poll interval) or a wake
-  turn = the due names, the lowest running / weight first, at most 4 per free slot and 4 per free slot of their
-    group; the others at the next turn
-  names with mutex keys in the turn: their candidates (heads of free keys, FIFO per key), once per turn;
-    a plan with fill() leaves them their share of the free slots, of the instance and of their groups
-  plain names: lock the oldest due jobs of each, up to min(its room, its group's room, the free slots), and take
+  turn = the due names, the lowest running / weight first, at most 4 per free slot and 4 per free slot of each of
+    their local limits; the others at the next turn
+  names with global limits in the turn: their candidates (due jobs whose keys have room), and their due jobs with a
+    full key, once per turn; a plan with fill() leaves them their share of the free slots, of the instance and of
+    their local limits
+  plain names: lock the oldest due jobs of each, up to min(the rooms of its local limits, the free slots), and take
     them by share (fill(): the lowest running / weight first, ties round-robin)
-  names with mutex keys: claim their candidates whose keys are free, by share
+  names with global limits: claim their candidates whose keys have room, by share; block those with a full key
   claimed: start the handlers, loop at once
   none (other processes took them): back off 10–200 ms, with ±50 % jitter
-  none (all due jobs wait for keys): wait for a key-release wake or the poll interval
+  none (all due jobs blocked): wait for the end of a job of a key, or the poll interval
   a deadlock, a serialization failure, ER_CHECKREAD: the turn again at once, after 5–30 ms, up to 3 times
   another error (a lock wait timeout too), or a 4th such error in a row: an `error` event, then wait
     min(poll interval, 1 s)
@@ -274,15 +281,16 @@ remainder slot goes by ties, not by time, so it favors long jobs (see the API re
 
 **Which names a claim requests.** A claim locks up to the free slots of each name that it requests, so a claim of all
 1000 due names would lock thousands of rows to start a few jobs. A claim requests at most 4 names per free slot: the
-names furthest under their share first (`rankNames()`), and at most 4 per free slot of their group: a full group
-takes no more names, so the names after it get their turn. The names that the rule serves are always a prefix of that
+names furthest under their share first (`rankNames()`), and at most 4 per free slot of each of their local limits: a
+full limit takes no more names, so the names after it get their turn. The names that the rule serves are always a prefix of that
 order, and the other names are a margin for names whose jobs other processes hold. A claim that fills the free slots does not read the
 next due times of its names: they stay in the backlog, and the next turn claims them again.
 
-**The names with mutex keys** find their candidates once per turn, before the plain claim. A plan over all the names of
-the turn gives them their share of the free slots, on their candidate counts, and the plain claim leaves those slots
-free: in the instance, and in their groups (the plain claim gets the group rooms minus the reserved slots, and a
-`maxJobs` within them). If other processes take the candidates first, the reserved slots stay free for one turn, which comes at once.
+**The names with global limits** find their candidates once per turn, before the plain claim. A plan over all the
+names of the turn gives them their share of the free slots, on their candidate counts, and the plain claim leaves
+those slots free: in the instance, and in their local limits (the plain claim gets the rooms of the limits minus the
+reserved slots, and a `maxJobs` within them). If other processes take the candidates first, the reserved slots stay
+free for one turn, which comes at once.
 
 The process ignores the names that it does not handle. An idle name has no pending row, so it costs nothing. With 1000
 names and pending jobs in 10 of them, the probe reads 10 index entries. A probe with one query per registered name (a
@@ -292,8 +300,9 @@ These events wake the dispatcher:
 
 - An enqueue in this process, or a hint from another process. See
   [Wake-up after the commit](#wake-up-after-the-commit).
-- A finished job, which frees a slot, or a released mutex key. A job that finishes in a full group wakes every name
-  of the group, not only its own: the slot it frees can go to any of them.
+- A finished job, which frees a slot. A job that finishes in a full local limit wakes every name of the limit, not only
+  its own: the slot it frees can go to any of them. A job with global limits first unblocks the jobs of its keys, and
+  wakes their names, here and in the other processes.
 - The poll interval (5 s by default). It is the fallback, and it also finds jobs whose delay has ended.
 
 ### Wake-up after the commit
@@ -353,7 +362,8 @@ implementation for ioredis.
 - With `hint: { publish, subscribe }`, the channel is `<tablePrefix>ready`, and the message is a job name. sqlane
   publishes the hint after an enqueue, and `enqueue` does not wait for `publish`. A failed publish never rejects
   `enqueue`. Instead, sqlane emits an `error` event. A process sends a hint only for the jobs that it cannot start
-  itself. When a job frees mutex keys, the message is `*`, and every process probes all its names. A receiver re-probes
+  itself. When a job frees slots of global limits, the message is the name of each job that it unblocked. A
+  receiver re-probes
   for a short while, as after its own enqueue, because the hint can arrive before the commit.
 - With `{ notify: true }` on the pg, postgres.js or Drizzle adapter (PostgreSQL), sqlane listens on a dedicated
   connection. With pg, and with Drizzle over node-postgres, this connection comes from the queue's pool. postgres.js
@@ -367,17 +377,20 @@ A lost hint delays a job until the next poll. It never loses a job.
 
 ### Claim
 
-**Names without mutex keys** (in the definition of the claiming process; the keys of their rows are not taken): the
-due jobs are found, claimed and read at once, without candidates.
+**Names without global limits** (in the definition of the claiming process): the due jobs are found, claimed and read
+at once, without candidates. A locked row with global limits (from its enqueue options) is not taken: the claim
+returns its name, and the process claims that name with its limits from then on.
 
 - PostgreSQL: one statement, a transaction of its own. A `LATERAL` per due name locks its oldest due jobs
-  (`FOR UPDATE SKIP LOCKED`, at most `min(room, group room, free)`). The k-th locked row of a name gets the share
-  `(running + k − 1) / weight`, its share just before it takes the row. Ordering all rows by `(share, tie)` is the
-  greedy of `fill()`, row by row: a `ROW_NUMBER` per group keeps the group caps, and `LIMIT` the instance's. The shares
+  (`FOR UPDATE SKIP LOCKED`, at most `min(the rooms of its local limits, free)`). The k-th locked row of a name gets
+  the share `(running + k − 1) / weight`, its share just before it takes the row. Ordering all rows by `(share, tie)`
+  is the greedy of `fill()`, row by row. Without local limits, `LIMIT` keeps the instance's cap. With them, a
+  recursive CTE walks the rows in that order and takes a row while the instance and each of its limits have room: a
+  name can have several limits, so one `ROW_NUMBER` per limit would not do. The shares
   are `float8`: equal rationals give the same double, and different ones (weights ≤ 1000) differ far above its
   precision. An integration test checks the choice against `fill()` on random claims. The statement also
   returns `unpicked`, the names with a locked row that the claim did not take. The runner replays the choice with
-  `replayTie()` (`fill()` over the claimed rows, plus one row of each unpicked name, under the counts and group rooms
+  `replayTie()` (`fill()` over the claimed rows, plus one row of each unpicked name, under the counts and limit rooms
   that the claim was given) and moves the tie pointer as `fill()` would. The replay leaves out the names with no
   claimed row and a share above every claimed share: they never took a slot, nor tied. A property test checks the
   replay against `fill()` over all the locked rows.
@@ -395,14 +408,18 @@ So one turn of a process makes 2 round trips to the database on PostgreSQL: the 
 MySQL with the mysql2 adapter, it makes 6 round trips: the probe, and 5 for the claim transaction (the isolation level, `BEGIN`, the locking
 read, the `UPDATE` and `COMMIT`).
 
-**Names with mutex keys:** the candidates (the FIFO per key, from `sqlane_job_keys`), then one short transaction on the
-queue's pool:
+**Names with global limits:** the candidates, then one short transaction on the queue's pool. The candidates are the
+oldest 500 due jobs of each name, split by the held slots of their keys: those whose keys have room, at most twice the
+free slots of the name, and those with a full key.
 
 1. `SELECT … WHERE id IN (candidates) AND status = 'pending' AND run_at <= now ORDER BY run_at, id FOR UPDATE SKIP
    LOCKED`.
-2. Take the mutex keys (below). Drop the jobs whose keys are busy.
-3. `UPDATE` to `running` with a new `lock_token`, `locked_by`, `locked_until = now + lease` (4 minutes).
-4. Read the payloads.
+2. Read the held slots of their keys. Block the jobs with a key whose held slots reach the max of the job:
+   `status = 'blocked'`, `blocked_on` = that key.
+3. Choose among the others by share, FIFO within a name, counting the slots that the choice takes (`pick()`).
+4. Take a slot of each key of the chosen jobs (below). Drop the jobs that did not get all their slots.
+5. `UPDATE` to `running` with a new `lock_token`, `locked_by`, `locked_until = now + lease` (4 minutes).
+6. Read the payloads.
 
 Then the handlers start. A job without its payload (a broken enqueue outside a transaction, a manual change) goes back
 to `pending` with a 1 s delay and no attempt used, while it is younger than 60 s (its payload can still be on the way).
@@ -427,50 +444,55 @@ A lease is the time for which a process owns a running job. A lease lasts 4 minu
   30 s × 2^stalls, which is at most 1 h. So the first stall delays the job by 30 s, and the second stall by 60 s. After
   `maxStalls` stalls (2 by default), the next stall fails the job.
 - The keys of a stalled job linger for one more lease (4 minutes, in `held_until`) instead of being deleted, because
-  the old handler may still run. So a job with mutex keys runs again only after this time.
+  the old handler may still run. So a job with global limits runs again only after this time.
 - So after a crash, the leases of the process end within 4 minutes. Another process finds the jobs within about 30 s,
-  and it runs them again 30 s later. A job with mutex keys waits one more lease (4 minutes).
+  and it runs them again 30 s later. A job with global limits waits one more lease (4 minutes).
 - When a database write of a result fails, the process retries it for up to 10 minutes and renews the lease meanwhile.
 
-### Mutex keys
+### Global limits
 
-A mutex key is a string, such as `order:42`. Two jobs that share a key do not run at the same time.
+A global limit counts the running jobs of each of its keys in the whole cluster: `order:42`, or the limit's name for a
+limit without keys. A key of a limit of 1 is a mutex.
 
-- **Format.** A job has at most 10 keys. Each key has 1 to 255 printable ASCII characters. sqlane removes duplicate keys
-  at enqueue, before it counts them. The keys are global strings, so jobs of different names can share them.
-- **Hold.** The claim inserts one `sqlane_mutexes` row per key, in the claim transaction. So a job holds all its keys
-  or none of them. Every transition out of `running` deletes the rows in the same transaction, except when the keys
-  linger (see below). sqlane locks the keys in ascending order, so the transactions of the queue cannot deadlock on
-  them.
-- **FIFO per key.** A job starts only if none of its keys is held by a job of any name, and no older due job has one of
-  its keys. So a job with the keys A and B does not starve behind newer jobs of A or B.
-- **Which jobs count.** For each key of a candidate, the FIFO reads the due jobs of the key in order, from
-  `sqlane_job_keys`, and takes the oldest one of a name with mutex keys that the claiming process handles: a handled
-  name whose definition has `mutexKeys`. A job of another name can get keys from its enqueue options. These keys still
-  exclude other jobs at the claim, but without the FIFO. A name that no process handles never blocks a key,
-  for example a retired name or a misspelled name that someone enqueued by name. On PostgreSQL the FIFO reads the
-  first 100 due jobs of a key: more than 100 due jobs of other names at the front of a key make the process wait for
-  them. The candidates of a name are its oldest 500 due jobs. Processes that handle different names see different
-  jobs, so the FIFO across names is approximate.
-- **Wake-ups.** A completion with keys sends `#<key>` per key (NOTIFY, or the hint). Each process then looks up the
-  oldest due job of each released key and claims for its name, instead of probing all names. The woken name competes
-  for the free slots by its share, like any other name: it is not preferred. If it loses the slot, its job keeps its
-  place in the FIFO of the key, and the key stays free until the job runs.
-- **Fair share.** A name whose due jobs all wait for keys has no candidates: it takes no slot and banks nothing.
+- **Format.** A job has at most 10 keys. A key has at most 255 printable ASCII characters. sqlane removes duplicate keys
+  at enqueue, before it counts them. The keys are global strings, so jobs of different names can share them. Each key
+  is stored with the max of its limit, frozen at enqueue.
+- **Slots.** A running job holds one row of `sqlane_concurrency_slots` per key: `(key, slot)`, the lowest slot that no
+  job holds. A job starts if, for each of its keys, fewer slots are held than its own max. The claim inserts the rows in
+  the order of `(key, slot)`, so the transactions of the queue cannot deadlock on them, and a job holds all its slots
+  or none: two claims that race for one slot conflict on the primary key, and the loser drops the slots it took. Every
+  transition out of `running` deletes the rows in the same transaction, except when they linger (see below).
+- **Two maxes for one key.** Jobs enqueued before and after a deploy that changed a max carry different maxes. Each job
+  checks its own: after a lowering, new jobs wait until the held slots drop below the new max. Two claims that race
+  during the change can overshoot the lower max for a moment; with one max, the slots are exact.
+- **Blocked jobs.** A claim blocks a due job whose key is full: `status = 'blocked'`, `blocked_on` = the key. It leaves
+  the due jobs, so the 500 candidates of a name are never all jobs of one full key, and a flood of one client does not
+  hold back the others. Jobs of a key start in FIFO order among those that can start; a job with several keys waits
+  only for its full keys, so under contention it can wait longer than a newer job with fewer keys.
+- **Unblock.** After the end of a job with keys, and after a claim that blocked jobs, the process unblocks the keys: the
+  oldest jobs blocked on each key, as many as its free slots by the max of its oldest blocked job, go back to
+  `pending`, and their names are woken here and by a hint. The release and the claim each unblock after their own
+  commit, so the later of the two sees both: a job is not left blocked on a key with room. An unblocked job that is
+  still blocked by another key is blocked again on that key. The stall recovery sweeps the keys with blocked jobs about
+  every 30 s, for a process that stopped before its unblock and for the slots whose linger ended.
+- **Which jobs count.** A claim reads the keys of the rows, not the definition: a job of any name with keys from its
+  enqueue options counts. A worker claims a name through the global limits when its definition has
+  `globalConcurrencyLimits`, or once a plain claim met a row of the name with limits.
+- **Fair share.** A name whose due jobs all have full keys has no candidates: it takes no slot and banks nothing.
 - **Timeout.** JavaScript cannot stop a handler. On a timeout, sqlane aborts the `signal` with a `JobTimeoutError` and
-  emits a `timed_out` event. The job stays `running`, and its lease is renewed. It keeps its keys and its slot until the
-  handler settles, but for at most one more lease. During this time, `getStats()` counts it as
+  emits a `timed_out` event. The job stays `running`, and its lease is renewed. It keeps its slots and its slot of the
+  process until the handler settles, but for at most one more lease. During this time, `getStats()` counts it as
   `stuck`. Then the attempt fails with the `JobTimeoutError`. The job is retried after its backoff, or it fails for
-  good, and its keys are freed. This applies to all jobs, with or without keys.
-- **Linger.** The keys outlive their job row only in two cases, as rows with a `held_until` time. The first case is a
-  release on close while the handler still runs. The keys then stay until `exitsBy` plus 2 s (see [Close](#close)). The
-  second case is a stall. The keys then stay for one lease, because the old handler may still run. So the old run and
-  the new run do not overlap, unless a handler ignores its `signal` past the lease or past `exitsBy`.
-- **A job with mutex keys needs a timeout.** The lease is renewed while a handler runs. Without a timeout, a hung
-  handler would hold its keys in the whole cluster forever. So `handle()` throws a `ConfigError` if the definition has
-  `mutexKeys` and no timeout. A job can also get keys only from its enqueue options. If its handler has no timeout, the
-  job fails for good at the claim with a `FatalJobError` ("a job with mutex keys needs a timeout"), and its failure job
-  runs.
+  good, and its slots are freed. This applies to all jobs, with or without keys.
+- **Linger.** The slots outlive their job row only in two cases, as rows with a `held_until` time. The first case is a
+  release on close while the handler still runs. The slots then stay until `exitsBy` plus 2 s (see [Close](#close)).
+  The second case is a stall. The slots then stay for one lease, because the old handler may still run. So the old run
+  and the new run do not overlap, unless a handler ignores its `signal` past the lease or past `exitsBy`.
+- **A job with global limits needs a timeout.** The lease is renewed while a handler runs. Without a timeout, a hung
+  handler would hold its slots in the whole cluster forever. So `handle()` throws a `ConfigError` if the definition has
+  `globalConcurrencyLimits` and no timeout. A job can also get limits only from its enqueue options. If its handler has
+  no timeout, the job fails for good at the claim with a `FatalJobError` ("a job with global concurrency limits needs a
+  timeout"), and its failure job runs.
 
 ### Failure jobs
 
@@ -598,7 +620,7 @@ jobs whose retention has ended. It deletes them in batches of 1000 with SKIP LOC
 - `enqueue` uses the caller's connection or transaction.
 - All other queue work uses the adapter's pool, which should be small. The queue's transactions on this pool use
   `READ COMMITTED`. `migrate()` also runs on a connection of this pool.
-- Handlers use whatever connections they open. `maxConcurrency` limits the running handlers of a process, so they
+- Handlers use whatever connections they open. `localMaxConcurrency` limits the running handlers of a process, so they
   cannot exhaust the app's pool.
 
 ### MariaDB
@@ -621,7 +643,7 @@ copies of the MySQL files, changed where MariaDB differs. A change of the MySQL 
   the gap (11.0.0–11.0.5, 11.1.0–11.1.4, 11.2.0–11.2.3, 11.3, 11.4.0–11.4.1) answers `ER_UNKNOWN_SYSTEM_VARIABLE`
   (1193), and the store claims again without the prefix, from then on (a debug log). Only the claim statement needs
   it: the other locking reads either have no consistent read in the same statement (`renewLeases`,
-  `deleteExpiredJobs`, the claim of jobs with mutex keys), or lock their one row, by primary key, before the payload
+  `deleteExpiredJobs`, the claim of jobs with global limits, `unblock`), or lock their one row, by primary key, before the payload
   subquery opens the view (`lockJob` of `failJob` and of stall recovery). Each statement of the READ COMMITTED queue
   transaction has a read view of its own, so no view from an earlier statement is open.
 - **Writes by a list of ids.** On a small table, MariaDB scans the whole table for `WHERE id IN (…)` and waits for
@@ -640,7 +662,8 @@ The table lists each guarantee and the mechanism that keeps it.
 | A committed job runs at least once.                                                                                                                                                            | Leases, stall recovery, and the release on close.                                                                                                             |
 | Only the current owner saves the result of a job.                                                                                                                                              | The claim uses SKIP LOCKED, and every write checks the `lock_token`.                                                                                          |
 | A job with a `jobId` is added once while its row exists.                                                                                                                                       | The primary key is `<job_name>:<job_id>`.                                                                                                                     |
-| Two jobs with a common mutex key do not run at the same time, unless a handler ignores its `signal` past the lease or `exitsBy`.                                                               | The primary key of `sqlane_mutexes`, the claim, and the linger of keys.                                                                                       |
+| At most `max` jobs with a common key of a global limit run at the same time, unless a handler ignores its `signal` past the lease or `exitsBy`, or two claims race during a change of the max. | The primary key `(key, slot)` of `sqlane_concurrency_slots`, the claim, and the linger of slots.                                                              |
+| A job blocked on a key is due again once the key has room.                                                                                                                                     | The unblock after each release and after each claim that blocks, and the sweep of the stall recovery.                                                         |
 | A job that fails for good adds its failure job, if the database accepts it.                                                                                                                    | The INSERT of the failure job runs in the transaction of the fail.                                                                                            |
 | A lost hint does not lose a job.                                                                                                                                                               | Hints only wake processes, and the database keeps the jobs.                                                                                                   |
 | Each slot of a schedule adds at most one job, ever.                                                                                                                                            | The cursor in `sqlane_schedules`, locked and moved in the transaction of the enqueue.                                                                         |
@@ -695,9 +718,10 @@ The source files in `src/` have snake_case names. These are the main ones:
 
 - `create_sqlane.js` is the facade. It creates the instance and connects the parts below.
 - `define_job.js` defines jobs.
-- `registry.js` keeps the handlers, their caps, weights and concurrency groups.
+- `registry.js` keeps the handlers, their weights and local limits.
 - `fair_share.js` shares the free slots between the names: `fill()`, `rankNames()`, `chooseRows()`, and `replayTie()` for the choices made in SQL.
-- `define_concurrency_group.js` defines the concurrency groups.
+- `define_concurrency_limit.js` defines the concurrency limits; `concurrency_keys.js` checks the global limits of a
+  job at enqueue.
 - `runner.js` runs the dispatcher loop. It also renews the leases, recovers stalled jobs, runs the cleanup, and
   implements `close()` and `drain()`.
 - `enqueue.js` implements `enqueue` and `enqueueMany`.
@@ -711,12 +735,12 @@ The source files in `src/` have snake_case names. These are the main ones:
 - `schema/` holds the schema of each dialect, as versioned migrations.
 - `adapters/` holds one adapter per driver or ORM.
 
-Small helper modules, such as `backoff.js`, `duration.js`, `mutex_keys.js` and `payload.js`, complete the list.
+Small helper modules, such as `backoff.js`, `duration.js` and `payload.js`, complete the list.
 
 ## Testing
 
 - **Unit tests** sit next to the code, in `src/**/*.test.js`. They cover the modules that need no database, such as
-  backoff, durations, payloads, mutex keys, defaults, option checks and the error classes. They also check the
+  backoff, durations, payloads, global limits, defaults, option checks and the error classes. They also check the
   adapters and the runner with small stub objects instead of a database.
 - **Type tests** in `test/types/` and the examples in `examples/` are type-checked in CI, so the public API cannot
   change by accident. The quickstart in `examples/quickstart` runs in CI against the packed package.
