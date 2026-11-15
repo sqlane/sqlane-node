@@ -263,10 +263,10 @@ export function createStore(adapter, tablePrefix, logger) {
                 return Promise.resolve([]);
             }
 
-            // One statement on PostgreSQL; a read, then the writes, on MySQL and MariaDB
+            // One statement on PostgreSQL; on MySQL and MariaDB, a read, then a transaction only when a key has room
             return adapter.dialect === 'postgres'
                 ? postgresFinal.unblock(adapter.queue, p, keys)
-                : inQueue(executor => final.unblock(executor, p, keys));
+                : final.unblock(adapter.queue, p, keys, inQueue);
         },
         sweepSlots: limit => inQueue(executor => final.sweepSlots(executor, p, limit)),
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
