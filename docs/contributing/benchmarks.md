@@ -35,6 +35,62 @@ restarts cleanly (InnoDB with a slow shutdown), so no background work of the mig
 Before the window, the sqlane processes run a minor GC, so a GC in the window comes from its own allocations, not from
 a start-up that differs between the versions. `--db`, `--scenario` and `--window` narrow a run; `--save <file>` writes the numbers.
 
+### Contention
+
+Four more scenarios of `pnpm bench:regression` run only when named with `--scenario`: they are not in the default run
+nor in the published numbers. They measure what concurrency and rate limits cost when jobs wait on them, against the
+same work without limits.
+
+| Scenario                  | Workload                                                                 |
+| ------------------------- | ------------------------------------------------------------------------ |
+| `contention`              | The realistic trace, with the limits of its names                        |
+| `contention_plain`        | The same trace, without limits                                           |
+| `contention_stress`       | The stress trace: every job with 2 to 5 concurrency limits of max 1 to 5 |
+| `contention_stress_plain` | The same trace, without limits                                           |
+
+A trace (`bench/regression/trace.mjs`) is generated ahead from a seed (`--seed`, default 1), the same in every process
+and on both refs: per job, its time, name, payload, duration and outcome. A producer replays it from its start; 2
+workers with `localMaxConcurrency: 10` each run its jobs, each for its duration. The jobs arrive at 100/s (Poisson),
+and at 300/s in a burst of 2 s every 10 s, over 1000 names (Zipf). A job runs for about 20 ms (300 ms for the slow
+names, which get 5% of the jobs; log-normal, σ = 1, at most 2 s: 56 ms on average), so the workers use about 6 of their
+20 slots, and 17 in a burst. 1% of the jobs throw once and run again after 200 ms, and 0.2% of them throw a
+`RateLimitedError` (retryAfter 1 s) once. A payload has a tenant (1000, Zipf), a user of the tenant and an integration,
+which the keys of the limits come from. In the realistic profile, 70% of the names have no limit, 15% one, 10% two or
+three, 5% four or five, out of 8: per tenant, per user, per integration (max 1 to 5), and shared (max 5 to 50); 10% of
+the names with a limit also have a rate limit (per tenant 10/s, or shared 50/s). The generator fails, and names the
+key, if a key has no steady state: on average, its work must stay under 80% of its max (the busiest key of the
+realistic trace is at 16%, of the stress trace at 35%), and its starts under 80% of its rate (4%). So jobs wait on
+their keys in the bursts, and the queue drains between them.
+
+Their warm-up is 30 s and their window 60 s (unless `--warmup` or `--window`): a pair of runs takes about 3 minutes,
+a rerun as long again; the four scenarios take 16 to 17 minutes on the Linux machine, the databases in parallel. The
+verdict is per completed job, as in `run` (a job that ran twice counts once: its second attempt is its cost). When jobs
+wait, the work per job depends on the timing, so the same tree spreads by more than the ±5% and ±3% of the other
+scenarios: by up to 14% in instructions and 13% in statements (`contention`) over three runs on the Linux machine.
+Each scenario has thresholds of its own (`CONTENTION_THRESHOLDS` in `ab.mjs`), its spread rounded up: `contention`
+±14% / ±13%, `contention_plain` ±5% / ±5%, `contention_stress` ±9% / ±5%, `contention_stress_plain` ±7% / ±6%. The
+report adds:
+
+- **The penalty of the limits**: instructions and statements per job with limits against without, per tree.
+- **The latency** from the enqueue to the first start, p50, p95 and p99, of the jobs that started in the window: each
+  worker keeps a histogram in memory (buckets of 4.4%), read with its counts at the edges of the window.
+- **The blocked share**: the jobs that started in the window and waited on a full key. sqlane does not say which jobs
+  it blocked, so it is an estimate from the runs (each worker keeps the job, start and end of each run in memory, and
+  sends them once, after the window): between its enqueue and its start, one of the job's concurrency keys had its
+  max of runs, or one of its rate keys had no quota.
+- **The guard**, from the same runs: no concurrency key ran more jobs at once than its max, and no rate key started
+  more than `max + burst − 1` jobs in any window of its period (less 100 ms: a run starts a little after its claim). A
+  violation fails the run.
+- **The repeated runs**: the runs that the trace does not explain (a job runs once, twice if it throws once), in the
+  whole run: a job that ran again after a stall, or twice at once. Reported, not a failure.
+- **The internal errors**: the `error` events of sqlane in the window, such as a deadlock of a periodic sweep under
+  contention. sqlane goes on after one, so these runs do too (the other scenarios fail on any error).
+
+```sh
+pnpm bench:regression --ref . --scenario contention --scenario contention_plain \
+    --scenario contention_stress --scenario contention_stress_plain
+```
+
 On macOS, the servers come from Homebrew (`postgresql@17`, `mysql@8.4`, `mariadb@11.8`; `PG_BIN`, `MYSQL_BIN`,
 `MARIADB_BIN` for others), and the counters from `bench/lib/proc_usage.py`. On Linux, `bench/run_linux.sh regression` runs it
 in the container of `bench/compare/linux.dockerfile`, with the counters of `bench/lib/proc_usage_linux.py`.

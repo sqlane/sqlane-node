@@ -14,7 +14,7 @@ export default defineConfig({
                 extends: true,
                 test: {
                     name: 'unit',
-                    include: ['src/**/*.test.js'],
+                    include: ['src/**/*.test.js', 'bench/regression/*.test.js'],
                 },
             },
             // One project per database: the same integration tests run against each one, in its own container
