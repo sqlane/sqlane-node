@@ -2,25 +2,21 @@
 import { hostname } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createMonotonicUlid } from './ulid.js';
-import { getBackoffMs } from './backoff.js';
 import { parseDuration } from './duration.js';
-import { toErrorJson } from './error_json.js';
 import {
     ClosedError,
     ConfigError,
     DrainTimeoutError,
-    FatalJobError,
     InvalidOptionsError,
-    JobTimeoutError,
     LeaseLostError,
-    MissingPayloadError,
-    RateLimitedError,
-    RetryJobError,
     ShutdownError,
 } from './errors.js';
+import { createFailureJobs } from './failure_jobs.js';
 import { ANY_NAME } from './hint_channel.js';
 import { chooseRows, fill, rankNames, replayTie, shareNamesOfRequests } from './fair_share.js';
 import { incrementUs, waitUs } from './gcra.js';
+import { createJobRuns, waitAtMost } from './job_runs.js';
+import { createKeyUnblocks } from './key_unblocks.js';
 import {
     createLocalRateWakes,
     limitRoom,
@@ -30,16 +26,13 @@ import {
     roomOf,
     shareNamesOf,
 } from './local_limits.js';
-import { nowUs, pauseRate, takeRate } from './local_rates.js';
-import { buildNewJob } from './new_job.js';
-import { parseRateKey, rateKeyOf } from './rate_limit_shape.js';
+import { nowUs, takeRate } from './local_rates.js';
 import { isRateKey } from './rate_keys.js';
-import { createKeyUnblocks } from './key_unblocks.js';
-import { scheduledAtOf } from './schedule.js';
 import { isQuickRetryError, isTransientDbError } from './transient_error.js';
 
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
+/** @typedef {import('./job_runs.js').RunningJob} RunningJob */
 /** @typedef {import('./local_limits.js').LocalLimit} LocalLimit */
 
 /** A turn that fails with a deadlock-like error is retried at once this many times, then reported and backed off */
@@ -81,26 +74,8 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
 const CLAIM_NAMES_PER_SLOT = 4;
 const STALLED = { name: 'StalledError', message: 'The lease of the job ended: its process stopped or blocked' };
 const BATCH = 1000;
-/** The completed jobs of one write */
-const MAX_COMPLETE_BATCH = 100;
 
 /** @typedef {'idle' | 'started' | 'draining' | 'closing' | 'closed'} RunnerState */
-
-/**
- * @typedef {object} RunningJob
- * @property {string} key
- * @property {ClaimedJob} claimed
- * @property {HandlerEntry} entry
- * @property {AbortController} controller
- * @property {Promise<void>} done Resolves when the result is written (or given up).
- * @property {boolean} settled The handler settled.
- * @property {boolean} released Released or abandoned on close: the result is not written.
- * @property {boolean} timedOut
- * @property {boolean} leaseLost
- * @property {boolean} completionConfirmed The completion batch changed every owned row.
- * @property {number} leaseEndsAt
- * @property {number} startedAt
- */
 
 /**
  * @typedef {object} RunnerParams
@@ -132,53 +107,6 @@ const MAX_COMPLETE_BATCH = 100;
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
  * @property {(name: string) => boolean} canStartNow This process handles the name and has a free slot for it.
  */
-
-/**
- * Waits for the promise, at most `ms`. The timer ends with the wait: it keeps no process alive after it.
- * @param {Promise<unknown>} promise
- * @param {number} ms
- * @param {{ ref?: boolean }} [options] `ref: false`: the timer alone does not keep the process alive.
- * @returns {Promise<void>}
- */
-async function waitAtMost(promise, ms, { ref = true } = {}) {
-    /** @type {NodeJS.Timeout | undefined} */
-    let timer;
-
-    try {
-        // A plain timer, cleared: an aborted sleep would build an error at each wait
-        await Promise.race([promise, new Promise((resolve) => {
-            timer = setTimeout(resolve, Math.max(ms, 0));
-
-            if (!ref) {
-                timer.unref();
-            }
-        })]);
-    } finally {
-        clearTimeout(timer);
-    }
-}
-
-/**
- * @param {RunningJob} job
- * @returns {import('./types.js').HandlerContext}
- */
-function contextOf(job) {
-    const { claimed } = job;
-
-    return {
-        payload: undefined,
-        job: {
-            id: claimed.id,
-            name: claimed.name,
-            attempt: claimed.attempts + 1,
-            maxAttempts: claimed.maxAttempts,
-            enqueuedAt: claimed.enqueuedAt,
-            globalConcurrencyLimits: claimed.limits,
-            scheduledAt: scheduledAtOf(claimed.id),
-        },
-        signal: job.controller.signal,
-    };
-}
 
 /**
  * @param {RunnerParams} params
@@ -258,9 +186,6 @@ export function createRunner({
     let namesLeftOut = false;
     let claimsInFlight = 0;
     const counts = { completed: 0, retried: 0, failed: 0 };
-    /** @type {{ job: import('./store/store.js').FinishedJob, written: PromiseWithResolvers<boolean> }[]} */
-    let toComplete = [];
-    let completing = false;
     /** The jobs that finished: their results are written */
     let finishedCount = 0;
 
@@ -321,6 +246,30 @@ export function createRunner({
         setTimer,
         clearTimer,
         wake: names => wakeUp(names, { speculative: true }),
+    });
+    const failureJobs = createFailureJobs({
+        registry,
+        defaults,
+        emit,
+        reportError,
+        onAdded: (name) => {
+            onEnqueued([name]);
+            hintChannel.publish(name);
+        },
+    });
+    const { runJob } = createJobRuns({
+        store,
+        defaults,
+        logger,
+        emit,
+        reportError,
+        counts,
+        timings: t,
+        state: () => state,
+        failureJobs,
+        armRateWake,
+        wakeAfterRates,
+        hintChannel,
     });
 
     /**
@@ -579,362 +528,6 @@ export function createRunner({
         movePointer(lastTieWinner);
 
         return chosen;
-    }
-
-    // ---- results ----
-
-    /** @type {import('./store/store.js').FailureJobBuilder} */
-    function buildFailureJob(failed) {
-        const newJob = buildNewJob({
-            name: failed.failureJob,
-            definition: registry.findDefinition(failed.failureJob),
-            defaults,
-            payload: {
-                job: {
-                    id: failed.id,
-                    name: failed.name,
-                    payload: failed.payload,
-                    attempt: failed.attempt,
-                    maxAttempts: failed.maxAttempts,
-                },
-                error: failed.error,
-            },
-            options: undefined,
-            maxPayloadBytes: Infinity,
-        });
-
-        return { ...newJob, failureJob: null };
-    }
-
-    /**
-     * @param {{ id: string, name: string, attempt: number, failureJob: string | null }} job
-     * @param {import('./store/store.js').FailureJobResult | null} result
-     */
-    function reportFailureJob(job, result) {
-        if (result && 'notAdded' in result) {
-            reportError('failure_job', result.notAdded);
-            emit({
-                type: 'failure_job_not_added',
-                jobId: job.id,
-                jobName: job.name,
-                attempt: job.attempt,
-                failureJob: String(job.failureJob),
-                error: result.notAdded,
-            });
-        } else if (result && 'added' in result) {
-            onEnqueued([result.added.name]);
-            hintChannel.publish(result.added.name);
-        }
-    }
-
-    /**
-     * Completes the job in the next write. One write at a time: the jobs that finish during a write go together in the
-     * next one, in one transaction. The first write waits for the jobs that finish in the same turn of the event loop
-     * (the jobs of one claim, with short handlers): one commit for them, and their slots free together for one claim.
-     * @param {import('./store/store.js').FinishedJob} job
-     * @returns {Promise<boolean>} Every job in its batch was completed. Rejects with the error of its write.
-     */
-    function completeJob(job) {
-        /** @type {PromiseWithResolvers<boolean>} */
-        const written = Promise.withResolvers();
-
-        toComplete.push({ job, written });
-
-        if (!completing) {
-            completing = true;
-            setImmediate(() => void writeCompletions());
-        }
-
-        return written.promise;
-    }
-
-    async function writeCompletions() {
-        while (toComplete.length) {
-            const batch = toComplete.slice(0, MAX_COMPLETE_BATCH);
-
-            toComplete = toComplete.slice(MAX_COMPLETE_BATCH);
-
-            try {
-                // In the order of the ids: the row locks of two writes come in one order
-                // oxlint-disable-next-line no-await-in-loop -- one write at a time
-                const changed = await store.completeJobs(
-                    batch.map(entry => entry.job).toSorted((a, b) => (a.id < b.id ? -1 : 1)),
-                );
-
-                for (const { written } of batch) {
-                    // The count cannot identify stale entries in a partial batch: keep all their wakes.
-                    written.resolve(changed === batch.length);
-                }
-            } catch (error) {
-                for (const { written } of batch) {
-                    written.reject(error);
-                }
-            }
-        }
-
-        completing = false;
-    }
-
-    /**
-     * Runs a write of the result until it succeeds; on errors, it retries with a backoff while the lease is renewed.
-     * @param {RunningJob} job
-     * @param {() => Promise<unknown>} write
-     * @returns {Promise<void>}
-     */
-    async function writeResult(job, write) {
-        const since = Date.now();
-
-        for (let attempt = 0; ; attempt++) {
-            try {
-                // oxlint-disable-next-line no-await-in-loop -- a retry waits for the previous try
-                await write();
-
-                return;
-            } catch (error) {
-                reportError('write_result', error);
-
-                if (Date.now() - since >= t.maxFinalizingMs || job.released || state === 'closed') {
-                    // The lease ends, and the stall recovery takes the job.
-                    return;
-                }
-
-                // oxlint-disable-next-line no-await-in-loop -- a retry waits for the previous try
-                await sleep(Math.min(100 * (2 ** attempt), 2000));
-            }
-        }
-    }
-
-    /**
-     * @param {RunningJob} job
-     * @param {unknown} error Null: the handler succeeded.
-     * @returns {Promise<void>}
-     */
-    async function finalize(job, error) {
-        const { claimed } = job;
-        const base = { jobId: claimed.id, jobName: claimed.name, attempt: claimed.attempts + 1 };
-        const durationMs = Date.now() - job.startedAt;
-
-        if (error === null && !job.timedOut) {
-            await writeResult(job, async () => {
-                job.completionConfirmed = await completeJob(claimed);
-            });
-            counts.completed++;
-            emit({ type: 'completed', ...base, durationMs });
-
-            return;
-        }
-
-        if (error instanceof RateLimitedError && await waitForRate(job, error, durationMs)) {
-            return;
-        }
-
-        const fatal = error instanceof FatalJobError || error instanceof MissingPayloadError;
-        const attemptsLeft = claimed.attempts + 1 < claimed.maxAttempts;
-
-        if (!fatal && attemptsLeft) {
-            const delayMs = retryDelayMs(job, error);
-
-            await writeResult(job, () => store.retryJob(claimed, { delayMs, error: toErrorJson(error) }));
-            counts.retried++;
-            emit({ type: 'retried', ...base, durationMs, delayMs, error });
-
-            return;
-        }
-
-        logger?.error({ error, jobId: claimed.id, jobName: claimed.name }, 'sqlane: job failed');
-        await writeResult(job, async () => {
-            const { failureJob } = await store.failJob(claimed, { error: toErrorJson(error), buildFailureJob });
-
-            reportFailureJob(
-                { id: claimed.id, name: claimed.name, attempt: base.attempt, failureJob: claimed.failureJob },
-                failureJob,
-            );
-        });
-        counts.failed++;
-        emit({ type: 'failed', ...base, durationMs, error });
-    }
-
-    /**
-     * @param {RunningJob} job
-     * @param {unknown} error Of a failed attempt that is retried.
-     * @returns {number} The delay of a RetryJobError, or the `retryAfter` of a RateLimitedError on no rate limit of
-     *     the job; else the backoff.
-     */
-    function retryDelayMs(job, error) {
-        const backoffMs = getBackoffMs(job.entry.definition?.backoff ?? defaults.backoff, job.claimed.attempts + 1);
-
-        if (error instanceof RetryJobError) {
-            return parseDuration(error.delay) ?? backoffMs;
-        }
-
-        if (error instanceof RateLimitedError) {
-            return parseDuration(error.retryAfter) ?? backoffMs;
-        }
-
-        return backoffMs;
-    }
-
-    /**
-     * A RateLimitedError on rate limits of the job (`limit`, or all of them without it), without an attempt used: a
-     * global key gets its next start at `retryAfter` from now at the earliest, and the job is blocked on it, its slots
-     * freed; a local limit pauses in this process until then, and a job without a global key to wait on is pending
-     * again at once, for any process.
-     * @param {RunningJob} job
-     * @param {RateLimitedError} error
-     * @param {number} durationMs
-     * @returns {Promise<boolean>} False: `limit` is not a rate limit of the job, or it has none.
-     */
-    async function waitForRate(job, error, durationMs) {
-        const { claimed, entry } = job;
-        const key = error.limit === undefined ? null : rateKeyOf(error.limit);
-        const globalLimits = claimed.rateLimits.filter(limit => key === null || limit.key === key);
-        const localRates = entry.rates.filter(rate => key === null || rate.settings.key === key);
-
-        if (!globalLimits.length && !localRates.length) {
-            return false;
-        }
-
-        // Checked by the constructor
-        const retryAfterMs = parseDuration(error.retryAfter) ?? 0;
-        const now = nowUs();
-        let waitMs = retryAfterMs;
-
-        for (const rate of localRates) {
-            pauseRate(rate, now, retryAfterMs * 1000);
-        }
-
-        wakeAfterRates(entry);
-
-        if (globalLimits.length) {
-            await writeResult(job, async () => {
-                const result = await store.rateLimited(claimed, {
-                    limits: globalLimits,
-                    retryAfterMs,
-                    error: toErrorJson(error),
-                });
-
-                if (result.changed) {
-                    // Blocked on its first key: the timer of this process unblocks it
-                    armRateWake(globalLimits[0].key, result.delayMs);
-                    waitMs = Math.max(waitMs, result.delayMs);
-                }
-            });
-        } else {
-            await writeResult(job, () => store.releaseJob(claimed, { delayMs: 0, lingerMs: 0 }));
-            // The other processes may run it now
-            hintChannel.publish(claimed.name);
-        }
-
-        emit({
-            type: 'rate_limited',
-            jobId: claimed.id,
-            jobName: claimed.name,
-            attempt: claimed.attempts + 1,
-            ...(globalLimits.length
-                ? { ...parseRateKey(globalLimits[0].key), scope: 'global' }
-                : { limit: localRates[0].limit.name, key: null, scope: 'local' }),
-            retryAt: new Date(Date.now() + waitMs),
-            durationMs,
-            error,
-        });
-
-        return true;
-    }
-
-    /**
-     * Runs the handler, then writes the result.
-     * @param {RunningJob} job
-     * @param {{ found: boolean, payload: unknown }} payload
-     * @returns {Promise<void>}
-     */
-    async function runJob(job, payload) {
-        const { claimed, entry } = job;
-        /** @type {unknown} */
-        let error = null;
-
-        if (!payload.found) {
-            if (Date.now() - claimed.enqueuedAt.getTime() < t.missingPayloadGraceMs) {
-                // Its payload can still be on the way (an enqueue outside a transaction)
-                job.settled = true;
-                await writeResult(job, () => store.releaseJob(claimed, { delayMs: 1000, lingerMs: 0 }));
-
-                return;
-            }
-
-            error = new MissingPayloadError(`The payload of job "${claimed.id}" is missing`);
-        } else if (claimed.limits.length && entry.timeoutMs === null) {
-            error = new FatalJobError(
-                'A job with global concurrency limits needs a timeout: set one in the definition or "defaults"',
-            );
-        } else {
-            error = await runHandler(job, payload.payload);
-        }
-
-        job.settled = true;
-
-        if (job.released || job.leaseLost) {
-            return;
-        }
-
-        await finalize(job, error);
-    }
-
-    /**
-     * @param {RunningJob} job
-     * @param {unknown} payload
-     * @returns {Promise<unknown>} The error, or null.
-     */
-    async function runHandler(job, payload) {
-        const { entry } = job;
-        const handlerDone = (async () => {
-            try {
-                await entry.handler({ ...contextOf(job), payload });
-
-                return null;
-            } catch (error) {
-                return error ?? new Error('The handler threw no error object');
-            }
-        })();
-
-        if (entry.timeoutMs === null) {
-            return handlerDone;
-        }
-
-        /** @type {NodeJS.Timeout | undefined} */
-        let timer;
-        const timedOut = new Promise((resolve) => {
-            timer = setTimeout(() => resolve('timeout'), entry.timeoutMs ?? 0);
-        });
-        const first = await Promise.race([handlerDone, timedOut]);
-
-        clearTimeout(timer);
-
-        if (first !== 'timeout') {
-            return first;
-        }
-
-        const timeoutError = new JobTimeoutError(`The job timed out after ${entry.timeoutMs} ms`);
-
-        job.timedOut = true;
-        job.controller.abort(timeoutError);
-        emit({
-            type: 'timed_out',
-            jobId: job.claimed.id,
-            jobName: job.claimed.name,
-            attempt: job.claimed.attempts + 1,
-            durationMs: Date.now() - job.startedAt,
-        });
-
-        try {
-            await store.markTimedOut(job.claimed);
-        } catch (error) {
-            reportError('mark_timed_out', error);
-        }
-
-        // The job keeps its keys and its slot until the handler settles, at most one more lease
-        await waitAtMost(handlerDone, t.leaseMs, { ref: false });
-
-        return timeoutError;
     }
 
     /**
@@ -1675,7 +1268,10 @@ export function createRunner({
             }
 
             // oxlint-disable-next-line no-await-in-loop -- small batches, one job per transaction
-            const recovered = await store.recoverStaleJob(id, { leaseMs: t.leaseMs, buildFailureJob });
+            const recovered = await store.recoverStaleJob(id, {
+                leaseMs: t.leaseMs,
+                buildFailureJob: failureJobs.build,
+            });
 
             if (recovered.result === 'released') {
                 freedKeys = true;
@@ -1686,7 +1282,7 @@ export function createRunner({
                 freedKeys = true;
                 counts.failed++;
                 emit({ type: 'failed', jobId: id, jobName: name, attempt, durationMs: runMs, error: STALLED });
-                reportFailureJob({ id, name, attempt, failureJob: null }, recovered.failureJob);
+                failureJobs.report({ id, name, attempt, failureJob: null }, recovered.failureJob);
             }
         }
 
