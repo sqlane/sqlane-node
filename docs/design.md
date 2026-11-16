@@ -827,8 +827,9 @@ The source files in `src/` have snake_case names. These are the main ones:
 - `runner.js` implements `start()`, `close()` and `drain()`, and connects these parts. `dispatcher.js` runs the
   dispatcher loop: the wakes, the probes and the claims. `job_runs.js` runs a claimed job and writes its result, and
   `failure_jobs.js` adds its failure job. `leases.js` renews the leases. `key_unblocks.js` unblocks the jobs blocked on
-  keys, with the timer of the rate keys. `local_limits.js` holds the rooms of the local limits. `reprobes.js` re-probes
-  after an enqueue. `maintenance.js` recovers stalled jobs, sweeps the slots and runs the cleanup.
+  keys, with the timer of the rate keys. `local_limits.js` holds the rooms of the local limits, and the wake timer of
+  the local rate limits. `reprobes.js` re-probes after an enqueue. `maintenance.js` recovers stalled jobs, sweeps the
+  slots and runs the cleanup.
 - `enqueue.js` implements `enqueue` and `enqueueMany`.
 - `hint_channel.js` sends and receives the hints.
 - `migrations.js` implements `migrate()` and `getMigrations()`.
