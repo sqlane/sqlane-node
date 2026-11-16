@@ -5,7 +5,7 @@ import { nextUnblockMs, RATE_UNBLOCK_BATCH, toleranceUs, waitMsOf, waitUs as key
 import { isRateKey } from '../rate_keys.js';
 import { createMonotonicUlid } from '../ulid.js';
 import { insertJobsPostgres } from './postgres_enqueue.js';
-import { rateLimitsOf } from './postgres_worker.js';
+import { arrayParam, rateLimitsOf } from './postgres_worker.js';
 
 /** @typedef {import('../types.js').Executor} Executor */
 /** @typedef {import('./store.js').OwnedJob} OwnedJob */
@@ -46,7 +46,7 @@ export async function renewLeases(executor, p, jobs, leaseMs) {
     const rows = await executor.query(`
         WITH locked AS (
             SELECT j.id FROM ${p}jobs j
-              JOIN unnest($1::text[], $2::text[]) AS own(id, lock_token)
+              JOIN unnest(${arrayParam(1, 'text')}, ${arrayParam(2, 'text')}) AS own(id, lock_token)
                 ON own.id = j.id AND own.lock_token = j.lock_token
              WHERE j.status = 'running'
                FOR UPDATE OF j SKIP LOCKED
@@ -149,7 +149,7 @@ export async function completeJobs(executor, p, jobs) {
 
     const [row] = await executor.query(`
         WITH owned AS (
-            SELECT * FROM unnest($1::text[], $2::text[]) AS o(id, lock_token)
+            SELECT * FROM unnest(${arrayParam(1, 'text')}, ${arrayParam(2, 'text')}) AS o(id, lock_token)
         ),
         done AS (
             UPDATE ${p}jobs j
@@ -329,7 +329,8 @@ export async function rateLimited(executor, p, job, { limits, retryAfterMs, erro
         WITH pushed AS (
             INSERT INTO ${p}rate_limits AS r (limit_key, tat)
             SELECT k.limit_key, ${NOW} + k.ahead_us * interval '1 microsecond'
-              FROM unnest($1::text[], $2::bigint[]) WITH ORDINALITY AS k(limit_key, ahead_us, position)
+              FROM unnest(${arrayParam(1, 'text')}, ${arrayParam(2, 'bigint')})
+                   WITH ORDINALITY AS k(limit_key, ahead_us, position)
              ORDER BY k.position
             ON CONFLICT (limit_key) DO UPDATE SET tat = GREATEST(r.tat, EXCLUDED.tat)
             RETURNING r.limit_key, r.tat
@@ -429,7 +430,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
 export async function unblock(executor, p, keys) {
     const rows = await executor.query(`
         WITH k AS (
-            SELECT DISTINCT unnest($1::text[]) AS limit_key
+            SELECT DISTINCT unnest(${arrayParam(1, 'text')}) AS limit_key
         ),
         room AS (
             SELECT k.limit_key,
@@ -491,7 +492,7 @@ export async function unblock(executor, p, keys) {
 export async function unblockRates(executor, p, keys, { floors = new Map() } = {}) {
     const [row] = await executor.query(`
         WITH k AS (
-            SELECT DISTINCT unnest($1::text[]) AS limit_key
+            SELECT DISTINCT unnest(${arrayParam(1, 'text')}) AS limit_key
         ),
         queue AS (
             SELECT k.limit_key, b.id, b.run_at, b.rate_limits FROM k
@@ -508,7 +509,9 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
                        COALESCE((SELECT ${debtUs('r.tat')} FROM ${p}rate_limits r WHERE r.limit_key = k.limit_key), 0),
                        COALESCE(f.debt, 0)
                    ) AS debt
-              FROM k LEFT JOIN unnest($2::text[], $3::bigint[]) AS f(limit_key, debt) ON f.limit_key = k.limit_key
+              FROM k
+              LEFT JOIN unnest(${arrayParam(2, 'text')}, ${arrayParam(3, 'bigint')}) AS f(limit_key, debt)
+                ON f.limit_key = k.limit_key
         ),
         need AS (
             SELECT queue.limit_key, queue.id, queue.run_at, e.inc, e.allow,
@@ -688,7 +691,7 @@ export async function deleteExpiredJobs(executor, p, limit) {
 export async function makeDue(executor, p, names) {
     await executor.run(`
         UPDATE ${p}jobs SET run_at = ${runAt('interval \'0\'')}
-         WHERE status = 'pending' AND job_name = ANY($1::text[]) AND run_at > ${NOW}
+         WHERE status = 'pending' AND job_name = ANY(${arrayParam(1, 'text')}) AND run_at > ${NOW}
     `, [names]);
 }
 

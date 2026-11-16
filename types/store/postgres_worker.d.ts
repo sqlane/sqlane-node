@@ -11,6 +11,17 @@ export type ClaimedJob = import('./store.js').ClaimedJob;
 /** The due jobs of each name with global limits that a search of candidates reads */
 export declare const LIMIT_WINDOW_SIZE = 500;
 /**
+ * An array parameter, behind a subquery (an InitPlan): the planner does not see its elements, in a custom plan either.
+ * PostgreSQL plans the first 5 executions of a prepared statement with the parameters' values, then keeps its generic
+ * plan if that costs no more than the custom ones did. A generic plan assumes 10 elements in an array; a custom one,
+ * which counts them, costs less with fewer, so each execution was planned again (planning took several times the
+ * execution). With the count hidden from both, the generic plan wins, and is planned once per connection.
+ * @param {number} position The parameter's position, from 1.
+ * @param {'text' | 'integer' | 'bigint'} type The type of its elements.
+ * @returns {string}
+ */
+export declare const arrayParam: (position: number, type: 'text' | 'integer' | 'bigint') => string;
+/**
  * The settings of the rate keys of a JSON array (`rate_limits`), with the increment of a start and the allowance of
  * the key in µs, as gcra.js computes them. Bigints: cost × per_us is at most 6 × 10^17.
  * @param {string} json
