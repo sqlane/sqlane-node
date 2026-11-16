@@ -180,7 +180,9 @@ if (trace) {
 }
 
 /** @type {Record<string, number>} */
-const counts = { ops: 0, jobs: 0, completed: 0, fired: 0, errors: 0, ...trace && { retried: 0, rateLimited: 0 } };
+const counts = {
+    ops: 0, jobs: 0, completed: 0, fired: 0, errors: 0, ...trace && { retried: 0, rateLimited: 0, internalErrors: 0 },
+};
 
 /**
  * @param {any} limit
@@ -259,6 +261,11 @@ const sqlane = createInstance({
             counts.retried++;
         } else if (trace && event.type === 'rate_limited') {
             counts.rateLimited++;
+        } else if (trace && event.type === 'error') {
+            // An internal operation that failed (a deadlock of a periodic sweep under contention): sqlane goes on, so
+            // the run does too; ab.mjs reports the count
+            counts.internalErrors++;
+            console.error(event);
         } else if (event.type === 'error' || event.type === 'failed') {
             counts.errors++;
             console.error(event);

@@ -425,7 +425,8 @@ function startApp(appArgs, role, log, label = role) {
  *     waited on a full key; null without limits.
  * @property {{ keys: number, busiest: { concurrency: string | null, rate: string | null } } | null} guard The keys
  *     of the run, and the closest to its bound of each kind; null without limits. A violation fails the run.
- * @property {{ retried: number, rateLimited: number }} events In the window.
+ * @property {{ retried: number, rateLimited: number, internalErrors: number }} events In the window. Internal
+ *     errors: `error` events of sqlane (a deadlock of a sweep), which do not fail these runs.
  * @property {{ runs: number, jobs: number, repeated: number }} runs The runs of the whole run (all of its jobs), and
  *     those beyond what the trace explains: a job that ran again after a stall, or twice at once.
  */
@@ -709,7 +710,7 @@ async function contentionOf(scenario, children, counts, { from, to, timing }) {
         latency: { samples, p50, p95, p99 },
         blocked: null,
         guard: null,
-        events: { retried: counts.retried, rateLimited: counts.rateLimited },
+        events: { retried: counts.retried, rateLimited: counts.rateLimited, internalErrors: counts.internalErrors },
         runs: repeated,
     };
 
@@ -959,6 +960,7 @@ function meanContention(runs, variant) {
         events: {
             retried: mean(item => item.events.retried),
             rateLimited: mean(item => item.events.rateLimited),
+            internalErrors: mean(item => item.events.internalErrors),
         },
         runs: {
             runs: mean(item => item.runs.runs),
@@ -972,12 +974,12 @@ function meanContention(runs, variant) {
  * @param {Contention} contention
  * @returns {string} Its latencies, its blocked share and its guard, in a line.
  */
-function contentionText({ latency, blocked, guard: checked, runs }) {
+function contentionText({ latency, blocked, guard: checked, runs, events }) {
     const latencies = `latency p50/p95/p99 ${[latency.p50, latency.p95, latency.p99].map(ms => ms.toFixed(0)).join('/')} ms`;
     const share = blocked ? `, ${(blocked.share * 100).toFixed(1)}% of ${blocked.jobs.toFixed(0)} jobs blocked` : '';
 
     return `${latencies}${share}${checked ? `, guard ok on ${checked.keys} keys` : ''}, ${
-        runs.repeated} repeated runs`;
+        runs.repeated} repeated runs${events.internalErrors ? `, ${events.internalErrors} internal errors` : ''}`;
 }
 
 /**
@@ -1155,9 +1157,10 @@ function contentionTables(comparisons) {
         '\nContention (no verdict): the latency from the enqueue to the first start of the jobs that started in the window, '
         + 'the share of them that waited on a full key (estimated from the start and the end of each run), and the guard '
         + '(a violation fails the run). Repeated runs: runs that the trace does not explain (a job that ran again after a '
-        + 'stall, or twice at once), in the whole run. Baseline → working tree.\n',
-        '| Scenario | Database | Latency p50 / p95 / p99, ms | Blocked | Guard | Repeated runs |',
-        '| --- | --- | --- | --- | --- | --- |',
+        + 'stall, or twice at once), in the whole run. Internal errors: `error` events of sqlane in the window (they do '
+        + 'not fail these runs). Baseline → working tree.\n',
+        '| Scenario | Database | Latency p50 / p95 / p99, ms | Blocked | Guard | Repeated runs | Internal errors |',
+        '| --- | --- | --- | --- | --- | --- | --- |',
     ];
 
     for (const row of rows) {
@@ -1165,7 +1168,8 @@ function contentionTables(comparisons) {
 
         lines.push(`| ${row.scenario} | ${row.dialect} | ${latenciesOf(base)} → ${latenciesOf(current)} | ${
             blockedOf(base)} → ${blockedOf(current)} | ${current.guard ? `ok, ${current.guard.keys} keys` : '–'} | ${
-            base.runs.repeated} of ${base.runs.runs} → ${current.runs.repeated} of ${current.runs.runs} |`);
+            base.runs.repeated} of ${base.runs.runs} → ${current.runs.repeated} of ${current.runs.runs} | ${
+            base.events.internalErrors} → ${current.events.internalErrors} |`);
     }
 
     /** @type {string[]} */

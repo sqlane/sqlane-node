@@ -79,6 +79,8 @@ in `run` (a job that ran twice counts once: its second attempt is its cost), use
   violation fails the run.
 - **The repeated runs**: the runs that the trace does not explain (a job runs once, twice if it throws once), in the
   whole run: a job that ran again after a stall, or twice at once. Reported, not a failure.
+- **The internal errors**: the `error` events of sqlane in the window, such as a deadlock of a periodic sweep under
+  contention. sqlane goes on after one, so these runs do too (the other scenarios fail on any error).
 
 ```sh
 pnpm bench:regression --ref . --scenario contention --scenario contention_plain \
