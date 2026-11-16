@@ -28,6 +28,7 @@ export type Timings = {
  */
 /** @type {Timings} */
 export declare const DEFAULT_TIMINGS: Timings;
+export type RunnerState = 'idle' | 'started' | 'draining' | 'closing' | 'closed';
 export type RunningJob = {
     key: string;
     claimed: ClaimedJob;

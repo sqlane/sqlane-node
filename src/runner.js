@@ -34,7 +34,7 @@ import { nowUs, pauseRate, takeRate } from './local_rates.js';
 import { buildNewJob } from './new_job.js';
 import { parseRateKey, rateKeyOf } from './rate_limit_shape.js';
 import { isRateKey } from './rate_keys.js';
-import { createRateWakes } from './rate_wakes.js';
+import { createKeyUnblocks } from './key_unblocks.js';
 import { scheduledAtOf } from './schedule.js';
 import { isQuickRetryError, isTransientDbError } from './transient_error.js';
 
@@ -81,10 +81,10 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
 const CLAIM_NAMES_PER_SLOT = 4;
 const STALLED = { name: 'StalledError', message: 'The lease of the job ended: its process stopped or blocked' };
 const BATCH = 1000;
-/** A failed unblock of rate keys: again after this */
-const RATE_UNBLOCK_RETRY_MS = 1000;
 /** The completed jobs of one write */
 const MAX_COMPLETE_BATCH = 100;
+
+/** @typedef {'idle' | 'started' | 'draining' | 'closing' | 'closed'} RunnerState */
 
 /**
  * @typedef {object} RunningJob
@@ -208,7 +208,7 @@ export function createRunner({
     let renewalTimerOn = false;
     const lockedBy = `${hostname()}:${process.pid}:${createMonotonicUlid()()}`;
     const lockToken = createMonotonicUlid();
-    /** @type {'idle' | 'started' | 'draining' | 'closing' | 'closed'} */
+    /** @type {RunnerState} */
     let state = 'idle';
     /** @type {Map<string, RunningJob>} */
     const running = new Map();
@@ -263,16 +263,6 @@ export function createRunner({
     let completing = false;
     /** The jobs that finished: their results are written */
     let finishedCount = 0;
-    /** The unblocks of rate keys that run: their keys left the timer, their jobs are not pending yet */
-    let rateUnblocks = 0;
-    /** @type {Set<Promise<void>>} The same: close() waits for them */
-    const rateUnblocksRunning = new Set();
-    /** @type {Set<string>} The rate keys whose timer fired while idle (after a drain()): the next start() or drain()
-     *     unblocks them */
-    const idleRateKeys = new Set();
-    /** @type {Map<string, { debtUs: number, atMs: number }>} Of each rate key, its debt after the jobs that the last
-     *     unblock here made pending, and when: the next unblock counts them, until the claims take their quota */
-    const rateFloors = new Map();
 
     // ---- events, logs, timers ----
 
@@ -317,62 +307,16 @@ export function createRunner({
         timers.delete(timer);
     }
 
-    /** The timer of the rate keys on which this process blocked jobs: an unblock when their next start is due */
-    const rateWakes = createRateWakes({
+    const unblocks = createKeyUnblocks({
+        store,
+        state: () => state,
         setTimer,
         clearTimer,
-        onDue: (keys) => {
-            void runRateUnblock(keys);
-        },
+        wake: names => wakeUp(names),
+        hintChannel,
+        reportError,
     });
-
-    /**
-     * Arms the timer of a rate key, unless the process closes: its timers are cleared, and fire no unblock.
-     * @param {string} key
-     * @param {number} delayMs
-     * @param {import('./rate_wakes.js').RateWakes} [wakes] Default: the next starts, not the checks.
-     */
-    function armRateWake(key, delayMs, wakes = rateWakes) {
-        if (state !== 'closing' && state !== 'closed') {
-            wakes.arm(key, delayMs);
-        }
-    }
-
-    /**
-     * @param {string[]} keys
-     * @returns {Promise<void>} Never rejects.
-     */
-    async function runRateUnblock(keys) {
-        const unblocking = unblockRateKeys(keys);
-
-        rateUnblocksRunning.add(unblocking);
-
-        try {
-            await unblocking;
-        } finally {
-            rateUnblocksRunning.delete(unblocking);
-        }
-    }
-
-    /** Arms the rate keys whose timer fired while idle: at once */
-    function armIdleRateKeys() {
-        for (const key of idleRateKeys) {
-            rateWakes.arm(key, 0);
-        }
-
-        idleRateKeys.clear();
-    }
-
-    /** The checks of the rate keys whose last unblock left no blocked job: a job blocked during it (gcra.js,
-     * `nextUnblockMs`). drain() does not wait for them */
-    const rateRechecks = createRateWakes({
-        setTimer,
-        clearTimer,
-        onDue: (keys) => {
-            void runRateUnblock(keys);
-        },
-    });
-
+    const { unblockKeys, armRateWake } = unblocks;
     const { wakeAfterRates, clear: clearLocalRateWakes } = createLocalRateWakes({
         setTimer,
         clearTimer,
@@ -1069,114 +1013,6 @@ export function createRunner({
                 }
             }
         })();
-    }
-
-    /**
-     * Makes the jobs blocked on the keys pending again, as far as the keys have room, and wakes their names here and
-     * in the other processes. It runs after the commit of a release, and after the commit of a claim that blocked
-     * jobs: the later of the two sees both, so a job is not left blocked on a key with room.
-     * @param {readonly string[]} keys
-     * @returns {Promise<void>} Never rejects: an error is reported.
-     */
-    async function unblockKeys(keys) {
-        try {
-            const names = await store.unblock([...new Set(keys)]);
-
-            if (names.length) {
-                wakeUp(names);
-
-                for (const name of names) {
-                    hintChannel.publish(name);
-                }
-            }
-        } catch (error) {
-            reportError('unblock', error);
-        }
-    }
-
-    /**
-     * Makes the jobs blocked on the rate keys pending again, as far as their quota allows now, and wakes their names
-     * here and in the other processes. The timer of the keys calls it; the keys with blocked jobs left get their next
-     * time. The jobs that the last unblock of a key made pending count, as if they started then (`rateFloors`): without
-     * them, an unblock right after another one (a full batch) would make the same quota pending again.
-     * @param {string[]} keys
-     * @returns {Promise<void>} Never rejects: an error is reported, and the keys are tried again in 1 s.
-     */
-    async function unblockRateKeys(keys) {
-        if (state === 'idle') {
-            // After a drain(): the next start() or drain() unblocks them
-            for (const key of keys) {
-                idleRateKeys.add(key);
-            }
-
-            return;
-        }
-
-        if (state !== 'started' && state !== 'draining') {
-            // Closing: the sweep of another process takes them
-            return;
-        }
-
-        rateUnblocks++;
-
-        try {
-            const { names, waits } = await store.unblockRates(keys, floorsOf(keys));
-            const atMs = Date.now();
-            const withWaits = new Set(waits.map(wait => wait.key));
-
-            for (const key of keys.filter(each => !withWaits.has(each))) {
-                // No blocked job left
-                rateFloors.delete(key);
-            }
-
-            for (const { key, delayMs, debtUs, left } of waits) {
-                if (debtUs !== null) {
-                    rateFloors.set(key, { debtUs, atMs });
-                }
-
-                armRateWake(key, delayMs, left ? rateWakes : rateRechecks);
-            }
-
-            if (names.length) {
-                wakeUp(names);
-
-                for (const name of names) {
-                    hintChannel.publish(name);
-                }
-            }
-        } catch (error) {
-            reportError('unblock', error);
-
-            for (const key of keys) {
-                armRateWake(key, RATE_UNBLOCK_RETRY_MS);
-            }
-        } finally {
-            rateUnblocks--;
-        }
-    }
-
-    /**
-     * @param {string[]} keys
-     * @returns {Map<string, number>} The debt of the keys after the jobs that their last unblock here made pending, as
-     *     if they started then: less by the time since.
-     */
-    function floorsOf(keys) {
-        const now = Date.now();
-        /** @type {Map<string, number>} */
-        const floors = new Map();
-
-        for (const key of keys) {
-            const floor = rateFloors.get(key);
-            const debtUs = floor ? floor.debtUs - ((now - floor.atMs) * 1000) : 0;
-
-            if (debtUs > 0) {
-                floors.set(key, debtUs);
-            } else {
-                rateFloors.delete(key);
-            }
-        }
-
-        return floors;
     }
 
     // ---- dispatch ----
@@ -1984,7 +1820,7 @@ export function createRunner({
         handledCount = Math.max(registry.entries().length, 1);
         tiePointer = Math.floor(random() * handledCount);
         state = 'started';
-        armIdleRateKeys();
+        unblocks.resume();
         every('recover_stale_jobs', recoverStaleJobs, t.recoveryIntervalMs);
 
         if (cleanup) {
@@ -2034,7 +1870,7 @@ export function createRunner({
         handledCount = Math.max(registry.entries().length, 1);
         tiePointer = Math.floor(random() * handledCount);
         state = 'draining';
-        armIdleRateKeys();
+        unblocks.resume();
 
         const before = { ...counts };
         const deadline = Date.now() + timeoutMs;
@@ -2077,7 +1913,7 @@ export function createRunner({
                 // A rate key that this process unblocks, now or before the deadline, or a local rate limit that admits
                 // a due job before it: its jobs are still to run
                 const quiet = !claimed && !lostRace && !running.size && finishedCount === finishedBefore
-                    && !rateUnblocks && !rateWakes.dueBefore(deadline) && !ratesAdmitBefore(registry, due, deadline);
+                    && !unblocks.busy() && !unblocks.dueBefore(deadline) && !ratesAdmitBefore(registry, due, deadline);
 
                 quietRounds = quiet ? quietRounds + 1 : 0;
 
@@ -2210,11 +2046,8 @@ export function createRunner({
         );
 
         // An unblock that runs: its writes, until the deadline; it arms no timer now
-        await waitAtMost(Promise.allSettled(rateUnblocksRunning), deadline - Date.now());
-        rateWakes.clear();
-        rateRechecks.clear();
-        rateFloors.clear();
-        idleRateKeys.clear();
+        await waitAtMost(unblocks.settled(), deadline - Date.now());
+        unblocks.clear();
         clearLocalRateWakes();
 
         for (const timer of timers) {
