@@ -3,6 +3,7 @@ import { expect, test, vi } from 'vitest';
 import { resolveDefaults } from './defaults.js';
 import { defineConcurrencyLimit } from './define_concurrency_limit.js';
 import { defineJob } from './define_job.js';
+import { defineRateLimit } from './define_rate_limit.js';
 import { LeaseLostError, RetryJobError, ShutdownError } from './errors.js';
 import { createHintChannel } from './hint_channel.js';
 import { createRegistry } from './registry.js';
@@ -32,7 +33,8 @@ function runnerWith(makeDueErrors) {
         probe: async () => [{ name: 'ping', delayMs: 0 }],
         claimDue: async () => ({ jobs: [], next: [] }),
         findStaleJobs: async () => [],
-        sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0 }),
+        sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
+        deleteIdleRateKeys: async () => 0,
     }));
 
     registry.handle('ping', () => {});
@@ -287,6 +289,7 @@ function runnerWithHeldJobs(withKeys, {
         name: index > 0 && futureDelayMs !== undefined ? 'later' : 'ping',
         runAtMs: index > 0 ? Date.now() + (sameNameFutureMs ?? futureDelayMs ?? 0) : 0,
         limits: withKeys ? [{ key: `key-${index + 1}`, max: 1 }] : [],
+        rateLimits: [],
         attempts: 0,
         maxAttempts: 3,
         stalls: 0,
@@ -353,7 +356,7 @@ function runnerWithHeldJobs(withKeys, {
 
             return [...new Set(waiting.map(job => job.name))];
         },
-        claim: async () => ({ jobs: pending.splice(0, 1), blockedKeys: [], blockedNames: [] }),
+        claim: async () => ({ jobs: pending.splice(0, 1), blockedKeys: [], blockedNames: [], rateWaits: [] }),
         readPayloads: async (/** @type {string[]} */ ids) => new Map(ids.map(id => [id, null])),
         completeJobs: async (/** @type {unknown[]} */ jobs) => completeCount ?? jobs.length,
         renewLeases: async (/** @type {import('./store/store.js').OwnedJob[]} */ jobs) => (
@@ -634,6 +637,7 @@ async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
         id: 'job-1',
         name: 'ping',
         limits: [],
+        rateLimits: [],
         attempts: 0,
         maxAttempts: 3,
         stalls: 0,
@@ -866,7 +870,8 @@ test.each([
             return found;
         },
         recoverStaleJob: async () => ({ result, failureJob: null, attempt: 2, runMs: 250_000 }),
-        sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0 }),
+        sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
+        deleteIdleRateKeys: async () => 0,
     }));
 
     registry.handle('ping', () => {});
@@ -944,6 +949,7 @@ function dueJobOf(name) {
         id: name,
         name,
         limits: [],
+        rateLimits: [],
         attempts: 0,
         maxAttempts: 1,
         stalls: 0,
@@ -1117,7 +1123,7 @@ function recordingRunner({ maxConcurrency = 4, names = 2, pointer = 0 } = {}) {
         claim: async () => {
             calls.push('claim');
 
-            return { jobs: [], blockedKeys: [], blockedNames: [] };
+            return { jobs: [], blockedKeys: [], blockedNames: [], rateWaits: [] };
         },
         findStaleJobs: async () => [],
         renewLeases: async () => new Set(),
@@ -1199,6 +1205,7 @@ function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}
         return {
             id: `${name}-${id}`, name, attempts: 0, maxAttempts: 1, stalls: 0, maxStalls: 1, failureJob: null,
             enqueuedAt: new Date(0), waitedMs: 0, limits: name === 'keyed' ? [{ key: `k${id}`, max: 1 }] : [],
+            rateLimits: [],
             lockToken: 't',
             payload: { found: true, payload: {} },
         };
@@ -1234,9 +1241,10 @@ function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}
             return { jobs, next: [], unpicked: [], limited: [] };
         },
         claim: async (/** @type {import('./store/store.js').ClaimParams} */ { candidateIds, pick }) => ({
-            jobs: pick(candidateIds.map(() => jobOf('keyed')), new Map()),
+            jobs: pick(candidateIds.map(() => jobOf('keyed')), new Map(), new Map()),
             blockedKeys: [],
             blockedNames: [],
+            rateWaits: [],
         }),
         unblock: async () => [],
         readPayloads: async (/** @type {string[]} */ ids) => new Map(ids.map(jobId => [jobId, {}])),
@@ -1385,7 +1393,8 @@ async function runnerWithClaims(errors) {
         probe: async () => [{ name: 'ping', delayMs: 0 }],
         // The recovery timer: its first run comes at recoveryIntervalMs × Math.random(), so at times during the test
         findStaleJobs: async () => [],
-        sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0 }),
+        sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
+        deleteIdleRateKeys: async () => 0,
         claimDue: async () => {
             const error = errors[claimTimes.length] ?? null;
 
@@ -1547,3 +1556,155 @@ test.each([
         await runner.close({ deadline: 0 });
     }
 });
+
+/**
+ * A runner of the name `tick`, with a global rate limit: its one due job is blocked on `@smooth` by the claim, whose
+ * timer is due after `waitMs`. `unblockRates` answers by `unblock`.
+ * @param {{
+ *     waitMs: number,
+ *     unblock?: (keys: string[], floors: Map<string, number> | undefined) => Promise<{
+ *         names: string[],
+ *         waits: { key: string, delayMs: number, debtUs: number | null, left: boolean }[],
+ *     }>,
+ * }} options
+ * @returns {{
+ *     runner: import('./runner.js').Runner,
+ *     unblocks: { keys: string[], floors: Map<string, number> | undefined }[],
+ * }}
+ */
+function runnerWithRateKey({ waitMs, unblock = async () => ({ names: [], waits: [] }) }) {
+    const registry = createRegistry({ jobsByName: new Map(), defaultTimeoutMs: null });
+    const smooth = defineRateLimit({ name: 'smooth', max: 10, per: '1s' });
+    /** @type {{ keys: string[], floors: Map<string, number> | undefined }[]} */
+    const unblocks = [];
+    let due = true;
+    const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
+        probe: async () => (due ? [{ name: 'tick', delayMs: 0 }] : []),
+        findCandidates: async () => (due
+            ? { startable: [{ id: 'j1', name: 'tick', runAtMs: 0 }], full: [] }
+            : { startable: [], full: [] }),
+        claimDue: async () => ({ jobs: [], next: [], unpicked: [], limited: [] }),
+        claim: async () => {
+            due = false;
+
+            return {
+                jobs: [],
+                blockedKeys: ['@smooth'],
+                blockedNames: ['tick'],
+                rateWaits: [{ key: '@smooth', delayMs: waitMs }],
+            };
+        },
+        unblockRates: async (/** @type {string[]} */ keys, /** @type {Map<string, number> | undefined} */ floors) => {
+            unblocks.push({ keys, floors });
+
+            return unblock(keys, floors);
+        },
+        findStaleJobs: async () => [],
+        sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
+        deleteIdleRateKeys: async () => 0,
+    }));
+
+    registry.handle(defineJob({ name: 'tick', globalRateLimits: () => [smooth] }), () => {});
+
+    return {
+        runner: createRunner({
+            store,
+            registry,
+            localMaxConcurrency: 10,
+            defaults: resolveDefaults(),
+            cleanup: false,
+            logger: undefined,
+            onEvent: undefined,
+            hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+            hintsAfterCommit: false,
+            timings: { pollIntervalMs: 60_000, recoveryIntervalMs: 60_000 },
+        }),
+        unblocks,
+    };
+}
+
+test('rate keys: a timer that fires after drain() returned is kept, and the next drain() unblocks its key', async () => {
+    const { runner, unblocks } = runnerWithRateKey({ waitMs: 150 });
+
+    // The key is due after the timeout: drain() leaves it
+    await expect(runner.drain({ timeout: '100ms' })).resolves.toStrictEqual({ completed: 0, retried: 0, failed: 0 });
+    // It fires while idle
+    await sleep(200);
+    expect(unblocks).toStrictEqual([]);
+    await runner.drain({ timeout: '1s' });
+    expect(unblocks.map(each => each.keys)).toStrictEqual([['@smooth']]);
+    await runner.close();
+});
+
+test('rate keys: the next unblock gets the debt after the jobs that the last one made pending', async () => {
+    // A full batch, then a key with nothing left
+    const results = [
+        { names: [], waits: [{ key: '@smooth', delayMs: 0, debtUs: 5_000_000, left: true }] },
+        { names: [], waits: [] },
+    ];
+    const { runner, unblocks } = runnerWithRateKey({
+        waitMs: 0,
+        unblock: async () => /** @type {typeof results[0]} */ (results.shift()),
+    });
+
+    await runner.start();
+    await waitFor(() => unblocks.length >= 2, 1000);
+    expect(unblocks[0].floors).toStrictEqual(new Map());
+    expect(unblocks[1].floors?.get('@smooth')).toBeGreaterThan(4_900_000);
+    expect(unblocks[1].floors?.get('@smooth')).toBeLessThanOrEqual(5_000_000);
+    await sleep(50);
+    expect(unblocks).toHaveLength(2);
+    await runner.close();
+});
+
+test('rate keys: close() waits for an unblock that runs, which arms no timer after it', async () => {
+    const unblocking = Promise.withResolvers();
+    let settled = false;
+    const { runner, unblocks } = runnerWithRateKey({
+        waitMs: 0,
+        unblock: async () => {
+            await unblocking.promise;
+            settled = true;
+
+            return { names: [], waits: [{ key: '@smooth', delayMs: 20, debtUs: null, left: true }] };
+        },
+    });
+
+    await runner.start();
+    await waitFor(() => unblocks.length === 1, 1000);
+
+    let settledAtClose = false;
+    const closing = (async () => {
+        await runner.close({ deadline: '5s' });
+        settledAtClose = settled;
+    })();
+
+    await sleep(200);
+    unblocking.resolve(undefined);
+    await closing;
+    expect(settledAtClose).toBe(true);
+    await sleep(50);
+    expect(unblocks).toHaveLength(1);
+});
+
+test('rate keys: an unblock that leaves no blocked job arms a check of its key; drain() does not wait for it',
+    async () => {
+        const results = [
+            { names: [], waits: [{ key: '@smooth', delayMs: 300, debtUs: 100_000, left: false }] },
+            { names: [], waits: [] },
+        ];
+        const { runner, unblocks } = runnerWithRateKey({
+            waitMs: 0,
+            unblock: async () => /** @type {typeof results[0]} */ (results.shift()),
+        });
+        const startedAt = Date.now();
+
+        await runner.drain({ timeout: '5s' });
+        expect(Date.now() - startedAt).toBeLessThan(250);
+        expect(unblocks).toHaveLength(1);
+        // The check fires while idle: the next start() runs it
+        await runner.start();
+        await waitFor(() => unblocks.length === 2, 1000);
+        expect(unblocks).toHaveLength(2);
+        await runner.close();
+    });

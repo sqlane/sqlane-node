@@ -2,7 +2,9 @@ import { expect, test } from 'vitest';
 import { createSqlane } from './create_sqlane.js';
 import { defineConcurrencyLimit } from './define_concurrency_limit.js';
 import { defineJob } from './define_job.js';
+import { defineRateLimit } from './define_rate_limit.js';
 import { ClosedError, ConfigError } from './errors.js';
+import { createRegistry } from './registry.js';
 
 /** An adapter that is never called: the checks run before any SQL */
 const adapter = /** @type {import('./types.js').Adapter<any>} */ ({ dialect: 'mysql' });
@@ -35,6 +37,19 @@ test.each([
             localConcurrencyLimits: [defineConcurrencyLimit({ name: 'heavy', max: 3 })],
         }), noop);
     }, 'handle("b"): the concurrency limit "heavy" has the max 3 here and 2 in another definition'],
+    ['two rate limits with one name and different settings', () => {
+        const sqlane = sqlaneWith();
+
+        sqlane.handle(defineJob({
+            name: 'a',
+            localRateLimits: [defineRateLimit({ name: 'disk', max: 10, per: '1s' })],
+        }), noop);
+        sqlane.handle(defineJob({
+            name: 'b',
+            localRateLimits: [defineRateLimit({ name: 'disk', max: 10, per: '1s', burst: 5 })],
+        }), noop);
+    }, 'handle("b"): the rate limit "disk" has max 10 per 1000 ms, burst 5 here and max 10 per 1000 ms, burst 1 in '
+    + 'another definition'],
     ['a handler that is not a function', () => sqlaneWith().handle('a', /** @type {any} */ ('handler')),
         'the handler must be a function'],
     ['a bad name', () => sqlaneWith().handle('Bad', noop), 'the job must be a job definition or a job name'],
@@ -70,6 +85,25 @@ test('one limit shared by several definitions; limits with one name and one max 
             localConcurrencyLimits: [defineConcurrencyLimit({ name: 'heavy', max: 2 })],
         }), noop);
     }).not.toThrow();
+});
+
+test('a local rate limit: one state per name of limit in the instance, shared by its definitions', () => {
+    const registry = createRegistry({ jobsByName: new Map(), defaultTimeoutMs: null });
+    const disk = defineRateLimit({ name: 'disk', max: 10, per: '1s' });
+
+    registry.handle(defineJob({ name: 'a', localRateLimits: [disk] }), noop);
+    registry.handle(defineJob({
+        name: 'b',
+        localRateLimits: [defineRateLimit({ name: 'disk', max: 10, per: 1000 })],
+    }), noop);
+    registry.handle('c', noop);
+
+    const [a, b, c] = ['a', 'b', 'c'].map(name => registry.getEntry(name));
+
+    expect(a?.rates).toHaveLength(1);
+    expect(b?.rates[0]).toBe(a?.rates[0]);
+    expect(a?.rates[0]).toMatchObject({ limit: disk, tatUs: 0, names: ['a', 'b'] });
+    expect(c?.rates).toStrictEqual([]);
 });
 
 test('start() accepts a local limit above the instance\'s cap: the lower one applies', async () => {

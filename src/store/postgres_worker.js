@@ -1,4 +1,5 @@
 // The worker side of the store on PostgreSQL: probe, candidates, claim. Times are computed in SQL.
+import { incrementsOf, splitByRate } from '../gcra.js';
 
 /** @typedef {import('../types.js').Executor} Executor */
 /** @typedef {import('./store.js').ProbeRow} ProbeRow */
@@ -15,6 +16,22 @@ export const LIMIT_WINDOW_SIZE = 500;
  */
 const epochMs = column => `(EXTRACT(EPOCH FROM ${column}) * 1000)::bigint`;
 const HELD = '(s.held_until IS NULL OR s.held_until >= clock_timestamp())';
+/**
+ * @param {string} tat
+ * @returns {string} The debt of a rate key in µs (gcra.js): how far its tat is ahead of now.
+ */
+const debtUs = tat => `GREATEST((EXTRACT(EPOCH FROM ${tat} - clock_timestamp()) * 1000000)::bigint, 0)`;
+/**
+ * The settings of the rate keys of a JSON array (`rate_limits`), with the increment of a start and the allowance of
+ * the key in µs, as gcra.js computes them. Bigints: cost × per_us is at most 6 × 10^17.
+ * @param {string} json
+ * @returns {string} A FROM item `e`, with `key`, `inc` and `allow`.
+ */
+export const rateLimitsOf = json => `(
+    SELECT r.key, (r.cost * r.per_us + r.max - 1) / r.max AS inc,
+           (r.cost * r.per_us + r.max - 1) / r.max + (r.burst - r.cost) * r.per_us / r.max AS allow
+      FROM jsonb_to_recordset(${json}) AS r(key text, max bigint, per_us bigint, burst bigint, cost bigint)
+) AS e`;
 
 /**
  * The next due time of each given job name with pending jobs: one index probe per name.
@@ -73,27 +90,77 @@ export async function probe(executor, p, names) {
 
 /**
  * The due jobs of names with global limits, oldest first: at most `limit` of each name whose keys have room, and those
- * with a full key, which the claim blocks. A key is full when its held slots reach the max of the job.
+ * with a full key, which the claim blocks. A key is full when its held slots reach the max of the job, or a rate key
+ * has no quota left for it after the older jobs of the search. Without `withRates`, the search leaves out the rate
+ * keys, and returns its jobs that have some too, past the max of their name: they tell their names (store.js).
  * @param {Executor} executor
  * @param {string} p
  * @param {Map<string, number>} limitsByName
- * @returns {Promise<import('./store.js').FoundCandidates>}
+ * @param {boolean} withRates
+ * @returns {Promise<import('./store.js').FoundCandidatesOf>}
  */
-export async function findCandidates(executor, p, limitsByName) {
+export async function findCandidates(executor, p, limitsByName, withRates) {
     const names = [...limitsByName.keys()];
 
     if (!names.length) {
-        return { startable: [], full: [] };
+        return { startable: [], full: [], ratedNames: [] };
     }
 
-    const rows = await executor.query(`
+    const rows = await executor.query(candidatesSql(p, withRates), [names, names.map(name => limitsByName.get(name))]);
+    const candidates = rows.map(row => ({
+        id: String(row.id),
+        name: String(row.job_name),
+        runAtMs: Number(row.run_at_ms),
+        full: Boolean(row.is_full),
+    }));
+
+    return {
+        startable: candidates.filter(row => !row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
+        full: candidates.filter(row => row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
+        ratedNames: [...new Set(rows.filter(row => row.rated).map(row => String(row.job_name)))],
+    };
+}
+
+/**
+ * @param {string} p
+ * @param {boolean} withRates With the rate keys of the jobs. Without: a column `rated`, the job has rate keys, and
+ *     the jobs with rate keys are returned too, past the max of their name: they only tell their names.
+ * @returns {string} The search of candidates, `$1` the names and `$2` the max jobs of each.
+ */
+function candidatesSql(p, withRates) {
+    const rates = `
+        wr AS (
+            SELECT w.id, w.run_at, e.key AS limit_key, e.inc, e.allow FROM w
+             CROSS JOIN LATERAL ${rateLimitsOf('w.rate_limits')}
+        ),
+        -- The debt of each rate key, and its oldest blocked job: the jobs after it wait behind it
+        rate AS MATERIALIZED (
+            SELECT k.limit_key, COALESCE(${debtUs('r.tat')}, 0) AS debt, head.run_at AS head_run_at, head.id AS head_id
+              FROM (SELECT DISTINCT limit_key FROM wr) AS k
+              LEFT JOIN ${p}rate_limits r ON r.limit_key = k.limit_key
+              LEFT JOIN LATERAL (
+                  SELECT b.run_at, b.id FROM ${p}jobs b WHERE b.status = 'blocked' AND b.blocked_on = k.limit_key
+                   ORDER BY b.run_at, b.id LIMIT 1
+              ) AS head ON true
+        ),
+        -- The jobs over the quota of a rate key, after the older jobs of the search
+        rate_full AS (
+            SELECT DISTINCT used.id FROM (
+                SELECT wr.*, SUM(wr.inc) OVER (PARTITION BY wr.limit_key ORDER BY wr.run_at, wr.id) AS used FROM wr
+            ) AS used
+              JOIN rate ON rate.limit_key = used.limit_key
+             WHERE rate.debt + used.used > used.allow OR (rate.head_run_at, rate.head_id) < (used.run_at, used.id)
+        ),`;
+
+    return `
         WITH request AS (
             SELECT * FROM unnest($1::text[], $2::integer[]) AS request(name, max_jobs)
         ),
         w AS (
             SELECT due.*, request.max_jobs FROM request
              CROSS JOIN LATERAL (
-                 SELECT id, job_name, run_at, limit_keys, limit_maxes FROM ${p}jobs
+                 SELECT id, job_name, run_at, limit_keys, limit_maxes,
+                        ${withRates ? 'rate_limits' : 'rate_limits IS NOT NULL AS rated'} FROM ${p}jobs
                   WHERE status = 'pending' AND job_name = request.name AND run_at <= clock_timestamp()
                   ORDER BY run_at, id LIMIT ${LIMIT_WINDOW_SIZE}
              ) AS due
@@ -107,31 +174,21 @@ export async function findCandidates(executor, p, limitsByName) {
               FROM (SELECT DISTINCT limit_key FROM wk) AS k
               LEFT JOIN ${p}concurrency_slots s ON s.limit_key = k.limit_key AND ${HELD}
              GROUP BY k.limit_key
-        ),
+        ),${withRates ? rates : ''}
         marked AS (
-            SELECT w.id, w.job_name, w.run_at, w.max_jobs,
+            SELECT w.id, w.job_name, w.run_at, w.max_jobs, ${withRates ? '' : 'w.rated,'}
                    EXISTS (
                        SELECT 1 FROM wk JOIN held h ON h.limit_key = wk.limit_key WHERE wk.id = w.id AND h.held >= wk.max
-                   ) AS is_full
+                   ) ${withRates ? 'OR w.id IN (SELECT id FROM rate_full)' : ''} AS is_full
               FROM w
         ),
         ranked AS (
             SELECT *, ROW_NUMBER() OVER (PARTITION BY job_name, is_full ORDER BY run_at, id) AS name_rank FROM marked
         )
-        SELECT id, job_name, ${epochMs('run_at')} AS run_at_ms, is_full FROM ranked WHERE is_full OR name_rank <= max_jobs
+        SELECT id, job_name, ${epochMs('run_at')} AS run_at_ms, is_full${withRates ? '' : ', rated'}
+          FROM ranked WHERE is_full OR name_rank <= max_jobs${withRates ? '' : ' OR rated'}
          ORDER BY run_at, id
-    `, [names, names.map(name => limitsByName.get(name))]);
-    const candidates = rows.map(row => ({
-        id: String(row.id),
-        name: String(row.job_name),
-        runAtMs: Number(row.run_at_ms),
-        full: Boolean(row.is_full),
-    }));
-
-    return {
-        startable: candidates.filter(row => !row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
-        full: candidates.filter(row => row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
-    };
+    `;
 }
 
 /**
@@ -187,6 +244,45 @@ async function takeSlots(executor, p, jobs, { heldSlots, lockToken }) {
 }
 
 /**
+ * Locks the rows of the rate keys, in the order of the keys (no deadlocks between claims), and creates the missing
+ * ones: a new key has its full quota. The claim's first statement does it, with the jobs, when the candidates may have
+ * rate keys (`withRates`); else this one, for the keys that it found.
+ * @param {string} p
+ * @param {string} keys A FROM item `k` with the keys as `limit_key`, sorted, and its ORDER BY.
+ * @returns {string}
+ */
+const lockRateKeysSql = (p, keys) => `
+    INSERT INTO ${p}rate_limits AS r (limit_key, tat)
+    SELECT k.limit_key, clock_timestamp() FROM ${keys}
+    ON CONFLICT (limit_key) DO UPDATE SET tat = r.tat`;
+
+/**
+ * Reads the locked rows of the rate keys, with the oldest job blocked on each key. A statement after the lock: its
+ * snapshot sees the jobs that another claim blocked while it held a row (a statement sees what committed before it
+ * started, and that claim committed before the lock was given).
+ * @param {Executor} executor In the transaction of the claim, after the lock of the rows.
+ * @param {string} p
+ * @param {string[]} keys
+ * @returns {Promise<Map<string, import('../gcra.js').RateKeyState>>}
+ */
+async function readRateKeys(executor, p, keys) {
+    const rows = await executor.query(`
+        SELECT r.limit_key, ${debtUs('r.tat')} AS debt_us, head.id AS head_id, ${epochMs('head.run_at')} AS head_run_at_ms
+          FROM ${p}rate_limits r
+          LEFT JOIN LATERAL (
+              SELECT b.id, b.run_at FROM ${p}jobs b WHERE b.status = 'blocked' AND b.blocked_on = r.limit_key
+               ORDER BY b.run_at, b.id LIMIT 1
+          ) AS head ON true
+         WHERE r.limit_key = ANY($1::text[])
+    `, [keys]);
+
+    return new Map(rows.map(row => [String(row.limit_key), {
+        debtUs: Number(row.debt_us),
+        head: row.head_id === null ? null : { runAtMs: Number(row.head_run_at_ms), id: String(row.head_id) },
+    }]));
+}
+
+/**
  * @param {Record<string, unknown>} row With `limit_keys` and `limit_maxes` as JSON texts.
  * @returns {import('../concurrency_keys.js').GlobalLimit[]}
  */
@@ -204,43 +300,62 @@ function limitsOf(row) {
 }
 
 /**
- * Claims due jobs among the candidates, and blocks those with a full key. Call it in a queue transaction.
+ * Claims due jobs among the candidates, and blocks those with a full key. Call it in a queue transaction. The order of
+ * the locks: the jobs, the rows of their rate keys, then their slots; the tat of a rate key moves only for the jobs
+ * that got all their slots, so nothing is given back. With `withRates`, the statement that locks the jobs locks the
+ * rows of their rate keys too: the read of the rows, after it, sees the blocked jobs as they are, without a statement
+ * of its own for the lock.
  * @param {Executor} executor
  * @param {string} p
  * @param {ClaimParams} params
  * @returns {Promise<import('./store.js').ClaimResult>}
  */
-export async function claim(executor, p, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick }) {
+export async function claim(executor, p, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, withRates }) {
     const ids = [...candidateIds, ...fullIds];
 
     if (!ids.length) {
-        return { jobs: [], blockedKeys: [], blockedNames: [] };
+        return { jobs: [], blockedKeys: [], blockedNames: [], rateWaits: [] };
     }
 
-    /** @type {ClaimedJob[]} */
-    const lockedRows = (await executor.query(`
-        SELECT id, job_name, array_to_json(limit_keys)::text AS limit_keys,
-               array_to_json(limit_maxes)::text AS limit_maxes, attempts, max_attempts, stalls, max_stalls, failure_job,
-               ${epochMs('created_at')} AS created_at_ms,
-               (EXTRACT(EPOCH FROM clock_timestamp() - run_at) * 1000)::bigint AS waited_ms
-          FROM ${p}jobs
+    const columns = `id, job_name, array_to_json(limit_keys)::text AS limit_keys,
+               array_to_json(limit_maxes)::text AS limit_maxes, rate_limits::text AS rate_limits, attempts,
+               max_attempts, stalls, max_stalls, failure_job, ${epochMs('created_at')} AS created_at_ms,
+               ${epochMs('run_at')} AS run_at_ms,
+               (EXTRACT(EPOCH FROM clock_timestamp() - run_at) * 1000)::bigint AS waited_ms`;
+    const pending = `FROM ${p}jobs
          WHERE id = ANY($1::text[]) AND status = 'pending' AND run_at <= clock_timestamp()
          ORDER BY run_at, id
-           FOR UPDATE SKIP LOCKED
-    `, [ids])).map(row => ({
-        id: String(row.id),
-        name: String(row.job_name),
-        limits: limitsOf(row),
-        attempts: Number(row.attempts),
-        maxAttempts: Number(row.max_attempts),
-        stalls: Number(row.stalls),
-        maxStalls: Number(row.max_stalls),
-        failureJob: row.failure_job === null ? null : String(row.failure_job),
-        enqueuedAt: new Date(Number(row.created_at_ms)),
-        waitedMs: Number(row.waited_ms),
-        lockToken,
+           FOR UPDATE SKIP LOCKED`;
+    // With the rows of the rate keys of the jobs, once each, in order: "C" sorts their ASCII as JavaScript does
+    const locked = (await executor.query(withRates
+        ? `
+        WITH locked AS (
+            SELECT * ${pending}
+        ),
+        rate_rows AS (${lockRateKeysSql(p, `(
+            SELECT DISTINCT e.key COLLATE "C" AS limit_key
+              FROM locked CROSS JOIN LATERAL jsonb_to_recordset(locked.rate_limits) AS e(key text)
+        ) AS k ORDER BY k.limit_key`)})
+        SELECT ${columns} FROM locked ORDER BY run_at, id`
+        : `SELECT ${columns} ${pending}`, [ids])).map(row => ({
+        runAtMs: Number(row.run_at_ms),
+        /** @type {ClaimedJob} */
+        job: {
+            id: String(row.id),
+            name: String(row.job_name),
+            limits: limitsOf(row),
+            rateLimits: row.rate_limits === null ? [] : JSON.parse(String(row.rate_limits)),
+            attempts: Number(row.attempts),
+            maxAttempts: Number(row.max_attempts),
+            stalls: Number(row.stalls),
+            maxStalls: Number(row.max_stalls),
+            failureJob: row.failure_job === null ? null : String(row.failure_job),
+            enqueuedAt: new Date(Number(row.created_at_ms)),
+            waitedMs: Number(row.waited_ms),
+            lockToken,
+        },
     }));
-    const keys = [...new Set(lockedRows.flatMap(row => row.limits.map(limit => limit.key)))];
+    const keys = [...new Set(locked.flatMap(({ job }) => job.limits.map(limit => limit.key)))];
     /** @type {Map<string, Set<number>>} */
     const heldSlots = new Map();
 
@@ -259,18 +374,33 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     const held = new Map([...heldSlots].map(([key, slots]) => [key, slots.size]));
     /** @type {{ id: string, name: string, key: string }[]} */
     const blocked = [];
-    /** @type {ClaimedJob[]} */
-    const open = [];
+    /** @type {{ job: ClaimedJob, runAtMs: number }[]} */
+    const withRoom = [];
 
-    for (const row of lockedRows) {
-        const fullLimit = row.limits.find(({ key, max }) => (held.get(key) ?? 0) >= max);
+    for (const row of locked) {
+        // A full concurrency key first: its release unblocks the job, without a timer
+        const fullLimit = row.job.limits.find(({ key, max }) => (held.get(key) ?? 0) >= max);
 
         if (fullLimit) {
-            blocked.push({ id: row.id, name: row.name, key: fullLimit.key });
+            blocked.push({ id: row.job.id, name: row.job.name, key: fullLimit.key });
         } else {
-            open.push(row);
+            withRoom.push(row);
         }
     }
+
+    const rateKeys = [...new Set(withRoom.flatMap(({ job }) => job.rateLimits.map(limit => limit.key)))].toSorted();
+
+    if (rateKeys.length && !withRates) {
+        await executor.query(
+            lockRateKeysSql(p, 'unnest($1::text[]) WITH ORDINALITY AS k(limit_key, position) ORDER BY k.position'),
+            [rateKeys],
+        );
+    }
+
+    const rateStates = rateKeys.length ? await readRateKeys(executor, p, rateKeys) : new Map();
+    const { open, blocked: overRate, waits } = splitByRate(withRoom, rateStates);
+
+    blocked.push(...overRate);
 
     if (blocked.length) {
         await executor.query(`
@@ -280,27 +410,44 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
         `, [blocked.map(job => job.id), blocked.map(job => job.key)]);
     }
 
-    const picked = pick(open, held);
+    const picked = pick(open, held, new Map([...rateStates].map(([key, state]) => [key, state.debtUs])));
     const pickedWithLimits = picked.filter(row => row.limits.length);
     const withSlots = pickedWithLimits.length
         ? await takeSlots(executor, p, pickedWithLimits, { heldSlots, lockToken })
         : new Set();
     const claimed = picked.filter(row => !row.limits.length || withSlots.has(row.id));
+    // Only the jobs that start take their quota
+    const increments = incrementsOf(claimed);
+
+    // In the same statement: their tat moves by the increments
+    const moveTat = `WITH tat AS (
+        UPDATE ${p}rate_limits r SET tat = GREATEST(r.tat, clock_timestamp()) + u.inc * interval '1 microsecond'
+          FROM unnest($5::text[], $6::bigint[]) AS u(limit_key, inc)
+         WHERE r.limit_key = u.limit_key
+    )`;
 
     if (claimed.length) {
         await executor.query(`
+            ${increments.size ? moveTat : ''}
             UPDATE ${p}jobs
                SET status = 'running', lock_token = $2, locked_by = $3,
                    locked_until = clock_timestamp() + $4 * interval '1 millisecond', started_at = clock_timestamp(),
                    timed_out_at = NULL, updated_at = clock_timestamp()
              WHERE id = ANY($1::text[])
-        `, [claimed.map(row => row.id), lockToken, lockedBy, leaseMs]);
+        `, [
+            claimed.map(row => row.id),
+            lockToken,
+            lockedBy,
+            leaseMs,
+            ...increments.size ? [[...increments.keys()], [...increments.values()]] : [],
+        ]);
     }
 
     return {
         jobs: claimed,
         blockedKeys: [...new Set(blocked.map(job => job.key))],
         blockedNames: [...new Set(blocked.map(job => job.name))],
+        rateWaits: waits,
     };
 }
 
@@ -334,6 +481,7 @@ function parseClaimedJobs(json, lockToken) {
         id: job.id,
         name: job.name,
         limits: [],
+        rateLimits: [],
         attempts: job.attempts,
         maxAttempts: job.maxAttempts,
         stalls: job.stalls,
@@ -424,7 +572,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
                    request.weight
               FROM request
              CROSS JOIN LATERAL (
-                 SELECT id, run_at, limit_keys IS NOT NULL AS limited FROM ${p}jobs
+                 SELECT id, run_at, limit_keys IS NOT NULL OR rate_limits IS NOT NULL AS limited FROM ${p}jobs
                   WHERE status = 'pending' AND job_name = request.name AND run_at <= clock_timestamp()
                   ORDER BY run_at, id LIMIT request.max_jobs
                     FOR UPDATE SKIP LOCKED
@@ -506,7 +654,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
 async function claimDueOfName(executor, p, { name, limit, lockToken, lockedBy, leaseMs }) {
     const [row] = await executor.query(`
         WITH locked AS (
-            SELECT id, limit_keys IS NOT NULL AS limited FROM ${p}jobs
+            SELECT id, limit_keys IS NOT NULL OR rate_limits IS NOT NULL AS limited FROM ${p}jobs
              WHERE status = 'pending' AND job_name = $1 AND run_at <= clock_timestamp()
              ORDER BY run_at, id LIMIT $2
                FOR UPDATE SKIP LOCKED

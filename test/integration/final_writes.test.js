@@ -2,7 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, inject, test, vi } from 'vitest';
 import { resolveDefaults } from '../../src/defaults.js';
 import { toErrorJson } from '../../src/error_json.js';
-import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit, RateLimitedError } from '../../src/index.js';
 import { buildNewJob } from '../../src/new_job.js';
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
@@ -54,6 +54,20 @@ const INSERT_ORPHAN_SQL = {
                  VALUES (?, 0, ?, ?, NULL, UTC_TIMESTAMP(3))`,
     postgres: p => `INSERT INTO ${p}concurrency_slots (limit_key, slot, job_id, lock_token, held_until, created_at)
                     VALUES ($1, 0, $2, $3, NULL, clock_timestamp())`,
+};
+
+/** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
+const READ_RATES_SQL = {
+    mysql: p => `SELECT limit_key, TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(6), tat) DIV 1000 AS ahead_ms
+                   FROM ${p}rate_limits ORDER BY limit_key`,
+    postgres: p => `SELECT limit_key, (EXTRACT(EPOCH FROM tat - clock_timestamp()) * 1000)::bigint AS ahead_ms
+                      FROM ${p}rate_limits ORDER BY limit_key`,
+};
+
+/** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
+const READ_BLOCKED_ON_SQL = {
+    mysql: p => `SELECT blocked_on FROM ${p}jobs WHERE id = ?`,
+    postgres: p => `SELECT blocked_on FROM ${p}jobs WHERE id = $1`,
 };
 
 const LEASE_MS = 240_000;
@@ -319,6 +333,106 @@ test('retryJob: pending after the delay, one attempt used, the error kept, the k
     await expect(readHolds(tables.p)).resolves.toStrictEqual([]);
 });
 
+/**
+ * @param {string} p
+ * @returns {Promise<Record<string, number>>} The ms that the tat of each rate key is ahead of now.
+ */
+async function readRates(p) {
+    const rows = await database.query(READ_RATES_SQL[database.family](p));
+
+    return Object.fromEntries(rows.map(row => [String(row.limit_key), Number(row.ahead_ms)]));
+}
+
+describe('rateLimited', () => {
+    // 10 per s, bursts of 5: τ = 400 ms
+    const api = defineRateLimit({ name: 'api', max: 10, per: '1s', burst: 5 });
+    const quota = defineRateLimit({ name: 'quota', max: 1, per: '1h' });
+
+    test('the keys wait retryAfter, by the settings of the job; the job is blocked on the first, without an attempt; '
+        + 'its slots are freed', async () => {
+        const tables = await freshTables();
+        const job = await claimedJob(tables, { globalRateLimits: [quota, api.key('a')] });
+        const error = toErrorJson(new RateLimitedError({ retryAfter: '30s' }));
+
+        expect(job.rateLimits.map(limit => limit.key)).toStrictEqual(['@api:a', '@quota']);
+        await expect(tables.store.rateLimited(job, { limits: job.rateLimits, retryAfterMs: 30_000, error }))
+            .resolves.toStrictEqual({ changed: true, delayMs: expect.any(Number) });
+        await expect(readJob(tables.p, job.id)).resolves.toMatchObject({
+            status: 'blocked',
+            attempts: 0,
+            lock_token: null,
+            lease_in_ms: null,
+            last_error: { name: 'RateLimitedError' },
+        });
+        await expect(database.query(READ_BLOCKED_ON_SQL[database.family](tables.p), [job.id]))
+            .resolves.toMatchObject([{ blocked_on: '@api:a' }]);
+        await expect(readHolds(tables.p)).resolves.toStrictEqual([]);
+
+        // The next start at 30 s: then one per 100 ms. The claim took the quota of the hour already: it stays.
+        const rates = await readRates(tables.p);
+
+        expect(rates['@api:a']).toBeGreaterThan(30_350);
+        expect(rates['@api:a']).toBeLessThanOrEqual(30_400);
+        expect(rates['@quota']).toBeGreaterThan(3_590_000);
+    });
+
+    test('the wait of the job on its key; a key further ahead stays', async () => {
+        const tables = await freshTables();
+        const error = toErrorJson(new RateLimitedError({ retryAfter: '1m' }));
+        const first = await claimedJob(tables, { globalRateLimits: [api.key('a')] });
+        const firstResult = await tables.store.rateLimited(first, {
+            limits: first.rateLimits,
+            retryAfterMs: 60_000,
+            error,
+        });
+
+        expect(firstResult.delayMs).toBeGreaterThan(59_900);
+        expect(firstResult.delayMs).toBeLessThanOrEqual(60_000);
+
+        // Another job, on the same key: a shorter retryAfter does not bring the key back
+        const second = await claimedJob(tables, { globalRateLimits: [api.key('b')] });
+        const secondResult = await tables.store.rateLimited(second, {
+            limits: [{ ...second.rateLimits[0], key: '@api:a' }],
+            retryAfterMs: 1000,
+            error,
+        });
+
+        expect(secondResult.delayMs).toBeGreaterThan(59_000);
+        expect((await readRates(tables.p))['@api:a']).toBeGreaterThan(60_000);
+    });
+
+    test('a key without a row: created', async () => {
+        const tables = await freshTables();
+        const job = await claimedJob(tables);
+
+        await expect(tables.store.rateLimited(job, {
+            limits: [{ key: '@api', max: 10, per_us: 1_000_000, burst: 1, cost: 1 }],
+            retryAfterMs: 5000,
+            error: toErrorJson('limited'),
+        })).resolves.toMatchObject({ changed: true });
+
+        const rates = await readRates(tables.p);
+
+        expect(rates['@api']).toBeGreaterThan(4900);
+        expect(rates['@api']).toBeLessThanOrEqual(5000);
+    });
+
+    test('a lost lock: no change', async () => {
+        const tables = await freshTables();
+        const job = await claimedJob(tables, { globalRateLimits: [api.key('a')] });
+        const before = await readRates(tables.p);
+
+        await expect(tables.store.rateLimited({ ...job, lockToken: 'other' }, {
+            limits: job.rateLimits,
+            retryAfterMs: 60_000,
+            error: toErrorJson('limited'),
+        })).resolves.toStrictEqual({ changed: false, delayMs: 0 });
+        await expect(readJob(tables.p, job.id)).resolves.toMatchObject({ status: 'running', lock_token: job.lockToken });
+        await expect(readHolds(tables.p)).resolves.toMatchObject([{ limit_key: 'order:1', job_id: job.id }]);
+        expect((await readRates(tables.p))['@api:a']).toBeLessThanOrEqual(before['@api:a']);
+    });
+});
+
 describe('failJob', () => {
     test('failed with its payload; its failure job added in the same transaction', async () => {
         const tables = await freshTables();
@@ -473,7 +587,12 @@ test('sweepSlots: deletes the ended lingers and the slots without their running 
     await database.query(insertHold, ['future', 'gone', 'old', 3600]);
     await database.query(INSERT_ORPHAN_SQL[database.family](tables.p), ['orphan', 'gone', 'old']);
 
-    await expect(tables.store.sweepSlots(100)).resolves.toStrictEqual({ lingers: 1, orphans: 1, unblocked: 0 });
+    await expect(tables.store.sweepSlots(100)).resolves.toStrictEqual({
+        lingers: 1,
+        orphans: 1,
+        unblocked: 0,
+        rateWaits: [],
+    });
     await expect(readHolds(tables.p)).resolves.toMatchObject([
         { limit_key: 'future' },
         { limit_key: 'order:1', job_id: job.id },

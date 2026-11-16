@@ -72,6 +72,18 @@ export declare function releaseJob(executor: Executor, p: string, job: OwnedJob,
     lingerMs: number;
 }): Promise<boolean>;
 /**
+ * The handler threw a RateLimitedError on rate keys of the job: the tat of each moves to `now + retryAfter + τ` at the
+ * least (its next start at `now + retryAfter`, then one per per / max), by the settings of the job; a missing row is
+ * created. The job is blocked on the first key, without an attempt used, and its slots are freed. The order of the
+ * locks of a claim: the job, the rows of the keys in their order, then the slots.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {OwnedJob} job
+ * @param {import('./store.js').RateLimitedParams} params
+ * @returns {Promise<import('./store.js').RateLimitedResult>}
+ */
+export declare function rateLimited(executor: Executor, p: string, job: OwnedJob, { limits, retryAfterMs, error }: import('./store.js').RateLimitedParams): Promise<import('./store.js').RateLimitedResult>;
+/**
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit
@@ -106,19 +118,40 @@ export declare function recoverStaleJob(executor: Executor, p: string, id: strin
  */
 export declare function unblock(executor: Executor, p: string, keys: string[], inTransaction?: <T>(func: (executor: Executor) => Promise<T>) => Promise<T>): Promise<string[]>;
 /**
+ * Makes the jobs blocked on the rate keys pending again, the oldest first: on each key, as many as its quota allows
+ * now, each job by its own settings (gcra.js, `admitQueue`), at most RATE_UNBLOCK_BATCH. It does not take the quota:
+ * the claim does, and blocks again a job that another one got ahead of. A read; then a transaction, only when a job
+ * may start.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} keys
+ * @param {import('./postgres_final.js').RateUnblockOptions} [options]
+ * @returns {Promise<{ names: string[], waits: import('./postgres_final.js').RateUnblock[] }>} The names of the jobs
+ *     that it made pending; the keys on which it found blocked jobs.
+ */
+export declare function unblockRates(executor: Executor, p: string, keys: string[], options?: import('./postgres_final.js').RateUnblockOptions): Promise<{
+    names: string[];
+    waits: import('./postgres_final.js').RateUnblock[];
+}>;
+/**
  * Deletes the ended lingers, and the slots without their running job (from a manual change, or old code). Then
  * unblocks the jobs blocked on keys with room: a release that ended in a linger, or a process that stopped before its
- * unblock.
+ * unblock; and the jobs blocked on rate keys whose next start is due: a process that stopped with its timer.
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit
- * @returns {Promise<{ lingers: number, orphans: number, unblocked: number }>}
+ * @returns {Promise<import('./store.js').SweepResult>}
  */
-export declare function sweepSlots(executor: Executor, p: string, limit: number): Promise<{
-    lingers: number;
-    orphans: number;
-    unblocked: number;
-}>;
+export declare function sweepSlots(executor: Executor, p: string, limit: number): Promise<import('./store.js').SweepResult>;
+/**
+ * Deletes a batch of rows of rate keys whose tat passed: such a key has its full quota, as without a row. SKIP LOCKED:
+ * a claim holds the rows of its keys.
+ * @param {Executor} executor In a transaction.
+ * @param {string} p
+ * @param {number} limit
+ * @returns {Promise<number>} The deleted rows.
+ */
+export declare function deleteIdleRateKeys(executor: Executor, p: string, limit: number): Promise<number>;
 /**
  * Deletes a batch of completed and failed jobs whose retention ended, with their payloads. SKIP LOCKED: processes
  * share the work.
