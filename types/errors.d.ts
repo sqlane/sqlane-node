@@ -43,6 +43,17 @@ export declare class InvalidConcurrencyLimitError extends SqlaneError {
      */
     constructor(message: string, options?: ErrorOptions);
 }
+/**
+ * More than 10 global keys with the concurrency limits, a key or a cost that breaks the rules, one key with two
+ * settings, or bad options of a `RateLimitedError`.
+ */
+export declare class InvalidRateLimitError extends SqlaneError {
+    /**
+     * @param {string} message
+     * @param {ErrorOptions} [options]
+     */
+    constructor(message: string, options?: ErrorOptions);
+}
 /** Enqueue of an unknown name with `unknownJobs: 'reject'`. */
 export declare class UnknownJobError extends SqlaneError {
     /**
@@ -117,6 +128,35 @@ export declare class RetryJobError extends SqlaneError {
      */
     constructor(message: string, options: ErrorOptions & {
         delay: import('./types.js').Duration;
+    });
+}
+/**
+ * Thrown by a handler when the other side limits the rate (an HTTP 429): the job waits for the limit, without using an
+ * attempt. `limit`: the rate limit, or the key of it, to push back to at least `retryAfter` from now; without it, all
+ * the global rate keys of the job. A job without rate keys is retried after `retryAfter`, as by a `RetryJobError`.
+ */
+export declare class RateLimitedError extends SqlaneError {
+    /**
+     * @readonly
+     * @type {import('./types.js').RateLimit | import('./types.js').RateLimitKey | undefined}
+     */
+    limit: import('./types.js').RateLimit | import('./types.js').RateLimitKey | undefined;
+    /**
+     * @readonly
+     * @type {import('./types.js').Duration}
+     */
+    retryAfter: import('./types.js').Duration;
+    /**
+     * @param {{
+     *     limit?: import('./types.js').RateLimit | import('./types.js').RateLimitKey,
+     *     retryAfter: import('./types.js').Duration,
+     *     cause?: unknown,
+     * }} options
+     */
+    constructor(options: {
+        limit?: import('./types.js').RateLimit | import('./types.js').RateLimitKey;
+        retryAfter: import('./types.js').Duration;
+        cause?: unknown;
     });
 }
 /** `migrate()` did not get the migration lock in its `lockTimeout`. */

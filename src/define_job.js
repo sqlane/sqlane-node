@@ -1,16 +1,17 @@
 import { isConcurrencyLimit } from './define_concurrency_limit.js';
+import { isRateLimit } from './define_rate_limit.js';
 import { ConfigError } from './errors.js';
 import { checkFailureJob, checkJobFields, checkObject, JOB_NAME_REGEXP } from './validate.js';
 
 const JOB_OPTION_NAMES = [
     'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'failureJob', 'fairShareWeight',
-    'localConcurrencyLimits', 'globalConcurrencyLimits',
+    'localConcurrencyLimits', 'globalConcurrencyLimits', 'localRateLimits', 'globalRateLimits',
 ];
 export const MAX_WEIGHT = 1000;
 
 /**
  * Defines a job name and its options. Producers and workers import the definition. `defineJob<{ reportId: string }>(…)`
- * declares the payload: `enqueue`, `handle` and `globalConcurrencyLimits` then check it.
+ * declares the payload: `enqueue`, `handle`, `globalConcurrencyLimits` and `globalRateLimits` then check it.
  * @template [P=any]
  * @param {import('./types.js').JobOptions<P>} options
  * @returns {import('./types.js').JobDefinition<P>} Frozen.
@@ -39,6 +40,10 @@ export function defineJob(options) {
         throw new ConfigError(`${where}: "globalConcurrencyLimits" must be a function of the context, ({ payload })`);
     }
 
+    if (options.globalRateLimits !== undefined && typeof options.globalRateLimits !== 'function') {
+        throw new ConfigError(`${where}: "globalRateLimits" must be a function of the context, ({ payload })`);
+    }
+
     if (options.failureJob !== undefined) {
         checkFailureJob(options.failureJob, name, scope);
     }
@@ -59,9 +64,23 @@ export function defineJob(options) {
         throw new ConfigError(`${where}: "localConcurrencyLimits" names a limit twice`);
     }
 
+    const localRate = options.localRateLimits;
+
+    // Keyless: each instance counts its starts in memory, with no key to tell apart
+    if (localRate !== undefined && (!Array.isArray(localRate) || !localRate.every(isRateLimit))) {
+        throw new ConfigError(
+            `${where}: "localRateLimits" must be an array of limits from defineRateLimit(), without key() or cost()`,
+        );
+    }
+
+    if (localRate && new Set(localRate.map(limit => limit.name)).size !== localRate.length) {
+        throw new ConfigError(`${where}: "localRateLimits" names a limit twice`);
+    }
+
     return Object.freeze({
         ...options,
         ...(local && { localConcurrencyLimits: Object.freeze([...local]) }),
+        ...(localRate && { localRateLimits: Object.freeze([...localRate]) }),
         ...(options.backoff && { backoff: Object.freeze({ ...options.backoff }) }),
         ...(options.retention && { retention: Object.freeze({ ...options.retention }) }),
     });

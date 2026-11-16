@@ -1,17 +1,25 @@
 import { describe, expect, test } from 'vitest';
 import { defineConcurrencyLimit } from './define_concurrency_limit.js';
 import { defineJob } from './define_job.js';
+import { defineRateLimit } from './define_rate_limit.js';
 import { resolveDefaults } from './defaults.js';
-import { InvalidConcurrencyLimitError, InvalidOptionsError, PayloadTooLargeError } from './errors.js';
+import {
+    InvalidConcurrencyLimitError,
+    InvalidOptionsError,
+    InvalidRateLimitError,
+    PayloadTooLargeError,
+} from './errors.js';
 import { buildNewJob } from './new_job.js';
 
 const defaults = resolveDefaults();
 const report = defineConcurrencyLimit({ name: 'report', max: 1 });
+const reportApi = defineRateLimit({ name: 'report_api', max: 10, per: '1m', burst: 2 });
 const buildReport = defineJob({
     name: 'build_report',
     maxAttempts: 5,
     retention: { completed: '10m' },
     globalConcurrencyLimits: ({ payload }) => [report.key(payload.reportId)],
+    globalRateLimits: ({ payload }) => [reportApi.key(payload.reportId, { cost: 2 })],
     failureJob: defineJob({ name: 'report_failed' }),
 });
 
@@ -39,6 +47,7 @@ describe('with a definition', () => {
             name: 'build_report',
             payloadJson: '{"reportId":"r1"}',
             limits: [{ key: 'report:r1', max: 1 }],
+            rateLimits: [{ key: '@report_api:r1', max: 10, per_us: 60_000_000, burst: 2, cost: 2 }],
             maxAttempts: 5,
             maxStalls: 2,
             completedRetentionMs: 600_000,
@@ -61,11 +70,13 @@ describe('with a definition', () => {
                 retention: { failed: '1d' },
                 failureJob: 'other_failed',
                 globalConcurrencyLimits: [],
+                globalRateLimits: [],
             },
         })).toMatchObject({
             id: 'build_report:r1',
             hasJobId: true,
             limits: [],
+            rateLimits: [],
             maxAttempts: 1,
             maxStalls: 0,
             completedRetentionMs: 600_000,
@@ -84,6 +95,27 @@ describe('with a definition', () => {
             .toStrictEqual([{ key: 'report:2030-01-01T00:00:00.000Z', max: 1 }]);
     });
 
+    test('the global rate limits: from the payload as JSON gives it back; the option replaces them', () => {
+        const withKeys = defineJob({ name: 'with_keys', globalRateLimits: ({ payload }) => [reportApi.key(payload.at)] });
+        const at = new Date('2030-01-01T00:00:00Z');
+
+        expect(build({ name: 'with_keys', definition: withKeys, payload: { at } }).rateLimits)
+            .toStrictEqual([{ key: '@report_api:2030-01-01T00:00:00.000Z', max: 10, per_us: 60_000_000, burst: 2, cost: 1 }]);
+        expect(build({ options: { globalRateLimits: [reportApi] } }).rateLimits)
+            .toStrictEqual([{ key: '@report_api', max: 10, per_us: 60_000_000, burst: 2, cost: 1 }]);
+    });
+
+    test('10 global keys, concurrency and rate limits together', () => {
+        const many = {
+            globalConcurrencyLimits: Array.from({ length: 5 }, (_, index) => report.key(index)),
+            globalRateLimits: Array.from({ length: 5 }, (_, index) => reportApi.key(index)),
+        };
+
+        expect(build({ options: many })).toMatchObject({ limits: { length: 5 }, rateLimits: { length: 5 } });
+        expect(() => build({ options: { ...many, globalRateLimits: [...many.globalRateLimits, reportApi] } }))
+            .toThrow('enqueue("build_report"): at most 10 global keys, concurrency and rate limits together, got 11');
+    });
+
     test('the mutexKeys of 5.x: an error that names the new option', () => {
         expect(() => build({ options: /** @type {any} */ ({ mutexKeys: ['a'] }) }))
             .toThrow('enqueue("build_report"): "mutexKeys" was removed in 6.0: use "globalConcurrencyLimits"');
@@ -98,6 +130,7 @@ test('an unknown name takes the defaults', () => {
     expect(build({ name: 'send_email', definition: null, options: { jobId: 'e1' } })).toMatchObject({
         id: 'send_email:e1',
         limits: [],
+        rateLimits: [],
         maxAttempts: 3,
         maxStalls: 2,
         completedRetentionMs: 3_600_000,
@@ -125,6 +158,9 @@ test.each([
     ['a payload above the limit', { maxPayloadBytes: 10 }, PayloadTooLargeError],
     ['a bad key of a limit', { options: { globalConcurrencyLimits: [report.key(' a')] } }, InvalidConcurrencyLimitError],
     ['a key that is not of a limit', { options: { globalConcurrencyLimits: ['report:1'] } }, InvalidConcurrencyLimitError],
+    ['a bad key of a rate limit', { options: { globalRateLimits: [reportApi.key('a ')] } }, InvalidRateLimitError],
+    ['a concurrency limit as a rate limit', { options: { globalRateLimits: [report] } }, InvalidRateLimitError],
+    ['a rate limit as a concurrency limit', { options: { globalConcurrencyLimits: [reportApi] } }, InvalidConcurrencyLimitError],
     ['a jobId with the reserved prefix', { options: { jobId: 'schedule:2026' } }, InvalidOptionsError],
     ['slot with jobId', { options: { slot: { at: new Date() }, jobId: 'r1' } }, InvalidOptionsError],
     ['a slot without at', { options: { slot: {} } }, InvalidOptionsError],

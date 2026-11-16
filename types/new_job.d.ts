@@ -11,6 +11,11 @@ export type NewJob = {
      * duplicates.
      */
     limits: readonly import('./concurrency_keys.js').GlobalLimit[];
+    /**
+     * Its global rate limits: sorted by key,
+     * without duplicates. At most 10 keys with `limits`.
+     */
+    rateLimits: readonly import('./rate_keys.js').GlobalRateLimit[];
     maxAttempts: number;
     maxStalls: number;
     completedRetentionMs: number;
