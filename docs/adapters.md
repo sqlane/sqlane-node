@@ -241,9 +241,18 @@ PostgreSQL drops the duplicate notifications of a transaction, so it delivers on
 name. NOTIFY takes a global lock at the commit, so under a heavy write load it can limit the commit rate of the whole
 database.
 
-**Prepared statements.** By default (`prepare: true`), sqlane runs its SQL as named prepared statements. Each
-connection parses and plans a statement once, and PostgreSQL then reuses a cached plan. A pooler in transaction mode
-without prepared statement support, such as PgBouncer before 1.21, cannot keep them: set `{ prepare: false }` there.
+**Prepared statements.** By default (`prepare: true`), sqlane runs its SQL as named prepared statements
+(`sqlane_<hash>`). Each connection parses and plans a statement once, and PostgreSQL then reuses a cached plan. sqlane
+has about 55 statements at run time, and 40 more on the connection that runs `migrate()`. Their number does not grow
+with the job names, the keys or the batch sizes. A connection that has run them all keeps 2–3.5 MB of plans (PostgreSQL
+17); the largest, the claims and `enqueueMany`, take about 0.3 MB each.
+
+A pooler in transaction mode without prepared statement support, such as PgBouncer before 1.21, cannot keep them: set
+`{ prepare: false }` there. PgBouncer 1.21 and later keep them in transaction mode with `max_prepared_statements` at
+least 100, plus your app's own: its default is 200 since 1.24; set it on 1.21–1.23. Do not run `DISCARD ALL` or
+`DEALLOCATE ALL` on a connection that sqlane uses, including one of your app's pool that you pass to `enqueue`: pg
+remembers what it prepared, and each later run of the statement on that connection fails with "prepared statement … does
+not exist". PgBouncer 1.22 and later, with `max_prepared_statements` set, handle these two commands themselves.
 
 ## postgres.js
 
@@ -284,8 +293,12 @@ keep its transform. A reserved connection (`sql.reserve()`) must be in a transac
 database.
 
 **Prepared statements.** sqlane runs its SQL as named prepared statements, as postgres.js runs its tagged queries: each
-connection parses and plans a statement once. `postgres({ prepare: false })`, for a pooler in transaction mode without
-prepared statement support, turns them off for sqlane's SQL too.
+connection parses and plans a statement once. Their number and memory are those of the [pg adapter](#pg): about 55,
+and 40 more for `migrate()`; 2–3.5 MB per connection. `postgres({ prepare: false })`, for a pooler in transaction mode
+without prepared statement support, turns them off for sqlane's SQL too. With PgBouncer 1.21 or later, set
+`max_prepared_statements` to at least 100, plus your app's own. Do not run
+`DISCARD ALL` or `DEALLOCATE ALL` on a connection that sqlane uses: postgres.js remembers what it prepared, and a
+statement in a transaction then fails with "prepared statement … does not exist".
 
 ## Knex
 
