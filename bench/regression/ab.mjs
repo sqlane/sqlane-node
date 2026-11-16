@@ -1,10 +1,11 @@
 // The A/B performance regression check: `pnpm bench:regression [--ref main] [--db postgres|mysql|mariadb]… [--scenario
 // <name>]… [--window 15] [--warmup 5] [--out <dir>] [--save <file>]`. Compares the working tree with a git ref on
 // PostgreSQL, MySQL and MariaDB of this host (started from their binaries: --pg-bin, --mysql-bin, --mariadb-bin,
-// defaults: the PG_BIN, MYSQL_BIN and MARIADB_BIN variables, else Homebrew's), in six scenarios under steady load. Each
-// scenario runs its sqlane processes (app.mjs) on a fresh database, and measures a window: the CPU instructions per
-// operation of these processes and of the database server (with its descendants), and the statements per operation (the
-// server's statistics, db_stats.mjs).
+// defaults: the PG_BIN, MYSQL_BIN and MARIADB_BIN variables, else Homebrew's), in seven scenarios under steady load.
+// Each scenario runs its sqlane processes (app.mjs) on a fresh database, and measures a window: the CPU instructions
+// per operation of these processes and of the database server (with its descendants), and the statements per operation
+// (the server's statistics, db_stats.mjs). A scenario of a feature that the baseline lacks (`global_rate_limits`
+// against a ref without `defineRateLimit`) is skipped: n/a, not a failure.
 //
 // `--ref .`: the baseline is the working tree itself, without git (a copy with no .git, as on the Linux machine of the
 // published numbers: `bench/run_linux.sh regression --ref . --save bench/regression/results.json`). Every verdict
@@ -15,7 +16,7 @@
 // A difference beyond ±5% in instructions, or ±3% in statements, reruns the pair in the other order; only a difference
 // of both runs, in the same direction, counts. Exit code 1: a confirmed regression (more instructions or statements);
 // 2: a run failed. The baseline and the working tree run on the same server instance; the databases run in parallel,
-// one lane each, their scenarios one after the other. About 6 minutes with the defaults, more with reruns.
+// one lane each, their scenarios one after the other. About 7 minutes with the defaults, more with reruns.
 //
 // Timing: a warm-up of 5 s, then a window of 15 s. The worker scenarios align their window with the poll of the
 // worker (every 5 s from its start): from the middle of one interval to the middle of another, so that it holds whole
@@ -75,6 +76,8 @@ const WARMUP_MS = Number(args.warmup) * 1000;
  * @property {'ops' | 'completed' | 'fired' | 'seconds'} per The operations: the producer's calls, the worker's
  *     completed jobs, the scheduler's fired slots, or the seconds of the window.
  * @property {'none' | 'poll' | 'slot'} align
+ * @property {string} [requires] The export of sqlane that the scenario needs: without it in the baseline (a version
+ *     before it), the scenario is skipped, n/a.
  */
 
 /** @type {Scenario[]} */
@@ -129,6 +132,21 @@ const SCENARIOS = [
         ],
         per: 'completed',
         align: 'poll',
+    },
+    {
+        // A key takes a job every 5 s, its limit one per second: no job waits for its key. A tighter limit would block
+        // a share of the jobs that depends on the timing (one per 5 s: about half), or all of them with a backlog that
+        // grows, so the cost per job would differ between runs. This one measures what each job with a rate key pays
+        name: 'global_rate_limits',
+        unit: 'job with one of 100 keys of a global rate limit of 1/s, none limited (20/s)',
+        op: 'job',
+        processes: [
+            { role: 'worker', args: ['--rate-limit-keys', '100'] },
+            { role: 'producer', args: ['--op', 'enqueue', '--rate', '20', '--rate-limit-keys', '100'] },
+        ],
+        per: 'completed',
+        align: 'poll',
+        requires: 'defineRateLimit',
     },
 ];
 
@@ -198,7 +216,11 @@ function extract(ref) {
  */
 function startApp(appArgs, role, log) {
     const fd = openSync(log, 'w');
-    const child = fork(APP, [...appArgs, '--role', role], { stdio: ['ignore', fd, fd, 'ipc'] });
+    // --expose-gc: `collect`
+    const child = fork(APP, [...appArgs, '--role', role], {
+        stdio: ['ignore', fd, fd, 'ipc'],
+        execArgv: ['--expose-gc'],
+    });
 
     closeSync(fd);
 
@@ -358,6 +380,10 @@ async function runScenario(lane, scenario, { variant, src, attempt }) {
         // The producers pause: no operation straddles the edge
         const countsBefore = await Promise.all(children.map(child => child.request('pause')));
 
+        // Their young generation empty: a scavenge in the window comes from its allocations, not from the start-up's,
+        // which differ between versions and would put one in the window of one of them (an idle worker allocates
+        // ~100 KB per poll: none then)
+        await Promise.all(children.map(child => child.request('collect')));
         await lane.stats.reset(database);
 
         const before = await readCounters(lane, children);
@@ -541,6 +567,7 @@ function deltaOf(base, current) {
  * @property {boolean} confirmed The first pair was beyond a threshold, and the rerun too, in the same direction.
  * @property {boolean} rerun
  * @property {string} [error]
+ * @property {string} [skipped] Why the scenario did not run: a source tree without its export.
  */
 
 /**
@@ -585,6 +612,14 @@ function directions(deltas) {
  * @returns {Promise<Comparison>}
  */
 async function compare(lane, scenario, sources) {
+    const missing = await missingExport(scenario, sources);
+
+    if (missing) {
+        console.error(`${lane.dialect} ${scenario.name}: skipped, ${missing}`);
+
+        return { ...failed(lane.dialect, scenario, null), skipped: missing };
+    }
+
     const startedAt = Date.now();
     /**
      * @param {string[]} order
@@ -667,16 +702,37 @@ async function compare(lane, scenario, sources) {
 }
 
 /**
+ * @param {Scenario} scenario
+ * @param {{ base: string, current: string }} sources
+ * @returns {Promise<string | null>} Which tree lacks the export that the scenario needs, if one does.
+ */
+async function missingExport(scenario, sources) {
+    if (!scenario.requires) {
+        return null;
+    }
+
+    for (const variant of /** @type {const} */ (['base', 'current'])) {
+        const lib = await import(join(sources[variant], 'src/index.js'));
+
+        if (!(scenario.requires in lib)) {
+            return `the ${variant === 'base' ? 'baseline' : 'working tree'} has no ${scenario.requires}`;
+        }
+    }
+
+    return null;
+}
+
+/**
  * @param {string} dialect
  * @param {Scenario} scenario
- * @param {unknown} error
+ * @param {unknown} error null: no error, a skipped scenario.
  * @returns {Comparison}
  */
 function failed(dialect, scenario, error) {
     return {
         dialect, scenario: scenario.name, unit: scenario.unit, runs: [],
         instructions: { base: 0, current: 0, delta: 0 }, statements: { base: 0, current: 0, delta: 0 },
-        verdict: 'same', confirmed: false, rerun: false, error: String(error),
+        verdict: 'same', confirmed: false, rerun: false, ...error !== null && { error: String(error) },
     };
 }
 
@@ -765,6 +821,10 @@ function table(comparisons) {
             return `| ${row.scenario} | ${row.dialect} | | | error: ${row.error.split('\n')[0]} |`;
         }
 
+        if (row.skipped) {
+            return `| ${row.scenario} | ${row.dialect} | | | n/a: ${row.skipped} |`;
+        }
+
         const { instructions: i, statements: s } = row;
         let verdict = row.confirmed ? `**${row.verdict}**, confirmed` : 'same';
 
@@ -825,6 +885,10 @@ function saved(comparisons, { commit, totalS }) {
             description: scenario.unit,
             databases: Object.fromEntries(dialects.map((dialect) => {
                 const row = comparisons.find(item => item.scenario === scenario.name && item.dialect === dialect);
+
+                if (row?.skipped) {
+                    return [dialect, { skipped: row.skipped }];
+                }
 
                 if (!row || row.error) {
                     return [dialect, { error: row?.error ?? 'missing' }];

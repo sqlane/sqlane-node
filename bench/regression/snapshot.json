@@ -89,6 +89,21 @@
                 "min": 6218,
                 "max": 6224
             }
+        },
+        "global_rate_limits": {
+            "operations": 100,
+            "statements": {
+                "min": 800,
+                "max": 800
+            },
+            "rows": {
+                "min": 1482,
+                "max": 1482
+            },
+            "blocks": {
+                "min": 9027,
+                "max": 9071
+            }
         }
     },
     "mysql-8.4": {
@@ -176,6 +191,21 @@
             "rows": {
                 "min": 32481,
                 "max": 32481
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "global_rate_limits": {
+            "operations": 100,
+            "statements": {
+                "min": 1500,
+                "max": 1500
+            },
+            "rows": {
+                "min": 13660,
+                "max": 13660
             },
             "blocks": {
                 "min": 0,
@@ -273,6 +303,21 @@
                 "min": 0,
                 "max": 0
             }
+        },
+        "global_rate_limits": {
+            "operations": 100,
+            "statements": {
+                "min": 1500,
+                "max": 1500
+            },
+            "rows": {
+                "min": 90372,
+                "max": 90372
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
         }
     },
     "mariadb-11.8": {
@@ -360,6 +405,21 @@
             "rows": {
                 "min": 78986,
                 "max": 78986
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "global_rate_limits": {
+            "operations": 100,
+            "statements": {
+                "min": 1500,
+                "max": 1500
+            },
+            "rows": {
+                "min": 89804,
+                "max": 89804
             },
             "blocks": {
                 "min": 0,
@@ -456,6 +516,21 @@
             "blocks": {
                 "min": 6569,
                 "max": 6572
+            }
+        },
+        "global_rate_limits": {
+            "operations": 100,
+            "statements": {
+                "min": 800,
+                "max": 800
+            },
+            "rows": {
+                "min": 1482,
+                "max": 1482
+            },
+            "blocks": {
+                "min": 9412,
+                "max": 9444
             }
         }
     }
