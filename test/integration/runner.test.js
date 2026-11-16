@@ -337,6 +337,45 @@ describe('concurrency', () => {
         expect(allMeter.max()).toBe(3);
     });
 
+    test('a busy name and a wake of more than 100 other names: each job runs once (the probe of all names gives the '
+        + 'names of the claim too)', async () => {
+        const { sqlane, p, events } = await freshSqlane({ localMaxConcurrency: 8, pollInterval: '10s' });
+        const names = Array.from({ length: 150 }, (_, at) => `n${String(at).padStart(3, '0')}`);
+        /** @type {string[]} The ids of the jobs that started */
+        const runs = [];
+        /** @type {import('../../src/types.js').Handler} */
+        const count = ({ job }) => {
+            runs.push(job.id);
+        };
+
+        // The busy name fills the instance: its claims fill the free slots, so it stays in the backlog, claimed at once
+        sqlane.handle('busy', async (context) => {
+            count(context);
+            await sleep(20);
+        });
+
+        for (const name of names) {
+            sqlane.handle(name, count);
+        }
+
+        await sqlane.start();
+        await sqlane.enqueueMany(testAdapter.pool, 'busy', Array.from({ length: 300 }, () => ({ payload: {} })));
+
+        // Enqueues of 150 names in this process: their re-probes wake them all at once, a probe of more than 100
+        // names, which reads all names
+        for (const name of names) {
+            // oxlint-disable-next-line no-await-in-loop -- one enqueue after the other
+            await sqlane.enqueue(testAdapter.pool, name, {});
+        }
+
+        await waitFor(async () => (await readJobs(p)).every(job => job.status === 'completed'), 30_000);
+
+        // The ids that started more than once
+        expect(runs.filter((id, at) => runs.indexOf(id) !== at)).toStrictEqual([]);
+        expect(runs).toHaveLength(300 + names.length);
+        expect(events.filter(event => event.type === 'error')).toStrictEqual([]);
+    }, 40_000);
+
     test('a global limit of 1: the jobs of a key run one at a time, other keys in parallel', async () => {
         const { sqlane, p } = await freshSqlane();
         const perKey = new Map([['order:1', concurrencyMeter()], ['order:2', concurrencyMeter()]]);

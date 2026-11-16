@@ -228,7 +228,7 @@ export type Store = {
     /**
      * Finds, chooses by share, claims and reads
      * the due jobs of names without global limits, at once: one statement on PostgreSQL. It leaves the rows with
-     * limits.
+     * limits. A name requested more than once counts once, by its first request.
      */
     claimDue: (params: ClaimDueParams) => Promise<ClaimDueResult>;
     /**
@@ -497,7 +497,7 @@ export type SweepResult = {
  * @property {(params: ClaimParams) => Promise<ClaimResult>} claim In a queue transaction of its own.
  * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, chooses by share, claims and reads
  *     the due jobs of names without global limits, at once: one statement on PostgreSQL. It leaves the rows with
- *     limits.
+ *     limits. A name requested more than once counts once, by its first request.
  * @property {(keys: string[]) => Promise<string[]>} unblock Makes the jobs blocked on the concurrency keys pending
  *     again, the oldest first, as many as each key has room for: their names. It leaves the rate keys.
  * @property {(keys: string[], floors?: Map<string, number>)

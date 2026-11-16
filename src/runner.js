@@ -254,10 +254,20 @@ export function createRunner({
      * @param {{ found: boolean, payload: unknown }} payload
      */
     function startJob(claimed, payload) {
+        const key = `${claimed.id}\n${claimed.lockToken}`;
+
+        if (running.has(key)) {
+            // A claim that gave the job twice (a bug): it runs once
+            reportError('start_job', new Error(`sqlane: the job ${claimed.id} was claimed twice by one claim, `
+                + 'it runs once'));
+
+            return;
+        }
+
         const entry = /** @type {HandlerEntry} */ (registry.getEntry(claimed.name));
         /** @type {RunningJob} */
         const job = {
-            key: `${claimed.id}\n${claimed.lockToken}`,
+            key,
             claimed,
             entry,
             controller: new AbortController(),

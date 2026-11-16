@@ -308,6 +308,14 @@ full limit takes no more names, so the names after it get their turn. The names 
 order, and the other names are a margin for names whose jobs other processes hold. A claim that fills the free slots does not read the
 next due times of its names: they stay in the backlog, and the next turn claims them again.
 
+**Each name once.** On MySQL and MariaDB, each requested name is one branch of the `UNION ALL` that locks the due
+jobs, and `SKIP LOCKED` does not skip the transaction's own locks: a name requested twice would lock its jobs twice,
+and the process would run each of them twice. A probe of more than 100 names reads all names (a long list makes a slow
+range plan), so it also gives the names that the turn claims at once: the turn keeps each name once. The store drops a
+repeated name as well (its first request counts), and the process does not start a job that the same claim gave
+twice: an `error` event instead. On PostgreSQL the `UPDATE … FROM` of the claim updates a row once, however many
+times it is locked, so there a repeated name could only skew the share.
+
 **The names with global limits** find their candidates once per turn, before the plain claim. A plan over all the
 names of the turn gives them their share of the free slots, on their candidate counts, and the plain claim leaves
 those slots free: in the instance, and in their local limits (the plain claim gets the rooms of the limits minus the

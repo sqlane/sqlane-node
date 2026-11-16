@@ -174,7 +174,7 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
  * @property {(params: ClaimParams) => Promise<ClaimResult>} claim In a queue transaction of its own.
  * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, chooses by share, claims and reads
  *     the due jobs of names without global limits, at once: one statement on PostgreSQL. It leaves the rows with
- *     limits.
+ *     limits. A name requested more than once counts once, by its first request.
  * @property {(keys: string[]) => Promise<string[]>} unblock Makes the jobs blocked on the concurrency keys pending
  *     again, the oldest first, as many as each key has room for: their names. It leaves the rate keys.
  * @property {(keys: string[], floors?: Map<string, number>)
@@ -326,10 +326,24 @@ export function createStore(adapter, tablePrefix, logger) {
         probe: names => sql.probe(adapter.queue, tablePrefix, names),
         findCandidates: (limitsByName, ratedNames) => findCandidates(sql, limitsByName, ratedNames),
         claim: params => adapter.queueTransaction(executor => sql.claim(executor, tablePrefix, params)),
-        claimDue: params => (adapter.dialect === 'postgres'
-            // One statement: a transaction of its own
-            ? postgresWorker.claimDue(adapter.queue, p, params)
-            : claimDueInQueue(params)),
+        claimDue: (params) => {
+            // Each name once: MySQL and MariaDB lock the rows of each request, so a name requested twice would claim
+            // its jobs twice. The first request of a name counts
+            const names = new Set();
+            const requests = params.requests.filter((request) => {
+                const first = !names.has(request.name);
+
+                names.add(request.name);
+
+                return first;
+            });
+            const unique = requests.length === params.requests.length ? params : { ...params, requests };
+
+            return adapter.dialect === 'postgres'
+                // One statement: a transaction of its own
+                ? postgresWorker.claimDue(adapter.queue, p, unique)
+                : claimDueInQueue(unique);
+        },
         readPayloads: ids => sql.readPayloads(adapter.queue, tablePrefix, ids),
         renewLeases: (jobs, leaseMs) => inQueue(executor => final.renewLeases(executor, p, jobs, leaseMs)),
         markTimedOut: job => final.markTimedOut(adapter.queue, p, job),

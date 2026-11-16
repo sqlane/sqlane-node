@@ -562,6 +562,28 @@ describe('claimDue', () => {
         expect(results.map(result => result.id)).toStrictEqual(expect.arrayContaining(claimedIds));
     });
 
+    test('a name requested twice: its jobs are claimed once', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const results = await sqlane.enqueueMany(
+            testAdapter.pool,
+            'a',
+            Array.from({ length: 3 }, () => ({ payload: {}, options: { runAt: ago(5) } })),
+        );
+        const b = await sqlane.enqueue(testAdapter.pool, 'b', {}, { runAt: ago(5) });
+        const claimed = await claimDue(store, {
+            requests: [request('a', 5, 0), request('b', 5, 1), request('a', 5, 2)],
+            // MySQL and MariaDB: every locked row
+            choose: locked => locked,
+        });
+        const claimedIds = claimed.map(job => job.id);
+
+        expect(claimedIds.toSorted()).toStrictEqual([...results.map(result => result.id), b.id].toSorted());
+
+        const rows = await database.query(`SELECT id FROM ${p}jobs WHERE status = 'running'`);
+
+        expect(rows).toHaveLength(4);
+    });
+
     test('a job without its payload row: claimed, the payload not found', async () => {
         const { p, sqlane, store } = await freshTables();
         const { id } = await sqlane.enqueue(testAdapter.pool, 'a', { n: 1 }, { runAt: ago(5) });
