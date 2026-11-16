@@ -17,6 +17,7 @@ import { createLeases } from './leases.js';
 import { createLocalRateWakes, limitRoom, ratesAdmitBefore } from './local_limits.js';
 import { nowUs, takeRate } from './local_rates.js';
 import { createMaintenance } from './maintenance.js';
+import { createReprobes } from './reprobes.js';
 import { isTransientDbError } from './transient_error.js';
 
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
@@ -46,8 +47,6 @@ export const DEFAULT_TIMINGS = {
     missingPayloadGraceMs: 60_000,
 };
 
-/** The wakes after the last enqueue (or hint), until its commit makes the job visible */
-const REPROBE_DELAYS_MS = [20, 50, 100, 200, 500, 1000, 2000];
 const RELEASE_EXTRA_DELAY_MS = 2000;
 
 /** @typedef {'idle' | 'started' | 'draining' | 'closing' | 'closed'} RunnerState */
@@ -105,18 +104,12 @@ export function createRunner({
     let state = 'idle';
     /** @type {Map<string, RunningJob>} */
     const running = new Map();
-    /** @type {Map<string, number>} The names of the enqueues of the current series of re-probes: their last enqueue */
-    const reprobeNames = new Map();
     /** @type {Promise<void> | null} */
     let loopDone = null;
     /** @type {Promise<void> | null} */
     let closeDone = null;
     /** @type {Set<NodeJS.Timeout>} */
     const timers = new Set();
-    /** The time of the last enqueue (or hint): the re-probes follow it */
-    let reprobeFrom = 0;
-    /** @type {{ timer: NodeJS.Timeout, at: number } | null} The next re-probe */
-    let reprobe = null;
     const counts = { completed: 0, retried: 0, failed: 0 };
     /** The jobs that finished: their results are written */
     let finishedCount = 0;
@@ -226,6 +219,13 @@ export function createRunner({
         armRateWake,
         wakeAfterRates,
         hintChannel,
+    });
+    const reprobes = createReprobes({
+        pollIntervalMs: t.pollIntervalMs,
+        state: () => state,
+        setTimer,
+        clearTimer,
+        wake: names => wakeUp(names, { speculative: true }),
     });
     const dispatcher = createDispatcher({
         store,
@@ -358,25 +358,7 @@ export function createRunner({
             return;
         }
 
-        // One series of re-probes, from the last enqueue: of the names enqueued within its steps
-        reprobeFrom = Date.now();
-
-        for (const name of names) {
-            reprobeNames.set(name, reprobeFrom);
-        }
-
-        // A re-probe that comes sooner stays: then the series goes on from this enqueue. A burst of enqueues gives a
-        // re-probe at most each first step, not one per enqueue.
-        if (reprobe && reprobe.at <= reprobeFrom + REPROBE_DELAYS_MS[0]) {
-            return;
-        }
-
-        if (reprobe) {
-            clearTimeout(reprobe.timer);
-            timers.delete(reprobe.timer);
-        }
-
-        scheduleReprobe();
+        reprobes.follow(names);
     }
 
     /**
@@ -385,37 +367,6 @@ export function createRunner({
      */
     function handlesAny(names) {
         return names.some(name => name === ANY_NAME || registry.getEntry(name));
-    }
-
-    /** Sets the timer of the next step of the series, if one is left before the poll. */
-    function scheduleReprobe() {
-        const now = Date.now();
-        const delays = REPROBE_DELAYS_MS.filter(delay => delay < t.pollIntervalMs);
-        const at = delays.map(delay => reprobeFrom + delay).find(time => time > now);
-        const lastDelay = delays.at(-1) ?? 0;
-
-        if (at === undefined || state !== 'started') {
-            reprobe = null;
-            reprobeNames.clear();
-
-            return;
-        }
-
-        const timer = setTimer(() => {
-            const stepAt = Date.now();
-
-            for (const [name, enqueuedAt] of reprobeNames) {
-                // Its last step is past: a series that goes on for later enqueues does not probe it again
-                if (stepAt - enqueuedAt > lastDelay) {
-                    reprobeNames.delete(name);
-                }
-            }
-
-            wakeUp([...reprobeNames.keys()], { speculative: true });
-            scheduleReprobe();
-        }, at - now);
-
-        reprobe = { at, timer };
     }
 
     async function start() {
