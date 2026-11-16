@@ -120,8 +120,11 @@ export declare function unblock(executor: Executor, p: string, keys: string[], i
 /**
  * Makes the jobs blocked on the rate keys pending again, the oldest first: on each key, as many as its quota allows
  * now, each job by its own settings (gcra.js, `admitQueue`), at most RATE_UNBLOCK_BATCH. It does not take the quota:
- * the claim does, and blocks again a job that another one got ahead of. A read; then a transaction, only when a job
- * may start.
+ * the claim does, and blocks again a job that another one got ahead of. A read of the oldest blocked job of each key,
+ * with the debt of the key: by its settings, `most` jobs fit. Then, only when a job may start, a transaction: the
+ * `most + 1` oldest jobs of the key, locked, and the update of the prefix that fits. So the reads are as long as the
+ * prefix, not as the queue. A job of other settings after the first `most` waits for the next unblock, at once, like
+ * the one after a full batch.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
