@@ -1299,6 +1299,78 @@ describe('global rate limits', () => {
             .resolves.toStrictEqual(['pending', 'pending', 'blocked']);
     });
 
+    test('an unblock that finds every blocked job of its key locked checks the key again in a second', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
+        const ids = [];
+
+        for (const secondsAgo of [30, 20, 10]) {
+            // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
+            ids.push((await sqlane.enqueue(testAdapter.pool, 'tick', {}, {
+                globalRateLimits: [once],
+                runAt: ago(secondsAgo),
+            })).id);
+        }
+
+        await claimWithBlocks(store, ids.slice(0, 1), 'T1', ids.slice(1));
+        await database.query(SET_TAT_SQL[database.family](p), ['@once', 0]);
+
+        // Another unblock holds them
+        const other = await testAdapter.connect();
+
+        try {
+            await other.begin();
+            await other.execute(`SELECT id FROM ${p}jobs WHERE status = 'blocked' FOR UPDATE`);
+            await expect(store.unblockRates(['@once'])).resolves.toStrictEqual({
+                names: [],
+                waits: [{ key: '@once', delayMs: 1000, debtUs: null, left: false }],
+            });
+        } finally {
+            await other.commit();
+            other.release();
+        }
+    });
+
+    test('an unblock whose oldest blocked job does not fit waits for it, though a cheaper one after it, past a lock, '
+        + 'would fit', async () => {
+        const { p, sqlane, store } = await freshTables();
+        // 3 per hour, bursts of 3: 20 min per start
+        const quota = defineRateLimit({ name: 'quota', max: 3, per: '1h', burst: 3 });
+        const ids = [];
+
+        for (const [at, cost] of [3, 2, 1].entries()) {
+            // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
+            ids.push((await sqlane.enqueue(testAdapter.pool, 'call', {}, {
+                globalRateLimits: [quota.cost(cost)],
+                runAt: ago(70 - at),
+            })).id);
+        }
+
+        await claimWithBlocks(store, ids.slice(0, 1), 'T1', ids.slice(1));
+        // Two starts of debt: room for one of cost 1, not for the oldest blocked one (cost 2)
+        await database.query(SET_TAT_SQL[database.family](p), ['@quota', -40 * 60]);
+
+        // Another transaction holds the oldest blocked job
+        const other = await testAdapter.connect();
+
+        try {
+            await other.begin();
+            await other.execute(`SELECT id FROM ${p}jobs WHERE id = '${ids[1]}' FOR UPDATE`);
+
+            const unblocked = await store.unblockRates(['@quota']);
+
+            // Its wait: one more start of debt, 20 min
+            expect(unblocked).toMatchObject({ names: [], waits: [{ key: '@quota', debtUs: null, left: true }] });
+            expect(unblocked.waits[0].delayMs).toBeGreaterThan((20 * 60_000) - 5000);
+        } finally {
+            await other.commit();
+            other.release();
+        }
+
+        await expect(statuses(p).then(rows => rows.slice(1).map(row => row.status)))
+            .resolves.toStrictEqual(['blocked', 'blocked']);
+    });
+
     test.each([true, false])('the claim reads the jobs blocked on a rate key after it locks its row: a job blocked '
         + 'meanwhile holds the newer ones (withRates: %s)', async (withRates) => {
         const { p, sqlane, store } = await freshTables();

@@ -504,21 +504,26 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
               LEFT JOIN unnest(${arrayParam(2, 'text')}, ${arrayParam(3, 'bigint')}) AS f(limit_key, debt)
                 ON f.limit_key = k.limit_key
         ),
-        -- Of each key, the oldest blocked jobs: as many as fit by the settings of the oldest one (lim), and one more.
-        -- So the read is as long as the prefix, not as the queue: a key that admits one job reads two, not a batch
-        queue AS (
-            SELECT debt.limit_key, debt.debt, head.lim, b.id, b.run_at, b.rate_limits FROM debt
+        -- Of each key with blocked jobs, the oldest one, not locked: how many fit by its settings (lim)
+        heads AS (
+            SELECT debt.limit_key, debt.debt, head.inc, head.allow,
+                   LEAST(GREATEST((head.allow - debt.debt) / head.inc, 0), ${RATE_UNBLOCK_BATCH}) AS lim
+              FROM debt
              CROSS JOIN LATERAL (
-                 SELECT LEAST(GREATEST((e.allow - debt.debt) / e.inc, 0), ${RATE_UNBLOCK_BATCH}) AS lim
-                   FROM ${p}jobs j
+                 SELECT e.inc, e.allow FROM ${p}jobs j
                   CROSS JOIN LATERAL ${rateLimitsOf('j.rate_limits')}
                   WHERE j.status = 'blocked' AND j.blocked_on = debt.limit_key AND e.key = debt.limit_key
                   ORDER BY j.run_at, j.id LIMIT 1
              ) AS head
+        ),
+        -- Of each key whose oldest job fits, the oldest blocked jobs: lim, and one more. So the read is as long as the
+        -- prefix, not as the queue: a key that admits one job reads two, not a batch; one that admits none, none
+        queue AS (
+            SELECT heads.limit_key, heads.debt, heads.lim, b.id, b.run_at, b.rate_limits FROM heads
              CROSS JOIN LATERAL (
                  SELECT j.id, j.run_at, j.rate_limits FROM ${p}jobs j
-                  WHERE j.status = 'blocked' AND j.blocked_on = debt.limit_key
-                  ORDER BY j.run_at, j.id LIMIT head.lim + 1
+                  WHERE heads.lim > 0 AND j.status = 'blocked' AND j.blocked_on = heads.limit_key
+                  ORDER BY j.run_at, j.id LIMIT heads.lim + 1
                     FOR UPDATE SKIP LOCKED
              ) AS b
         ),
@@ -546,11 +551,20 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
         -- Of each key, the first job held back: its wait after the prefix; else the last one of the prefix: the wait of a
         -- job like it after the prefix (admitQueue). The debt after the prefix: the need of its last job (null: none)
         waits AS (
-            SELECT DISTINCT ON (limit_key) limit_key, held_back AS left_over,
-                   GREATEST(CASE WHEN held_back THEN need - allow ELSE need + inc - allow END, 0) AS wait_us,
-                   CASE WHEN NOT held_back THEN need WHEN n > 1 THEN need - inc END AS debt_us
-              FROM marked
-             ORDER BY limit_key, held_back DESC, CASE WHEN held_back THEN n ELSE -n END
+            (
+                SELECT DISTINCT ON (limit_key) limit_key, held_back AS left_over,
+                       GREATEST(CASE WHEN held_back THEN need - allow ELSE need + inc - allow END, 0) AS wait_us,
+                       CASE WHEN NOT held_back THEN need WHEN n > 1 THEN need - inc END AS debt_us
+                  FROM marked
+                 ORDER BY limit_key, held_back DESC, CASE WHEN held_back THEN n ELSE -n END
+            )
+            UNION ALL
+            -- A key whose oldest job does not fit: its wait, though a job after it, past a lock, would fit (a key that
+            -- admits none reads none). Else every blocked job locked by another unblock, or no longer blocked: a check
+            -- in a second (left: false)
+            SELECT heads.limit_key, heads.lim = 0, GREATEST(heads.debt + heads.inc - heads.allow, 0), NULL::bigint
+              FROM heads
+             WHERE NOT EXISTS (SELECT FROM queue WHERE queue.limit_key = heads.limit_key)
         ),
         counts AS (
             SELECT limit_key, count(*) AS unblocked FROM unblocked GROUP BY limit_key
