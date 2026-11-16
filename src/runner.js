@@ -204,11 +204,6 @@ function localLimitsOf(entry) {
  * @returns {number} The lowest room of its local limits, of concurrency and of rate; Infinity without one.
  */
 function limitsRoom(entry) {
-    // Each poll checks every handled name: most have no limit, and need no loop
-    if (!entry.limits.length && !entry.rates.length) {
-        return Infinity;
-    }
-
     let room = Infinity;
 
     for (const limit of entry.limits) {
@@ -642,7 +637,11 @@ export function createRunner({
      * @returns {number} The jobs of the name that can start now: under its local limits and the instance's cap.
      */
     function freeSlots(entry) {
-        return Math.max(0, Math.min(limitsRoom(entry), freeProcessSlots()));
+        // Each poll checks every handled name, and most have no limit: the check stays small enough for V8 to inline,
+        // and the loops of limitsRoom() run only for the names with limits
+        const room = entry.limits.length || entry.rates.length ? limitsRoom(entry) : Infinity;
+
+        return Math.max(0, Math.min(room, freeProcessSlots()));
     }
 
     /** @returns {number} The handled names: the span of the tie order. Fixed from start() or drain(). */
