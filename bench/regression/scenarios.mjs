@@ -241,8 +241,10 @@ export const SCENARIOS = [
             const sqlane = create({
                 jobs,
                 // The stall recovery and the cleanup run every 30 s and 5 minutes: off, so the window holds the
-                // scheduler's work only (`timings` is undocumented, for the tests of sqlane)
-                timings: { recoveryIntervalMs: 3_600_000, cleanupIntervalMs: 3_600_000 },
+                // scheduler's work only (`timings` is undocumented, for the tests of sqlane). Their first run comes
+                // at a random time within the interval: 3 weeks, not 1 h, where it fell in the window of 20 s about
+                // once in 200 runs (under the 2^31 ms of setTimeout)
+                timings: { recoveryIntervalMs: 2_000_000_000, cleanupIntervalMs: 2_000_000_000 },
                 onEvent: (/** @type {{ type: string }} */ event) => {
                     if (event.type === 'schedule_fired') {
                         fired++;
