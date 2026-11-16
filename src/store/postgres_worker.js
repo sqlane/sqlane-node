@@ -22,6 +22,17 @@ const HELD = '(s.held_until IS NULL OR s.held_until >= clock_timestamp())';
  */
 const debtUs = tat => `GREATEST((EXTRACT(EPOCH FROM ${tat} - clock_timestamp()) * 1000000)::bigint, 0)`;
 /**
+ * An array parameter, behind a subquery (an InitPlan): the planner does not see its elements, in a custom plan either.
+ * PostgreSQL plans the first 5 executions of a prepared statement with the parameters' values, then keeps its generic
+ * plan if that costs no more than the custom ones did. A generic plan assumes 10 elements in an array; a custom one,
+ * which counts them, costs less with fewer, so each execution was planned again (planning took several times the
+ * execution). With the count hidden from both, the generic plan wins, and is planned once per connection.
+ * @param {number} position The parameter's position, from 1.
+ * @param {'text' | 'integer' | 'bigint'} type The type of its elements.
+ * @returns {string}
+ */
+export const arrayParam = (position, type) => `(SELECT $${position}::${type}[])::${type}[]`;
+/**
  * The settings of the rate keys of a JSON array (`rate_limits`), with the increment of a start and the allowance of
  * the key in µs, as gcra.js computes them. Bigints: cost × per_us is at most 6 × 10^17.
  * @param {string} json
@@ -44,7 +55,7 @@ async function probeNames(executor, p, names) {
     const rows = await executor.query(`
         SELECT request.name AS job_name,
                (EXTRACT(EPOCH FROM next.run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
-          FROM unnest($1::text[]) AS request(name)
+          FROM unnest(${arrayParam(1, 'text')}) AS request(name)
          CROSS JOIN LATERAL (
              SELECT run_at FROM ${p}jobs
               WHERE status = 'pending' AND job_name = request.name ORDER BY run_at LIMIT 1
@@ -154,7 +165,7 @@ function candidatesSql(p, withRates) {
 
     return `
         WITH request AS (
-            SELECT * FROM unnest($1::text[], $2::integer[]) AS request(name, max_jobs)
+            SELECT * FROM unnest(${arrayParam(1, 'text')}, ${arrayParam(2, 'integer')}) AS request(name, max_jobs)
         ),
         w AS (
             SELECT due.*, request.max_jobs FROM request
@@ -218,7 +229,8 @@ async function takeSlots(executor, p, jobs, { heldSlots, lockToken }) {
     const acquired = new Set((await executor.query(`
         INSERT INTO ${p}concurrency_slots AS s (limit_key, slot, job_id, lock_token, held_until, created_at)
         SELECT hold.limit_key, hold.slot, hold.job_id, $4, NULL, clock_timestamp()
-          FROM unnest($1::text[], $2::integer[], $3::text[]) WITH ORDINALITY AS hold(limit_key, slot, job_id, position)
+          FROM unnest(${arrayParam(1, 'text')}, ${arrayParam(2, 'integer')}, ${arrayParam(3, 'text')})
+               WITH ORDINALITY AS hold(limit_key, slot, job_id, position)
          ORDER BY hold.position
         ON CONFLICT (limit_key, slot) DO UPDATE
            SET job_id = EXCLUDED.job_id, lock_token = EXCLUDED.lock_token, held_until = NULL,
@@ -235,7 +247,7 @@ async function takeSlots(executor, p, jobs, { heldSlots, lockToken }) {
     if (partial.length) {
         await executor.query(`
             DELETE FROM ${p}concurrency_slots s
-             USING unnest($1::text[], $2::integer[]) AS hold(limit_key, slot)
+             USING unnest(${arrayParam(1, 'text')}, ${arrayParam(2, 'integer')}) AS hold(limit_key, slot)
              WHERE s.limit_key = hold.limit_key AND s.slot = hold.slot AND s.lock_token = $3
         `, [partial.map(hold => hold.key), partial.map(hold => hold.slot), lockToken]);
     }
@@ -273,7 +285,7 @@ async function readRateKeys(executor, p, keys) {
               SELECT b.id, b.run_at FROM ${p}jobs b WHERE b.status = 'blocked' AND b.blocked_on = r.limit_key
                ORDER BY b.run_at, b.id LIMIT 1
           ) AS head ON true
-         WHERE r.limit_key = ANY($1::text[])
+         WHERE r.limit_key = ANY(${arrayParam(1, 'text')})
     `, [keys]);
 
     return new Map(rows.map(row => [String(row.limit_key), {
@@ -323,7 +335,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
                ${epochMs('run_at')} AS run_at_ms,
                (EXTRACT(EPOCH FROM clock_timestamp() - run_at) * 1000)::bigint AS waited_ms`;
     const pending = `FROM ${p}jobs
-         WHERE id = ANY($1::text[]) AND status = 'pending' AND run_at <= clock_timestamp()
+         WHERE id = ANY(${arrayParam(1, 'text')}) AND status = 'pending' AND run_at <= clock_timestamp()
          ORDER BY run_at, id
            FOR UPDATE SKIP LOCKED`;
     // With the rows of the rate keys of the jobs, once each, in order: "C" sorts their ASCII as JavaScript does
@@ -361,7 +373,8 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
 
     if (keys.length) {
         const slotRows = await executor.query(`
-            SELECT s.limit_key, s.slot FROM ${p}concurrency_slots s WHERE s.limit_key = ANY($1::text[]) AND ${HELD}
+            SELECT s.limit_key, s.slot FROM ${p}concurrency_slots s
+             WHERE s.limit_key = ANY(${arrayParam(1, 'text')}) AND ${HELD}
         `, [keys]);
 
         for (const row of slotRows) {
@@ -392,7 +405,10 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
 
     if (rateKeys.length && !withRates) {
         await executor.query(
-            lockRateKeysSql(p, 'unnest($1::text[]) WITH ORDINALITY AS k(limit_key, position) ORDER BY k.position'),
+            lockRateKeysSql(
+                p,
+                `unnest(${arrayParam(1, 'text')}) WITH ORDINALITY AS k(limit_key, position) ORDER BY k.position`,
+            ),
             [rateKeys],
         );
     }
@@ -405,7 +421,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     if (blocked.length) {
         await executor.query(`
             UPDATE ${p}jobs j SET status = 'blocked', blocked_on = b.limit_key, updated_at = clock_timestamp()
-              FROM unnest($1::text[], $2::text[]) AS b(id, limit_key)
+              FROM unnest(${arrayParam(1, 'text')}, ${arrayParam(2, 'text')}) AS b(id, limit_key)
              WHERE j.id = b.id
         `, [blocked.map(job => job.id), blocked.map(job => job.key)]);
     }
@@ -422,7 +438,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     // In the same statement: their tat moves by the increments
     const moveTat = `WITH tat AS (
         UPDATE ${p}rate_limits r SET tat = GREATEST(r.tat, clock_timestamp()) + u.inc * interval '1 microsecond'
-          FROM unnest($5::text[], $6::bigint[]) AS u(limit_key, inc)
+          FROM unnest(${arrayParam(5, 'text')}, ${arrayParam(6, 'bigint')}) AS u(limit_key, inc)
          WHERE r.limit_key = u.limit_key
     )`;
 
@@ -433,7 +449,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
                SET status = 'running', lock_token = $2, locked_by = $3,
                    locked_until = clock_timestamp() + $4 * interval '1 millisecond', started_at = clock_timestamp(),
                    timed_out_at = NULL, updated_at = clock_timestamp()
-             WHERE id = ANY($1::text[])
+             WHERE id = ANY(${arrayParam(1, 'text')})
         `, [
             claimed.map(row => row.id),
             lockToken,
@@ -564,7 +580,10 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
         ),
         request AS (
             SELECT r.name, r.max_jobs, r.running, r.weight, r.limits::integer[] AS limits, r.tie
-              FROM unnest($1::text[], $2::bigint[], $3::bigint[], $4::integer[], $5::text[], $6::integer[])
+              FROM unnest(
+                       ${arrayParam(1, 'text')}, ${arrayParam(2, 'bigint')}, ${arrayParam(3, 'bigint')},
+                       ${arrayParam(4, 'integer')}, ${arrayParam(5, 'text')}, ${arrayParam(6, 'integer')}
+                   )
                 AS r(name, max_jobs, running, weight, limits, tie)
         ),
         locked_all AS (
@@ -601,7 +620,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
         next AS (
             SELECT request.name AS job_name,
                    (EXTRACT(EPOCH FROM n.run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
-              FROM unnest($1::text[]) AS request(name)
+              FROM unnest(${arrayParam(1, 'text')}) AS request(name)
              CROSS JOIN LATERAL (
                  SELECT run_at FROM ${p}jobs
                   WHERE status = 'pending' AND job_name = request.name AND id NOT IN (SELECT id FROM picked)
@@ -704,7 +723,7 @@ export async function readPayloads(executor, p, ids) {
     }
 
     const rows = await executor.query(`
-        SELECT id, payload::text AS payload FROM ${p}payloads WHERE id = ANY($1::text[])
+        SELECT id, payload::text AS payload FROM ${p}payloads WHERE id = ANY(${arrayParam(1, 'text')})
     `, [ids]);
 
     return new Map(rows.map(row => [String(row.id), JSON.parse(String(row.payload))]));
