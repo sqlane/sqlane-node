@@ -1,5 +1,5 @@
 {
-    "date": "2026-11-16T09:00:21.118Z",
+    "date": "2026-11-16T14:15:50.787Z",
     "ref": ".",
     "commit": null,
     "machine": {
@@ -18,35 +18,35 @@
     },
     "warmupS": 5,
     "windowS": 15,
-    "totalS": 387,
+    "totalS": 361,
     "scenarios": {
         "enqueue": {
             "unit": "enqueue",
             "description": "enqueue, in a transaction of its own (50/s)",
             "databases": {
                 "postgres": {
-                    "instructionsPerOp": 964716,
+                    "instructionsPerOp": 961877,
                     "statementsPerOp": 1,
                     "baseline": {
-                        "instructionsPerOp": 947695,
+                        "instructionsPerOp": 956978,
                         "statementsPerOp": 1
                     },
                     "verdict": "same"
                 },
                 "mysql": {
-                    "instructionsPerOp": 2044570,
+                    "instructionsPerOp": 2072003,
                     "statementsPerOp": 5,
                     "baseline": {
-                        "instructionsPerOp": 2047943,
+                        "instructionsPerOp": 2057171,
                         "statementsPerOp": 5
                     },
                     "verdict": "same"
                 },
                 "mariadb": {
-                    "instructionsPerOp": 1567330,
+                    "instructionsPerOp": 1586363,
                     "statementsPerOp": 5,
                     "baseline": {
-                        "instructionsPerOp": 1574614,
+                        "instructionsPerOp": 1585439,
                         "statementsPerOp": 5
                     },
                     "verdict": "same"
@@ -58,28 +58,28 @@
             "description": "`enqueueMany` of 100 jobs (2/s)",
             "databases": {
                 "postgres": {
-                    "instructionsPerOp": 19992706,
+                    "instructionsPerOp": 20492885,
                     "statementsPerOp": 1,
                     "baseline": {
-                        "instructionsPerOp": 20093630,
+                        "instructionsPerOp": 20536909,
                         "statementsPerOp": 1
                     },
                     "verdict": "same"
                 },
                 "mysql": {
-                    "instructionsPerOp": 33865750,
+                    "instructionsPerOp": 33603128,
                     "statementsPerOp": 5,
                     "baseline": {
-                        "instructionsPerOp": 33865096,
+                        "instructionsPerOp": 33707470,
                         "statementsPerOp": 5
                     },
                     "verdict": "same"
                 },
                 "mariadb": {
-                    "instructionsPerOp": 28245834,
+                    "instructionsPerOp": 26595163,
                     "statementsPerOp": 5,
                     "baseline": {
-                        "instructionsPerOp": 28270454,
+                        "instructionsPerOp": 26655382,
                         "statementsPerOp": 5
                     },
                     "verdict": "same"
@@ -91,29 +91,29 @@
             "description": "job enqueued, run and completed (20/s, 1000 handled names)",
             "databases": {
                 "postgres": {
-                    "instructionsPerOp": 2925813,
+                    "instructionsPerOp": 2925870,
                     "statementsPerOp": 3.01,
                     "baseline": {
-                        "instructionsPerOp": 2915462,
+                        "instructionsPerOp": 2927947,
                         "statementsPerOp": 3.01
                     },
                     "verdict": "same"
                 },
                 "mysql": {
-                    "instructionsPerOp": 9701000,
-                    "statementsPerOp": 18.18,
+                    "instructionsPerOp": 9810782,
+                    "statementsPerOp": 18.2533,
                     "baseline": {
-                        "instructionsPerOp": 9839558,
-                        "statementsPerOp": 18.2933
+                        "instructionsPerOp": 9753668,
+                        "statementsPerOp": 18.2133
                     },
                     "verdict": "same"
                 },
                 "mariadb": {
-                    "instructionsPerOp": 7940224,
-                    "statementsPerOp": 18.2767,
+                    "instructionsPerOp": 7998356,
+                    "statementsPerOp": 18.3067,
                     "baseline": {
-                        "instructionsPerOp": 7924242,
-                        "statementsPerOp": 18.2433
+                        "instructionsPerOp": 7953239,
+                        "statementsPerOp": 18.33
                     },
                     "verdict": "same"
                 }
@@ -124,29 +124,29 @@
             "description": "second of a worker of 1000 names, no job",
             "databases": {
                 "postgres": {
-                    "instructionsPerOp": 547263,
-                    "statementsPerOp": 0.2,
+                    "instructionsPerOp": 564113,
+                    "statementsPerOp": 0.1999,
                     "baseline": {
-                        "instructionsPerOp": 552521,
+                        "instructionsPerOp": 565090,
                         "statementsPerOp": 0.2
                     },
                     "verdict": "same"
                 },
                 "mysql": {
-                    "instructionsPerOp": 2224584,
-                    "statementsPerOp": 0.1999,
+                    "instructionsPerOp": 2251256,
+                    "statementsPerOp": 0.2,
                     "baseline": {
-                        "instructionsPerOp": 2237341,
-                        "statementsPerOp": 0.1999
+                        "instructionsPerOp": 2237208,
+                        "statementsPerOp": 0.2
                     },
                     "verdict": "same"
                 },
                 "mariadb": {
-                    "instructionsPerOp": 700711,
+                    "instructionsPerOp": 724997,
                     "statementsPerOp": 0.1999,
                     "baseline": {
-                        "instructionsPerOp": 695723,
-                        "statementsPerOp": 0.1999
+                        "instructionsPerOp": 719682,
+                        "statementsPerOp": 0.2
                     },
                     "verdict": "same"
                 }
@@ -157,29 +157,29 @@
             "description": "fired slot of 1000 `every: '10s'` schedules, no handler",
             "databases": {
                 "postgres": {
-                    "instructionsPerOp": 669135,
-                    "statementsPerOp": 0.053,
+                    "instructionsPerOp": 642658,
+                    "statementsPerOp": 0.0545,
                     "baseline": {
-                        "instructionsPerOp": 644507,
-                        "statementsPerOp": 0.053
+                        "instructionsPerOp": 640225,
+                        "statementsPerOp": 0.0545
                     },
                     "verdict": "same"
                 },
                 "mysql": {
-                    "instructionsPerOp": 927236,
-                    "statementsPerOp": 0.0835,
+                    "instructionsPerOp": 965936,
+                    "statementsPerOp": 0.0855,
                     "baseline": {
-                        "instructionsPerOp": 941003,
-                        "statementsPerOp": 0.0835
+                        "instructionsPerOp": 934857,
+                        "statementsPerOp": 0.0855
                     },
                     "verdict": "same"
                 },
                 "mariadb": {
-                    "instructionsPerOp": 894761,
-                    "statementsPerOp": 0.0835,
+                    "instructionsPerOp": 890236,
+                    "statementsPerOp": 0.0855,
                     "baseline": {
-                        "instructionsPerOp": 866341,
-                        "statementsPerOp": 0.0835
+                        "instructionsPerOp": 927255,
+                        "statementsPerOp": 0.0855
                     },
                     "verdict": "same"
                 }
@@ -190,29 +190,62 @@
             "description": "job with one of 100 keys of a global limit of 1 (20/s)",
             "databases": {
                 "postgres": {
-                    "instructionsPerOp": 7939387,
-                    "statementsPerOp": 11.0467,
+                    "instructionsPerOp": 7888281,
+                    "statementsPerOp": 11.01,
                     "baseline": {
-                        "instructionsPerOp": 7921579,
+                        "instructionsPerOp": 7880164,
                         "statementsPerOp": 11.01
                     },
                     "verdict": "same"
                 },
                 "mysql": {
-                    "instructionsPerOp": 14935768,
-                    "statementsPerOp": 25.5133,
+                    "instructionsPerOp": 15625405,
+                    "statementsPerOp": 25.6213,
                     "baseline": {
-                        "instructionsPerOp": 14879840,
-                        "statementsPerOp": 25.4967
+                        "instructionsPerOp": 15503315,
+                        "statementsPerOp": 25.52
                     },
                     "verdict": "same"
                 },
                 "mariadb": {
-                    "instructionsPerOp": 16956266,
-                    "statementsPerOp": 25.8633,
+                    "instructionsPerOp": 17781369,
+                    "statementsPerOp": 25.84,
                     "baseline": {
-                        "instructionsPerOp": 17058354,
-                        "statementsPerOp": 25.7567
+                        "instructionsPerOp": 17673703,
+                        "statementsPerOp": 25.78
+                    },
+                    "verdict": "same"
+                }
+            }
+        },
+        "global_rate_limits": {
+            "unit": "job",
+            "description": "job with one of 100 keys of a global rate limit of 1/s, none limited (20/s)",
+            "databases": {
+                "postgres": {
+                    "instructionsPerOp": 8699049,
+                    "statementsPerOp": 9.01,
+                    "baseline": {
+                        "instructionsPerOp": 8691284,
+                        "statementsPerOp": 9.01
+                    },
+                    "verdict": "same"
+                },
+                "mysql": {
+                    "instructionsPerOp": 17717203,
+                    "statementsPerOp": 23.6533,
+                    "baseline": {
+                        "instructionsPerOp": 17653108,
+                        "statementsPerOp": 23.5847
+                    },
+                    "verdict": "same"
+                },
+                "mariadb": {
+                    "instructionsPerOp": 21108633,
+                    "statementsPerOp": 23.77,
+                    "baseline": {
+                        "instructionsPerOp": 21078281,
+                        "statementsPerOp": 23.6667
                     },
                     "verdict": "same"
                 }
