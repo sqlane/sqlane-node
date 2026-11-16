@@ -1,6 +1,8 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, inject, test } from 'vitest';
 import { chooseRows } from '../../src/fair_share.js';
-import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
+import { incrementUs, waitUs } from '../../src/gcra.js';
+import { createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit } from '../../src/index.js';
 import { probeSql } from '../../src/store/mysql_worker.js';
 import { createStore } from '../../src/store/store.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
@@ -15,6 +17,17 @@ const LINGER_SQL = {
                  VALUES (?, 0, 'old', 'old', UTC_TIMESTAMP(3) + INTERVAL ? SECOND, UTC_TIMESTAMP(3))`,
     postgres: p => `INSERT INTO ${p}concurrency_slots (limit_key, slot, job_id, lock_token, held_until, created_at)
                     VALUES ($1, 0, 'old', 'old', clock_timestamp() + $2 * interval '1 second', clock_timestamp())`,
+};
+
+/**
+ * Sets the tat of a rate key to `$2` seconds ago (negative: ahead).
+ * @type {Record<'mysql' | 'postgres', (p: string) => string>}
+ */
+const SET_TAT_SQL = {
+    mysql: p => `INSERT INTO ${p}rate_limits (limit_key, tat) VALUES (?, UTC_TIMESTAMP(6) - INTERVAL ? SECOND)
+                 ON DUPLICATE KEY UPDATE tat = VALUES(tat)`,
+    postgres: p => `INSERT INTO ${p}rate_limits (limit_key, tat) VALUES ($1, clock_timestamp() - $2 * interval '1 second')
+                    ON CONFLICT (limit_key) DO UPDATE SET tat = EXCLUDED.tat`,
 };
 
 const LEASE_MS = 240_000;
@@ -72,19 +85,26 @@ function ago(secondsAgo) {
 }
 
 /**
- * Picks the locked jobs whose keys have room, oldest first, counting the picked ones.
+ * Picks the locked jobs whose keys have room and whose rate keys have quota, oldest first, counting the picked ones.
  * @param {ClaimedJob[]} locked
  * @param {Map<string, number>} held
+ * @param {Map<string, number>} debts
  * @returns {ClaimedJob[]}
  */
-function pickFits(locked, held) {
+function pickFits(locked, held, debts) {
     const counts = new Map(held);
+    const used = new Map(debts);
 
     return locked.filter((job) => {
-        const fits = job.limits.every(({ key, max }) => (counts.get(key) ?? 0) < max);
+        const fits = job.limits.every(({ key, max }) => (counts.get(key) ?? 0) < max)
+            && job.rateLimits.every(limit => waitUs(used.get(limit.key) ?? 0, limit) <= 0);
 
         for (const { key } of fits ? job.limits : []) {
             counts.set(key, (counts.get(key) ?? 0) + 1);
+        }
+
+        for (const limit of fits ? job.rateLimits : []) {
+            used.set(limit.key, (used.get(limit.key) ?? 0) + incrementUs(limit));
         }
 
         return fits;
@@ -807,12 +827,22 @@ describe('global concurrency limits', () => {
         const waiting = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
 
         await claimWithBlocks(store, [], 'T1', [waiting.id]);
-        await expect(store.sweepSlots(100)).resolves.toStrictEqual({ lingers: 0, orphans: 0, unblocked: 0 });
+        await expect(store.sweepSlots(100)).resolves.toStrictEqual({
+            lingers: 0,
+            orphans: 0,
+            unblocked: 0,
+            rateWaits: [],
+        });
 
         // The linger ends
         await database.query(`DELETE FROM ${p}concurrency_slots`);
         await database.query(LINGER_SQL[database.family](p), ['order:1', -1]);
-        await expect(store.sweepSlots(100)).resolves.toStrictEqual({ lingers: 1, orphans: 0, unblocked: 1 });
+        await expect(store.sweepSlots(100)).resolves.toStrictEqual({
+            lingers: 1,
+            orphans: 0,
+            unblocked: 1,
+            rateWaits: [],
+        });
         await expect(statuses(p)).resolves.toStrictEqual([{ id: waiting.id, status: 'pending', blocked_on: null }]);
     });
 
@@ -844,6 +874,497 @@ describe('global concurrency limits', () => {
 
         await expect(sqlane.getStats()).resolves.toMatchObject([
             { name: 'sync_order', pending: 1, due: 0, running: 1 },
+        ]);
+    });
+});
+
+/** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
+const AHEAD_SQL = {
+    mysql: p => `SELECT limit_key, TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(6), tat) DIV 1000 AS ahead_ms
+                   FROM ${p}rate_limits ORDER BY limit_key`,
+    postgres: p => `SELECT limit_key, (EXTRACT(EPOCH FROM tat - clock_timestamp()) * 1000)::bigint AS ahead_ms
+                      FROM ${p}rate_limits ORDER BY limit_key`,
+};
+
+/**
+ * @param {string} p
+ * @returns {Promise<Record<string, number>>} How far the tat of each rate key is ahead of now, in ms.
+ */
+async function aheadMs(p) {
+    const rows = await database.query(AHEAD_SQL[database.family](p));
+
+    return Object.fromEntries(rows.map(row => [String(row.limit_key), Number(row.ahead_ms)]));
+}
+
+/**
+ * @param {import('../../src/store/store.js').Store} store
+ * @param {Map<string, number>} limitsByName
+ * @param {string} lockToken
+ * @returns {Promise<import('../../src/store/store.js').ClaimResult>} The claim of the candidates of the names.
+ */
+async function claimCandidates(store, limitsByName, lockToken) {
+    const found = await store.findCandidates(limitsByName);
+
+    return claimWithBlocks(store, found.startable.map(job => job.id), lockToken, found.full.map(job => job.id));
+}
+
+describe('global rate limits', () => {
+    // 4 per 400 ms, bursts of 4: one each 100 ms
+    const api = defineRateLimit({ name: 'api', max: 4, per: '400ms', burst: 4 });
+    const callApi = defineJob({
+        name: 'call_api',
+        globalRateLimits: ({ payload }) => [api.key(payload.account, { cost: payload.cost ?? 1 })],
+    });
+
+    /**
+     * @param {import('../../src/types.js').Sqlane<any>} sqlane
+     * @param {number} count
+     * @param {{ account: string, cost?: number }} payload
+     * @param {number} [secondsAgo] The due time of the first: the others 1 s apart.
+     * @returns {Promise<string[]>} The ids, oldest first.
+     */
+    async function enqueueCalls(sqlane, count, payload, secondsAgo = 60) {
+        const ids = [];
+
+        for (let at = 0; at < count; at++) {
+            // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
+            ids.push((await sqlane.enqueue(testAdapter.pool, callApi, /** @type {any} */ (payload), {
+                runAt: ago(secondsAgo - at),
+            })).id);
+        }
+
+        return ids;
+    }
+
+    test('burst = max: max jobs start at once, the others are blocked on the key; then one per per / max', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const ids = await enqueueCalls(sqlane, 6, { account: 'a1' });
+        const found = await store.findCandidates(new Map([['call_api', 10]]));
+
+        expect(found.startable.map(job => job.id)).toStrictEqual(ids.slice(0, 4));
+        expect(found.full.map(job => job.id)).toStrictEqual(ids.slice(4));
+
+        // A name not known with rate keys: the same result; the name is known from then on
+        const ratedNames = new Set(['other']);
+
+        await expect(store.findCandidates(new Map([['call_api', 10]]), ratedNames)).resolves.toStrictEqual(found);
+        expect([...ratedNames]).toStrictEqual(['other', 'call_api']);
+
+        const result = await claimWithBlocks(store, ids.slice(0, 4), 'T1', ids.slice(4));
+
+        expect(result.jobs.map(job => job.id)).toStrictEqual(ids.slice(0, 4));
+        expect(result.jobs[0].rateLimits).toStrictEqual([
+            { key: '@api:a1', max: 4, per_us: 400_000, burst: 4, cost: 1 },
+        ]);
+        expect(result).toMatchObject({ blockedKeys: ['@api:a1'], blockedNames: ['call_api'] });
+        expect(result.rateWaits).toHaveLength(1);
+        expect(result.rateWaits[0].key).toBe('@api:a1');
+        expect(result.rateWaits[0].delayMs).toBeGreaterThan(50);
+        expect(result.rateWaits[0].delayMs).toBeLessThanOrEqual(100);
+        await expect(statuses(p).then(rows => rows.map(row => [row.status, row.blocked_on]))).resolves.toStrictEqual([
+            ...Array.from({ length: 4 }, () => ['running', null]),
+            ['blocked', '@api:a1'],
+            ['blocked', '@api:a1'],
+        ]);
+        // 4 × 100 ms ahead, from the claim
+        expect((await aheadMs(p))['@api:a1']).toBeGreaterThan(300);
+
+        // No quota yet: nothing unblocked, the time of the oldest
+        const early = await store.unblockRates(['@api:a1']);
+
+        expect(early.names).toStrictEqual([]);
+        expect(early.waits).toMatchObject([{ key: '@api:a1' }]);
+        await sleep(early.waits[0].delayMs + 5);
+
+        // One more start: the oldest blocked job only
+        const unblocked = await store.unblockRates(['@api:a1']);
+
+        expect(unblocked.names).toStrictEqual(['call_api']);
+        expect(unblocked.waits).toHaveLength(1);
+        expect(unblocked.waits[0].delayMs).toBeGreaterThan(50);
+        expect(unblocked.waits[0].delayMs).toBeLessThanOrEqual(100);
+        await expect(claimCandidates(store, new Map([['call_api', 10]]), 'T2'))
+            .resolves.toMatchObject({ jobs: [{ id: ids[4] }], blockedKeys: [] });
+    });
+
+    test('burst 1: one start, then the next after per / max', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const smooth = defineRateLimit({ name: 'smooth', max: 10, per: '1s' });
+        const ids = [];
+
+        for (const secondsAgo of [30, 20, 10]) {
+            // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
+            ids.push((await sqlane.enqueue(testAdapter.pool, 'tick', {}, {
+                globalRateLimits: [smooth],
+                runAt: ago(secondsAgo),
+            })).id);
+        }
+
+        const first = await claimCandidates(store, new Map([['tick', 10]]), 'T1');
+
+        expect(first.jobs.map(job => job.id)).toStrictEqual([ids[0]]);
+        expect(first.rateWaits).toMatchObject([{ key: '@smooth' }]);
+        await expect(claimCandidates(store, new Map([['tick', 10]]), 'T2')).resolves.toMatchObject({ jobs: [] });
+        await sleep(first.rateWaits[0].delayMs + 5);
+        await store.unblockRates(['@smooth']);
+        await expect(claimCandidates(store, new Map([['tick', 10]]), 'T3'))
+            .resolves.toMatchObject({ jobs: [{ id: ids[1] }] });
+        await expect(statuses(p).then(rows => rows.map(row => row.status)))
+            .resolves.toStrictEqual(['running', 'running', 'blocked']);
+    });
+
+    test('a per that is not a multiple of max: a key without debt takes a job', async () => {
+        const { sqlane, store } = await freshTables();
+        // 142,857.1… µs per start
+        const seventh = defineRateLimit({ name: 'seventh', max: 7, per: '1s' });
+        const ids = [];
+
+        for (const secondsAgo of [20, 10]) {
+            // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
+            ids.push((await sqlane.enqueue(testAdapter.pool, 'tick', {}, {
+                globalRateLimits: [seventh],
+                runAt: ago(secondsAgo),
+            })).id);
+        }
+
+        const found = await store.findCandidates(new Map([['tick', 10]]));
+
+        expect(found.startable.map(job => job.id)).toStrictEqual([ids[0]]);
+
+        const first = await claimCandidates(store, new Map([['tick', 10]]), 'T1');
+
+        expect(first.jobs.map(job => job.id)).toStrictEqual([ids[0]]);
+        expect(first.rateWaits).toMatchObject([{ key: '@seventh', delayMs: expect.any(Number) }]);
+        expect(first.rateWaits[0].delayMs).toBeGreaterThan(100);
+        expect(first.rateWaits[0].delayMs).toBeLessThanOrEqual(143);
+        await sleep(first.rateWaits[0].delayMs + 5);
+        await expect(store.unblockRates(['@seventh'])).resolves.toMatchObject({ names: ['tick'] });
+    });
+
+    test('cost: a job takes cost × per / max of the quota', async () => {
+        const { sqlane, store } = await freshTables();
+        const [big] = await enqueueCalls(sqlane, 1, { account: 'a1', cost: 3 });
+        const [small] = await enqueueCalls(sqlane, 1, { account: 'a1', cost: 2 }, 30);
+        const result = await claimWithBlocks(store, [big, small], 'T1');
+
+        expect(result.jobs.map(job => job.id)).toStrictEqual([big]);
+        expect(result.blockedKeys).toStrictEqual(['@api:a1']);
+        // 300 ms of 400 taken; 200 more: 100 ms to wait
+        expect(result.rateWaits[0].delayMs).toBeGreaterThan(50);
+        expect(result.rateWaits[0].delayMs).toBeLessThanOrEqual(100);
+    });
+
+    test('several rate keys: all or nothing; a blocked job takes the quota of none', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const a = defineRateLimit({ name: 'a', max: 1, per: '1h' });
+        const b = defineRateLimit({ name: 'b', max: 1, per: '1h' });
+        const onB = await sqlane.enqueue(testAdapter.pool, 'two', {}, { globalRateLimits: [b], runAt: ago(30) });
+        const both = await sqlane.enqueue(testAdapter.pool, 'two', {}, { globalRateLimits: [a, b], runAt: ago(20) });
+
+        await expect(claimWithBlocks(store, [onB.id, both.id], 'T1')).resolves.toMatchObject({
+            jobs: [{ id: onB.id }],
+            blockedKeys: ['@b'],
+        });
+
+        // @a kept its quota: a job of @a alone starts
+        const onA = await sqlane.enqueue(testAdapter.pool, 'two', {}, { globalRateLimits: [a], runAt: ago(10) });
+
+        await expect(claimAll(store, [onA.id], 'T2')).resolves.toMatchObject([{ id: onA.id }]);
+        await expect(statuses(p)).resolves.toStrictEqual([
+            { id: onB.id, status: 'running', blocked_on: null },
+            { id: both.id, status: 'blocked', blocked_on: '@b' },
+            { id: onA.id, status: 'running', blocked_on: null },
+        ]);
+    });
+
+    test('FIFO per key: a newer job waits behind the jobs blocked on its key, even with quota', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const ids = await enqueueCalls(sqlane, 5, { account: 'a1' });
+        const { rateWaits } = await claimWithBlocks(store, ids.slice(0, 4), 'T1', [ids[4]]);
+
+        await sleep(rateWaits[0].delayMs + 5);
+
+        // The key has quota for one, but its oldest blocked job comes first
+        const [newer] = await enqueueCalls(sqlane, 1, { account: 'a1' }, 1);
+        const found = await store.findCandidates(new Map([['call_api', 10]]));
+
+        expect(found).toMatchObject({ startable: [], full: [{ id: newer }] });
+        await expect(claimWithBlocks(store, [newer], 'T2')).resolves.toMatchObject({
+            jobs: [],
+            blockedKeys: ['@api:a1'],
+            // Behind an older blocked job: that job's timer
+            rateWaits: [],
+        });
+        await expect(store.unblockRates(['@api:a1'])).resolves.toMatchObject({ names: ['call_api'] });
+        await expect(statuses(p).then(rows => rows.slice(4).map(row => [row.id, row.status]))).resolves.toStrictEqual([
+            [ids[4], 'pending'],
+            [newer, 'blocked'],
+        ]);
+    });
+
+    test('a key without quota does not hold the other keys of the name', async () => {
+        const { sqlane, store } = await freshTables();
+        const flood = await enqueueCalls(sqlane, 8, { account: 'flood' });
+        const other = await enqueueCalls(sqlane, 2, { account: 'other' }, 30);
+        // 4 free slots, 2 × 4 candidates: the search counts the quota of each key, after the older jobs
+        const found = await store.findCandidates(new Map([['call_api', 8]]));
+
+        expect(found.startable.map(job => job.id)).toStrictEqual([...flood.slice(0, 4), ...other]);
+        expect(found.full.map(job => job.id)).toStrictEqual(flood.slice(4));
+        await expect(claimWithBlocks(store, found.startable.map(job => job.id), 'T1', found.full.map(job => job.id)))
+            .resolves.toMatchObject({ blockedKeys: ['@api:flood'] });
+    });
+
+    test('a full concurrency key and a rate key without quota: blocked on the concurrency key', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const lane = defineConcurrencyLimit({ name: 'lane', max: 1 });
+        const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
+        const options = { globalConcurrencyLimits: [lane], globalRateLimits: [once] };
+        const first = await sqlane.enqueue(testAdapter.pool, 'both', {}, { ...options, runAt: ago(30) });
+        const [running] = await claimAll(store, [first.id], 'T1');
+
+        const second = await sqlane.enqueue(testAdapter.pool, 'both', {}, { ...options, runAt: ago(20) });
+
+        await expect(claimWithBlocks(store, [], 'T2', [second.id]))
+            .resolves.toMatchObject({ blockedKeys: ['lane'], rateWaits: [] });
+
+        // The slot frees: unblocked, then blocked on the rate key
+        await store.completeJobs([running]);
+        await expect(store.unblock(['lane'])).resolves.toStrictEqual(['both']);
+        await expect(claimWithBlocks(store, [second.id], 'T3'))
+            .resolves.toMatchObject({ jobs: [], blockedKeys: ['@once'], rateWaits: [{ key: '@once' }] });
+        // No slot taken
+        await expect(slotsOf(p)).resolves.toStrictEqual([]);
+        await expect(statuses(p).then(rows => rows.map(row => row.blocked_on))).resolves.toStrictEqual([null, '@once']);
+    });
+
+    test('a job blocked on its concurrency key takes no quota', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const lane = defineConcurrencyLimit({ name: 'lane', max: 1 });
+        const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
+        const holder = await sqlane.enqueue(testAdapter.pool, 'both', {}, {
+            globalConcurrencyLimits: [lane],
+            runAt: ago(30),
+        });
+
+        await claimAll(store, [holder.id], 'T1');
+
+        const waiting = await sqlane.enqueue(testAdapter.pool, 'both', {}, {
+            globalConcurrencyLimits: [lane],
+            globalRateLimits: [once],
+            runAt: ago(20),
+        });
+        const rateOnly = await sqlane.enqueue(testAdapter.pool, 'both', {}, { globalRateLimits: [once], runAt: ago(10) });
+
+        await expect(claimWithBlocks(store, [waiting.id, rateOnly.id], 'T2')).resolves.toMatchObject({
+            jobs: [{ id: rateOnly.id }],
+            blockedKeys: ['lane'],
+        });
+        await expect(slotsOf(p)).resolves.toMatchObject([{ limit_key: 'lane', job_id: holder.id }]);
+    });
+
+    test('concurrent claims never take more than the quota', async () => {
+        const { store, sqlane } = await freshTables();
+        const ids = await enqueueCalls(sqlane, 12, { account: 'a1' });
+        const claims = await Promise.all([0, 1, 2].map(at => claimWithBlocks(
+            store,
+            ids.filter((_, index) => index % 3 === at),
+            `T${at}`,
+        )));
+
+        expect(claims.flatMap(claim => claim.jobs)).toHaveLength(4);
+    });
+
+    test('the sweep unblocks the jobs whose time came, for a lost timer; then it takes the timer over', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const ids = await enqueueCalls(sqlane, 6, { account: 'a1' });
+        const { rateWaits } = await claimWithBlocks(store, ids.slice(0, 4), 'T1', ids.slice(4));
+
+        await expect(store.sweepSlots(100)).resolves.toStrictEqual({
+            lingers: 0,
+            orphans: 0,
+            unblocked: 0,
+            rateWaits: [],
+        });
+        await sleep(rateWaits[0].delayMs + 5);
+
+        const swept = await store.sweepSlots(100);
+
+        expect(swept).toMatchObject({ unblocked: 1, rateWaits: [{ key: '@api:a1' }] });
+        await expect(statuses(p).then(rows => rows.slice(4).map(row => row.status)))
+            .resolves.toStrictEqual(['pending', 'blocked']);
+    });
+
+    test('an unblock that leaves no blocked job on its key gives one more unblock, in a second at the earliest: '
+        + 'a job blocked meanwhile behind the ones it made pending', async () => {
+        const { sqlane, store } = await freshTables();
+        // One start each 100 ms
+        const smooth = defineRateLimit({ name: 'smooth', max: 10, per: '1s' });
+        const ids = [];
+
+        for (const secondsAgo of [20, 10]) {
+            // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
+            ids.push((await sqlane.enqueue(testAdapter.pool, 'tick', {}, {
+                globalRateLimits: [smooth],
+                runAt: ago(secondsAgo),
+            })).id);
+        }
+
+        const { rateWaits } = await claimWithBlocks(store, ids, 'T1');
+
+        await sleep(rateWaits[0].delayMs + 5);
+
+        const unblocked = await store.unblockRates(['@smooth']);
+
+        expect(unblocked.names).toStrictEqual(['tick']);
+        expect(unblocked.waits).toMatchObject([{ key: '@smooth', delayMs: 1000 }]);
+        // Then nothing left: no more
+        await expect(store.unblockRates(['@smooth'])).resolves.toStrictEqual({ names: [], waits: [] });
+    });
+
+    test('an unblock counts the jobs that the previous one made pending, by their debt: not again', async () => {
+        const { p, sqlane, store } = await freshTables();
+        // 3 per hour, bursts of 3: 20 min per start
+        const quota = defineRateLimit({ name: 'quota', max: 3, per: '1h', burst: 3 });
+        const ids = [];
+
+        for (let at = 0; at < 7; at++) {
+            // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
+            ids.push((await sqlane.enqueue(testAdapter.pool, 'call', {}, {
+                globalRateLimits: [quota],
+                runAt: ago(70 - at),
+            })).id);
+        }
+
+        await claimWithBlocks(store, ids.slice(0, 3), 'T1', ids.slice(3));
+        // One start of debt: room for two
+        await database.query(SET_TAT_SQL[database.family](p), ['@quota', -20 * 60]);
+
+        const first = await store.unblockRates(['@quota']);
+
+        expect(first.names).toStrictEqual(['call']);
+        expect(first.waits).toMatchObject([{ key: '@quota', debtUs: expect.any(Number) }]);
+        // 3 starts of debt after the two: the next one in 20 min
+        expect(first.waits[0].debtUs).toBeGreaterThan(3600e6 - 5e6);
+        expect(first.waits[0].delayMs).toBeGreaterThan((20 * 60_000) - 5000);
+        await expect(statuses(p).then(rows => rows.slice(3).map(row => row.status)))
+            .resolves.toStrictEqual(['pending', 'pending', 'blocked', 'blocked']);
+
+        // Before their claims: given the debt, no more; without it, the stored tat lets two more go
+        const again = await store.unblockRates(['@quota'], new Map([['@quota', Number(first.waits[0].debtUs)]]));
+
+        expect(again.names).toStrictEqual([]);
+        expect(again.waits[0].delayMs).toBeGreaterThan((20 * 60_000) - 5000);
+        await expect(statuses(p).then(rows => rows.slice(3).map(row => row.status)))
+            .resolves.toStrictEqual(['pending', 'pending', 'blocked', 'blocked']);
+        await expect(store.unblockRates(['@quota'])).resolves.toMatchObject({ names: ['call'] });
+        await expect(statuses(p).then(rows => rows.slice(3).map(row => row.status)))
+            .resolves.toStrictEqual(['pending', 'pending', 'pending', 'pending']);
+    });
+
+    test.each([true, false])('the claim reads the jobs blocked on a rate key after it locks its row: a job blocked '
+        + 'meanwhile holds the newer ones (withRates: %s)', async (withRates) => {
+        const { p, sqlane, store } = await freshTables();
+        const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
+        const older = await sqlane.enqueue(testAdapter.pool, 'tick', {}, { globalRateLimits: [once], runAt: ago(20) });
+        const newer = await sqlane.enqueue(testAdapter.pool, 'tick', {}, { globalRateLimits: [once], runAt: ago(10) });
+
+        await database.query(SET_TAT_SQL[database.family](p), ['@once', 0]);
+
+        // Another claim holds the row of the key, and blocks the older job on it
+        const other = await testAdapter.connect();
+
+        try {
+            await other.begin();
+            await other.execute(`SELECT limit_key FROM ${p}rate_limits WHERE limit_key = '@once' FOR UPDATE`);
+            await other.execute(`UPDATE ${p}jobs SET status = 'blocked', blocked_on = '@once' WHERE id = '${older.id}'`);
+
+            const claiming = store.claim({
+                candidateIds: [newer.id],
+                fullIds: [],
+                lockToken: 'T1',
+                lockedBy: 'test:T1',
+                leaseMs: LEASE_MS,
+                pick: pickFits,
+                withRates,
+            });
+
+            // The claim waits for the row
+            await sleep(200);
+            await other.commit();
+            await expect(claiming).resolves.toMatchObject({ jobs: [], blockedKeys: ['@once'] });
+        } finally {
+            other.release();
+        }
+
+        await expect(statuses(p)).resolves.toStrictEqual([
+            { id: older.id, status: 'blocked', blocked_on: '@once' },
+            { id: newer.id, status: 'blocked', blocked_on: '@once' },
+        ]);
+    });
+
+    test('the cleanup deletes the rows of the keys whose tat passed', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
+        const brief = defineRateLimit({ name: 'brief', max: 1, per: 1 });
+        const ids = [];
+
+        for (const limit of [once, brief]) {
+            // oxlint-disable-next-line no-await-in-loop -- one after the other
+            ids.push((await sqlane.enqueue(testAdapter.pool, 'x', {}, { globalRateLimits: [limit], runAt: ago(5) })).id);
+        }
+
+        await claimAll(store, ids, 'T1');
+        await sleep(5);
+        await expect(store.deleteIdleRateKeys(1000)).resolves.toBe(1);
+        await expect(aheadMs(p).then(Object.keys)).resolves.toStrictEqual(['@once']);
+    });
+
+    test('the claim of names without limits leaves the jobs with rate limits', async () => {
+        const { sqlane, store } = await freshTables();
+
+        await sqlane.enqueue(testAdapter.pool, 'plain', {}, { globalRateLimits: [api.key('a1')], runAt: ago(20) });
+
+        const plain = await sqlane.enqueue(testAdapter.pool, 'plain', {}, { runAt: ago(10) });
+
+        await expect(claimDueWithNext(store, { requests: [request('plain', 5, 0)] })).resolves.toMatchObject({
+            jobs: [{ id: plain.id }],
+            limited: ['plain'],
+        });
+    });
+
+    test('a search that leaves the rate keys out finds a job with rate keys past the max of its name', async () => {
+        const { sqlane, store } = await freshTables();
+        const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
+        const ids = [];
+
+        // Two jobs without rate keys, then three with them from their enqueue options: one fits, two are full
+        for (const [at, options] of [{}, {}, ...Array.from({ length: 3 }, () => ({ globalRateLimits: [once] }))]
+            .entries()) {
+            // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
+            ids.push((await sqlane.enqueue(testAdapter.pool, 'mixed', {}, { ...options, runAt: ago(50 - at) })).id);
+        }
+
+        const limits = new Map([['mixed', 2]]);
+        const found = await store.findCandidates(limits);
+
+        expect(found.startable.map(job => job.id)).toStrictEqual(ids.slice(0, 2));
+        expect(found.full.map(job => job.id)).toStrictEqual(ids.slice(3));
+
+        const ratedNames = new Set();
+
+        await expect(store.findCandidates(limits, ratedNames)).resolves.toStrictEqual(found);
+        expect([...ratedNames]).toStrictEqual(['mixed']);
+    });
+
+    test('getStats counts the jobs blocked on a rate key as pending', async () => {
+        const { sqlane, store } = await freshTables();
+
+        await enqueueCalls(sqlane, 6, { account: 'a1' });
+        await claimCandidates(store, new Map([['call_api', 10]]), 'T1');
+
+        await expect(sqlane.getStats()).resolves.toMatchObject([
+            { name: 'call_api', pending: 2, due: 0, running: 4 },
         ]);
     });
 });

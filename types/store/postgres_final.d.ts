@@ -72,6 +72,18 @@ export declare function releaseJob(executor: Executor, p: string, job: OwnedJob,
     lingerMs: number;
 }): Promise<boolean>;
 /**
+ * The handler threw a RateLimitedError on rate keys of the job: the tat of each moves to `now + retryAfter + τ` at the
+ * least (its next start at `now + retryAfter`, then one per per / max), by the settings of the job; a missing row is
+ * created. The job is blocked on the first key, without an attempt used, and its slots are freed. The order of the
+ * locks of a claim: the job, the rows of the keys in their order, then the slots.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {OwnedJob} job
+ * @param {import('./store.js').RateLimitedParams} params
+ * @returns {Promise<import('./store.js').RateLimitedResult>}
+ */
+export declare function rateLimited(executor: Executor, p: string, job: OwnedJob, { limits, retryAfterMs, error }: import('./store.js').RateLimitedParams): Promise<import('./store.js').RateLimitedResult>;
+/**
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit
@@ -103,20 +115,70 @@ export declare function recoverStaleJob(executor: Executor, p: string, id: strin
  * @returns {Promise<string[]>} The names of the jobs that it made pending.
  */
 export declare function unblock(executor: Executor, p: string, keys: string[]): Promise<string[]>;
+export type RateUnblock = import('../gcra.js').RateWait & {
+    unblocked: number;
+    debtUs: number | null;
+    left: boolean;
+};
+export type RateUnblockOptions = {
+    /**
+     * MySQL and MariaDB: runs the
+     * writes, after the read.
+     */
+    inTransaction?: <T>(func: (executor: Executor) => Promise<T>) => Promise<T>;
+    /**
+     * The least debt of some keys (µs): the jobs that an earlier unblock made
+     * pending, not claimed yet.
+     */
+    floors?: Map<string, number>;
+};
+/**
+ * A rate key after an unblock that found blocked jobs on it: when the next unblock is due (`nextUnblockMs`), the jobs
+ * that the unblock made pending, the debt of the key after them (null: none), and whether blocked jobs are left (else
+ * the next unblock is a check).
+ * @typedef {import('../gcra.js').RateWait & { unblocked: number, debtUs: number | null, left: boolean }} RateUnblock
+ */
+/**
+ * @typedef {object} RateUnblockOptions
+ * @property {<T>(func: (executor: Executor) => Promise<T>) => Promise<T>} [inTransaction] MySQL and MariaDB: runs the
+ *     writes, after the read.
+ * @property {Map<string, number>} [floors] The least debt of some keys (µs): the jobs that an earlier unblock made
+ *     pending, not claimed yet.
+ */
+/**
+ * Makes the jobs blocked on the rate keys pending again, the oldest first: on each key, as many as its quota allows
+ * now, each job by its own settings (gcra.js, `admitQueue`), at most RATE_UNBLOCK_BATCH. It does not take the quota:
+ * the claim does, and blocks again a job that another one got ahead of. One statement.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} keys
+ * @param {RateUnblockOptions} [options]
+ * @returns {Promise<{ names: string[], waits: RateUnblock[] }>} The names of the jobs that it made pending; the keys
+ *     on which it found blocked jobs.
+ */
+export declare function unblockRates(executor: Executor, p: string, keys: string[], { floors }?: RateUnblockOptions): Promise<{
+    names: string[];
+    waits: RateUnblock[];
+}>;
 /**
  * Deletes the ended lingers, and the slots without their running job (from a manual change, or old code). Then
  * unblocks the jobs blocked on keys with room: a release that ended in a linger, or a process that stopped before its
- * unblock.
+ * unblock; and the jobs blocked on rate keys whose next start is due: a process that stopped with its timer.
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit
- * @returns {Promise<{ lingers: number, orphans: number, unblocked: number }>}
+ * @returns {Promise<import('./store.js').SweepResult>}
  */
-export declare function sweepSlots(executor: Executor, p: string, limit: number): Promise<{
-    lingers: number;
-    orphans: number;
-    unblocked: number;
-}>;
+export declare function sweepSlots(executor: Executor, p: string, limit: number): Promise<import('./store.js').SweepResult>;
+/**
+ * Deletes a batch of rows of rate keys whose tat passed: such a key has its full quota, as without a row. SKIP LOCKED:
+ * a claim holds the rows of its keys.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {number} limit
+ * @returns {Promise<number>} The deleted rows.
+ */
+export declare function deleteIdleRateKeys(executor: Executor, p: string, limit: number): Promise<number>;
 /**
  * Deletes a batch of completed and failed jobs whose retention ended, with their payloads. SKIP LOCKED: processes
  * share the work.

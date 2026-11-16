@@ -11,6 +11,13 @@ export type ClaimedJob = import('./store.js').ClaimedJob;
 /** The due jobs of each name with global limits that a search of candidates reads */
 export declare const LIMIT_WINDOW_SIZE = 500;
 /**
+ * The settings of the rate keys of a JSON array (`rate_limits`), with the increment of a start and the allowance of
+ * the key in µs, as gcra.js computes them. Bigints: cost × per_us is at most 6 × 10^17.
+ * @param {string} json
+ * @returns {string} A FROM item `e`, with `key`, `inc` and `allow`.
+ */
+export declare const rateLimitsOf: (json: string) => string;
+/**
  * The next due time of each given job name with pending jobs; null: of each job name. PostgreSQL has no loose index
  * scan: for all names, a recursive CTE skips from one pending name to the next on the partial index, two index probes
  * per pending name.
@@ -22,21 +29,28 @@ export declare const LIMIT_WINDOW_SIZE = 500;
 export declare function probe(executor: Executor, p: string, names: string[] | null): Promise<ProbeRow[]>;
 /**
  * The due jobs of names with global limits, oldest first: at most `limit` of each name whose keys have room, and those
- * with a full key, which the claim blocks. A key is full when its held slots reach the max of the job.
+ * with a full key, which the claim blocks. A key is full when its held slots reach the max of the job, or a rate key
+ * has no quota left for it after the older jobs of the search. Without `withRates`, the search leaves out the rate
+ * keys, and returns its jobs that have some too, past the max of their name: they tell their names (store.js).
  * @param {Executor} executor
  * @param {string} p
  * @param {Map<string, number>} limitsByName
- * @returns {Promise<import('./store.js').FoundCandidates>}
+ * @param {boolean} withRates
+ * @returns {Promise<import('./store.js').FoundCandidatesOf>}
  */
-export declare function findCandidates(executor: Executor, p: string, limitsByName: Map<string, number>): Promise<import('./store.js').FoundCandidates>;
+export declare function findCandidates(executor: Executor, p: string, limitsByName: Map<string, number>, withRates: boolean): Promise<import('./store.js').FoundCandidatesOf>;
 /**
- * Claims due jobs among the candidates, and blocks those with a full key. Call it in a queue transaction.
+ * Claims due jobs among the candidates, and blocks those with a full key. Call it in a queue transaction. The order of
+ * the locks: the jobs, the rows of their rate keys, then their slots; the tat of a rate key moves only for the jobs
+ * that got all their slots, so nothing is given back. With `withRates`, the statement that locks the jobs locks the
+ * rows of their rate keys too: the read of the rows, after it, sees the blocked jobs as they are, without a statement
+ * of its own for the lock.
  * @param {Executor} executor
  * @param {string} p
  * @param {ClaimParams} params
  * @returns {Promise<import('./store.js').ClaimResult>}
  */
-export declare function claim(executor: Executor, p: string, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick }: ClaimParams): Promise<import('./store.js').ClaimResult>;
+export declare function claim(executor: Executor, p: string, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, withRates }: ClaimParams): Promise<import('./store.js').ClaimResult>;
 /**
  * Finds, chooses, claims and reads the due jobs of names without global limits, in one statement (a transaction of its
  * own). Each name locks its oldest due jobs that no other claim holds (SKIP LOCKED), up to its `maxJobs`. The locked

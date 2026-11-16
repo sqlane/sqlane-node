@@ -4,9 +4,11 @@ import {
     createSqlane,
     defineConcurrencyLimit,
     defineJob,
+    defineRateLimit,
     DrainTimeoutError,
     FatalJobError,
     JobTimeoutError,
+    RateLimitedError,
     RetryJobError,
     ShutdownError,
 } from '../../src/index.js';
@@ -402,6 +404,367 @@ describe('concurrency', () => {
         held.resolve(undefined);
         await sqlane.close({ deadline: '1s' });
     });
+});
+
+/**
+ * @param {string} p
+ * @returns {Promise<Record<string, number>>} The jobs by status.
+ */
+async function statusCounts(p) {
+    const rows = await database.query(`SELECT status, count(*) AS count FROM ${p}jobs GROUP BY status`);
+
+    return Object.fromEntries(rows.map(row => [String(row.status), Number(row.count)]));
+}
+
+describe('global rate limits', () => {
+    test('the jobs blocked on a rate key start at their time, by its timer, without a poll', async () => {
+        const { sqlane, p } = await freshSqlane(/** @type {any} */ ({
+            pollInterval: '10s',
+            timings: { ...TIMINGS, recoveryIntervalMs: 60_000 },
+        }));
+        // One start each 100 ms
+        const smooth = defineRateLimit({ name: 'smooth', max: 10, per: '1s' });
+        const tick = defineJob({ name: 'tick', globalRateLimits: () => [smooth] });
+        /** @type {number[]} */
+        const starts = [];
+
+        sqlane.handle(tick, () => {
+            starts.push(Date.now());
+        });
+        await sqlane.enqueueMany(testAdapter.pool, tick, [1, 2, 3, 4].map(n => ({ payload: { n } })));
+        await sqlane.start();
+        await waitFor(async () => (await statusCounts(p)).completed === 4, 3000);
+
+        for (const [at, start] of starts.slice(1).entries()) {
+            // The database clock spaces the claims by 100 ms; the handlers start a few ms after them
+            expect(start - starts[at]).toBeGreaterThanOrEqual(85);
+        }
+
+        // The timer, not the poll
+        expect(/** @type {number} */ (starts.at(-1)) - starts[0]).toBeLessThan(2000);
+    });
+
+    test('a flood on one rate key does not hold the other keys of the name', async () => {
+        const { sqlane, p } = await freshSqlane();
+        const account = defineRateLimit({ name: 'account', max: 3, per: '1h', burst: 3 });
+        const call = defineJob({ name: 'call', globalRateLimits: ({ payload }) => [account.key(payload.account)] });
+        /** @type {string[]} */
+        const done = [];
+
+        sqlane.handle(call, ({ payload }) => {
+            done.push(payload.account);
+        });
+        // More than a search reads
+        await sqlane.enqueueMany(testAdapter.pool, call, Array.from({ length: 600 }, () => ({
+            payload: { account: 'flood' },
+        })));
+        await sqlane.enqueueMany(testAdapter.pool, call, [1, 2, 3].map(() => ({ payload: { account: 'other' } })));
+        await sqlane.start();
+        await waitFor(async () => (await statusCounts(p)).completed === 6, 10_000);
+
+        expect(done.filter(key => key === 'other')).toHaveLength(3);
+        await expect(statusCounts(p)).resolves.toStrictEqual({ blocked: 597, completed: 6 });
+    });
+
+    test('two processes never start more than the quota', async () => {
+        const { sqlane, p } = await freshSqlane();
+        const other = createSqlane(/** @type {any} */ ({
+            adapter: testAdapter.adapter,
+            tablePrefix: p,
+            pollInterval: '100ms',
+            timings: TIMINGS,
+        }));
+        const quota = defineRateLimit({ name: 'quota', max: 3, per: '1h', burst: 3 });
+        const call = defineJob({ name: 'call', globalRateLimits: () => [quota] });
+
+        instances.push(other);
+
+        for (const each of [sqlane, other]) {
+            each.handle(call, () => {});
+        }
+
+        await sqlane.enqueueMany(testAdapter.pool, call, Array.from({ length: 12 }, (_, n) => ({ payload: { n } })));
+        await Promise.all([sqlane.start(), other.start()]);
+        await waitFor(async () => (await statusCounts(p)).completed === 3, 3000);
+        await sleep(300);
+        await expect(statusCounts(p)).resolves.toStrictEqual({ blocked: 9, completed: 3 });
+    });
+
+    test('a process that stopped with its timer: the sweep of another one unblocks the jobs', async () => {
+        const { sqlane, p } = await freshSqlane();
+        const other = createSqlane(/** @type {any} */ ({
+            adapter: testAdapter.adapter,
+            tablePrefix: p,
+            pollInterval: '10s',
+            timings: TIMINGS,
+        }));
+        const smooth = defineRateLimit({ name: 'smooth', max: 10, per: '1s' });
+        const tick = defineJob({ name: 'tick', globalRateLimits: () => [smooth] });
+
+        instances.push(other);
+
+        for (const each of [sqlane, other]) {
+            each.handle(tick, () => {});
+        }
+
+        await sqlane.enqueueMany(testAdapter.pool, tick, [1, 2, 3].map(n => ({ payload: { n } })));
+        await sqlane.start();
+        await waitFor(async () => (await statusCounts(p)).completed === 1, 3000);
+        await sqlane.close();
+        await other.start();
+        // The sweep runs each 500 ms here; then the timer of the other process
+        await waitFor(async () => (await statusCounts(p)).completed === 3, 5000);
+        await expect(statusCounts(p)).resolves.toStrictEqual({ completed: 3 });
+    });
+
+    test('drain() waits for the jobs blocked on a rate key of this process', async () => {
+        const { sqlane } = await freshSqlane();
+        // One start each 50 ms
+        const smooth = defineRateLimit({ name: 'smooth', max: 20, per: '1s' });
+        const tick = defineJob({ name: 'tick', globalRateLimits: () => [smooth] });
+
+        sqlane.handle(tick, () => {});
+        await sqlane.enqueueMany(testAdapter.pool, tick, [1, 2, 3, 4].map(n => ({ payload: { n } })));
+        await expect(sqlane.drain()).resolves.toStrictEqual({ completed: 4, retried: 0, failed: 0 });
+    });
+});
+
+describe('local rate limits', () => {
+    test('two names share a limit: its burst at once, then one start per per / max, by a timer, without a poll', async () => {
+        const { sqlane, p } = await freshSqlane(/** @type {any} */ ({
+            pollInterval: '10s',
+            timings: { ...TIMINGS, recoveryIntervalMs: 60_000 },
+        }));
+        // 10 per s, bursts of 2: one each 100 ms after the burst
+        const disk = defineRateLimit({ name: 'disk', max: 10, per: '1s', burst: 2 });
+        /** @type {{ name: string, at: number }[]} */
+        const starts = [];
+
+        for (const name of ['read', 'write']) {
+            sqlane.handle(defineJob({ name, localRateLimits: [disk] }), ({ job }) => {
+                starts.push({ name: job.name, at: Date.now() });
+            });
+            // oxlint-disable-next-line no-await-in-loop -- two names
+            await sqlane.enqueueMany(testAdapter.pool, name, [1, 2, 3].map(n => ({ payload: { n } })));
+        }
+
+        await sqlane.start();
+        await waitFor(async () => (await statusCounts(p)).completed === 6, 3000);
+
+        const times = starts.map(start => start.at).toSorted((a, b) => a - b);
+
+        expect(new Set(starts.map(start => start.name))).toStrictEqual(new Set(['read', 'write']));
+        // The burst
+        expect(times[1] - times[0]).toBeLessThan(50);
+
+        for (let at = 2; at < times.length; at++) {
+            expect(times[at] - times[at - 1]).toBeGreaterThanOrEqual(85);
+        }
+
+        // The timer, not the poll
+        expect(/** @type {number} */ (times.at(-1)) - times[0]).toBeLessThan(1500);
+    });
+
+    test('a name over its limit is not claimed: its jobs stay pending, for the other processes', async () => {
+        const { sqlane, p } = await freshSqlane();
+        const other = createSqlane(/** @type {any} */ ({
+            adapter: testAdapter.adapter,
+            tablePrefix: p,
+            pollInterval: '100ms',
+            timings: TIMINGS,
+        }));
+        const hourly = defineRateLimit({ name: 'hourly', max: 1, per: '1h' });
+        const report = defineJob({ name: 'report', localRateLimits: [hourly] });
+
+        instances.push(other);
+        sqlane.handle(report, () => {});
+        other.handle(report, () => {});
+        await sqlane.enqueueMany(testAdapter.pool, report, [1, 2, 3].map(n => ({ payload: { n } })));
+        await sqlane.start();
+        await waitFor(async () => (await statusCounts(p)).completed === 1);
+        await sleep(300);
+        await expect(statusCounts(p)).resolves.toStrictEqual({ completed: 1, pending: 2 });
+
+        // Each process counts its own starts
+        await other.start();
+        await waitFor(async () => (await statusCounts(p)).completed === 2);
+        await sleep(300);
+        await expect(statusCounts(p)).resolves.toStrictEqual({ completed: 2, pending: 1 });
+    });
+
+    test('drain() waits for a local rate limit that admits the due jobs before its timeout', async () => {
+        const { sqlane } = await freshSqlane();
+        // One start each 50 ms
+        const disk = defineRateLimit({ name: 'disk', max: 20, per: '1s' });
+        const scan = defineJob({ name: 'scan', localRateLimits: [disk] });
+
+        sqlane.handle(scan, () => {});
+        await sqlane.enqueueMany(testAdapter.pool, scan, [1, 2, 3, 4].map(n => ({ payload: { n } })));
+        await expect(sqlane.drain()).resolves.toStrictEqual({ completed: 4, retried: 0, failed: 0 });
+    });
+});
+
+/**
+ * @param {SqlaneEvent[]} events
+ * @returns {Extract<SqlaneEvent, { type: 'rate_limited' }> | undefined}
+ */
+function rateLimitedEvent(events) {
+    return /** @type {Extract<SqlaneEvent, { type: 'rate_limited' }> | undefined} */ (
+        events.find(event => event.type === 'rate_limited')
+    );
+}
+
+/**
+ * Handles the jobs: the first call of all throws the error; each call records its start.
+ * @param {Sqlane} sqlane
+ * @param {import('../../src/types.js').JobDefinition<any>[]} jobs
+ * @param {() => Error} makeError
+ * @returns {{ name: string, payload: any, at: number }[]} The starts.
+ */
+function throwFirst(sqlane, jobs, makeError) {
+    /** @type {{ name: string, payload: any, at: number }[]} */
+    const starts = [];
+
+    for (const job of jobs) {
+        sqlane.handle(job, ({ job: { name }, payload }) => {
+            starts.push({ name, payload, at: Date.now() });
+
+            if (starts.length === 1) {
+                throw makeError();
+            }
+        });
+    }
+
+    return starts;
+}
+
+describe('RateLimitedError', () => {
+    // Plenty of quota: only the error holds the key
+    const api = defineRateLimit({ name: 'api', max: 100, per: '1s', burst: 100 });
+    const call = defineJob({
+        name: 'call',
+        globalRateLimits: ({ payload }) => [api.key(payload.account)],
+        timeout: '5s',
+    });
+
+    test('on a global key: the job is blocked on it, without an attempt; the key starts no job before retryAfter, '
+        + 'other keys run', async () => {
+        const { sqlane, p, events } = await freshSqlane();
+        const starts = throwFirst(sqlane, [call], () => new RateLimitedError({ limit: api.key('a1'), retryAfter: '300ms' }));
+
+        await sqlane.start();
+        await sqlane.enqueue(testAdapter.pool, call, { account: 'a1', n: 1 });
+        await waitFor(() => Boolean(rateLimitedEvent(events)));
+
+        const limitedAt = Date.now();
+        const event = /** @type {{ retryAt: Date }} */ (rateLimitedEvent(events));
+
+        expect(event).toMatchObject({
+            jobName: 'call',
+            attempt: 1,
+            limit: 'api',
+            key: 'a1',
+            scope: 'global',
+            durationMs: expect.any(Number),
+            error: expect.any(RateLimitedError),
+        });
+        expect(event.retryAt.getTime() - limitedAt).toBeGreaterThan(250);
+        expect(event.retryAt.getTime() - limitedAt).toBeLessThanOrEqual(310);
+        await expect(readJobs(p)).resolves.toMatchObject([{ status: 'blocked', attempts: 0 }]);
+        await sqlane.enqueue(testAdapter.pool, call, { account: 'a1', n: 2 });
+        await sqlane.enqueue(testAdapter.pool, call, { account: 'a2', n: 3 });
+        await waitFor(async () => (await statusCounts(p)).completed === 3, 3000);
+
+        const late = starts.slice(1).filter(start => start.payload.account === 'a1');
+
+        // The job again first, then the other one of the key
+        expect(late.map(start => start.payload.n)).toStrictEqual([1, 2]);
+
+        for (const start of late) {
+            expect(start.at - limitedAt).toBeGreaterThanOrEqual(250);
+        }
+
+        expect(/** @type {{ at: number }} */ (starts.find(start => start.payload.account === 'a2')).at - limitedAt)
+            .toBeLessThan(250);
+        await expect(readJobs(p)).resolves.toMatchObject([
+            { status: 'completed', attempts: 0 },
+            { status: 'completed', attempts: 0 },
+            { status: 'completed', attempts: 0 },
+        ]);
+        expect(events.map(each => each.type)).not.toContain('retried');
+    });
+
+    test('without a limit: all the global keys of the job wait; it is blocked on the first', async () => {
+        const { sqlane, p, events } = await freshSqlane();
+        const starts = throwFirst(sqlane, [call], () => new RateLimitedError({ retryAfter: '200ms' }));
+
+        await sqlane.start();
+        await sqlane.enqueue(testAdapter.pool, call, { account: 'a1', n: 1 }, {
+            globalRateLimits: [api.key('a1'), api.key('a0')],
+        });
+        await waitFor(() => Boolean(rateLimitedEvent(events)));
+
+        const limitedAt = Date.now();
+
+        expect(rateLimitedEvent(events)).toMatchObject({ limit: 'api', key: 'a0', scope: 'global' });
+        await expect(readJobs(p)).resolves.toMatchObject([{ status: 'blocked', attempts: 0 }]);
+        await waitFor(async () => (await statusCounts(p)).completed === 1);
+        expect(/** @type {{ at: number }} */ (starts[1]).at - limitedAt).toBeGreaterThanOrEqual(150);
+    });
+
+    test('on a local limit: paused in this process; the job is pending at once, without an attempt', async () => {
+        const { sqlane, p, events } = await freshSqlane();
+        const disk = defineRateLimit({ name: 'disk', max: 100, per: '1s', burst: 100 });
+        const starts = throwFirst(
+            sqlane,
+            ['scan', 'index'].map(name => defineJob({ name, localRateLimits: [disk] })),
+            () => new RateLimitedError({ limit: disk, retryAfter: '300ms' }),
+        );
+
+        await sqlane.start();
+        await sqlane.enqueue(testAdapter.pool, 'scan', {});
+        await waitFor(() => Boolean(rateLimitedEvent(events)));
+
+        const limitedAt = Date.now();
+
+        expect(rateLimitedEvent(events)).toMatchObject({ jobName: 'scan', attempt: 1, limit: 'disk', key: null, scope: 'local' });
+        await expect(readJobs(p)).resolves.toMatchObject([{ status: 'pending', attempts: 0 }]);
+        // Another name of the limit waits too
+        await sqlane.enqueue(testAdapter.pool, 'index', {});
+        await waitFor(async () => (await statusCounts(p)).completed === 2, 3000);
+
+        for (const start of starts.slice(1)) {
+            expect(start.at - limitedAt).toBeGreaterThanOrEqual(250);
+        }
+
+        await expect(readJobs(p)).resolves.toMatchObject([
+            { status: 'completed', attempts: 0 },
+            { status: 'completed', attempts: 0 },
+        ]);
+    });
+
+    test('on a limit that is not the job\'s, or a job without rate limits: retried after retryAfter, with an attempt',
+        async () => {
+            const { sqlane, p, events } = await freshSqlane();
+            const elsewhere = defineRateLimit({ name: 'elsewhere', max: 1, per: '1s' });
+
+            throwFirst(sqlane, [call], () => new RateLimitedError({ limit: elsewhere, retryAfter: '100ms' }));
+            sqlane.handle('plain', failingFirst(1, () => new RateLimitedError({ retryAfter: '50ms' })).handler);
+            await sqlane.start();
+            await sqlane.enqueue(testAdapter.pool, call, { account: 'a1', n: 1 });
+            await sqlane.enqueue(testAdapter.pool, 'plain', {});
+            await waitFor(async () => (await statusCounts(p)).completed === 2, 3000);
+
+            await expect(readJobs(p)).resolves.toMatchObject([
+                { job_name: 'call', status: 'completed', attempts: 1 },
+                { job_name: 'plain', status: 'completed', attempts: 1 },
+            ]);
+            expect(events.filter(event => event.type === 'retried')).toMatchObject([
+                { jobName: 'call', delayMs: 100 },
+                { jobName: 'plain', delayMs: 50 },
+            ]);
+            expect(rateLimitedEvent(events)).toBeUndefined();
+        });
 });
 
 /**

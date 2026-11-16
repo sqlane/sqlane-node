@@ -14,18 +14,26 @@ import {
     JobTimeoutError,
     LeaseLostError,
     MissingPayloadError,
+    RateLimitedError,
     RetryJobError,
     ShutdownError,
 } from './errors.js';
 import { ANY_NAME } from './hint_channel.js';
 import { chooseRows, fill, rankNames, replayTie, shareNamesOfRequests } from './fair_share.js';
+import { incrementUs, waitUs } from './gcra.js';
+import { nowUs, pauseRate, rateRoom, rateWaitMs, takeRate } from './local_rates.js';
 import { buildNewJob } from './new_job.js';
+import { parseRateKey, rateKeyOf } from './rate_limit_shape.js';
+import { isRateKey } from './rate_keys.js';
+import { createRateWakes } from './rate_wakes.js';
 import { scheduledAtOf } from './schedule.js';
 import { isQuickRetryError, isTransientDbError } from './transient_error.js';
 
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
 /** @typedef {import('./registry.js').LimitState} LimitState */
+/** @typedef {import('./registry.js').RateState} RateState */
+/** @typedef {LimitState | RateState} LocalLimit A local limit, of concurrency or of rate */
 
 /** A turn that fails with a deadlock-like error is retried at once this many times, then reported and backed off */
 const MAX_TRANSIENT_DISPATCH_RETRIES = 3;
@@ -66,6 +74,8 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
 const CLAIM_NAMES_PER_SLOT = 4;
 const STALLED = { name: 'StalledError', message: 'The lease of the job ended: its process stopped or blocked' };
 const BATCH = 1000;
+/** A failed unblock of rate keys: again after this */
+const RATE_UNBLOCK_RETRY_MS = 1000;
 /** The completed jobs of one write */
 const MAX_COMPLETE_BATCH = 100;
 
@@ -172,12 +182,30 @@ function limitRoom(limit) {
 }
 
 /**
+ * @param {LocalLimit} limit
+ * @returns {number} The jobs that it admits now: of a concurrency limit, its max minus its running jobs; of a rate
+ *     limit, the starts that its quota admits now.
+ */
+function roomOf(limit) {
+    return 'tatUs' in limit ? rateRoom(limit, nowUs()) : limitRoom(limit);
+}
+
+/**
  * @param {HandlerEntry} entry
- * @returns {number} The lowest room of its local limits; Infinity without one.
+ * @returns {readonly LocalLimit[]} Its local limits of both kinds.
+ */
+function localLimitsOf(entry) {
+    // Most names have no rate limit: no copy
+    return entry.rates.length ? [...entry.limits, ...entry.rates] : entry.limits;
+}
+
+/**
+ * @param {HandlerEntry} entry
+ * @returns {number} The lowest room of its local limits, of concurrency and of rate; Infinity without one.
  */
 function limitsRoom(entry) {
     // Each poll checks every handled name: most have no limit, and need no loop
-    if (!entry.limits.length) {
+    if (!entry.limits.length && !entry.rates.length) {
         return Infinity;
     }
 
@@ -187,16 +215,25 @@ function limitsRoom(entry) {
         room = Math.min(room, limitRoom(limit));
     }
 
+    if (entry.rates.length) {
+        const now = nowUs();
+
+        for (const rate of entry.rates) {
+            room = Math.min(room, rateRoom(rate, now));
+        }
+    }
+
     return room;
 }
 
 /**
- * The names of a choice, with their counts now. The names of one limit share one room object.
+ * The names of a choice, with their counts now. The names of one limit share one room object; the room of a rate
+ * limit is the starts that its quota admits now, one per job.
  * @param {HandlerEntry[]} entries
  * @returns {import('./fair_share.js').ShareName[]}
  */
 function shareNamesOf(entries) {
-    /** @type {Map<LimitState, { room: number }>} */
+    /** @type {Map<LocalLimit, { room: number }>} */
     const rooms = new Map();
 
     return entries.map(entry => ({
@@ -204,8 +241,8 @@ function shareNamesOf(entries) {
         index: entry.index,
         weight: entry.weight,
         running: entry.running,
-        limits: entry.limits.map((limit) => {
-            const room = rooms.get(limit) ?? { room: Math.max(0, limitRoom(limit)) };
+        limits: localLimitsOf(entry).map((limit) => {
+            const room = rooms.get(limit) ?? { room: Math.max(0, roomOf(limit)) };
 
             rooms.set(limit, room);
 
@@ -263,6 +300,11 @@ export function createRunner({
     /** @type {Set<string>} The handled names with global limits: their definition's, set by start(); and the names
      *     whose jobs got limits from their enqueue options, seen by the claims */
     let namesWithLimits = new Set();
+    /** @type {Set<string>} The handled names with global rate limits: their definition's, set by start(); and the
+     *     names whose jobs got rate limits from their enqueue options, seen by the search of candidates */
+    let namesWithRates = new Set();
+    /** @type {HandlerEntry[]} The handled names with local rate limits, set by start() */
+    let entriesWithLocalRates = [];
     /** The time of the next probe of all names: the poll */
     let fullProbeAt = 0;
     /** @type {Map<string, number>} The names of the enqueues of the current series of re-probes: their last enqueue */
@@ -293,6 +335,16 @@ export function createRunner({
     let completing = false;
     /** The jobs that finished: their results are written */
     let finishedCount = 0;
+    /** The unblocks of rate keys that run: their keys left the timer, their jobs are not pending yet */
+    let rateUnblocks = 0;
+    /** @type {Set<Promise<void>>} The same: close() waits for them */
+    const rateUnblocksRunning = new Set();
+    /** @type {Set<string>} The rate keys whose timer fired while idle (after a drain()): the next start() or drain()
+     *     unblocks them */
+    const idleRateKeys = new Set();
+    /** @type {Map<string, { debtUs: number, atMs: number }>} Of each rate key, its debt after the jobs that the last
+     *     unblock here made pending, and when: the next unblock counts them, until the claims take their quota */
+    const rateFloors = new Map();
 
     // ---- events, logs, timers ----
 
@@ -329,6 +381,109 @@ export function createRunner({
         timers.add(timer);
 
         return timer;
+    }
+
+    /** The timer of the rate keys on which this process blocked jobs: an unblock when their next start is due */
+    const rateWakes = createRateWakes({
+        setTimer,
+        clearTimer: (timer) => {
+            clearTimeout(timer);
+            timers.delete(timer);
+        },
+        onDue: (keys) => {
+            void runRateUnblock(keys);
+        },
+    });
+
+    /**
+     * Arms the timer of a rate key, unless the process closes: its timers are cleared, and fire no unblock.
+     * @param {string} key
+     * @param {number} delayMs
+     * @param {import('./rate_wakes.js').RateWakes} [wakes] Default: the next starts, not the checks.
+     */
+    function armRateWake(key, delayMs, wakes = rateWakes) {
+        if (state !== 'closing' && state !== 'closed') {
+            wakes.arm(key, delayMs);
+        }
+    }
+
+    /**
+     * @param {string[]} keys
+     * @returns {Promise<void>} Never rejects.
+     */
+    async function runRateUnblock(keys) {
+        const unblocking = unblockRateKeys(keys);
+
+        rateUnblocksRunning.add(unblocking);
+
+        try {
+            await unblocking;
+        } finally {
+            rateUnblocksRunning.delete(unblocking);
+        }
+    }
+
+    /** Arms the rate keys whose timer fired while idle: at once */
+    function armIdleRateKeys() {
+        for (const key of idleRateKeys) {
+            rateWakes.arm(key, 0);
+        }
+
+        idleRateKeys.clear();
+    }
+
+    /** The checks of the rate keys whose last unblock left no blocked job: a job blocked during it (gcra.js,
+     * `nextUnblockMs`). drain() does not wait for them */
+    const rateRechecks = createRateWakes({
+        setTimer,
+        clearTimer: (timer) => {
+            clearTimeout(timer);
+            timers.delete(timer);
+        },
+        onDue: (keys) => {
+            void runRateUnblock(keys);
+        },
+    });
+
+    /** @type {Map<string, RateState>} The local rate limits that wait for their next start, by name */
+    const waitingRates = new Map();
+    /** The timer of the local rate limits that a turn left names out for: a wake of their names when one may start */
+    const localRateWakes = createRateWakes({
+        setTimer,
+        clearTimer: (timer) => {
+            clearTimeout(timer);
+            timers.delete(timer);
+        },
+        onDue: (limitNames) => {
+            const names = limitNames.flatMap(name => waitingRates.get(name)?.names ?? []);
+
+            for (const name of limitNames) {
+                waitingRates.delete(name);
+            }
+
+            wakeUp(names, { speculative: true });
+        },
+        batchMs: 0,
+    });
+
+    /**
+     * The local rate limits of the name that admit no start now: its names wake when one may start. A name over one of
+     * them is left out of the turns, as a name at its local cap.
+     * @param {HandlerEntry} entry
+     */
+    function wakeAfterRates(entry) {
+        if (!entry.rates.length) {
+            return;
+        }
+
+        const now = nowUs();
+
+        for (const rate of entry.rates) {
+            if (rateRoom(rate, now) <= 0) {
+                waitingRates.set(rate.limit.name, rate);
+                localRateWakes.arm(rate.limit.name, rateWaitMs(rate, now));
+            }
+        }
     }
 
     /**
@@ -526,14 +681,18 @@ export function createRunner({
 
     /**
      * Takes the locked jobs of names with global limits, by the share of their names, FIFO within a name: a job whose
-     * keys all have room, with the jobs that this choice took. A passed-over job stays pending.
+     * keys all have room, and whose rate keys all have quota (gcra.js), with the jobs that this choice took. A
+     * passed-over job stays pending.
      * @param {ClaimedJob[]} locked In the order of run_at; none of their keys was full.
      * @param {Map<string, number>} held The held slots of their keys.
+     * @param {Map<string, number>} debts The debts of their rate keys, in µs.
      * @returns {ClaimedJob[]}
      */
-    function pick(locked, held) {
+    function pick(locked, held, debts) {
         const taken = new Map(held);
-        const fits = (/** @type {ClaimedJob} */ job) => job.limits.every(({ key, max }) => (taken.get(key) ?? 0) < max);
+        const used = new Map(debts);
+        const fits = (/** @type {ClaimedJob} */ job) => job.limits.every(({ key, max }) => (taken.get(key) ?? 0) < max)
+            && job.rateLimits.every(limit => waitUs(used.get(limit.key) ?? 0, limit) <= 0);
         /** @type {Map<string, ClaimedJob[]>} */
         const rowsByName = new Map();
 
@@ -566,6 +725,10 @@ export function createRunner({
 
                 for (const { key } of job.limits) {
                     taken.set(key, (taken.get(key) ?? 0) + 1);
+                }
+
+                for (const limit of job.rateLimits) {
+                    used.set(limit.key, (used.get(limit.key) ?? 0) + incrementUs(limit));
                 }
 
                 return job;
@@ -720,14 +883,15 @@ export function createRunner({
             return;
         }
 
+        if (error instanceof RateLimitedError && await waitForRate(job, error, durationMs)) {
+            return;
+        }
+
         const fatal = error instanceof FatalJobError || error instanceof MissingPayloadError;
         const attemptsLeft = claimed.attempts + 1 < claimed.maxAttempts;
 
         if (!fatal && attemptsLeft) {
-            const backoff = job.entry.definition?.backoff ?? defaults.backoff;
-            const delayMs = error instanceof RetryJobError
-                ? parseDuration(error.delay) ?? getBackoffMs(backoff, claimed.attempts + 1)
-                : getBackoffMs(backoff, claimed.attempts + 1);
+            const delayMs = retryDelayMs(job, error);
 
             await writeResult(job, () => store.retryJob(claimed, { delayMs, error: toErrorJson(error) }));
             counts.retried++;
@@ -747,6 +911,93 @@ export function createRunner({
         });
         counts.failed++;
         emit({ type: 'failed', ...base, durationMs, error });
+    }
+
+    /**
+     * @param {RunningJob} job
+     * @param {unknown} error Of a failed attempt that is retried.
+     * @returns {number} The delay of a RetryJobError, or the `retryAfter` of a RateLimitedError on no rate limit of
+     *     the job; else the backoff.
+     */
+    function retryDelayMs(job, error) {
+        const backoffMs = getBackoffMs(job.entry.definition?.backoff ?? defaults.backoff, job.claimed.attempts + 1);
+
+        if (error instanceof RetryJobError) {
+            return parseDuration(error.delay) ?? backoffMs;
+        }
+
+        if (error instanceof RateLimitedError) {
+            return parseDuration(error.retryAfter) ?? backoffMs;
+        }
+
+        return backoffMs;
+    }
+
+    /**
+     * A RateLimitedError on rate limits of the job (`limit`, or all of them without it), without an attempt used: a
+     * global key gets its next start at `retryAfter` from now at the earliest, and the job is blocked on it, its slots
+     * freed; a local limit pauses in this process until then, and a job without a global key to wait on is pending
+     * again at once, for any process.
+     * @param {RunningJob} job
+     * @param {RateLimitedError} error
+     * @param {number} durationMs
+     * @returns {Promise<boolean>} False: `limit` is not a rate limit of the job, or it has none.
+     */
+    async function waitForRate(job, error, durationMs) {
+        const { claimed, entry } = job;
+        const key = error.limit === undefined ? null : rateKeyOf(error.limit);
+        const globalLimits = claimed.rateLimits.filter(limit => key === null || limit.key === key);
+        const localRates = entry.rates.filter(rate => key === null || rate.settings.key === key);
+
+        if (!globalLimits.length && !localRates.length) {
+            return false;
+        }
+
+        // Checked by the constructor
+        const retryAfterMs = parseDuration(error.retryAfter) ?? 0;
+        const now = nowUs();
+        let waitMs = retryAfterMs;
+
+        for (const rate of localRates) {
+            pauseRate(rate, now, retryAfterMs * 1000);
+        }
+
+        wakeAfterRates(entry);
+
+        if (globalLimits.length) {
+            await writeResult(job, async () => {
+                const result = await store.rateLimited(claimed, {
+                    limits: globalLimits,
+                    retryAfterMs,
+                    error: toErrorJson(error),
+                });
+
+                if (result.changed) {
+                    // Blocked on its first key: the timer of this process unblocks it
+                    armRateWake(globalLimits[0].key, result.delayMs);
+                    waitMs = Math.max(waitMs, result.delayMs);
+                }
+            });
+        } else {
+            await writeResult(job, () => store.releaseJob(claimed, { delayMs: 0, lingerMs: 0 }));
+            // The other processes may run it now
+            hintChannel.publish(claimed.name);
+        }
+
+        emit({
+            type: 'rate_limited',
+            jobId: claimed.id,
+            jobName: claimed.name,
+            attempt: claimed.attempts + 1,
+            ...(globalLimits.length
+                ? { ...parseRateKey(globalLimits[0].key), scope: 'global' }
+                : { limit: localRates[0].limit.name, key: null, scope: 'local' }),
+            retryAt: new Date(Date.now() + waitMs),
+            durationMs,
+            error,
+        });
+
+        return true;
     }
 
     /**
@@ -873,6 +1124,15 @@ export function createRunner({
             limit.running++;
         }
 
+        if (entry.rates.length) {
+            // A claim takes the quota of the local rate limits
+            const now = nowUs();
+
+            for (const rate of entry.rates) {
+                takeRate(rate, now);
+            }
+        }
+
         running.set(job.key, job);
         keepRenewingLeases();
         emit({ type: 'claimed', jobId: claimed.id, jobName: claimed.name, attempt: claimed.attempts + 1 });
@@ -937,6 +1197,91 @@ export function createRunner({
         }
     }
 
+    /**
+     * Makes the jobs blocked on the rate keys pending again, as far as their quota allows now, and wakes their names
+     * here and in the other processes. The timer of the keys calls it; the keys with blocked jobs left get their next
+     * time. The jobs that the last unblock of a key made pending count, as if they started then (`rateFloors`): without
+     * them, an unblock right after another one (a full batch) would make the same quota pending again.
+     * @param {string[]} keys
+     * @returns {Promise<void>} Never rejects: an error is reported, and the keys are tried again in 1 s.
+     */
+    async function unblockRateKeys(keys) {
+        if (state === 'idle') {
+            // After a drain(): the next start() or drain() unblocks them
+            for (const key of keys) {
+                idleRateKeys.add(key);
+            }
+
+            return;
+        }
+
+        if (state !== 'started' && state !== 'draining') {
+            // Closing: the sweep of another process takes them
+            return;
+        }
+
+        rateUnblocks++;
+
+        try {
+            const { names, waits } = await store.unblockRates(keys, floorsOf(keys));
+            const atMs = Date.now();
+            const withWaits = new Set(waits.map(wait => wait.key));
+
+            for (const key of keys.filter(each => !withWaits.has(each))) {
+                // No blocked job left
+                rateFloors.delete(key);
+            }
+
+            for (const { key, delayMs, debtUs, left } of waits) {
+                if (debtUs !== null) {
+                    rateFloors.set(key, { debtUs, atMs });
+                }
+
+                armRateWake(key, delayMs, left ? rateWakes : rateRechecks);
+            }
+
+            if (names.length) {
+                wakeUp(names);
+
+                for (const name of names) {
+                    hintChannel.publish(name);
+                }
+            }
+        } catch (error) {
+            reportError('unblock', error);
+
+            for (const key of keys) {
+                armRateWake(key, RATE_UNBLOCK_RETRY_MS);
+            }
+        } finally {
+            rateUnblocks--;
+        }
+    }
+
+    /**
+     * @param {string[]} keys
+     * @returns {Map<string, number>} The debt of the keys after the jobs that their last unblock here made pending, as
+     *     if they started then: less by the time since.
+     */
+    function floorsOf(keys) {
+        const now = Date.now();
+        /** @type {Map<string, number>} */
+        const floors = new Map();
+
+        for (const key of keys) {
+            const floor = rateFloors.get(key);
+            const debtUs = floor ? floor.debtUs - ((now - floor.atMs) * 1000) : 0;
+
+            if (debtUs > 0) {
+                floors.set(key, debtUs);
+            } else {
+                rateFloors.delete(key);
+            }
+        }
+
+        return floors;
+    }
+
     // ---- dispatch ----
 
     /**
@@ -966,7 +1311,7 @@ export function createRunner({
             return withRoom;
         }
 
-        /** @type {Map<LimitState, number>} */
+        /** @type {Map<LocalLimit, number>} */
         const inLimits = new Map();
         /** @type {HandlerEntry[]} */
         const turn = [];
@@ -977,8 +1322,8 @@ export function createRunner({
         for (const entry of withRoom) {
             const { name } = entry;
             // A full limit takes no more names: the names after it get their turn
-            const limitFull = entry.limits.some(
-                each => (inLimits.get(each) ?? 0) >= CLAIM_NAMES_PER_SLOT * limitRoom(each),
+            const limitFull = localLimitsOf(entry).some(
+                each => (inLimits.get(each) ?? 0) >= CLAIM_NAMES_PER_SLOT * roomOf(each),
             );
 
             if (turn.length >= limit || limitFull) {
@@ -986,7 +1331,7 @@ export function createRunner({
             } else {
                 turn.push(entry);
 
-                for (const each of entry.limits) {
+                for (const each of localLimitsOf(entry)) {
                     inLimits.set(each, (inLimits.get(each) ?? 0) + 1);
                 }
             }
@@ -1041,7 +1386,7 @@ export function createRunner({
             limits.set(entry.name, 2 * freeSlots(entry));
         }
 
-        const found = await store.findCandidates(limits);
+        const found = await store.findCandidates(limits, namesWithRates);
         const withCandidates = new Set([...found.startable, ...found.full].map(candidate => candidate.name));
 
         for (const { name } of entries) {
@@ -1059,10 +1404,10 @@ export function createRunner({
      * them free, in the instance and in their local limits.
      * @param {HandlerEntry[]} turn
      * @param {import('./store/store.js').Candidate[]} candidates
-     * @returns {{ slots: number, limits: Map<LimitState, number> }} The slots of the instance, and of each limit.
+     * @returns {{ slots: number, limits: Map<LocalLimit, number> }} The slots of the instance, and of each limit.
      */
     function reservedForKeys(turn, candidates) {
-        /** @type {Map<LimitState, number>} */
+        /** @type {Map<LocalLimit, number>} */
         const limits = new Map();
 
         if (!candidates.length) {
@@ -1096,7 +1441,7 @@ export function createRunner({
             if (namesWithLimits.has(entry.name)) {
                 slots++;
 
-                for (const limit of entry.limits) {
+                for (const limit of localLimitsOf(entry)) {
                     limits.set(limit, (limits.get(limit) ?? 0) + 1);
                 }
             }
@@ -1109,7 +1454,7 @@ export function createRunner({
      * The due jobs of names without global limits: found, chosen by share, claimed and read at once.
      * @param {HandlerEntry[]} turn
      * @param {number} free The free slots for them.
-     * @param {Map<LimitState, number>} reservedInLimits The slots of each local limit for the names with global limits.
+     * @param {Map<LocalLimit, number>} reservedInLimits The slots of each local limit for the names with global limits.
      * @returns {Promise<{ candidates: number, claimed: number }>}
      */
     async function claimAndStartPlain(turn, free, reservedInLimits) {
@@ -1121,7 +1466,7 @@ export function createRunner({
         const size = tieSpan();
         /** @type {HandlerEntry[]} */
         const entries = [];
-        /** @type {LimitState[]} */
+        /** @type {LocalLimit[]} */
         const limits = [];
         /** @type {import('./store/store.js').DueRequest[]} */
         const requests = [];
@@ -1130,7 +1475,7 @@ export function createRunner({
             const maxJobs = Math.min(
                 freeSlots(entry),
                 free,
-                ...entry.limits.map(limit => limitRoom(limit) - (reservedInLimits.get(limit) ?? 0)),
+                ...localLimitsOf(entry).map(limit => roomOf(limit) - (reservedInLimits.get(limit) ?? 0)),
             );
 
             if (maxJobs <= 0) {
@@ -1145,7 +1490,7 @@ export function createRunner({
                 maxJobs,
                 running: entry.running,
                 weight: entry.weight,
-                limits: entry.limits.map((limit) => {
+                limits: localLimitsOf(entry).map((limit) => {
                     const at = limits.indexOf(limit);
 
                     return at === -1 ? limits.push(limit) - 1 : at;
@@ -1158,7 +1503,7 @@ export function createRunner({
             return { candidates: 0, claimed: 0 };
         }
 
-        const limitRooms = limits.map(limit => Math.max(0, limitRoom(limit) - (reservedInLimits.get(limit) ?? 0)));
+        const limitRooms = limits.map(limit => Math.max(0, roomOf(limit) - (reservedInLimits.get(limit) ?? 0)));
         /** @type {number | null | undefined} */
         let chosenTie;
         const { jobs, next, unpicked, limited } = await store.claimDue({
@@ -1255,14 +1600,20 @@ export function createRunner({
             return { candidates: 0, claimed: 0 };
         }
 
-        const { jobs: claimed, blockedKeys, blockedNames } = await store.claim({
+        const { jobs: claimed, blockedKeys, blockedNames, rateWaits } = await store.claim({
             candidateIds: startable.map(candidate => candidate.id),
             fullIds: full.map(candidate => candidate.id),
             lockToken: lockToken(),
             lockedBy,
             leaseMs: t.leaseMs,
             pick,
+            withRates: [...startable, ...full].some(candidate => namesWithRates.has(candidate.name)),
         });
+
+        // A rate key frees by time: its timer, here
+        for (const { key, delayMs } of rateWaits) {
+            armRateWake(key, delayMs);
+        }
 
         if (blockedKeys.length) {
             // The due jobs after the blocked ones: the next turn
@@ -1270,8 +1621,12 @@ export function createRunner({
                 backlog.add(name);
             }
 
-            // A release that committed during the claim did not see the blocked jobs
-            await unblockKeys(blockedKeys);
+            const slotKeys = blockedKeys.filter(key => !isRateKey(key));
+
+            if (slotKeys.length) {
+                // A release that committed during the claim did not see the blocked jobs
+                await unblockKeys(slotKeys);
+            }
         }
 
         if (!claimed.length) {
@@ -1299,8 +1654,16 @@ export function createRunner({
         return { candidates: startable.length, claimed: claimed.length };
     }
 
-    /** @returns {string[]} The handled names with a free slot. */
+    /** @returns {string[]} The handled names with a free slot. A name over a local rate limit wakes at its time. */
     function namesWithFreeSlots() {
+        // Each poll checks every handled name: the loop goes over the few with local rate limits only. A loop over all
+        // of them cost an idle worker more instructions per poll (its allocations until optimized, then its compile)
+        for (const entry of entriesWithLocalRates) {
+            if (freeSlots(entry) <= 0) {
+                wakeAfterRates(entry);
+            }
+        }
+
         return registry.entries().filter(entry => freeSlots(entry) > 0).map(entry => entry.name);
     }
 
@@ -1322,8 +1685,9 @@ export function createRunner({
                 if (entry && freeSlots(entry) > 0) {
                     names.add(name);
                 } else if (entry) {
-                    // No free slot: the turn after a completion looks at it again
+                    // No free slot: the turn after a completion looks at it again, or the time of its rate limit
                     (scope.claim.has(name) ? backlog : wakeProbeNames).add(name);
+                    wakeAfterRates(entry);
                 }
             }
         } else {
@@ -1593,11 +1957,22 @@ export function createRunner({
             }
         }
 
-        const { lingers, orphans, unblocked } = await store.sweepSlots(100);
+        const { lingers, orphans, unblocked, rateWaits } = await store.sweepSlots(100);
+
+        // The rate keys whose timer was lost: this process takes it over
+        for (const { key, delayMs } of rateWaits) {
+            armRateWake(key, delayMs);
+        }
 
         if (freedKeys || lingers || orphans || unblocked) {
             wakeUp();
             hintChannel.publish(ANY_NAME);
+        }
+
+        // oxlint-disable-next-line no-unmodified-loop-condition -- close() changes state
+        for (let deleted = BATCH; deleted >= BATCH && state === 'started';) {
+            // oxlint-disable-next-line no-await-in-loop -- batches one after the other
+            deleted = await store.deleteIdleRateKeys(BATCH);
         }
     }
 
@@ -1707,9 +2082,12 @@ export function createRunner({
 
         registry.validate();
         namesWithLimits = new Set(registry.namesWithLimits());
+        namesWithRates = new Set(registry.namesWithRateLimits());
+        entriesWithLocalRates = registry.entries().filter(entry => entry.rates.length);
         handledCount = Math.max(registry.entries().length, 1);
         tiePointer = Math.floor(random() * handledCount);
         state = 'started';
+        armIdleRateKeys();
         every('recover_stale_jobs', recoverStaleJobs, t.recoveryIntervalMs);
 
         if (cleanup) {
@@ -1734,6 +2112,19 @@ export function createRunner({
     }
 
     /**
+     * @param {string[]} names
+     * @param {number} at
+     * @returns {boolean} One of the names waits for a local rate limit that admits a start before the time.
+     */
+    function ratesAdmitBefore(names, at) {
+        const now = nowUs();
+
+        return names.some(name => registry.getEntry(name)?.rates.some(
+            rate => rateRoom(rate, now) <= 0 && Date.now() + rateWaitMs(rate, now) < at,
+        ));
+    }
+
+    /**
      * @param {import('./types.js').DrainOptions} [options]
      * @returns {Promise<import('./types.js').DrainResult>}
      */
@@ -1754,9 +2145,12 @@ export function createRunner({
 
         registry.validate();
         namesWithLimits = new Set(registry.namesWithLimits());
+        namesWithRates = new Set(registry.namesWithRateLimits());
+        entriesWithLocalRates = registry.entries().filter(entry => entry.rates.length);
         handledCount = Math.max(registry.entries().length, 1);
         tiePointer = Math.floor(random() * handledCount);
         state = 'draining';
+        armIdleRateKeys();
 
         const before = { ...counts };
         const deadline = Date.now() + timeoutMs;
@@ -1771,6 +2165,8 @@ export function createRunner({
 
                 let claimed = 0;
                 let lostRace = false;
+                /** @type {string[]} */
+                let due = [];
 
                 try {
                     if (options.includeDelayed) {
@@ -1780,7 +2176,7 @@ export function createRunner({
 
                     // One probe per round: only the due names compete for the free slots
                     // oxlint-disable-next-line no-await-in-loop -- one round after the other
-                    const due = (await store.probe(names)).filter(row => row.delayMs <= 0).map(row => row.name);
+                    due = (await store.probe(names)).filter(row => row.delayMs <= 0).map(row => row.name);
 
                     // oxlint-disable-next-line no-await-in-loop -- one round after the other
                     ({ claimed } = due.length ? await claimAndStart(due) : { claimed: 0 });
@@ -1794,7 +2190,10 @@ export function createRunner({
                     lostRace = true;
                 }
 
-                const quiet = !claimed && !lostRace && !running.size && finishedCount === finishedBefore;
+                // A rate key that this process unblocks, now or before the deadline, or a local rate limit that admits
+                // a due job before it: its jobs are still to run
+                const quiet = !claimed && !lostRace && !running.size && finishedCount === finishedBefore
+                    && !rateUnblocks && !rateWakes.dueBefore(deadline) && !ratesAdmitBefore(due, deadline);
 
                 quietRounds = quiet ? quietRounds + 1 : 0;
 
@@ -1925,6 +2324,15 @@ export function createRunner({
             Promise.allSettled([...running.values()].filter(job => job.settled).map(job => job.done)),
             deadline - Date.now(),
         );
+
+        // An unblock that runs: its writes, until the deadline; it arms no timer now
+        await waitAtMost(Promise.allSettled(rateUnblocksRunning), deadline - Date.now());
+        rateWakes.clear();
+        rateRechecks.clear();
+        rateFloors.clear();
+        idleRateKeys.clear();
+        localRateWakes.clear();
+        waitingRates.clear();
 
         for (const timer of timers) {
             clearTimeout(timer);

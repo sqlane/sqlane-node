@@ -1,9 +1,11 @@
-// The handlers of an instance, their weights and local concurrency limits, and the known definitions.
+// The handlers of an instance, their weights, local concurrency and rate limits, and the known definitions.
 import { parseDuration } from './duration.js';
 import { ConfigError } from './errors.js';
+import { createRateState } from './local_rates.js';
 import { isPlainObject, JOB_NAME_REGEXP } from './validate.js';
 
 /** @typedef {import('./types.js').JobDefinition} JobDefinition */
+/** @typedef {import('./local_rates.js').RateState} RateState */
 
 /**
  * A local concurrency limit in this instance: its handlers that run.
@@ -22,6 +24,7 @@ import { isPlainObject, JOB_NAME_REGEXP } from './validate.js';
  * @property {number} weight Its fairShareWeight.
  * @property {number} running Its jobs that run in this instance.
  * @property {LimitState[]} limits Its local concurrency limits.
+ * @property {RateState[]} rates Its local rate limits.
  * @property {number | null} timeoutMs Resolved: the definition, else the defaults.
  */
 
@@ -31,7 +34,9 @@ import { isPlainObject, JOB_NAME_REGEXP } from './validate.js';
  * @property {(name: string) => HandlerEntry | undefined} getEntry
  * @property {() => HandlerEntry[]} entries In the order of the handle() calls.
  * @property {(name: string) => JobDefinition | null} findDefinition In `jobs`, else handled.
- * @property {() => string[]} namesWithLimits The handled names whose definition has global limits.
+ * @property {() => string[]} namesWithLimits The handled names whose definition has global limits, of
+ *     concurrency or of rate.
+ * @property {() => string[]} namesWithRateLimits The handled names whose definition has global rate limits.
  * @property {() => void} validate Checks the handlers together: each failure job resolves and has none of its own.
  */
 
@@ -46,6 +51,8 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
     const entriesByName = new Map();
     /** @type {Map<string, LimitState>} */
     const limitStates = new Map();
+    /** @type {Map<string, RateState>} */
+    const rateStates = new Map();
 
     /** @type {Registry['findDefinition']} */
     function findDefinition(name) {
@@ -69,6 +76,28 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
             const state = known ?? { limit, running: 0, names: [] };
 
             limitStates.set(limit.name, state);
+
+            return state;
+        });
+    }
+
+    /**
+     * @param {readonly import('./types.js').RateLimit[]} limits
+     * @param {string} where
+     * @returns {RateState[]} One state per rate limit name in this instance.
+     */
+    function rateStatesOf(limits, where) {
+        return limits.map((limit) => {
+            const known = rateStates.get(limit.name);
+
+            if (known && describeRate(known.limit) !== describeRate(limit)) {
+                throw new ConfigError(`${where}: the rate limit ${JSON.stringify(limit.name)} has ${describeRate(limit)} `
+                    + `here and ${describeRate(known.limit)} in another definition`);
+            }
+
+            const state = known ?? createRateState(limit);
+
+            rateStates.set(limit.name, state);
 
             return state;
         });
@@ -113,8 +142,9 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
         }
 
         const limits = limitStatesOf(definition?.localConcurrencyLimits ?? [], where);
+        const rates = rateStatesOf(definition?.localRateLimits ?? [], where);
 
-        for (const limit of limits) {
+        for (const limit of [...limits, ...rates]) {
             limit.names.push(name);
         }
 
@@ -126,6 +156,7 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
             weight: definition?.fairShareWeight ?? 1,
             running: 0,
             limits,
+            rates,
             timeoutMs,
         });
     }
@@ -163,8 +194,19 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
         entries: () => [...entriesByName.values()],
         findDefinition,
         namesWithLimits: () => [...entriesByName.values()]
-            .filter(entry => entry.definition?.globalConcurrencyLimits)
+            .filter(entry => entry.definition?.globalConcurrencyLimits || entry.definition?.globalRateLimits)
+            .map(entry => entry.name),
+        namesWithRateLimits: () => [...entriesByName.values()]
+            .filter(entry => entry.definition?.globalRateLimits)
             .map(entry => entry.name),
         validate,
     };
+}
+
+/**
+ * @param {import('./types.js').RateLimit} limit
+ * @returns {string} Its settings, for a comparison and the error message.
+ */
+function describeRate({ max, per, burst }) {
+    return `max ${max} per ${per} ms, burst ${burst}`;
 }

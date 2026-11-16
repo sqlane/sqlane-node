@@ -1,8 +1,11 @@
 // The final writes on PostgreSQL: lease renewal, complete, retry, fail, release, stall recovery, sweeps. Each write of
 // a job checks its lock token: a process that lost the lease changes nothing. Completion is one atomic statement;
 // multi-statement writes run in a queue transaction.
+import { nextUnblockMs, RATE_UNBLOCK_BATCH, toleranceUs, waitMsOf, waitUs as keyWaitUs } from '../gcra.js';
+import { isRateKey } from '../rate_keys.js';
 import { createMonotonicUlid } from '../ulid.js';
 import { insertJobsPostgres } from './postgres_enqueue.js';
+import { rateLimitsOf } from './postgres_worker.js';
 
 /** @typedef {import('../types.js').Executor} Executor */
 /** @typedef {import('./store.js').OwnedJob} OwnedJob */
@@ -19,6 +22,11 @@ const runAt = offset => `date_trunc('milliseconds', ${NOW} + ${offset})`;
 const MS = 'interval \'1 millisecond\'';
 const CLEAR_LOCK = 'lock_token = NULL, locked_by = NULL, locked_until = NULL, timed_out_at = NULL';
 const HELD = `(s.held_until IS NULL OR s.held_until >= ${NOW})`;
+/**
+ * @param {string} tat
+ * @returns {string} The debt of a rate key in µs (gcra.js).
+ */
+const debtUs = tat => `GREATEST((EXTRACT(EPOCH FROM ${tat} - ${NOW}) * 1000000)::bigint, 0)`;
 const enqueueToken = createMonotonicUlid();
 
 /**
@@ -296,6 +304,50 @@ export async function releaseJob(executor, p, job, { delayMs, lingerMs }) {
 }
 
 /**
+ * The handler threw a RateLimitedError on rate keys of the job: the tat of each moves to `now + retryAfter + τ` at the
+ * least (its next start at `now + retryAfter`, then one per per / max), by the settings of the job; a missing row is
+ * created. The job is blocked on the first key, without an attempt used, and its slots are freed. The order of the
+ * locks of a claim: the job, the rows of the keys in their order, then the slots.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {OwnedJob} job
+ * @param {import('./store.js').RateLimitedParams} params
+ * @returns {Promise<import('./store.js').RateLimitedResult>}
+ */
+export async function rateLimited(executor, p, job, { limits, retryAfterMs, error }) {
+    const [owned] = await executor.query(`SELECT id FROM ${p}jobs WHERE id = $1 AND lock_token = $2 FOR UPDATE`, [
+        job.id,
+        job.lockToken,
+    ]);
+
+    if (!owned) {
+        return { changed: false, delayMs: 0 };
+    }
+
+    const [first] = limits;
+    const [row] = await executor.query(`
+        WITH pushed AS (
+            INSERT INTO ${p}rate_limits AS r (limit_key, tat)
+            SELECT k.limit_key, ${NOW} + k.ahead_us * interval '1 microsecond'
+              FROM unnest($1::text[], $2::bigint[]) WITH ORDINALITY AS k(limit_key, ahead_us, position)
+             ORDER BY k.position
+            ON CONFLICT (limit_key) DO UPDATE SET tat = GREATEST(r.tat, EXCLUDED.tat)
+            RETURNING r.limit_key, r.tat
+        )
+        SELECT ${debtUs('tat')} AS debt_us FROM pushed WHERE limit_key = $3
+    `, [limits.map(limit => limit.key), limits.map(limit => (retryAfterMs * 1000) + toleranceUs(limit)), first.key]);
+
+    await executor.run(`
+        UPDATE ${p}jobs
+           SET status = 'blocked', blocked_on = $2, ${CLEAR_LOCK}, last_error = $3::text::jsonb, updated_at = ${NOW}
+         WHERE id = $1
+    `, [job.id, first.key, JSON.stringify(error)]);
+    await deleteHolds(executor, p, job);
+
+    return { changed: true, delayMs: waitMsOf(keyWaitUs(Number(row.debt_us), first)) };
+}
+
+/**
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit
@@ -411,13 +463,115 @@ export async function unblock(executor, p, keys) {
 }
 
 /**
+ * A rate key after an unblock that found blocked jobs on it: when the next unblock is due (`nextUnblockMs`), the jobs
+ * that the unblock made pending, the debt of the key after them (null: none), and whether blocked jobs are left (else
+ * the next unblock is a check).
+ * @typedef {import('../gcra.js').RateWait & { unblocked: number, debtUs: number | null, left: boolean }} RateUnblock
+ */
+
+/**
+ * @typedef {object} RateUnblockOptions
+ * @property {<T>(func: (executor: Executor) => Promise<T>) => Promise<T>} [inTransaction] MySQL and MariaDB: runs the
+ *     writes, after the read.
+ * @property {Map<string, number>} [floors] The least debt of some keys (µs): the jobs that an earlier unblock made
+ *     pending, not claimed yet.
+ */
+
+/**
+ * Makes the jobs blocked on the rate keys pending again, the oldest first: on each key, as many as its quota allows
+ * now, each job by its own settings (gcra.js, `admitQueue`), at most RATE_UNBLOCK_BATCH. It does not take the quota:
+ * the claim does, and blocks again a job that another one got ahead of. One statement.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} keys
+ * @param {RateUnblockOptions} [options]
+ * @returns {Promise<{ names: string[], waits: RateUnblock[] }>} The names of the jobs that it made pending; the keys
+ *     on which it found blocked jobs.
+ */
+export async function unblockRates(executor, p, keys, { floors = new Map() } = {}) {
+    const [row] = await executor.query(`
+        WITH k AS (
+            SELECT DISTINCT unnest($1::text[]) AS limit_key
+        ),
+        queue AS (
+            SELECT k.limit_key, b.id, b.run_at, b.rate_limits FROM k
+             CROSS JOIN LATERAL (
+                 SELECT j.id, j.run_at, j.rate_limits FROM ${p}jobs j
+                  WHERE j.status = 'blocked' AND j.blocked_on = k.limit_key
+                  ORDER BY j.run_at, j.id LIMIT ${RATE_UNBLOCK_BATCH + 1}
+                    FOR UPDATE SKIP LOCKED
+             ) AS b
+        ),
+        debt AS (
+            SELECT k.limit_key,
+                   GREATEST(
+                       COALESCE((SELECT ${debtUs('r.tat')} FROM ${p}rate_limits r WHERE r.limit_key = k.limit_key), 0),
+                       COALESCE(f.debt, 0)
+                   ) AS debt
+              FROM k LEFT JOIN unnest($2::text[], $3::bigint[]) AS f(limit_key, debt) ON f.limit_key = k.limit_key
+        ),
+        need AS (
+            SELECT queue.limit_key, queue.id, queue.run_at, e.inc, e.allow,
+                   debt.debt + SUM(e.inc) OVER (PARTITION BY queue.limit_key ORDER BY queue.run_at, queue.id) AS need,
+                   ROW_NUMBER() OVER (PARTITION BY queue.limit_key ORDER BY queue.run_at, queue.id) AS n
+              FROM queue
+              JOIN debt ON debt.limit_key = queue.limit_key
+             CROSS JOIN LATERAL ${rateLimitsOf('queue.rate_limits')}
+             WHERE e.key = queue.limit_key
+        ),
+        -- A prefix of each queue: up to the first job that does not fit
+        marked AS (
+            SELECT need.*,
+                   bool_or(need.need > need.allow OR need.n > ${RATE_UNBLOCK_BATCH})
+                       OVER (PARTITION BY need.limit_key ORDER BY need.run_at, need.id) AS held_back
+              FROM need
+        ),
+        unblocked AS (
+            UPDATE ${p}jobs j SET status = 'pending', blocked_on = NULL, updated_at = ${NOW}
+              FROM marked WHERE j.id = marked.id AND NOT marked.held_back
+            RETURNING j.job_name, marked.limit_key
+        ),
+        -- Of each key, the first job held back: its wait after the prefix; else the last one of the prefix: the wait of a
+        -- job like it after the prefix (admitQueue)
+        waits AS (
+            SELECT DISTINCT ON (limit_key) limit_key, held_back AS left_over,
+                   GREATEST(CASE WHEN held_back THEN need - allow ELSE need + inc - allow END, 0) AS wait_us
+              FROM marked
+             ORDER BY limit_key, held_back DESC, CASE WHEN held_back THEN n ELSE -n END
+        )
+        SELECT (SELECT json_agg(DISTINCT job_name) FROM unblocked)::text AS names,
+               (
+                   SELECT json_agg(json_build_object(
+                       'key', w.limit_key, 'waitUs', w.wait_us, 'left', w.left_over,
+                       'unblocked', (SELECT count(*) FROM unblocked u WHERE u.limit_key = w.limit_key),
+                       'debtUs', (SELECT max(m.need) FROM marked m WHERE m.limit_key = w.limit_key AND NOT m.held_back)
+                   ))
+                     FROM waits w
+               )::text AS waits
+    `, [keys, [...floors.keys()], [...floors.values()].map(Math.round)]);
+    /** @type {{ key: string, waitUs: number, left: boolean, unblocked: number, debtUs: number | null }[]} */
+    const waits = (row?.waits ?? null) === null ? [] : JSON.parse(String(row?.waits));
+
+    return {
+        names: (row?.names ?? null) === null ? [] : JSON.parse(String(row?.names)),
+        waits: waits.map(wait => ({
+            key: wait.key,
+            delayMs: nextUnblockMs(Number(wait.waitUs), wait.left),
+            unblocked: Number(wait.unblocked),
+            debtUs: wait.debtUs === null ? null : Number(wait.debtUs),
+            left: wait.left,
+        })),
+    };
+}
+
+/**
  * Deletes the ended lingers, and the slots without their running job (from a manual change, or old code). Then
  * unblocks the jobs blocked on keys with room: a release that ended in a linger, or a process that stopped before its
- * unblock.
+ * unblock; and the jobs blocked on rate keys whose next start is due: a process that stopped with its timer.
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit
- * @returns {Promise<{ lingers: number, orphans: number, unblocked: number }>}
+ * @returns {Promise<import('./store.js').SweepResult>}
  */
 export async function sweepSlots(executor, p, limit) {
     const lingers = await executor.run(`
@@ -435,6 +589,8 @@ export async function sweepSlots(executor, p, limit) {
         )
     `, [limit]);
     let unblocked = 0;
+    /** @type {import('../gcra.js').RateWait[]} */
+    const rateWaits = [];
 
     // The keys with blocked jobs, a batch at a time: a loose index scan of the blocked jobs
     for (let after = ''; ;) {
@@ -455,8 +611,22 @@ export async function sweepSlots(executor, p, limit) {
             break;
         }
 
+        const rateKeys = keys.filter(isRateKey);
+        const slotKeys = keys.filter(key => !isRateKey(key));
+
         // oxlint-disable-next-line no-await-in-loop -- batches one after the other
-        unblocked += (await unblock(executor, p, keys)).length;
+        unblocked += slotKeys.length ? (await unblock(executor, p, slotKeys)).length : 0;
+
+        if (rateKeys.length) {
+            // oxlint-disable-next-line no-await-in-loop -- batches one after the other
+            const rates = await unblockRates(executor, p, rateKeys);
+
+            unblocked += rates.names.length;
+            // A key whose due jobs were still blocked lost its timer: its next unblock is here (`nextUnblockMs`)
+            rateWaits.push(...rates.waits.filter(wait => wait.unblocked > 0)
+                .map(({ key, delayMs }) => ({ key, delayMs })));
+        }
+
         after = /** @type {string} */ (keys.at(-1));
 
         if (keys.length < limit) {
@@ -464,7 +634,23 @@ export async function sweepSlots(executor, p, limit) {
         }
     }
 
-    return { lingers, orphans, unblocked };
+    return { lingers, orphans, unblocked, rateWaits };
+}
+
+/**
+ * Deletes a batch of rows of rate keys whose tat passed: such a key has its full quota, as without a row. SKIP LOCKED:
+ * a claim holds the rows of its keys.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {number} limit
+ * @returns {Promise<number>} The deleted rows.
+ */
+export async function deleteIdleRateKeys(executor, p, limit) {
+    return executor.run(`
+        DELETE FROM ${p}rate_limits WHERE limit_key IN (
+            SELECT limit_key FROM ${p}rate_limits WHERE tat < ${NOW} LIMIT $1 FOR UPDATE SKIP LOCKED
+        )
+    `, [limit]);
 }
 
 /**

@@ -8,6 +8,7 @@ import * as mysqlWorker from './mysql_worker.js';
 import * as postgresFinal from './postgres_final.js';
 import * as postgresSchedules from './postgres_schedules.js';
 import * as postgresWorker from './postgres_worker.js';
+import { isRateKey } from '../rate_keys.js';
 import { isUnknownSystemVariableError } from '../transient_error.js';
 
 /**
@@ -25,8 +26,14 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
 
 /**
  * The due jobs of names with global limits: those whose keys have room, at most the asked number per name, and those
- * with a full key, which a claim blocks.
+ * with a full key, which a claim blocks. A rate key is full for the jobs that its quota does not allow, after the older
+ * jobs of the search, and for the jobs behind an older job blocked on it.
  * @typedef {{ startable: Candidate[], full: Candidate[] }} FoundCandidates
+ */
+
+/**
+ * The candidates of a search, with the names of the returned jobs that have rate keys when it left them out.
+ * @typedef {FoundCandidates & { ratedNames: string[] }} FoundCandidatesOf
  */
 
 /**
@@ -35,6 +42,7 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
  * @property {string} id
  * @property {string} name
  * @property {import('../concurrency_keys.js').GlobalLimit[]} limits Its global limits, sorted by key.
+ * @property {import('../rate_keys.js').GlobalRateLimit[]} rateLimits Its global rate limits, sorted by key.
  * @property {number} attempts The failed attempts so far.
  * @property {number} maxAttempts
  * @property {number} stalls
@@ -52,16 +60,28 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
  * @property {string} lockToken Of this claim.
  * @property {string} lockedBy The process.
  * @property {number} leaseMs
- * @property {(locked: ClaimedJob[], held: Map<string, number>) => ClaimedJob[]} pick The jobs to take among the
- *     locked ones whose keys have room (in the order of run_at), given the held slots of their keys: the free slots,
- *     and fewer jobs on each key than its max, with the picked ones.
+ * @property {(locked: ClaimedJob[], held: Map<string, number>, debts: Map<string, number>) => ClaimedJob[]} pick
+ *     The jobs to take among the locked ones whose keys have room (in the order of run_at), given the held slots of
+ *     their keys and the debts of their rate keys (µs, gcra.js): the free slots, fewer jobs on each key than its max,
+ *     and the quota of each rate key, with the picked ones.
+ * @property {boolean} [withRates] The candidates may have rate keys (their names are known to): PostgreSQL locks the
+ *     rows of the rate keys in the statement that locks the jobs. Without, a statement of its own, if they have some.
+ */
+
+/** @typedef {import('../gcra.js').RateWait} RateWait */
+
+/**
+ * A rate key after an unblock, with its debt after the jobs that the unblock made pending (null: none). `left`: blocked
+ * jobs are left; else the next unblock is a check, for a job blocked during this one.
+ * @typedef {RateWait & { debtUs: number | null, left: boolean }} RateUnblockWait
  */
 
 /**
  * @typedef {object} ClaimResult
  * @property {ClaimedJob[]} jobs The claimed jobs, in the order of run_at.
- * @property {string[]} blockedKeys The keys on which the claim blocked jobs.
+ * @property {string[]} blockedKeys The keys on which the claim blocked jobs, of both kinds.
  * @property {string[]} blockedNames The names of the blocked jobs.
+ * @property {RateWait[]} rateWaits The rate keys on which the claim blocked the first jobs: when the oldest may start.
  */
 
 /**
@@ -148,14 +168,21 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
  * @typedef {object} Store
  * @property {(names: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given name with
  *     pending jobs; null: of each name. It may give other names too.
- * @property {(limitsByName: Map<string, number>) => Promise<FoundCandidates>} findCandidates Of names with global
- *     limits: their oldest due jobs, at most 500 per name.
+ * @property {(limitsByName: Map<string, number>, ratedNames?: Set<string>) => Promise<FoundCandidates>} findCandidates
+ *     Of names with global limits: their oldest due jobs, at most 500 per name. `ratedNames`: the names that may have
+ *     jobs with rate keys (`findCandidates` below); none: each search has the rate keys.
  * @property {(params: ClaimParams) => Promise<ClaimResult>} claim In a queue transaction of its own.
  * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, chooses by share, claims and reads
  *     the due jobs of names without global limits, at once: one statement on PostgreSQL. It leaves the rows with
  *     limits.
- * @property {(keys: string[]) => Promise<string[]>} unblock Makes the jobs blocked on the keys pending again, the
- *     oldest first, as many as each key has room for: their names.
+ * @property {(keys: string[]) => Promise<string[]>} unblock Makes the jobs blocked on the concurrency keys pending
+ *     again, the oldest first, as many as each key has room for: their names. It leaves the rate keys.
+ * @property {(keys: string[], floors?: Map<string, number>)
+ *     => Promise<{ names: string[], waits: RateUnblockWait[] }>} unblockRates Makes the jobs blocked on the rate keys
+ *     pending again, the oldest first, as many as the quota of each key allows now (at most 500), after the debt of
+ *     `floors` at least (µs: the jobs that an earlier unblock made pending, not claimed yet). Their names; and, of each
+ *     key with blocked jobs, the time of its next unblock: when the oldest job left may start; with none left, a check
+ *     for a job blocked during the unblock (gcra.js, `nextUnblockMs`).
  * @property {(ids: string[]) => Promise<Map<string, unknown>>} readPayloads
  * @property {(jobs: OwnedJob[], leaseMs: number) => Promise<Set<string>>} renewLeases
  * @property {(job: OwnedJob) => Promise<boolean>} markTimedOut
@@ -168,11 +195,16 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
  *     params: { error: import('../error_json.js').ErrorJson, buildFailureJob: FailureJobBuilder },
  * ) => Promise<{ changed: boolean, failureJob: FailureJobResult | null }>} failJob
  * @property {(job: OwnedJob, params: { delayMs: number, lingerMs: number }) => Promise<boolean>} releaseJob
+ * @property {(job: OwnedJob, params: RateLimitedParams) => Promise<RateLimitedResult>} rateLimited The handler threw a
+ *     RateLimitedError on global rate keys of the job: their next start is `retryAfter` from now at the earliest, the
+ *     job is blocked on the first of them, without an attempt used; its slots are freed.
  * @property {(limit: number) => Promise<{ id: string, name: string }[]>} findStaleJobs
  * @property {(id: string, params: { leaseMs: number, buildFailureJob: FailureJobBuilder })
  *     => Promise<StaleJobResult>} recoverStaleJob
- * @property {(limit: number) => Promise<{ lingers: number, orphans: number, unblocked: number }>} sweepSlots Deletes
- *     the ended lingers and the orphan slots, then unblocks the jobs blocked on keys with room.
+ * @property {(limit: number) => Promise<SweepResult>} sweepSlots Deletes the ended lingers and the orphan slots, then
+ *     unblocks the jobs blocked on keys with room, and on rate keys whose next start is due.
+ * @property {(limit: number) => Promise<number>} deleteIdleRateKeys Deletes a batch of rows of rate keys whose tat
+ *     passed: the same as no row. SKIP LOCKED.
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
  * @property {(names: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
  * @property {() => Promise<import('../types.js').JobStats[]>} getStats
@@ -187,6 +219,28 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
 /**
  * @typedef {{ clock: import('./fire_slots.js').ClockSample, rows: import('./fire_slots.js').ScheduleRow[] }}
  *     ScheduleRead
+ */
+
+/**
+ * @typedef {object} RateLimitedParams
+ * @property {import('../rate_keys.js').GlobalRateLimit[]} limits Rate keys of the job, sorted by key.
+ * @property {number} retryAfterMs
+ * @property {import('../error_json.js').ErrorJson} error
+ */
+
+/**
+ * @typedef {object} RateLimitedResult
+ * @property {boolean} changed False: the lease was lost; nothing changed.
+ * @property {number} delayMs The time until the job may start on the key that it is blocked on.
+ */
+
+/**
+ * @typedef {object} SweepResult
+ * @property {number} lingers
+ * @property {number} orphans
+ * @property {number} unblocked The names of the jobs that it unblocked.
+ * @property {RateWait[]} rateWaits The rate keys whose due jobs it unblocked, and that have blocked jobs left: their
+ *     timer was lost (a process stopped), so the sweeping process takes it over.
  */
 
 /**
@@ -210,6 +264,35 @@ export function createStore(adapter, tablePrefix, logger) {
     const p = tablePrefix;
     // MariaDB: false once the server rejects `innodb_snapshot_isolation` (a version without it)
     let snapshotIsolationOff = true;
+
+    /**
+     * The search of candidates has the rate keys only for a name in `ratedNames`: by its definition, or seen here. The
+     * part of the rate keys costs every search: PostgreSQL plans the statement at each call (a custom plan), and the
+     * rate CTEs double that planning; MySQL and MariaDB run them on every search. The other search also returns the
+     * jobs of its window that have rate keys (from their enqueue options): their names join `ratedNames`, and the
+     * search runs again with them. Without such a job its result is the same: a job without rate keys is never full by
+     * rate.
+     * @param {typeof postgresWorker | typeof mysqlWorker | typeof mariadbWorker} worker
+     * @param {Map<string, number>} limitsByName
+     * @param {Set<string>} [ratedNames] Grows with the names seen with rate keys. None: each search has the rate keys.
+     * @returns {Promise<FoundCandidates>}
+     */
+    async function findCandidates(worker, limitsByName, ratedNames) {
+        const withRates = !ratedNames || [...limitsByName.keys()].some(name => ratedNames.has(name));
+        const found = await worker.findCandidates(adapter.queue, p, limitsByName, withRates);
+
+        if (withRates || !found.ratedNames.length) {
+            return { startable: found.startable, full: found.full };
+        }
+
+        for (const name of found.ratedNames) {
+            ratedNames?.add(name);
+        }
+
+        const again = await worker.findCandidates(adapter.queue, p, limitsByName, true);
+
+        return { startable: again.startable, full: again.full };
+    }
 
     /**
      * @param {ClaimDueParams} params
@@ -241,7 +324,7 @@ export function createStore(adapter, tablePrefix, logger) {
 
     return {
         probe: names => sql.probe(adapter.queue, tablePrefix, names),
-        findCandidates: limitsByName => sql.findCandidates(adapter.queue, tablePrefix, limitsByName),
+        findCandidates: (limitsByName, ratedNames) => findCandidates(sql, limitsByName, ratedNames),
         claim: params => adapter.queueTransaction(executor => sql.claim(executor, tablePrefix, params)),
         claimDue: params => (adapter.dialect === 'postgres'
             // One statement: a transaction of its own
@@ -256,19 +339,36 @@ export function createStore(adapter, tablePrefix, logger) {
         retryJob: (job, params) => inQueue(executor => final.retryJob(executor, p, job, params)),
         failJob: (job, params) => inQueue(executor => final.failJob(executor, p, job, params)),
         releaseJob: (job, params) => inQueue(executor => final.releaseJob(executor, p, job, params)),
+        rateLimited: (job, params) => inQueue(executor => final.rateLimited(executor, p, job, params)),
         findStaleJobs: limit => final.findStaleJobs(adapter.queue, p, limit),
         recoverStaleJob: (id, params) => inQueue(executor => final.recoverStaleJob(executor, p, id, params)),
         unblock: (keys) => {
-            if (!keys.length) {
+            // A rate key has no slots: its room is its quota (unblockRates)
+            const slotKeys = keys.filter(key => !isRateKey(key));
+
+            if (!slotKeys.length) {
                 return Promise.resolve([]);
             }
 
             // One statement on PostgreSQL; on MySQL and MariaDB, a read, then a transaction only when a key has room
             return adapter.dialect === 'postgres'
-                ? postgresFinal.unblock(adapter.queue, p, keys)
-                : final.unblock(adapter.queue, p, keys, inQueue);
+                ? postgresFinal.unblock(adapter.queue, p, slotKeys)
+                : final.unblock(adapter.queue, p, slotKeys, inQueue);
+        },
+        unblockRates: async (keys, floors) => {
+            if (!keys.length) {
+                return { names: [], waits: [] };
+            }
+
+            // One statement on PostgreSQL; on MySQL and MariaDB, a read, then a transaction only when a job may start
+            const { names, waits } = adapter.dialect === 'postgres'
+                ? await postgresFinal.unblockRates(adapter.queue, p, keys, { floors })
+                : await final.unblockRates(adapter.queue, p, keys, { inTransaction: inQueue, floors });
+
+            return { names, waits: waits.map(({ key, delayMs, debtUs, left }) => ({ key, delayMs, debtUs, left })) };
         },
         sweepSlots: limit => inQueue(executor => final.sweepSlots(executor, p, limit)),
+        deleteIdleRateKeys: limit => inQueue(executor => final.deleteIdleRateKeys(executor, p, limit)),
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
         makeDue: names => inQueue(executor => final.makeDue(executor, p, names)),
         getStats: () => final.getStats(adapter.queue, p),
