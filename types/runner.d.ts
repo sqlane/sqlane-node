@@ -17,6 +17,10 @@ export type Timings = {
      */
     missingPayloadGraceMs: number;
 };
+/** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
+/** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
+/** @typedef {import('./job_runs.js').RunningJob} RunningJob */
+/** @typedef {import('./local_limits.js').LocalLimit} LocalLimit */
 /**
  * @typedef {object} Timings
  * @property {number} leaseMs
