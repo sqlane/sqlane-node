@@ -556,7 +556,11 @@ the cluster, in `sqlane_rate_limits`; a local limit counts in the memory of each
   itself for the next one. The unblock does not take the quota, the claims do: until they catch up, the next unblock
   of the key in the process counts the jobs that it made pending as if they started then. So a full batch is followed
   at once by the next one only while the quota admits more, and a long pause does not turn the whole queue pending.
-  An unblock that leaves no blocked job on its key arms one more, a check at the next start (in 1 s at the earliest):
+  The unblock reads the oldest blocked job of the key first: by its settings and the debt, `n` jobs fit, and it reads
+  `n + 1` (on MySQL and MariaDB, locked in the transaction of the update). So its cost follows the jobs that it makes
+  pending, not the length of the queue: a saturated key with 1,000 blocked jobs reads 2 rows, not 501. A job of other
+  settings after the first `n` (a deploy changed the limit) waits for the next unblock, at once, like the one after a
+  full batch. An unblock that leaves no blocked job on its key arms one more, a check at the next start (in 1 s at the earliest):
   a claim that blocked a job behind the ones that it made pending, while it ran, saw them blocked and armed no timer.
   A newer job behind a blocked one arms no timer either: the timer of the key's queue covers it. The sweep of the
   stall recovery, about every 30 s, unblocks the due keys whose process stopped and takes over their timer. So a

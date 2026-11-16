@@ -1262,6 +1262,43 @@ describe('global rate limits', () => {
             .resolves.toStrictEqual(['pending', 'pending', 'pending', 'pending']);
     });
 
+    test('an unblock reads as many blocked jobs as fit by the settings of the oldest one: a cheaper job after them '
+        + 'waits for the next unblock, at once', async () => {
+        const { p, sqlane, store } = await freshTables();
+        // 3 per hour, bursts of 3: 20 min per start
+        const quota = defineRateLimit({ name: 'quota', max: 3, per: '1h', burst: 3 });
+        const ids = [];
+
+        for (const [at, cost] of [3, 2, 1, 1].entries()) {
+            // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
+            ids.push((await sqlane.enqueue(testAdapter.pool, 'call', {}, {
+                globalRateLimits: [quota.cost(cost)],
+                runAt: ago(70 - at),
+            })).id);
+        }
+
+        await claimWithBlocks(store, ids.slice(0, 1), 'T1', ids.slice(1));
+        // No debt: room for the job of cost 2 and one of cost 1, but the oldest one fits alone by its settings
+        await database.query(SET_TAT_SQL[database.family](p), ['@quota', 0]);
+
+        const first = await store.unblockRates(['@quota']);
+
+        expect(first).toMatchObject({
+            names: ['call'],
+            waits: [{ key: '@quota', delayMs: 0, left: true }],
+        });
+        await expect(statuses(p).then(rows => rows.slice(1).map(row => row.status)))
+            .resolves.toStrictEqual(['pending', 'blocked', 'blocked']);
+
+        // With the debt of the first: the job of cost 1, then the next one in 20 min
+        const second = await store.unblockRates(['@quota'], new Map([['@quota', Number(first.waits[0].debtUs)]]));
+
+        expect(second).toMatchObject({ names: ['call'], waits: [{ key: '@quota', left: true }] });
+        expect(second.waits[0].delayMs).toBeGreaterThan((20 * 60_000) - 5000);
+        await expect(statuses(p).then(rows => rows.slice(1).map(row => row.status)))
+            .resolves.toStrictEqual(['pending', 'pending', 'blocked']);
+    });
+
     test.each([true, false])('the claim reads the jobs blocked on a rate key after it locks its row: a job blocked '
         + 'meanwhile holds the newer ones (withRates: %s)', async (withRates) => {
         const { p, sqlane, store } = await freshTables();
