@@ -1,5 +1,42 @@
 # @sqlane/core
 
+## 6.0.0
+
+### Major Changes
+
+- [#112](https://github.com/sqlane/sqlane-node/pull/112) [`eeefafc`](https://github.com/sqlane/sqlane-node/commit/eeefafc5911240ac418720fadf5254459cc835d5) - Concurrency limits replace mutex keys and concurrency groups. `defineConcurrencyLimit({ name, max })` declares a limit
+  once; a job definition lists it in `localConcurrencyLimits` (per process, in memory) or returns it, or its keys, from
+  `globalConcurrencyLimits({ payload })` (per key, in the whole cluster). A key of a global limit runs at most `max` jobs
+  at once; a job whose key is full is blocked out of the due jobs until a job of the key ends, so a flood on one key no
+  longer holds back the others. All the options of a job name move to its definition: `handle()` takes none, and
+  `createSqlane`'s `maxConcurrency` is now `localMaxConcurrency`. The migrations `0005_concurrency_limits` and
+  `0006_concurrency_slots` convert the mutex keys of existing jobs to limits with max 1. See
+  [Migrating from 5.x to 6.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/6.md).
+
+### Minor Changes
+
+- [#116](https://github.com/sqlane/sqlane-node/pull/116) [`2c08deb`](https://github.com/sqlane/sqlane-node/commit/2c08debbd087036390ca7e0186ef2b264082f378) - Rate limits. `defineRateLimit({ name, max, per, burst })` declares a limit of job starts: `max` per `per`, spread
+  evenly, with bursts of up to `burst`. A job definition lists it in `localRateLimits` (per process, in memory) or returns
+  it, its keys or a cost of it from `globalRateLimits({ payload })` (per key, in the whole cluster, with GCRA in one row
+  per key). A job over the quota of a key is blocked out of the due jobs, without using an attempt, until the key allows
+  its start, so a flood on one key does not hold back the others. A handler that gets a 429 throws
+  `new RateLimitedError({ limit, retryAfter })`: the key starts no job before `retryAfter`, and the job waits without
+  using an attempt; each wait emits a `rate_limited` event. The migration `0007_rate_limits` adds the table
+  `sqlane_rate_limits` and a column of `sqlane_jobs`.
+
+### Patch Changes
+
+- [#117](https://github.com/sqlane/sqlane-node/pull/117) [`0be7c02`](https://github.com/sqlane/sqlane-node/commit/0be7c02f5359bb281114935529faef84186644e8) - PostgreSQL keeps one plan per connection for the statements of the claim, the unblock and the rate keys: their array
+  parameters no longer make it plan each call again. With `pg` and `postgres.js` (whose adapter now sends named prepared
+  statements, unless the pool was created with `prepare: false`), a job with global limits costs the database about 40%
+  fewer instructions. An idle worker of many job names polls with fewer instructions.
+
+- [#118](https://github.com/sqlane/sqlane-node/pull/118) [`33ad612`](https://github.com/sqlane/sqlane-node/commit/33ad61289e4a22a02f5a519dcaa5b822fb325b7b) - The unblock of a rate key reads as many blocked jobs as its quota lets start, not up to 501: with a large backlog on a
+  key, it takes about 1 ms instead of tens of milliseconds.
+
+- [#119](https://github.com/sqlane/sqlane-node/pull/119) [`dff589a`](https://github.com/sqlane/sqlane-node/commit/dff589ab7c1f308df018399ddadb4c7197255b15) - Internal: the runner is split into modules (the dispatcher, the job runs, the unblocks of keys, the leases, the
+  maintenance and the local limits). No change of behaviour or API.
+
 ## 5.0.2
 
 ### Patch Changes
