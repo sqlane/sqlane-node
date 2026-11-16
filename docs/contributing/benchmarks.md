@@ -27,7 +27,9 @@ the snapshot: `pnpm bench:statements:update` runs each scenario 10 times and kee
 PostgreSQL, MySQL and MariaDB from binaries, for the working tree and a baseline (`--ref main`, the default; `--ref .`:
 the working tree itself). Per operation it reports the CPU instructions of the sqlane processes and the database
 server, and the statements. A difference beyond ±5% in instructions or ±3% in statements reruns that pair once, and only
-a confirmed slowdown fails. `--db`, `--scenario` and `--window` narrow a run; `--save <file>` writes the numbers.
+a confirmed slowdown fails. Each run starts on a fresh database; after its setup, the server restarts cleanly (InnoDB
+with a slow shutdown), so no background work of the migrations falls in the window.
+`--db`, `--scenario` and `--window` narrow a run; `--save <file>` writes the numbers.
 
 On macOS, the servers come from Homebrew (`postgresql@17`, `mysql@8.4`, `mariadb@11.8`; `PG_BIN`, `MYSQL_BIN`,
 `MARIADB_BIN` for others), and the counters from `bench/lib/proc_usage.py`. On Linux, `bench/run_linux.sh regression` runs it

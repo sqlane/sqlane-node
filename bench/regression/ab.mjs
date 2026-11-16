@@ -269,7 +269,8 @@ function startApp(appArgs, role, log) {
  * @property {'postgres' | 'mysql' | 'mariadb'} dialect
  * @property {import('../lib/servers.mjs').Server} server
  * @property {import('../lib/db_stats.mjs').StatsServer} stats
- * @property {(sql: string) => Promise<void>} admin
+ * @property {(sql: string) => Promise<any[]>} admin Its rows.
+ * @property {() => Promise<void>} closeAdmin
  * @property {string} dir
  */
 
@@ -330,10 +331,10 @@ async function runScenario(lane, scenario, { variant, src, attempt }) {
         throw new Error(`${lane.dialect} ${scenario.name} ${variant}: setup failed: see ${join(dir, 'setup.log')}`);
     }
 
-    if (lane.dialect === 'postgres') {
-        // No checkpoint of the setup in the window: the next timed one comes 5 minutes later
-        await lane.admin('CHECKPOINT');
-    }
+    // The setup's DDL leaves work to the server's background processes: a checkpoint, InnoDB's purge and dirty pages.
+    // In the window, it would count as the cost of the scenario (an idle worker's second cost 30% more on MySQL after
+    // the migrations of 6.0). A clean restart does it all first
+    await restartLane(lane);
 
     /** @type {Child[]} */
     const children = [];
@@ -414,6 +415,44 @@ async function runScenario(lane, scenario, { variant, src, attempt }) {
         // No autovacuum of its tables in the next runs
         await lane.admin(`DROP DATABASE IF EXISTS ${database}${lane.dialect === 'postgres' ? ' WITH (FORCE)' : ''}`);
     }
+}
+
+/**
+ * The admin connection and the statistics of the lane's server: one connection through the lane, until a restart. A
+ * server process that exits in a window would take its counts with it.
+ * @param {Lane} lane
+ * @returns {Promise<void>}
+ */
+async function connectLane(lane) {
+    lane.stats = await statsServer({ dialect: lane.dialect, adminUrl: lane.server.adminUrl });
+
+    if (lane.dialect === 'postgres') {
+        const client = new Client({ connectionString: lane.server.adminUrl });
+
+        await client.connect();
+        versions[lane.dialect] = (await client.query('SELECT version() AS version')).rows[0].version;
+        lane.admin = async sql => (await client.query(sql)).rows;
+        lane.closeAdmin = () => client.end();
+    } else {
+        const connection = await createConnection({ uri: lane.server.adminUrl });
+        const [rows] = /** @type {[any[], unknown]} */ (await connection.query('SELECT version() AS version'));
+
+        versions[lane.dialect] = rows[0].version;
+        lane.admin = async sql => /** @type {any[]} */ ((await connection.query(sql))[0]);
+        lane.closeAdmin = () => connection.end();
+    }
+}
+
+/**
+ * Restarts the lane's server cleanly, and connects to it again.
+ * @param {Lane} lane
+ * @returns {Promise<void>}
+ */
+async function restartLane(lane) {
+    await lane.closeAdmin();
+    await lane.stats.close();
+    await lane.server.restart?.();
+    await connectLane(lane);
 }
 
 /**
@@ -671,34 +710,10 @@ async function runServer(dialect, sources) {
 
     cleanups.push(() => server.kill());
 
-    const stats = await statsServer({ dialect, adminUrl: server.adminUrl });
-    /** @type {(sql: string) => Promise<void>} */
-    let admin;
-    /** @type {() => Promise<void>} */
-    let closeAdmin;
+    const lane = /** @type {Lane} */ ({ dialect, server, dir });
 
-    // One connection through the lane: a server process that exits in a window would take its counts with it
-    if (dialect === 'postgres') {
-        const client = new Client({ connectionString: server.adminUrl });
+    await connectLane(lane);
 
-        await client.connect();
-        versions[dialect] = (await client.query('SELECT version() AS version')).rows[0].version;
-        admin = async (sql) => {
-            await client.query(sql);
-        };
-        closeAdmin = () => client.end();
-    } else {
-        const connection = await createConnection({ uri: server.adminUrl });
-        const [rows] = /** @type {[any[], unknown]} */ (await connection.query('SELECT version() AS version'));
-
-        versions[dialect] = rows[0].version;
-        admin = async (sql) => {
-            await connection.query(sql);
-        };
-        closeAdmin = () => connection.end();
-    }
-
-    const lane = { dialect, server, stats, admin, dir };
     /** @type {Comparison[]} */
     const comparisons = [];
 
@@ -712,8 +727,8 @@ async function runServer(dialect, sources) {
             }
         }
     } finally {
-        await closeAdmin();
-        await stats.close();
+        await lane.closeAdmin();
+        await lane.stats.close();
         await server.stop();
     }
 

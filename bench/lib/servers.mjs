@@ -19,7 +19,10 @@ const execFileAsync = promisify(execFile);
  * @property {string} url A connection to its default database: `postgres` (PostgreSQL), `bench` (MySQL, MariaDB).
  * @property {string} adminUrl A superuser connection: `postgres` (PostgreSQL), `admin` with all privileges (MySQL,
  *     MariaDB), no database chosen on MySQL and MariaDB.
- * @property {number} pid The server process: its backends (PostgreSQL) are its descendants.
+ * @property {number} pid The server process: its backends (PostgreSQL) are its descendants. A restart changes it.
+ * @property {() => Promise<void>} [restart] PostgreSQL, MySQL, MariaDB: stops the server cleanly and starts it on the
+ *     same data: the work that its background processes still had (a checkpoint, a purge, dirty pages) is done, and
+ *     none is left for a measurement.
  * @property {() => Promise<void>} stop Stops the server and removes its data.
  * @property {() => void} kill Stops it at once, synchronously: for an exit handler.
  */
@@ -78,11 +81,15 @@ export async function startPostgres({
         execFileSync(join(bin, 'initdb'), ['-D', data, '-U', 'postgres', '--auth=trust'], { stdio: 'ignore' });
     }
 
-    await execFileAsync(join(bin, 'pg_ctl'), ['-D', data, '-l', join(dir, `pg-${port}.log`), '-w', 'start', '-o', [
-        `-p ${port} -c listen_addresses=127.0.0.1 -c unix_socket_directories=''`,
-        '-c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=top',
-        ...connections ? [`-c max_connections=${connections}`] : [],
-    ].join(' ')]);
+    const start = () => execFileAsync(join(bin, 'pg_ctl'), ['-D', data, '-l', join(dir, `pg-${port}.log`), '-w', 'start',
+        '-o', [
+            `-p ${port} -c listen_addresses=127.0.0.1 -c unix_socket_directories=''`,
+            '-c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=top',
+            ...connections ? [`-c max_connections=${connections}`] : [],
+        ].join(' ')]);
+    const readPid = () => Number(readFileSync(join(data, 'postmaster.pid'), 'utf8').split('\n')[0]);
+
+    await start();
 
     const url = `postgresql://postgres@127.0.0.1:${port}/postgres`;
     const admin = new Client({ connectionString: url });
@@ -92,11 +99,17 @@ export async function startPostgres({
     await admin.end();
 
     let stopped = false;
-
-    return {
+    /** @type {Server} */
+    const handle = {
         url,
         adminUrl: url,
-        pid: Number(readFileSync(join(data, 'postmaster.pid'), 'utf8').split('\n')[0]),
+        pid: readPid(),
+        async restart() {
+            // A fast shutdown: a checkpoint, then no WAL to replay
+            await execFileAsync(join(bin, 'pg_ctl'), ['-D', data, '-m', 'fast', '-w', 'stop']);
+            await start();
+            handle.pid = readPid();
+        },
         async stop() {
             if (!stopped) {
                 stopped = true;
@@ -111,6 +124,8 @@ export async function startPostgres({
             }
         },
     };
+
+    return handle;
 }
 
 /** @type {Promise<void>} The installations of MySQL and MariaDB data directories, one after the other */
@@ -179,40 +194,61 @@ GRANT ALL ON *.* TO 'admin'@'127.0.0.1' WITH GRANT OPTION;
         done();
     }
 
-    const server = spawn(join(bin, dialect === 'mysql' ? 'mysqld' : 'mariadbd'), [
-        '--no-defaults', `--datadir=${data}`, `--port=${port}`, '--bind-address=127.0.0.1', `--socket=${name}.sock`,
-        `--tmpdir=${temporary}`, `--log-error=${join(dir, `${name}.err`)}`, `--init-file=${initFile}`,
-        ...dialect === 'mysql'
-            ? ['--mysqlx=OFF']
-            : ['--performance-schema=ON', '--log-bin=binlog', '--sync-binlog=1', '--binlog-format=ROW'],
-    ], { cwd: dir, stdio: 'ignore' });
-    /** @type {Promise<void>} */
-    const exited = new Promise((resolve) => {
-        server.on('exit', () => resolve());
-    });
-
     const url = `mysql://bench@127.0.0.1:${port}/bench`;
+    const adminUrl = `mysql://admin@127.0.0.1:${port}/`;
+    /**
+     * Starts the server, and waits until it takes connections.
+     * @returns {Promise<{ server: import('node:child_process').ChildProcess, exited: Promise<void> }>}
+     */
+    const start = async () => {
+        const child = spawn(join(bin, dialect === 'mysql' ? 'mysqld' : 'mariadbd'), [
+            '--no-defaults', `--datadir=${data}`, `--port=${port}`, '--bind-address=127.0.0.1', `--socket=${name}.sock`,
+            `--tmpdir=${temporary}`, `--log-error=${join(dir, `${name}.err`)}`, `--init-file=${initFile}`,
+            // A restart starts with an empty buffer pool, not with a load in the background
+            '--innodb-buffer-pool-dump-at-shutdown=OFF', '--innodb-buffer-pool-load-at-startup=OFF',
+            ...dialect === 'mysql'
+                ? ['--mysqlx=OFF']
+                : ['--performance-schema=ON', '--log-bin=binlog', '--sync-binlog=1', '--binlog-format=ROW'],
+        ], { cwd: dir, stdio: 'ignore' });
+        /** @type {Promise<void>} */
+        const childExited = new Promise((resolve) => {
+            child.on('exit', () => resolve());
+        });
 
-    for (let tries = 0; ; tries++) {
-        try {
-            await (await createConnection({ uri: url })).end();
-            break;
-        } catch (error) {
-            if (tries > 240 || server.exitCode !== null) {
-                server.kill('SIGKILL');
-                throw new Error(`${dialect} did not start: see ${join(dir, `${name}.err`)}`, { cause: error });
+        for (let tries = 0; ; tries++) {
+            try {
+                await (await createConnection({ uri: url })).end();
+                break;
+            } catch (error) {
+                if (tries > 240 || child.exitCode !== null) {
+                    child.kill('SIGKILL');
+                    throw new Error(`${dialect} did not start: see ${join(dir, `${name}.err`)}`, { cause: error });
+                }
+
+                await sleep(250);
             }
-
-            await sleep(250);
         }
-    }
 
+        return { server: child, exited: childExited };
+    };
+    let { server, exited } = await start();
     let stopped = false;
-
-    return {
+    /** @type {Server} */
+    const handle = {
         url,
-        adminUrl: `mysql://admin@127.0.0.1:${port}/`,
+        adminUrl,
         pid: /** @type {number} */ (server.pid),
+        async restart() {
+            // A slow shutdown: InnoDB purges, merges and flushes everything before it exits
+            const admin = await createConnection({ uri: adminUrl });
+
+            await admin.query('SET GLOBAL innodb_fast_shutdown = 0');
+            await admin.end();
+            server.kill('SIGTERM');
+            await exited;
+            ({ server, exited } = await start());
+            handle.pid = /** @type {number} */ (server.pid);
+        },
         async stop() {
             if (!stopped) {
                 stopped = true;
@@ -229,6 +265,8 @@ GRANT ALL ON *.* TO 'admin'@'127.0.0.1' WITH GRANT OPTION;
             }
         },
     };
+
+    return handle;
 }
 
 /**
