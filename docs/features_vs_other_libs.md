@@ -37,7 +37,7 @@ each library's documentation and types. Versions are [at the bottom](#versions).
 | Configurable crash-recovery time       | ❌     | ✅      | ❌ ⁹            | ✅      | ✅        | ✅      | ✅                | ✅ ¹¹     |
 | Unique / deduplicated jobs             | ✅     | ✅      | ✅              | ✅      | 🟠 ¹²     | ✅      | ✅                | ✅        |
 | Parent/child workflows                 | ❌     | ✅      | ❌              | ✅      | ❌        | ❌ ⁹    | ❌                | ❌        |
-| Rate limiting                          | ❌     | 🟠 ¹³   | 🟠 ¹⁴           | ✅      | ❌        | ❌      | ❌                | ❌        |
+| Rate limiting                          | ✅     | 🟠 ¹³   | 🟠 ¹⁴           | ✅      | ❌        | ❌      | ❌                | ❌        |
 | Cron                                   | ✅     | ✅      | ✅              | ✅      | ✅        | ✅      | ✅                | ✅        |
 | Dashboard                              | ❌     | ✅ ¹⁵   | ❌              | ✅ ¹⁵   | ✅        | ✅ ¹⁵   | ❌                | ❌        |
 | License                                | MIT    | MIT     | MIT             | MIT     | LGPL-3.0  | MPL-2.0 | MIT               | MIT       |
@@ -125,6 +125,20 @@ was up, and whether several instances add one job per slot.
 24. Accepted by its cron parser, but not documented.
 25. A new leader starts from its current minute. `maxCatchUpMinutes` (default 5) only covers a late tick of a running
     leader.
+
+## Rate limits
+
+How each library limits the starts of jobs per period, from its documentation and source; not checked by running it.
+Sidequest, River, Boring Node Queue and Izi Queue have no rate limit.
+
+| Library         | Scope                                                                   | Per key                                     | Algorithm                                              | Over the limit                                                         | On a 429 from the handler                                                                    |
+| --------------- | ----------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| sqlane          | The cluster (`globalRateLimits`), or each process (`localRateLimits`)   | ✅ up to 10 keys per job, with a cost each  | GCRA: `max` per `per`, spread, with a `burst`          | Blocked out of the due jobs, FIFO per key, no attempt used             | `RateLimitedError`: pauses the key for every job, no attempt used                            |
+| BullMQ          | A queue, in the cluster (`limiter` on the worker, `setGlobalRateLimit`) | ❌ ²⁶                                       | Fixed window: up to `2 × max` across a window boundary | Stays waiting; the worker waits for the window to end; no attempt used | `queue.rateLimit(ms)` and `Worker.RateLimitError()`: pauses the whole queue, no attempt used |
+| pg-boss         | At enqueue only ¹³                                                      | 🟠 `singletonKey`: one job per key and slot | Fixed time slots, a unique index                       | Not added (`send` returns `null`), or added for the next slot          | ❌                                                                                           |
+| Graphile Worker | Not built in ¹⁴                                                         | 🟠 flags, with that package                 | Leaky bucket in Redis, with that package               | Not fetched, no attempt used                                           | ❌ a thrown error retries after the backoff and uses an attempt                              |
+
+26. Its per-key `groupKey` was removed in BullMQ 3.0; per-group limits are in BullMQ Pro.
 
 ## Versions
 

@@ -14,6 +14,7 @@ explains how sqlane works and why.
 - [`defineJob`](#definejob)
 - [`createSqlane`](#createsqlane)
 - [`defineConcurrencyLimit`](#defineconcurrencylimit)
+- [`defineRateLimit`](#defineratelimit)
 - [Where job options come from](#where-job-options-come-from)
 - [`enqueue`](#enqueue)
 - [`enqueueMany`](#enqueuemany)
@@ -43,11 +44,12 @@ explains how sqlane works and why.
 | Job definition    | The name and the options of a job name. You create it with `defineJob`. Producers and workers import the same definition.                                                                                                    |
 | Handler           | The function that runs a job. Only workers register handlers.                                                                                                                                                                |
 | Concurrency limit | The most jobs that run at once. A definition lists it as a local limit, which each instance counts, or as a global limit, which the whole cluster counts per key. You create it with `defineConcurrencyLimit`.               |
+| Rate limit        | The most job starts in a period. A definition lists it as a local limit, which each instance counts, or as a global limit, which the whole cluster counts per key. You create it with `defineRateLimit`.                     |
 | Fair share weight | The share of the free slots that a job name gets, against the other due names: `fairShareWeight`, default 1.                                                                                                                 |
 | Lease             | The time for which a process owns a running job. The process renews the lease while the handler runs. If the process stops, the lease ends and another process can take the job.                                             |
 | Stall             | A stall happens when the lease of a running job ends because its process stopped or blocked. sqlane then puts the job back in the queue.                                                                                     |
 | Key               | A string such as `order:42`: a global limit counts the jobs of each of its keys. Two jobs with one key of a limit of 1 never run at the same time in the whole cluster, as long as handlers stop when their `signal` aborts. |
-| Blocked job       | A due job with a full key. It waits out of the due jobs until a job of the key ends.                                                                                                                                         |
+| Blocked job       | A due job with a full key, or with a rate key that has no quota left. It waits out of the due jobs until a job of the key ends, or until the next start of the rate key.                                                     |
 | Failure job       | A job that sqlane adds when another job fails for good. It lets you react to the failure, for example by sending an alert.                                                                                                   |
 | Adapter           | The object that connects sqlane to your database driver or ORM.                                                                                                                                                              |
 | Hint              | A message that tells other processes that jobs of a name are ready. Hints only make jobs start sooner. If a hint is lost, the job still runs at the next poll.                                                               |
@@ -89,6 +91,8 @@ does not need to import the handler and its dependencies.
 | `timeout`                 | positive duration                                                       | None                                                                | The time after which sqlane aborts the handler. A definition with `globalConcurrencyLimits` needs a timeout, here or in the instance `defaults`.                                                                                                                                                                                                                 |
 | `globalConcurrencyLimits` | `({ payload }) => readonly (ConcurrencyLimit \| ConcurrencyLimitKey)[]` | None                                                                | A function that returns the global limits of a job: [limits and their keys](#defineconcurrencylimit). It must be synchronous and use only its argument. sqlane calls it at enqueue, with the payload as JSON gives it back, and stores the keys with their maxes in the job.                                                                                     |
 | `localConcurrencyLimits`  | `readonly ConcurrencyLimit[]`                                           | None                                                                | Limits that each instance counts for its own jobs. A job starts while each of them has room.                                                                                                                                                                                                                                                                     |
+| `globalRateLimits`        | `({ payload }) => readonly (RateLimit \| RateLimitKey)[]`               | None                                                                | A function that returns the global rate limits of a job: [limits, their keys and costs](#defineratelimit). It follows the rules of `globalConcurrencyLimits`: synchronous, called at enqueue, and the keys are stored with their settings in the job.                                                                                                            |
+| `localRateLimits`         | `readonly RateLimit[]`                                                  | None                                                                | Rate limits that each instance counts for its own starts. A job starts while each of them has quota.                                                                                                                                                                                                                                                             |
 | `fairShareWeight`         | integer, 1 to 1000                                                      | `1`                                                                 | The name's share of the free slots of an instance, against the other due names. See [How free slots are shared](#how-free-slots-are-shared).                                                                                                                                                                                                                     |
 | `failureJob`              | `string` or `JobDefinition`                                             | None                                                                | The job name that sqlane adds when a job of this name fails for good. A job cannot be its own failure job. The failure job cannot have a `failureJob` of its own. Its payload is a [`FailedJobPayload`](#failedjobpayload).                                                                                                                                      |
 
@@ -96,8 +100,8 @@ does not need to import the handler and its dependencies.
 definition with global limits has a timeout, because `handle()` checks that.
 
 The options of a definition apply at two times. `maxAttempts`, `maxStalls`, `retention`, `failureJob` and the global
-limits are stored in the job at enqueue: a change applies to the jobs enqueued after it. `backoff`, `timeout`,
-`fairShareWeight` and the local limits are read by the worker that runs the job.
+limits, of concurrency and of rate, are stored in the job at enqueue: a change applies to the jobs enqueued after it.
+`backoff`, `timeout`, `fairShareWeight` and the local limits are read by the worker that runs the job.
 
 ```js
 import { defineConcurrencyLimit, defineJob } from '@sqlane/core';
@@ -130,7 +134,8 @@ sqlane does not merge its fields with the default.
 ### Typed payloads
 
 A definition can declare the type of its payload. `enqueue` and `enqueueMany` then check the payload against this
-type. The handler's `payload` and the `payload` of `globalConcurrencyLimits` also get this type.
+type. The handler's `payload` and the `payload` of `globalConcurrencyLimits` and `globalRateLimits` also get this
+type.
 
 In TypeScript, pass the type to `defineJob`:
 
@@ -243,6 +248,78 @@ export const sendMessage = defineJob({
 });
 ```
 
+## `defineRateLimit`
+
+`defineRateLimit` defines a rate limit: the most job starts in a period.
+
+```ts
+defineRateLimit(options: { name: string, max: number, per: Duration, burst?: number }): RateLimit
+```
+
+| Option  | Type                    | Default  | Description                                                                                      |
+| ------- | ----------------------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `name`  | `string`                | Required | It must match `^[a-z][a-z0-9_.-]{0,127}$`.                                                       |
+| `max`   | integer, 1 to 1,000,000 | Required | The most starts per `per`, on average: one every `per / max`.                                    |
+| `per`   | duration, 1 ms to 7 d   | Required | The period. `max` must be at most the microseconds of `per`.                                     |
+| `burst` | integer, 1 to `max`     | `1`      | The starts that may come at once after a quiet time. With `1`, the starts are `per / max` apart. |
+
+Define a limit once, at module level, like a concurrency limit. The limit is a frozen object, with `per` in
+milliseconds. A definition uses it in one of two ways:
+
+- **Local**, in `localRateLimits`: each instance counts the starts of all the names that list the limit, in memory. It
+  costs no database work, and N instances start up to N times the rate. A local limit has no keys, and each start
+  costs 1. A name over one of its local rate limits takes no slot: its jobs stay pending until the limit allows a
+  start.
+- **Global**, returned from `globalRateLimits`: the whole cluster counts the starts, in the database. The limit itself
+  is one key. `limit.key(value)` gives one key per value, each with its own quota: `perToken.key('t1')` counts the
+  starts of token t1. A value is a string or an integer. `limit.key(value, { cost })` and `limit.cost(n)` make a job
+  take `n` starts at once, for an API that counts points. A cost is 1 to `burst`, and 1 by default.
+
+A job with global rate limits starts when each of its rate keys has quota. Otherwise it is blocked on the key: it
+leaves the due jobs, without using an attempt, and it is due again at the next start of the key. Jobs of a rate key
+start in FIFO order: a new job waits while an older job is blocked on its key. A job takes its quota when it starts:
+a retry, or a run after a stall, takes it again, and a job that fails at once gives nothing back. The settings are
+stored in the job at enqueue, with the keys: after a deploy that changes them, the jobs enqueued before it keep the old
+ones.
+
+**How many starts.** sqlane spreads the starts ([GCRA](design.md#rate-limits)): one every `per / max`, and up to
+`burst` at once after a quiet time. Any window of length `per` sees at most `max + burst − 1` starts. So
+`{ max: 10, per: '1s' }` starts a job every 100 ms, never 10 at once. With `burst: 10`, 10 jobs may start at once, and
+up to 19 in one second. For an API that allows N calls in any window, keep `max + burst − 1` at most N.
+
+A job has at most 10 global keys, of concurrency and rate limits together. A rate key is stored as `@<name>` or
+`@<name>:<value>`, so it never collides with a concurrency key, and it has at most 255 printable ASCII characters,
+without spaces at the ends. Duplicate keys count once. One key with two settings (`max`, `per`, `burst` or the cost)
+in one job throws an `InvalidRateLimitError` at enqueue; two local rate limits with one name and different settings in
+one instance make `handle()` throw a `ConfigError`. A global rate limit needs no `timeout`: a rate key holds nothing
+while the job runs.
+
+`defineRateLimit` throws a `ConfigError` for an unknown option, a bad name, or a bad `max`, `per` or `burst`.
+`limit.key()` and `limit.cost()` throw an `InvalidRateLimitError` for a bad value or cost.
+
+```js
+import { defineJob, defineRateLimit } from '@sqlane/core';
+
+export const perToken = defineRateLimit({ name: 'github', max: 5000, per: '1h' });
+export const allSms = defineRateLimit({ name: 'sms', max: 10, per: '1s', burst: 10 });
+export const diskIo = defineRateLimit({ name: 'disk_io', max: 50, per: '1s' });
+
+export const syncRepo = defineJob({
+    name: 'sync_repo',
+    // 5000 starts an hour per GitHub token in the cluster, and 50 a second in each process
+    globalRateLimits: ({ payload }) => [perToken.key(payload.tokenId)],
+    localRateLimits: [diskIo],
+});
+export const sendSms = defineJob({
+    name: 'send_sms',
+    // 10 a second in the cluster; a message of 2 parts takes 2 starts
+    globalRateLimits: ({ payload }) => [payload.parts > 1 ? allSms.cost(2) : allSms],
+});
+```
+
+A job can have both kinds of limits: it starts when each of its keys has room and quota. When the other side answers
+with a 429, the handler throws a [`RateLimitedError`](#errors-that-handlers-throw).
+
 ## Where job options come from
 
 A job gets each option from the first place that sets it, in this order:
@@ -257,8 +334,8 @@ A job gets each option from the first place that sets it, in this order:
 `fairShareWeight` and the local limits are not enqueue options: the worker reads them from the definition of the
 handler, else from `defaults`.
 
-sqlane fixes the other options of a job, the global limits with their maxes included, when you enqueue it. A later
-change to a definition does not change the jobs that already exist.
+sqlane fixes the other options of a job, the global limits with their maxes and settings included, when you enqueue
+it. A later change to a definition does not change the jobs that already exist.
 
 ## `enqueue`
 
@@ -273,8 +350,8 @@ connection or a transaction client, it must be in a transaction, because sqlane 
 pool, sqlane runs the insert in a transaction of its own, outside of any transaction of yours.
 
 The `job` is a definition or a job name. If you pass a name, sqlane looks for its definition in `jobs` and in the
-handled names. If it finds none, the job gets the defaults, and `globalConcurrencyLimits` and `failureJob` come only
-from the enqueue options.
+handled names. If it finds none, the job gets the defaults, and `globalConcurrencyLimits`, `globalRateLimits` and
+`failureJob` come only from the enqueue options.
 
 The `payload` must be JSON. sqlane rejects a payload that `JSON.stringify` cannot write, a string that is not
 well-formed UTF-16, and a NUL character (`\u0000`), because PostgreSQL refuses it. The handler gets the payload as
@@ -292,9 +369,10 @@ function, a `bigint` and a class instance with methods.
 | `retention`               | `{ completed?: Duration, failed?: Duration }`          | From the definition            | Overrides the retention for this job, field by field.                                                                                                                                                                                                                       |
 | `failureJob`              | `string` or `JobDefinition`                            | From the definition            | Overrides the failure job for this job.                                                                                                                                                                                                                                     |
 | `globalConcurrencyLimits` | `readonly (ConcurrencyLimit \| ConcurrencyLimitKey)[]` | From the definition's function | Replaces the global limits that the definition computes. An empty array removes them all.                                                                                                                                                                                   |
+| `globalRateLimits`        | `readonly (RateLimit \| RateLimitKey)[]`               | From the definition's function | Replaces the global rate limits that the definition computes. An empty array removes them all.                                                                                                                                                                              |
 
-The global limits follow the rules of [`defineConcurrencyLimit`](#defineconcurrencylimit). Keys are global, so jobs
-of different names can share a key.
+The global limits follow the rules of [`defineConcurrencyLimit`](#defineconcurrencylimit) and
+[`defineRateLimit`](#defineratelimit). Keys are global, so jobs of different names can share a key.
 
 `enqueue` resolves to an `EnqueueResult`:
 
@@ -309,6 +387,8 @@ of different names can share a key.
   `jobId` that starts with `schedule:`, or a payload that is not JSON.
 - `PayloadTooLargeError` if the payload is larger than `maxPayloadBytes`.
 - `InvalidConcurrencyLimitError` if a global limit breaks the rules of `defineConcurrencyLimit`.
+- `InvalidRateLimitError` if a global rate limit breaks the rules of `defineRateLimit`, or the job has more than 10
+  global keys of both kinds.
 - `UnknownJobError` for an unknown name when `unknownJobs` is `'reject'`.
 
 `enqueue` and `enqueueMany` still work after `close()`, because they use only your connection.
@@ -361,6 +441,7 @@ name are in its definition: `handle()` takes none.
 - The job name already has a handler.
 - `jobs` holds a different definition with the same name.
 - Two local limits with one name have different maxes in this instance.
+- Two local rate limits with one name have different settings in this instance.
 - The definition has `globalConcurrencyLimits`, but no timeout is set in the definition or `defaults`.
 - `start()` was called before, or `drain()` runs.
 
@@ -407,6 +488,8 @@ A handler finishes in one of these ways:
   failure job is added.
 - If it throws a [`RetryJobError`](#errors-that-handlers-throw), sqlane retries the job after the delay of the error.
 - If it throws a [`FatalJobError`](#errors-that-handlers-throw), the job fails for good at once.
+- If it throws a [`RateLimitedError`](#errors-that-handlers-throw), the job waits for its rate limit, without using an
+  attempt.
 
 ```js
 sqlane.handle(buildReport, async ({ payload, job, signal }) => {
@@ -424,7 +507,8 @@ cap. Ties go round-robin.
 - **Within a name**, jobs start in FIFO order: `run_at`, then the id. Jobs of a key of a global limit start in FIFO
   order among those that can start.
 - **A name is not in the race, and banks nothing,** while it has no due job, its due jobs have full keys, or it is at
-  one of its local limits. The rule keeps no history: only the running counts of the moment.
+  one of its local limits or over one of its local rate limits. The rule keeps no history: only the running counts of
+  the moment.
 - **The shares are per instance.** Each process shares its own slots.
 - **Not oldest first across names.** In 4.x, the oldest due job across names started first. Now a busy name cannot
   crowd out the others.
@@ -696,6 +780,9 @@ other names. It does not fire schedules: in tests, enqueue a slot with the `slot
 | `retried`   | `number` | The failed attempts that sqlane will retry. |
 | `failed`    | `number` | The jobs that failed for good.              |
 
+`drain` also waits for the jobs that a rate limit holds back in this instance, when their next start comes before
+the `timeout`. A `RateLimitedError` that sends a job back to wait is not counted.
+
 `drain` checks the failure jobs as `start()` does. It rejects with a `ConfigError` after `start()` or while another
 `drain()` runs. It rejects with an `InvalidOptionsError` for a bad `timeout`, and with a `ClosedError` after `close()`.
 
@@ -800,7 +887,10 @@ The list has one entry for each job name that has pending, running or failed job
 | `failed`         | `number`         | The failed jobs that sqlane still keeps.                                                  |
 | `oldestDueAgeMs` | `number \| null` | How long the oldest due job has waited, in milliseconds. It is `null` when no job is due. |
 
-A growing `oldestDueAgeMs` usually means that no process handles the name, or that the workers cannot keep up.
+Blocked jobs, on a full key or on a rate key without quota, count in `pending`, not in `due`. A job held back by a
+local rate limit stays pending and due. A growing `oldestDueAgeMs` usually means that no process handles the name, or
+that the workers cannot keep up. A growing `pending` with few `due` jobs can mean that a rate limit is below the rate
+of the enqueues.
 
 ## `wake`
 
@@ -819,22 +909,24 @@ nothing.
 All the errors of sqlane extend `SqlaneError`. Each error has a stable `code` that you can check. All the classes are
 exported from `@sqlane/core`.
 
-| Class                          | `code`                      | When                                                                                                                                                                                                                                                   |
-| ------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ConfigError`                  | `CONFIG`                    | The options of `createSqlane`, `defineJob`, `handle()`, `schedule()`, an adapter or `getMigrations` are bad. `start()` and `drain()` also throw it for a bad failure job. `start()` throws it for a bad schedule, or a missing table of the schedules. |
-| `InvalidOptionsError`          | `INVALID_OPTIONS`           | The arguments of `enqueue` or `enqueueMany` are bad, for example a bad name or `jobId`, a `jobId` with the reserved prefix `schedule:`, `slot` with `jobId`, `delay` with `runAt`, or a payload that is not JSON.                                      |
-| `PayloadTooLargeError`         | `PAYLOAD_TOO_LARGE`         | The payload is larger than `maxPayloadBytes`.                                                                                                                                                                                                          |
-| `InvalidConcurrencyLimitError` | `INVALID_CONCURRENCY_LIMIT` | A job has more than 10 global keys, a key breaks the rules, a key has two maxes, or a global limit is not from `defineConcurrencyLimit`.                                                                                                               |
-| `UnknownJobError`              | `UNKNOWN_JOB`               | `enqueue` got an unknown job name, and `unknownJobs` is `'reject'`.                                                                                                                                                                                    |
-| `ClosedError`                  | `CLOSED`                    | `start`, `handle`, `schedule` or `drain` was called after `close()`.                                                                                                                                                                                   |
-| `DrainTimeoutError`            | `DRAIN_TIMEOUT`             | `drain()` did not finish within its `timeout`.                                                                                                                                                                                                         |
-| `JobTimeoutError`              | `JOB_TIMEOUT`               | The handler's `signal` aborted because the timeout passed. It is also the error of the attempt.                                                                                                                                                        |
-| `ShutdownError`                | `SHUTDOWN`                  | The handler's `signal` aborted because `close()` reached its deadline.                                                                                                                                                                                 |
-| `LeaseLostError`               | `LEASE_LOST`                | The handler's `signal` aborted because the process could not renew the lease until 30 s before it ends, for example because the database is unreachable.                                                                                               |
-| `MissingPayloadError`          | `MISSING_PAYLOAD`           | sqlane did not find the payload of a job. The job fails for good with this error.                                                                                                                                                                      |
-| `MigrationLockTimeoutError`    | `MIGRATION_LOCK_TIMEOUT`    | `migrate()` did not get the migration lock within its `lockTimeout`.                                                                                                                                                                                   |
-| `FatalJobError`                | `FATAL_JOB`                 | A handler threw it to fail the job at once. See below.                                                                                                                                                                                                 |
-| `RetryJobError`                | `RETRY_JOB`                 | A handler threw it to retry the job after a given delay. See below.                                                                                                                                                                                    |
+| Class                          | `code`                      | When                                                                                                                                                                                                                                                                                              |
+| ------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ConfigError`                  | `CONFIG`                    | The options of `createSqlane`, `defineJob`, `handle()`, `schedule()`, an adapter or `getMigrations` are bad. `start()` and `drain()` also throw it for a bad failure job. `start()` throws it for a bad schedule, or a missing table of the schedules.                                            |
+| `InvalidOptionsError`          | `INVALID_OPTIONS`           | The arguments of `enqueue` or `enqueueMany` are bad, for example a bad name or `jobId`, a `jobId` with the reserved prefix `schedule:`, `slot` with `jobId`, `delay` with `runAt`, or a payload that is not JSON.                                                                                 |
+| `PayloadTooLargeError`         | `PAYLOAD_TOO_LARGE`         | The payload is larger than `maxPayloadBytes`.                                                                                                                                                                                                                                                     |
+| `InvalidConcurrencyLimitError` | `INVALID_CONCURRENCY_LIMIT` | A job has more than 10 global keys, a key breaks the rules, a key has two maxes, or a global limit is not from `defineConcurrencyLimit`.                                                                                                                                                          |
+| `InvalidRateLimitError`        | `INVALID_RATE_LIMIT`        | A job has more than 10 global keys of concurrency and rate limits together, a rate key breaks the rules, a rate key has two settings, or a global rate limit is not from `defineRateLimit`. `limit.key()` or `limit.cost()` got a bad value or cost, or `new RateLimitedError()` got bad options. |
+| `UnknownJobError`              | `UNKNOWN_JOB`               | `enqueue` got an unknown job name, and `unknownJobs` is `'reject'`.                                                                                                                                                                                                                               |
+| `ClosedError`                  | `CLOSED`                    | `start`, `handle`, `schedule` or `drain` was called after `close()`.                                                                                                                                                                                                                              |
+| `DrainTimeoutError`            | `DRAIN_TIMEOUT`             | `drain()` did not finish within its `timeout`.                                                                                                                                                                                                                                                    |
+| `JobTimeoutError`              | `JOB_TIMEOUT`               | The handler's `signal` aborted because the timeout passed. It is also the error of the attempt.                                                                                                                                                                                                   |
+| `ShutdownError`                | `SHUTDOWN`                  | The handler's `signal` aborted because `close()` reached its deadline.                                                                                                                                                                                                                            |
+| `LeaseLostError`               | `LEASE_LOST`                | The handler's `signal` aborted because the process could not renew the lease until 30 s before it ends, for example because the database is unreachable.                                                                                                                                          |
+| `MissingPayloadError`          | `MISSING_PAYLOAD`           | sqlane did not find the payload of a job. The job fails for good with this error.                                                                                                                                                                                                                 |
+| `MigrationLockTimeoutError`    | `MIGRATION_LOCK_TIMEOUT`    | `migrate()` did not get the migration lock within its `lockTimeout`.                                                                                                                                                                                                                              |
+| `FatalJobError`                | `FATAL_JOB`                 | A handler threw it to fail the job at once. See below.                                                                                                                                                                                                                                            |
+| `RetryJobError`                | `RETRY_JOB`                 | A handler threw it to retry the job after a given delay. See below.                                                                                                                                                                                                                               |
+| `RateLimitedError`             | `RATE_LIMITED`              | A handler threw it because the other side limits the rate: the job waits for its rate limit. See below.                                                                                                                                                                                           |
 
 ```js
 import { SqlaneError } from '@sqlane/core';
@@ -851,7 +943,7 @@ try {
 
 ### Errors that handlers throw
 
-A handler can throw two special errors to control what happens next.
+A handler can throw three special errors to control what happens next.
 
 `FatalJobError` fails the job at once, without retries. If the job has a failure job, sqlane adds it.
 
@@ -859,9 +951,9 @@ A handler can throw two special errors to control what happens next.
 new FatalJobError(message: string, options?: { cause?: unknown })
 ```
 
-`RetryJobError` retries the job after `delay`, instead of after the backoff. This is useful for a rate limit. The retry
-still uses an attempt, so the job fails for good if no attempts are left. If `delay` is not a valid duration, sqlane
-uses the backoff.
+`RetryJobError` retries the job after `delay`, instead of after the backoff. The retry still uses an attempt, so the
+job fails for good if no attempts are left. If `delay` is not a valid duration, sqlane uses the backoff. For an answer
+such as HTTP 429, a `RateLimitedError` on a rate limit of the job uses no attempt.
 
 ```ts
 new RetryJobError(message: string, options: { delay: Duration, cause?: unknown })
@@ -877,10 +969,47 @@ sqlane.handle(buildReport, async ({ payload, signal }) => {
         throw new FatalJobError(`Report ${payload.reportId} does not exist`);
     }
 
-    if (response.status === 429) {
-        throw new RetryJobError('Rate limited', { delay: '1m' });
+    if (response.status === 503) {
+        throw new RetryJobError('Reports are down', { delay: '1m' });
     }
-}, { timeout: '5m' });
+});
+```
+
+`RateLimitedError` tells sqlane that the other side limits the rate, for example with an HTTP 429. The job waits
+without using an attempt, and so do the other jobs of the rate limit.
+
+```ts
+new RateLimitedError(options: { limit?: RateLimit | RateLimitKey, retryAfter: Duration, cause?: unknown })
+```
+
+`retryAfter` is a duration from 0 to 7 days. `limit` is a [rate limit](#defineratelimit) of the job, or one of its
+keys, as the definition returns it: `perToken.key(id)` for a job with that key, not `perToken`. The constructor throws
+an `InvalidRateLimitError` for bad options.
+
+| `limit`                                                    | What happens                                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A global rate key of the job                               | The key starts nothing for `retryAfter`, in the whole cluster. Its next start is at `retryAfter` from now, then one per `per / max`. The job is blocked on the key, without using an attempt, and its concurrency slots are freed. Newer jobs of the key wait behind it. |
+| A local rate limit of the job                              | The limit starts nothing in this process for `retryAfter`. The job is pending again at once, without using an attempt, so another process may run it now.                                                                                                                |
+| Not given                                                  | All the rate limits of the job, global and local, as above.                                                                                                                                                                                                              |
+| Not a rate limit of the job, or the job has no rate limits | The job is retried after `retryAfter`, as with a `RetryJobError`: it uses an attempt, and sqlane emits `retried`.                                                                                                                                                        |
+
+A pause only extends the wait of a key: a shorter `retryAfter` never brings its next start closer. sqlane emits a
+`rate_limited` event for each wait. There is no cap: a job that always gets a 429 waits again and again, and never
+fails.
+
+```js
+import { RateLimitedError } from '@sqlane/core';
+
+sqlane.handle(syncRepo, async ({ payload, signal }) => {
+    const response = await fetch(`https://api.github.com/repos/${payload.repo}`, { signal });
+
+    if (response.status === 429) {
+        // Retry-After in seconds
+        const seconds = Number(response.headers.get('retry-after')) || 60;
+
+        throw new RateLimitedError({ limit: perToken.key(payload.tokenId), retryAfter: `${seconds}s` });
+    }
+});
 ```
 
 If a handler throws a value that is not an `Error`, sqlane records it as an error with the name `Error` and the value
@@ -899,19 +1028,20 @@ Every event except `error` and `schedule_fired` has these fields:
 | `jobName` | `string` | The job name.                                                                                               |
 | `attempt` | `number` | The attempt, starting at 1. When stall recovery emits the event, it is the attempt of the run that stalled. |
 
-| `type`                  | Extra fields                                            | When                                                                                                                                                                                                                                                                                   |
-| ----------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `claimed`               | None                                                    | This process claimed the job and starts its handler.                                                                                                                                                                                                                                   |
-| `completed`             | `durationMs`                                            | The job completed.                                                                                                                                                                                                                                                                     |
-| `retried`               | `durationMs`, `delayMs`, `error`                        | The attempt failed, and the job will run again after `delayMs`.                                                                                                                                                                                                                        |
-| `failed`                | `durationMs`, `error`                                   | The job failed for good. Stall recovery also emits it when a job stalls too often. `durationMs` is then the time from the start of the run that stalled until its recovery.                                                                                                            |
-| `timed_out`             | `durationMs`                                            | The handler ran longer than its timeout, and its `signal` aborted.                                                                                                                                                                                                                     |
-| `stalled`               | None                                                    | Stall recovery found a job whose lease had ended, and put it back in the queue.                                                                                                                                                                                                        |
-| `released`              | None                                                    | `close()` released an unfinished job in `'release'` mode.                                                                                                                                                                                                                              |
-| `lease_lost`            | None                                                    | This process could not renew the lease of the job until 30 s before it ends, and aborted its `signal`.                                                                                                                                                                                 |
-| `failure_job_not_added` | `failureJob`, `error`                                   | The job failed for good, but the database refused to add its failure job.                                                                                                                                                                                                              |
-| `error`                 | `operation`, `error`                                    | An internal operation failed, for example a poll or a hint. `operation` names it. sqlane also logs it. A deadlock, serialization failure or `ER_CHECKREAD` (1020) of the dispatcher is retried at once, up to 3 times, before it is reported; a lock wait timeout is reported at once. |
-| `schedule_fired`        | `scheduleId`, `jobName`, `scheduledAt`, `late`, `jobId` | A slot of a [schedule](#schedule) was decided. Only the process that decided it emits it, so the cluster gets one event per slot. `late` is true for a catch-up. `jobId` is `null` when `overlap: 'skip'` skipped the slot. It has no `attempt`.                                       |
+| `type`                  | Extra fields                                              | When                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claimed`               | None                                                      | This process claimed the job and starts its handler.                                                                                                                                                                                                                                                                                                  |
+| `completed`             | `durationMs`                                              | The job completed.                                                                                                                                                                                                                                                                                                                                    |
+| `retried`               | `durationMs`, `delayMs`, `error`                          | The attempt failed, and the job will run again after `delayMs`.                                                                                                                                                                                                                                                                                       |
+| `failed`                | `durationMs`, `error`                                     | The job failed for good. Stall recovery also emits it when a job stalls too often. `durationMs` is then the time from the start of the run that stalled until its recovery.                                                                                                                                                                           |
+| `timed_out`             | `durationMs`                                              | The handler ran longer than its timeout, and its `signal` aborted.                                                                                                                                                                                                                                                                                    |
+| `stalled`               | None                                                      | Stall recovery found a job whose lease had ended, and put it back in the queue.                                                                                                                                                                                                                                                                       |
+| `released`              | None                                                      | `close()` released an unfinished job in `'release'` mode.                                                                                                                                                                                                                                                                                             |
+| `lease_lost`            | None                                                      | This process could not renew the lease of the job until 30 s before it ends, and aborted its `signal`.                                                                                                                                                                                                                                                |
+| `rate_limited`          | `durationMs`, `limit`, `key`, `scope`, `retryAt`, `error` | The handler threw a [`RateLimitedError`](#errors-that-handlers-throw) on a rate limit of the job. The job waits, without using an attempt, until about `retryAt`. `limit` is the name of the limit it waits on, `key` its key (`null` for a limit without keys, and for a local limit), `scope` `'global'` or `'local'`. `drain()` does not count it. |
+| `failure_job_not_added` | `failureJob`, `error`                                     | The job failed for good, but the database refused to add its failure job.                                                                                                                                                                                                                                                                             |
+| `error`                 | `operation`, `error`                                      | An internal operation failed, for example a poll or a hint. `operation` names it. sqlane also logs it. A deadlock, serialization failure or `ER_CHECKREAD` (1020) of the dispatcher is retried at once, up to 3 times, before it is reported; a lock wait timeout is reported at once.                                                                |
+| `schedule_fired`        | `scheduleId`, `jobName`, `scheduledAt`, `late`, `jobId`   | A slot of a [schedule](#schedule) was decided. Only the process that decided it emits it, so the cluster gets one event per slot. `late` is true for a catch-up. `jobId` is `null` when `overlap: 'skip'` skipped the slot. It has no `attempt`.                                                                                                      |
 
 `durationMs` is the run time of the handler in milliseconds. `error` is the thrown value, of type `unknown`.
 
