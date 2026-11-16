@@ -494,15 +494,6 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
         WITH k AS (
             SELECT DISTINCT unnest(${arrayParam(1, 'text')}) AS limit_key
         ),
-        queue AS (
-            SELECT k.limit_key, b.id, b.run_at, b.rate_limits FROM k
-             CROSS JOIN LATERAL (
-                 SELECT j.id, j.run_at, j.rate_limits FROM ${p}jobs j
-                  WHERE j.status = 'blocked' AND j.blocked_on = k.limit_key
-                  ORDER BY j.run_at, j.id LIMIT ${RATE_UNBLOCK_BATCH + 1}
-                    FOR UPDATE SKIP LOCKED
-             ) AS b
-        ),
         debt AS (
             SELECT k.limit_key,
                    GREATEST(
@@ -513,19 +504,37 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
               LEFT JOIN unnest(${arrayParam(2, 'text')}, ${arrayParam(3, 'bigint')}) AS f(limit_key, debt)
                 ON f.limit_key = k.limit_key
         ),
+        -- Of each key, the oldest blocked jobs: as many as fit by the settings of the oldest one (lim), and one more.
+        -- So the read is as long as the prefix, not as the queue: a key that admits one job reads two, not a batch
+        queue AS (
+            SELECT debt.limit_key, debt.debt, head.lim, b.id, b.run_at, b.rate_limits FROM debt
+             CROSS JOIN LATERAL (
+                 SELECT LEAST(GREATEST((e.allow - debt.debt) / e.inc, 0), ${RATE_UNBLOCK_BATCH}) AS lim
+                   FROM ${p}jobs j
+                  CROSS JOIN LATERAL ${rateLimitsOf('j.rate_limits')}
+                  WHERE j.status = 'blocked' AND j.blocked_on = debt.limit_key AND e.key = debt.limit_key
+                  ORDER BY j.run_at, j.id LIMIT 1
+             ) AS head
+             CROSS JOIN LATERAL (
+                 SELECT j.id, j.run_at, j.rate_limits FROM ${p}jobs j
+                  WHERE j.status = 'blocked' AND j.blocked_on = debt.limit_key
+                  ORDER BY j.run_at, j.id LIMIT head.lim + 1
+                    FOR UPDATE SKIP LOCKED
+             ) AS b
+        ),
         need AS (
-            SELECT queue.limit_key, queue.id, queue.run_at, e.inc, e.allow,
-                   debt.debt + SUM(e.inc) OVER (PARTITION BY queue.limit_key ORDER BY queue.run_at, queue.id) AS need,
+            SELECT queue.limit_key, queue.id, queue.run_at, queue.lim, e.inc, e.allow,
+                   queue.debt + SUM(e.inc) OVER (PARTITION BY queue.limit_key ORDER BY queue.run_at, queue.id) AS need,
                    ROW_NUMBER() OVER (PARTITION BY queue.limit_key ORDER BY queue.run_at, queue.id) AS n
               FROM queue
-              JOIN debt ON debt.limit_key = queue.limit_key
              CROSS JOIN LATERAL ${rateLimitsOf('queue.rate_limits')}
              WHERE e.key = queue.limit_key
         ),
-        -- A prefix of each queue: up to the first job that does not fit
+        -- A prefix of each queue: up to the first job that does not fit, or the one after the read's bound (a job of
+        -- other settings may fit there: it waits for the next unblock, at once, like the one after a full batch)
         marked AS (
             SELECT need.*,
-                   bool_or(need.need > need.allow OR need.n > ${RATE_UNBLOCK_BATCH})
+                   bool_or(need.need > need.allow OR need.n > need.lim)
                        OVER (PARTITION BY need.limit_key ORDER BY need.run_at, need.id) AS held_back
               FROM need
         ),
@@ -535,21 +544,25 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
             RETURNING j.job_name, marked.limit_key
         ),
         -- Of each key, the first job held back: its wait after the prefix; else the last one of the prefix: the wait of a
-        -- job like it after the prefix (admitQueue)
+        -- job like it after the prefix (admitQueue). The debt after the prefix: the need of its last job (null: none)
         waits AS (
             SELECT DISTINCT ON (limit_key) limit_key, held_back AS left_over,
-                   GREATEST(CASE WHEN held_back THEN need - allow ELSE need + inc - allow END, 0) AS wait_us
+                   GREATEST(CASE WHEN held_back THEN need - allow ELSE need + inc - allow END, 0) AS wait_us,
+                   CASE WHEN NOT held_back THEN need WHEN n > 1 THEN need - inc END AS debt_us
               FROM marked
              ORDER BY limit_key, held_back DESC, CASE WHEN held_back THEN n ELSE -n END
+        ),
+        counts AS (
+            SELECT limit_key, count(*) AS unblocked FROM unblocked GROUP BY limit_key
         )
         SELECT (SELECT json_agg(DISTINCT job_name) FROM unblocked)::text AS names,
                (
                    SELECT json_agg(json_build_object(
                        'key', w.limit_key, 'waitUs', w.wait_us, 'left', w.left_over,
-                       'unblocked', (SELECT count(*) FROM unblocked u WHERE u.limit_key = w.limit_key),
-                       'debtUs', (SELECT max(m.need) FROM marked m WHERE m.limit_key = w.limit_key AND NOT m.held_back)
+                       'unblocked', COALESCE(c.unblocked, 0), 'debtUs', w.debt_us
                    ))
                      FROM waits w
+                     LEFT JOIN counts c ON c.limit_key = w.limit_key
                )::text AS waits
     `, [keys, [...floors.keys()], [...floors.values()].map(Math.round)]);
     /** @type {{ key: string, waitUs: number, left: boolean, unblocked: number, debtUs: number | null }[]} */
