@@ -759,7 +759,11 @@ describe('RateLimitedError', () => {
                 { job_name: 'call', status: 'completed', attempts: 1 },
                 { job_name: 'plain', status: 'completed', attempts: 1 },
             ]);
-            expect(events.filter(event => event.type === 'retried')).toMatchObject([
+            // The two jobs run at once: their events come in either order
+            const retried = events.filter(event => event.type === 'retried')
+                .toSorted((a, b) => a.jobName.localeCompare(b.jobName));
+
+            expect(retried).toMatchObject([
                 { jobName: 'call', delayMs: 100 },
                 { jobName: 'plain', delayMs: 50 },
             ]);
