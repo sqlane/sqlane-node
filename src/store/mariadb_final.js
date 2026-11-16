@@ -628,6 +628,9 @@ async function admitLocked(executor, p, keys) {
  * @returns {Promise<import('./store.js').SweepResult>}
  */
 export async function sweepSlots(executor, p, limit) {
+    // One DELETE, not the SKIP LOCKED read and the DELETE by primary key of MySQL: on 10.11 that DELETE by a list of
+    // keys waited for a neighbor row deleted by another sweep, and two sweeps deadlocked; this one did not, under the
+    // same load (test/integration/claim.test.js). A deadlock left runs the sweep again (store.js)
     const lingers = await executor.run(`DELETE FROM ${p}concurrency_slots WHERE held_until < ${NOW} LIMIT ?`, [limit]);
     const orphanSlots = await executor.query(`
         SELECT s.limit_key, s.slot FROM ${p}concurrency_slots s

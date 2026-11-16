@@ -525,6 +525,14 @@ limit without keys. A key of a limit of 1 is a mutex.
   release on close while the handler still runs. The slots then stay until `exitsBy` plus 2 s (see [Close](#close)).
   The second case is a stall. The slots then stay for one lease, because the old handler may still run. So the old run
   and the new run do not overlap, unless a handler ignores its `signal` past the lease or past `exitsBy`.
+- **Sweep.** A claim takes over an ended linger; the stall recovery deletes the others, 100 at a time, then the orphan
+  slots, then unblocks. On MySQL it locks the ended lingers first, in the order of `(key, slot)`, with SKIP LOCKED, and
+  deletes them by primary key: a `DELETE … LIMIT` scans the table, waits for the slots that claims and releases hold,
+  and holds the lingers that it already deleted, which they may wait for. A locked linger goes at the next sweep.
+  PostgreSQL deletes them with SKIP LOCKED too. MariaDB keeps the one `DELETE`: the two statements deadlocked between
+  concurrent sweeps on 10.11, the `DELETE` did not under the same load. A deadlock, a serialization failure or a 1020
+  that is left runs the sweep again at once, after 5–30 ms, up to 3 times, as a turn of the dispatcher; then it is an
+  `error` event.
 - **A job with global limits needs a timeout.** The lease is renewed while a handler runs. Without a timeout, a hung
   handler would hold its slots in the whole cluster forever. So `handle()` throws a `ConfigError` if the definition has
   `globalConcurrencyLimits` and no timeout. A job can also get limits only from its enqueue options. If its handler has

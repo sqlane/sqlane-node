@@ -1749,6 +1749,9 @@ function runnerOf(registry, store, localMaxConcurrency, events = []) {
                 new Set(jobs.map(job => job.id))
             ),
             findStaleJobs: async () => [],
+            // The recovery timer: its first run comes at recoveryIntervalMs × Math.random(), at times during a test
+            sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
+            deleteIdleRateKeys: async () => 0,
             ...store,
         }),
         registry,

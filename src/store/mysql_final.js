@@ -624,7 +624,17 @@ async function admitLocked(executor, p, keys) {
  * @returns {Promise<import('./store.js').SweepResult>}
  */
 export async function sweepSlots(executor, p, limit) {
-    const lingers = await executor.run(`DELETE FROM ${p}concurrency_slots WHERE held_until < ${NOW} LIMIT ?`, [limit]);
+    // SKIP LOCKED, then by primary key: a DELETE that scans waits for the slots that claims and releases hold, while it
+    // holds the lingers that it deleted, which they may wait for: a deadlock. A locked linger goes at the next sweep
+    const ended = await executor.query(`
+        SELECT limit_key, slot FROM ${p}concurrency_slots WHERE held_until < ${NOW}
+         ORDER BY limit_key, slot LIMIT ? FOR UPDATE SKIP LOCKED
+    `, [limit]);
+    const lingers = ended.length
+        ? await executor.run(`
+            DELETE FROM ${p}concurrency_slots WHERE (limit_key, slot) IN (${ended.map(() => '(?, ?)').join(', ')})
+        `, ended.flatMap(row => [String(row.limit_key), Number(row.slot)]))
+        : 0;
     const orphanSlots = await executor.query(`
         SELECT s.limit_key, s.slot FROM ${p}concurrency_slots s
          WHERE s.held_until IS NULL AND NOT EXISTS (

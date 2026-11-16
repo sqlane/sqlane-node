@@ -286,7 +286,8 @@ export type Store = {
     }) => Promise<StaleJobResult>;
     /**
      * Deletes the ended lingers and the orphan slots, then
-     * unblocks the jobs blocked on keys with room, and on rate keys whose next start is due.
+     * unblocks the jobs blocked on keys with room, and on rate keys whose next start is due. A deadlock, a
+     * serialization failure or a 1020 runs it again at once, up to 3 times.
      */
     sweepSlots: (limit: number) => Promise<SweepResult>;
     /**
@@ -525,7 +526,8 @@ export type SweepResult = {
  * @property {(id: string, params: { leaseMs: number, buildFailureJob: FailureJobBuilder })
  *     => Promise<StaleJobResult>} recoverStaleJob
  * @property {(limit: number) => Promise<SweepResult>} sweepSlots Deletes the ended lingers and the orphan slots, then
- *     unblocks the jobs blocked on keys with room, and on rate keys whose next start is due.
+ *     unblocks the jobs blocked on keys with room, and on rate keys whose next start is due. A deadlock, a
+ *     serialization failure or a 1020 runs it again at once, up to 3 times.
  * @property {(limit: number) => Promise<number>} deleteIdleRateKeys Deletes a batch of rows of rate keys whose tat
  *     passed: the same as no row. SKIP LOCKED.
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs

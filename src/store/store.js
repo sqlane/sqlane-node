@@ -1,4 +1,5 @@
 // The store: the SQL of one dialect, bound to an adapter and a table prefix.
+import { setTimeout as sleep } from 'node:timers/promises';
 import * as mariadbFinal from './mariadb_final.js';
 import * as mariadbSchedules from './mariadb_schedules.js';
 import * as mariadbWorker from './mariadb_worker.js';
@@ -9,7 +10,15 @@ import * as postgresFinal from './postgres_final.js';
 import * as postgresSchedules from './postgres_schedules.js';
 import * as postgresWorker from './postgres_worker.js';
 import { isRateKey } from '../rate_keys.js';
-import { isUnknownSystemVariableError } from '../transient_error.js';
+import { isQuickRetryError, isUnknownSystemVariableError } from '../transient_error.js';
+
+/**
+ * A sweep of the slots that fails with a deadlock-like error runs again at once this many times, after 5 to 30 ms, as a
+ * turn of the dispatcher; then it rejects
+ */
+const MAX_SWEEP_RETRIES = 3;
+const SWEEP_RETRY_MIN_MS = 5;
+const SWEEP_RETRY_JITTER_MS = 25;
 
 /**
  * @typedef {object} ProbeRow
@@ -202,7 +211,8 @@ import { isUnknownSystemVariableError } from '../transient_error.js';
  * @property {(id: string, params: { leaseMs: number, buildFailureJob: FailureJobBuilder })
  *     => Promise<StaleJobResult>} recoverStaleJob
  * @property {(limit: number) => Promise<SweepResult>} sweepSlots Deletes the ended lingers and the orphan slots, then
- *     unblocks the jobs blocked on keys with room, and on rate keys whose next start is due.
+ *     unblocks the jobs blocked on keys with room, and on rate keys whose next start is due. A deadlock, a
+ *     serialization failure or a 1020 runs it again at once, up to 3 times.
  * @property {(limit: number) => Promise<number>} deleteIdleRateKeys Deletes a batch of rows of rate keys whose tat
  *     passed: the same as no row. SKIP LOCKED.
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
@@ -317,6 +327,31 @@ export function createStore(adapter, tablePrefix, logger) {
         }
     }
 
+    /**
+     * The sweep in a transaction. Its locks meet those of the claims, releases and other sweeps of the same slots, in
+     * other orders: a deadlock (or a serialization failure, a 1020) says nothing about the next try, so it runs again
+     * at once, as a turn of the dispatcher. Not a lock wait timeout: the lock is likely still held.
+     * @param {number} limit
+     * @returns {Promise<SweepResult>}
+     */
+    async function sweepSlots(limit) {
+        for (let retry = 1; ; retry++) {
+            try {
+                // oxlint-disable-next-line no-await-in-loop -- one try after the other
+                return await inQueue(executor => final.sweepSlots(executor, p, limit));
+            } catch (error) {
+                if (!isQuickRetryError(error) || retry > MAX_SWEEP_RETRIES) {
+                    throw error;
+                }
+
+                logger?.debug({ error, operation: 'sweep_slots', retry },
+                    'sqlane: the sweep of the slots failed with a transient error, retried at once');
+                // oxlint-disable-next-line no-await-in-loop -- one try after the other
+                await sleep(SWEEP_RETRY_MIN_MS + (Math.random() * SWEEP_RETRY_JITTER_MS));
+            }
+        }
+    }
+
     /** @type {(params: ClaimDueParams) => Promise<ClaimDueResult>} */
     const claimDueInQueue = adapter.dialect === 'mariadb'
         ? claimDueMariadb
@@ -381,7 +416,7 @@ export function createStore(adapter, tablePrefix, logger) {
 
             return { names, waits: waits.map(({ key, delayMs, debtUs, left }) => ({ key, delayMs, debtUs, left })) };
         },
-        sweepSlots: limit => inQueue(executor => final.sweepSlots(executor, p, limit)),
+        sweepSlots,
         deleteIdleRateKeys: limit => inQueue(executor => final.deleteIdleRateKeys(executor, p, limit)),
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
         makeDue: names => inQueue(executor => final.makeDue(executor, p, names)),
