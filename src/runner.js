@@ -8,7 +8,6 @@ import {
     ConfigError,
     DrainTimeoutError,
     InvalidOptionsError,
-    LeaseLostError,
     ShutdownError,
 } from './errors.js';
 import { createFailureJobs } from './failure_jobs.js';
@@ -17,6 +16,7 @@ import { chooseRows, fill, rankNames, replayTie, shareNamesOfRequests } from './
 import { incrementUs, waitUs } from './gcra.js';
 import { createJobRuns, waitAtMost } from './job_runs.js';
 import { createKeyUnblocks } from './key_unblocks.js';
+import { createLeases } from './leases.js';
 import {
     createLocalRateWakes,
     limitRoom,
@@ -126,14 +126,6 @@ export function createRunner({
     random = Math.random,
 }) {
     const t = { ...DEFAULT_TIMINGS, ...timings };
-    /** How long a renewal of the leases is waited for: a later one counts as failed */
-    const renewWaitMs = t.renewIntervalMs;
-    /** The most time between two checks of the leases: the jitter of the timer (× 1.1), then the wait of a renewal */
-    const maxRenewGapMs = (1.1 * t.renewIntervalMs) + renewWaitMs;
-    /** A renewal of the leases waits for the store */
-    let renewing = false;
-    /** The renewal timer runs: while handlers run, in every state but closed */
-    let renewalTimerOn = false;
     const lockedBy = `${hostname()}:${process.pid}:${createMonotonicUlid()()}`;
     const lockToken = createMonotonicUlid();
     /** @type {RunnerState} */
@@ -256,6 +248,15 @@ export function createRunner({
             onEnqueued([name]);
             hintChannel.publish(name);
         },
+    });
+    const { keepRenewing: keepRenewingLeases } = createLeases({
+        store,
+        running,
+        timings: t,
+        state: () => state,
+        setTimer,
+        emit,
+        reportError,
     });
     const { runJob } = createJobRuns({
         store,
@@ -1134,129 +1135,6 @@ export function createRunner({
     }
 
     // ---- timers ----
-
-    /**
-     * A job whose lease is not renewed `renewIntervalMs` before it ends loses it: another process may take the job
-     * after. The next check can come too late for that (see `maxRenewGapMs`): a timer then checks at that time.
-     * @param {RunningJob} job
-     */
-    function checkLease(job) {
-        if (job.released || job.leaseLost || running.get(job.key) !== job) {
-            return;
-        }
-
-        const lostInMs = job.leaseEndsAt - t.renewIntervalMs - Date.now();
-
-        if (lostInMs > 0) {
-            if (lostInMs <= maxRenewGapMs) {
-                setTimer(() => checkLease(job), lostInMs);
-            }
-
-            return;
-        }
-
-        job.leaseLost = true;
-        job.controller.abort(new LeaseLostError(`The lease of job "${job.claimed.id}" was lost`));
-        emit({
-            type: 'lease_lost',
-            jobId: job.claimed.id,
-            jobName: job.claimed.name,
-            attempt: job.claimed.attempts + 1,
-        });
-    }
-
-    /** @returns {boolean} No lease to renew. A function: the state changes while a renewal waits. */
-    function renewalStops() {
-        return state === 'closed' || running.size === 0;
-    }
-
-    /**
-     * Renews the leases while handlers run: also while close() waits for them and during drain(), not only when
-     * started. The timer stops when no handler runs; the next claimed job starts it again.
-     */
-    function keepRenewingLeases() {
-        if (renewalTimerOn) {
-            return;
-        }
-
-        renewalTimerOn = true;
-
-        const run = async () => {
-            if (renewalStops()) {
-                renewalTimerOn = false;
-
-                return;
-            }
-
-            try {
-                await renewLeases();
-            } catch (error) {
-                reportError('renew_leases', error);
-            }
-
-            if (renewalStops()) {
-                renewalTimerOn = false;
-
-                return;
-            }
-
-            setTimer(run, t.renewIntervalMs * (0.9 + (Math.random() * 0.2)));
-        };
-
-        setTimer(run, t.renewIntervalMs * (0.9 + (Math.random() * 0.2)));
-    }
-
-    async function renewLeases() {
-        const jobs = [...running.values()].filter(job => !job.released && !job.leaseLost);
-
-        if (!jobs.length) {
-            return;
-        }
-
-        const renewedAt = Date.now();
-        /** @type {Set<string> | null} */
-        let renewed = null;
-
-        // A renewal that still waits (a pool with no free connection) is not started again: its result is dropped
-        if (!renewing) {
-            const controller = new AbortController();
-
-            try {
-                renewing = true;
-
-                const renewal = (async () => {
-                    try {
-                        return await store.renewLeases(jobs.map(job => job.claimed), t.leaseMs);
-                    } finally {
-                        renewing = false;
-                    }
-                })();
-
-                // The race handles the rejections of the renewal and of the aborted timer
-                renewed = await Promise.race([
-                    renewal,
-                    sleep(renewWaitMs, null, { signal: controller.signal, ref: false }),
-                ]);
-
-                if (!renewed) {
-                    reportError('renew_leases', new Error(`The renewal of the leases took more than ${renewWaitMs} ms`));
-                }
-            } catch (error) {
-                reportError('renew_leases', error);
-            } finally {
-                controller.abort();
-            }
-        }
-
-        for (const job of jobs) {
-            if (renewed?.has(job.claimed.id) && !job.leaseLost) {
-                job.leaseEndsAt = renewedAt + t.leaseMs;
-            } else {
-                // Not renewed: it throws, it hangs, or the job is not this process's any more
-                checkLease(job);
-            }
-        }
-    }
 
     async function recoverStaleJobs() {
         const ownIds = new Set([...running.values()].map(job => job.claimed.id));
