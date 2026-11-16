@@ -1,8 +1,6 @@
 export type ClaimedJob = import('./store/store.js').ClaimedJob;
 export type HandlerEntry = import('./registry.js').HandlerEntry;
-export type LimitState = import('./registry.js').LimitState;
-export type RateState = import('./registry.js').RateState;
-export type LocalLimit = LimitState | RateState;
+export type RunningJob = import('./job_runs.js').RunningJob;
 export type Timings = {
     leaseMs: number;
     renewIntervalMs: number;
@@ -18,6 +16,9 @@ export type Timings = {
      */
     missingPayloadGraceMs: number;
 };
+/** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
+/** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
+/** @typedef {import('./job_runs.js').RunningJob} RunningJob */
 /**
  * @typedef {object} Timings
  * @property {number} leaseMs
@@ -30,32 +31,7 @@ export type Timings = {
  */
 /** @type {Timings} */
 export declare const DEFAULT_TIMINGS: Timings;
-export type RunningJob = {
-    key: string;
-    claimed: ClaimedJob;
-    entry: HandlerEntry;
-    controller: AbortController;
-    /**
-     * Resolves when the result is written (or given up).
-     */
-    done: Promise<void>;
-    /**
-     * The handler settled.
-     */
-    settled: boolean;
-    /**
-     * Released or abandoned on close: the result is not written.
-     */
-    released: boolean;
-    timedOut: boolean;
-    leaseLost: boolean;
-    /**
-     * The completion batch changed every owned row.
-     */
-    completionConfirmed: boolean;
-    leaseEndsAt: number;
-    startedAt: number;
-};
+export type RunnerState = 'idle' | 'started' | 'draining' | 'closing' | 'closed';
 export type RunnerParams = {
     store: import('./store/store.js').Store;
     registry: import('./registry.js').Registry;
@@ -110,6 +86,36 @@ export type Runner = {
      */
     canStartNow: (name: string) => boolean;
 };
+/** @typedef {'idle' | 'started' | 'draining' | 'closing' | 'closed'} RunnerState */
+/**
+ * @typedef {object} RunnerParams
+ * @property {import('./store/store.js').Store} store
+ * @property {import('./registry.js').Registry} registry
+ * @property {number} localMaxConcurrency The instance's cap.
+ * @property {import('./defaults.js').ResolvedDefaults} defaults
+ * @property {boolean} cleanup
+ * @property {import('./types.js').Logger | undefined} logger
+ * @property {((event: import('./types.js').SqlaneEvent) => void) | undefined} onEvent
+ * @property {import('./hint_channel.js').HintChannel} hintChannel
+ * @property {boolean} hintsAfterCommit The hints come after the commit of their enqueue (PostgreSQL NOTIFY): they wake
+ *     at once, with no re-probes.
+ * @property {Partial<Timings>} [timings] For tests.
+ * @property {() => number} [random] For tests: the random start of the tie pointer.
+ */
+/**
+ * @typedef {object} Runner
+ * @property {() => Promise<void>} start
+ * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
+ * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
+ * @property {() => void} wake
+ * @property {(names: string[]) => void} onEnqueued An enqueue: its commit is to come.
+ * @property {(names: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.
+ * @property {() => boolean} isClosed
+ * @property {() => boolean} isStarted
+ * @property {() => boolean} isIdle Neither started, draining nor closed.
+ * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
+ * @property {(name: string) => boolean} canStartNow This process handles the name and has a free slot for it.
+ */
 /**
  * @param {RunnerParams} params
  * @returns {Runner}

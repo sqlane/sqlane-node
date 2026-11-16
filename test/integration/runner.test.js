@@ -557,8 +557,10 @@ describe('local rate limits', () => {
         // The burst
         expect(times[1] - times[0]).toBeLessThan(50);
 
+        // Then one each 100 ms: the k-th start is not before the first + (k - 1) × 100 ms. Not the gap between two
+        // starts: a start that its claim delays makes the next gap shorter, and the quota allows it
         for (let at = 2; at < times.length; at++) {
-            expect(times[at] - times[at - 1]).toBeGreaterThanOrEqual(85);
+            expect(times[at] - times[0]).toBeGreaterThanOrEqual(((at - 1) * 100) - 15);
         }
 
         // The timer, not the poll
