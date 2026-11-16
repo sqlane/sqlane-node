@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { expect, test } from 'vitest';
-import { insertJobsPostgres } from './postgres_enqueue.js';
+import { insertJobsPostgres, toJobInput } from './postgres_enqueue.js';
 import { insertScheduledJobsPostgres } from './postgres_schedules.js';
 
 /**
@@ -28,7 +28,7 @@ test('the enqueue statement is pinned: its prepared statement does not change by
 
     // Changed on purpose? Measure with `pnpm bench:regression`, then pin the new hash.
     expect(createHash('sha256').update(sql).digest('hex'))
-        .toBe('d0f4d836652a839144f84e51a0163e2a81dd3871295db9d729e81a6767203885');
+        .toBe('1224ad97b44388f056eb6e68af0511dbcd2aaf61c30e131978c6d4be417553d6');
 });
 
 test('the jobs of slots: one NOTIFY per name, run by a reference', async () => {
@@ -40,4 +40,26 @@ test('the jobs of slots: one NOTIFY per name, run by a reference', async () => {
     expect(sql).toMatch(/SELECT pg_notify\(\$3, d\.job_name\)\s+FROM \(SELECT DISTINCT job_name FROM inserted\) AS d/);
     expect(sql).toMatch(/SELECT id FROM inserted WHERE \(SELECT count\(\*\) FROM notified\) >= 0/);
     expect(params).toStrictEqual(['[]', 't', 'sqlane_ready']);
+});
+
+test('the input of a job: its rate limits as a JSON array, null without', () => {
+    /** @type {import('../new_job.js').NewJob} */
+    const job = {
+        id: 'a',
+        hasJobId: false,
+        name: 'a',
+        payloadJson: '{}',
+        limits: [],
+        rateLimits: [{ key: '@api', max: 10, per_us: 1_000_000, burst: 2, cost: 1 }],
+        maxAttempts: 1,
+        maxStalls: 0,
+        completedRetentionMs: 0,
+        failedRetentionMs: 0,
+        failureJob: null,
+        delayMs: 0,
+        runAt: null,
+    };
+
+    expect(toJobInput(job)).toMatchObject({ limit_keys: null, limit_maxes: null, rate_limits: job.rateLimits });
+    expect(toJobInput({ ...job, rateLimits: [] })).toMatchObject({ rate_limits: null });
 });

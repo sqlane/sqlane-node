@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, expect, test } from 'vitest';
-import { createSqlane, defineConcurrencyLimit, defineJob, InvalidOptionsError, UnknownJobError } from '../../src/index.js';
+import {
+    createSqlane,
+    defineConcurrencyLimit,
+    defineJob,
+    defineRateLimit,
+    InvalidOptionsError,
+    UnknownJobError,
+} from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
 
@@ -7,13 +14,13 @@ import { connectTestDatabase } from '../support/test_database.js';
 const READ_JOB_SQL = {
     mysql: p => `
         SELECT j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
-               j.limit_maxes, j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
+               j.limit_maxes, j.rate_limits, j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
                TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(3), j.run_at) DIV 1000 AS run_in_ms,
                TIMESTAMPDIFF(MICROSECOND, '1970-01-01', j.run_at) DIV 1000 AS run_at_ms
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id WHERE j.id = ?`,
     postgres: p => `
         SELECT j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
-               j.limit_maxes, j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
+               j.limit_maxes, j.rate_limits, j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
                (EXTRACT(EPOCH FROM j.run_at - clock_timestamp()) * 1000)::bigint AS run_in_ms,
                (EXTRACT(EPOCH FROM j.run_at) * 1000)::bigint AS run_at_ms
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id WHERE j.id = $1`,
@@ -114,6 +121,7 @@ test('adds the job in the caller\'s transaction, with the values frozen at enque
         max_stalls: 2,
         limit_keys: ['report:r1', 'reports'],
         limit_maxes: [1, 3],
+        rate_limits: null,
         failure_job: 'report_failed',
         completed_retention_ms: 600_000,
         failed_retention_ms: 2_592_000_000,
@@ -121,6 +129,28 @@ test('adds the job in the caller\'s transaction, with the values frozen at enque
     });
     expect(job?.run_in_ms).toBeGreaterThan(55_000);
     expect(job?.run_in_ms).toBeLessThanOrEqual(60_000);
+});
+
+test('the global rate limits: a JSON array sorted by key, with their settings in µs; the option replaces them', async () => {
+    const api = defineRateLimit({ name: 'report_api', max: 100, per: '1m', burst: 5 });
+    const limited = defineJob({
+        name: 'limited_report',
+        globalRateLimits: ({ payload }) => [api.key(payload.tenant, { cost: 2 }), api],
+        globalConcurrencyLimits: () => [reports],
+    });
+    const { id } = await inTransaction(connection => sqlane.enqueue(connection, limited, { tenant: 't1' }));
+    const [many, cleared] = await sqlane.enqueueMany(testAdapter.pool, limited, [
+        { payload: { tenant: 't2' }, options: { globalRateLimits: [api.cost(5)] } },
+        { payload: { tenant: 't3' }, options: { globalRateLimits: [] } },
+    ]);
+    const settings = { max: 100, per_us: 60_000_000, burst: 5 };
+
+    await expect(readJob(id)).resolves.toMatchObject({
+        limit_keys: ['reports'],
+        rate_limits: [{ key: '@report_api', ...settings, cost: 1 }, { key: '@report_api:t1', ...settings, cost: 2 }],
+    });
+    await expect(readJob(many.id)).resolves.toMatchObject({ rate_limits: [{ key: '@report_api', ...settings, cost: 5 }] });
+    await expect(readJob(cleared.id)).resolves.toMatchObject({ limit_keys: ['reports'], rate_limits: null });
 });
 
 test('a rollback adds no job', async () => {

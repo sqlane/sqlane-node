@@ -135,6 +135,22 @@ export function mysqlMigrations(p) {
                 `DROP TABLE IF EXISTS ${p}mutexes`,
             ],
         },
+        {
+            // Rate limits: the next allowed start of each rate key (its theoretical arrival time, GCRA), in µs; the
+            // rate keys of a job, frozen at enqueue with their settings, as a JSON array sorted by key. The ALTER TABLE
+            // comes last: MySQL has no ADD COLUMN IF NOT EXISTS, and a run cut after it fails on the column.
+            id: '0007_rate_limits',
+            statements: [
+                `CREATE TABLE IF NOT EXISTS ${p}rate_limits (
+                    limit_key VARCHAR(255) ${ASCII} NOT NULL,
+                    tat DATETIME(6) NOT NULL,
+                    PRIMARY KEY (limit_key),
+                    -- The sweep deletes the rows whose tat passed
+                    KEY ${p}rate_limits_tat (tat)
+                ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_bin`,
+                `ALTER TABLE ${p}jobs ADD COLUMN rate_limits JSON NULL AFTER limit_maxes`,
+            ],
+        },
     ];
 }
 

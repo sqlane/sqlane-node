@@ -2,8 +2,8 @@ import { expect, test } from 'vitest';
 import { ConfigError } from './errors.js';
 import { getMigrations } from './migrations.js';
 
-/** The migrations of 6.0 */
-const SIX = ['0005_concurrency_limits', '0006_concurrency_slots'];
+/** The migrations of 6.0, and of the rate limits */
+const SIX = ['0005_concurrency_limits', '0006_concurrency_slots', '0007_rate_limits'];
 
 test.each([
     // No 0003 on MySQL and MariaDB: the ids are matched, never counted
@@ -39,4 +39,23 @@ test('mariadb: the collation of MariaDB 10.11 (it has no utf8mb4_0900_bin)', () 
 
     expect(sql).toMatch(/COLLATE = utf8mb4_bin/);
     expect(sql).not.toMatch(/utf8mb4_0900_bin/);
+});
+
+test.each([
+    { dialect: 'mysql', time: /tat DATETIME\(6\) NOT NULL/, column: /ADD COLUMN rate_limits JSON NULL/,
+        index: /KEY q_rate_limits_tat \(tat\)/ },
+    { dialect: 'mariadb', time: /tat DATETIME\(6\) NOT NULL/, column: /ADD COLUMN IF NOT EXISTS rate_limits JSON NULL/,
+        index: /KEY q_rate_limits_tat \(tat\)/ },
+    { dialect: 'postgres', time: /tat timestamptz\(6\) NOT NULL/, column: /ADD COLUMN IF NOT EXISTS rate_limits jsonb/,
+        index: /CREATE INDEX IF NOT EXISTS q_rate_limits_tat ON q_rate_limits \(tat\)/ },
+])('$dialect: 0007_rate_limits: the table of the rate keys, in µs, with an index on tat, and the column of the jobs', ({
+    dialect, time, column, index,
+}) => {
+    const migrations = getMigrations({ dialect: /** @type {import('./types.js').Dialect} */ (dialect), tablePrefix: 'q_' });
+    const sql = migrations.find(({ id }) => id === '0007_rate_limits')?.statements.join('\n');
+
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS q_rate_limits /);
+    expect(sql).toMatch(time);
+    expect(sql).toMatch(column);
+    expect(sql).toMatch(index);
 });

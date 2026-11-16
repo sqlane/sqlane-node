@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Client } from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
-import { ConfigError, createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
+import { ConfigError, createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit } from '../../src/index.js';
 import { pgAdapter } from '../../src/adapters/pg.js';
 import { resolveDefaults } from '../../src/defaults.js';
 import { buildNewJob } from '../../src/new_job.js';
@@ -98,6 +98,14 @@ function query(sql, params = []) {
     let index = 0;
 
     return database.query(isPostgres ? sql.replaceAll('?', () => `$${++index}`) : sql, params);
+}
+
+/**
+ * @param {unknown} value A JSON column: a text or parsed, by the driver.
+ * @returns {unknown}
+ */
+function parsedJson(value) {
+    return typeof value === 'string' ? JSON.parse(value) : value;
 }
 
 /**
@@ -482,6 +490,34 @@ describe('the fire of the store', () => {
         expect(outcomes(results).filter(outcome => outcome === 'enqueued')).toHaveLength(1);
         expect(outcomes(results).filter(outcome => !['busy', 'lost'].includes(outcome))).toStrictEqual(['enqueued']);
         await expect(readJobs(p)).resolves.toMatchObject([{ id: `tick:schedule:${new Date(slot).toISOString()}` }]);
+    });
+
+    test('the job of a slot keeps its global limits and rate limits', async () => {
+        const { p } = await freshSqlane();
+        const slot = Math.floor((await dbNow()) / 1000) * 1000;
+        const api = defineRateLimit({ name: 'api', max: 10, per: '1s', burst: 2 });
+        const tenant = defineConcurrencyLimit({ name: 'tenant', max: 3 });
+
+        await register(p, ['tick'], slot - HOUR_MS);
+        await fire(p, [{ id: 'tick', slot }], {
+            buildJob: (/** @type {SlotCandidate} */ candidate) => buildNewJob({
+                name: candidate.name,
+                definition: null,
+                defaults,
+                payload: {},
+                options: {
+                    slot: { at: new Date(candidate.slot) },
+                    globalConcurrencyLimits: [tenant.key('eu')],
+                    globalRateLimits: [api.key('eu', { cost: 2 })],
+                },
+                maxPayloadBytes: 1024,
+            }),
+        });
+
+        const [job] = await query(`SELECT limit_keys, rate_limits FROM ${p}jobs`);
+
+        expect([job.limit_keys, job.rate_limits].map(parsedJson))
+            .toStrictEqual([['tenant:eu'], [{ key: '@api:eu', max: 10, per_us: 1_000_000, burst: 2, cost: 2 }]]);
     });
 
     test('a holder that sleeps under the lock: the others return at once, busy', async () => {
