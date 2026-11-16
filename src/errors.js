@@ -1,3 +1,7 @@
+import { parseDuration } from './duration.js';
+import { isRateLimit, isRateLimitKey, MAX_PER_MS, rateKeyOf } from './rate_limit_shape.js';
+import { checkObject } from './validate.js';
+
 /**
  * The base of the errors of sqlane.
  */
@@ -60,6 +64,21 @@ export class InvalidConcurrencyLimitError extends SqlaneError {
     constructor(message, options) {
         super('INVALID_CONCURRENCY_LIMIT', message, options);
         this.name = 'InvalidConcurrencyLimitError';
+    }
+}
+
+/**
+ * More than 10 global keys with the concurrency limits, a key or a cost that breaks the rules, one key with two
+ * settings, or bad options of a `RateLimitedError`.
+ */
+export class InvalidRateLimitError extends SqlaneError {
+    /**
+     * @param {string} message
+     * @param {ErrorOptions} [options]
+     */
+    constructor(message, options) {
+        super('INVALID_RATE_LIMIT', message, options);
+        this.name = 'InvalidRateLimitError';
     }
 }
 
@@ -172,6 +191,56 @@ export class RetryJobError extends SqlaneError {
         this.name = 'RetryJobError';
         /** @readonly */
         this.delay = delay;
+    }
+}
+
+/**
+ * Thrown by a handler when the other side limits the rate (an HTTP 429): the job waits for the limit, without using an
+ * attempt. `limit`: the rate limit, or the key of it, to push back to at least `retryAfter` from now; without it, all
+ * the global rate keys of the job. A job without rate keys is retried after `retryAfter`, as by a `RetryJobError`.
+ */
+export class RateLimitedError extends SqlaneError {
+    /**
+     * @param {{
+     *     limit?: import('./types.js').RateLimit | import('./types.js').RateLimitKey,
+     *     retryAfter: import('./types.js').Duration,
+     *     cause?: unknown,
+     * }} options
+     */
+    constructor(options) {
+        const where = 'new RateLimitedError()';
+        const { limit, retryAfter, ...rest } = checkObject(options, ['limit', 'retryAfter', 'cause'], 'options', {
+            where,
+            ErrorClass: InvalidRateLimitError,
+        });
+
+        if (limit !== undefined && !isRateLimit(limit) && !isRateLimitKey(limit)) {
+            throw new InvalidRateLimitError(
+                `${where}: "limit" must be a limit from defineRateLimit(), its key() or its cost()`,
+            );
+        }
+
+        const retryAfterMs = parseDuration(retryAfter);
+
+        if (retryAfterMs === null || retryAfterMs > MAX_PER_MS) {
+            throw new InvalidRateLimitError(`${where}: "retryAfter" must be a duration from 0 to 7 d ('30s', or `
+                + `milliseconds), got ${JSON.stringify(retryAfter)}`);
+        }
+
+        const on = limit === undefined ? '' : ` on ${rateKeyOf(limit).slice(1)}`;
+
+        super('RATE_LIMITED', `Rate limited${on}: retry after ${retryAfterMs} ms`, 'cause' in rest ? rest : undefined);
+        this.name = 'RateLimitedError';
+        /**
+         * @readonly
+         * @type {import('./types.js').RateLimit | import('./types.js').RateLimitKey | undefined}
+         */
+        this.limit = limit;
+        /**
+         * @readonly
+         * @type {import('./types.js').Duration}
+         */
+        this.retryAfter = /** @type {import('./types.js').Duration} */ (retryAfter);
     }
 }
 

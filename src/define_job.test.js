@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import { defineConcurrencyLimit } from './define_concurrency_limit.js';
 import { defineJob } from './define_job.js';
+import { defineRateLimit } from './define_rate_limit.js';
 import { ConfigError } from './errors.js';
 
 test('gives a frozen copy of the options', () => {
@@ -16,6 +17,8 @@ test('gives a frozen copy of the options', () => {
         failureJob: 'report_failed',
         fairShareWeight: 3,
         localConcurrencyLimits: [defineConcurrencyLimit({ name: 'heavy', max: 2 })],
+        globalRateLimits: () => [],
+        localRateLimits: [defineRateLimit({ name: 'disk_io', max: 50, per: '1s' })],
     };
     const definition = defineJob(options);
 
@@ -26,6 +29,8 @@ test('gives a frozen copy of the options', () => {
     expect(Object.isFrozen(definition.retention)).toBe(true);
     expect(Object.isFrozen(definition.localConcurrencyLimits)).toBe(true);
     expect(definition.localConcurrencyLimits).not.toBe(options.localConcurrencyLimits);
+    expect(Object.isFrozen(definition.localRateLimits)).toBe(true);
+    expect(definition.localRateLimits).not.toBe(options.localRateLimits);
 });
 
 test('accepts a definition as the failure job', () => {
@@ -68,6 +73,19 @@ test.each([
     ['a local limit twice', {
         name: 'a',
         localConcurrencyLimits: [defineConcurrencyLimit({ name: 'b', max: 1 }), defineConcurrencyLimit({ name: 'b', max: 2 })],
+    }],
+    ['globalRateLimits as an array', { name: 'a', globalRateLimits: [] }],
+    ['a local rate limit that is not from defineRateLimit()', {
+        name: 'a',
+        localRateLimits: [{ name: 'b', max: 1, per: 1000, burst: 1 }],
+    }],
+    ['a concurrency limit as a local rate limit', { name: 'a', localRateLimits: [defineConcurrencyLimit({ name: 'b', max: 1 })] }],
+    ['a key of a local rate limit', { name: 'a', localRateLimits: [defineRateLimit({ name: 'b', max: 1, per: '1s' }).key('k')] }],
+    ['a cost of a local rate limit', { name: 'a', localRateLimits: [defineRateLimit({ name: 'b', max: 2, per: '1s', burst: 2 }).cost(2)] }],
+    ['local rate limits as one limit', { name: 'a', localRateLimits: defineRateLimit({ name: 'b', max: 1, per: '1s' }) }],
+    ['a local rate limit twice', {
+        name: 'a',
+        localRateLimits: [defineRateLimit({ name: 'b', max: 1, per: '1s' }), defineRateLimit({ name: 'b', max: 2, per: '1s' })],
     }],
 ])('rejects %s', (_, options) => {
     expect(() => defineJob(/** @type {any} */ (options))).toThrow(ConfigError);

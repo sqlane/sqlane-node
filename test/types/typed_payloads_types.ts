@@ -1,7 +1,7 @@
 // Type tests of declared payloads, as a TypeScript app writes them: checked by tsc (pnpm typecheck), never run.
 import mysql from 'mysql2/promise';
 import { expectTypeOf } from 'vitest';
-import { createSqlane, defineConcurrencyLimit, defineJob } from '@sqlane/core';
+import { createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit } from '@sqlane/core';
 import type { Handler } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
@@ -43,6 +43,18 @@ export async function typedPayloadsTypes() {
         // @ts-expect-error the payload of globalConcurrencyLimits is a Report
         globalConcurrencyLimits: ({ payload }: { payload: { id: number } }) => [reportLimit.key(payload.id)],
         timeout: '1m',
+    });
+
+    const reportApi = defineRateLimit({ name: 'report_api', max: 10, per: '1s' });
+
+    defineJob<Report>({
+        name: 'b',
+        globalRateLimits: ({ payload: report }) => [reportApi.key(report.reportId, { cost: 1 })],
+    });
+    defineJob<Report>({
+        name: 'c',
+        // @ts-expect-error the payload of globalRateLimits is a Report
+        globalRateLimits: ({ payload }: { payload: { id: number } }) => [reportApi.key(payload.id)],
     });
 
     // Without a type argument: as before, any JSON

@@ -2,6 +2,7 @@ import { createMonotonicUlid } from './ulid.js';
 import { parseDuration } from './duration.js';
 import { InvalidOptionsError } from './errors.js';
 import { normalizeGlobalLimits } from './concurrency_keys.js';
+import { normalizeGlobalRateLimits } from './rate_keys.js';
 import { serializePayload } from './payload.js';
 import { isSlotKey, isSlotTime, MAX_KEY_LENGTH, SLOT_PREFIX, slotJobIdOf } from './schedule.js';
 import {
@@ -13,7 +14,8 @@ import {
 } from './validate.js';
 
 const ENQUEUE_OPTION_NAMES = [
-    'jobId', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureJob', 'globalConcurrencyLimits', 'slot',
+    'jobId', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureJob', 'globalConcurrencyLimits',
+    'globalRateLimits', 'slot',
 ];
 const MAX_JOB_ID_LENGTH = 120;
 /** Sorted by creation order in this process, also within one millisecond */
@@ -28,6 +30,8 @@ const ulid = createMonotonicUlid();
  * @property {string} payloadJson
  * @property {readonly import('./concurrency_keys.js').GlobalLimit[]} limits Its global limits: sorted by key, without
  *     duplicates.
+ * @property {readonly import('./rate_keys.js').GlobalRateLimit[]} rateLimits Its global rate limits: sorted by key,
+ *     without duplicates. At most 10 keys with `limits`.
  * @property {number} maxAttempts
  * @property {number} maxStalls
  * @property {number} completedRetentionMs
@@ -155,6 +159,9 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
     // The limits come from the payload as the handler gets it: as JSON gives it back.
     const rawLimits = options.globalConcurrencyLimits
         ?? definition?.globalConcurrencyLimits?.({ payload: JSON.parse(payloadJson) }) ?? [];
+    const rawRateLimits = options.globalRateLimits
+        ?? definition?.globalRateLimits?.({ payload: JSON.parse(payloadJson) }) ?? [];
+    const limits = normalizeGlobalLimits(rawLimits, where);
     const retention = { ...definition?.retention, ...options.retention };
 
     return {
@@ -162,7 +169,8 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
         hasJobId: jobId !== undefined,
         name,
         payloadJson,
-        limits: normalizeGlobalLimits(rawLimits, where),
+        limits,
+        rateLimits: normalizeGlobalRateLimits(rawRateLimits, where, limits.length),
         maxAttempts: options.maxAttempts ?? definition?.maxAttempts ?? defaults.maxAttempts,
         maxStalls: options.maxStalls ?? definition?.maxStalls ?? defaults.maxStalls,
         completedRetentionMs: parseDuration(retention.completed) ?? defaults.retention.completedMs,

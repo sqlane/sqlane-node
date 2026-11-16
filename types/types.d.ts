@@ -68,6 +68,18 @@ export type JobOptions<P = any> = {
      */
     localConcurrencyLimits?: readonly ConcurrencyLimit[];
     /**
+     * Rate limits that
+     * the whole cluster counts, per key: the starts of jobs. Sync, from the context only; at enqueue. At most 10 keys
+     * with the global concurrency limits.
+     */
+    globalRateLimits?: (context: {
+        payload: P;
+    }) => readonly (RateLimit | RateLimitKey)[];
+    /**
+     * Rate limits that each instance counts for its own starts: keyless.
+     */
+    localRateLimits?: readonly RateLimit[];
+    /**
      * Added when a job fails for good.
      */
     failureJob?: string | JobDefinition;
@@ -98,6 +110,11 @@ export type EnqueueBaseOptions = {
      * of the definition; `[]` clears them.
      */
     globalConcurrencyLimits?: readonly (ConcurrencyLimit | ConcurrencyLimitKey)[];
+    /**
+     * Replace the global rate limits of the
+     * definition; `[]` clears them.
+     */
+    globalRateLimits?: readonly (RateLimit | RateLimitKey)[];
 };
 export type EnqueueJobIdOption = {
     /**
@@ -185,6 +202,40 @@ export type ConcurrencyLimitKey = Readonly<{
     limit: ConcurrencyLimit;
     key: string;
 }>;
+export type RateLimitOptions = {
+    /**
+     * Matches `^[a-z][a-z0-9_.-]{0,127}$`.
+     */
+    name: string;
+    /**
+     * 1–1,000,000. The most starts per `per`, on average: one every `per / max`.
+     */
+    max: number;
+    /**
+     * 1 ms to 7 d.
+     */
+    per: Duration;
+    /**
+     * 1–`max`. The starts that may come at once after a pause. Default: 1.
+     */
+    burst?: number;
+};
+export type RateLimit = Readonly<{
+    name: string;
+    max: number;
+    per: number;
+    burst: number;
+}> & {
+    readonly key: (value: string | number, options?: {
+        cost?: number;
+    }) => RateLimitKey;
+    readonly cost: (cost: number) => RateLimitKey;
+};
+export type RateLimitKey = Readonly<{
+    limit: RateLimit;
+    key: string | null;
+    cost: number;
+}>;
 export type JobDefaults = {
     maxAttempts?: number;
     maxStalls?: number;
@@ -224,6 +275,14 @@ export type SqlaneEvent = (JobEventBase & ({
 } | {
     type: 'failed';
     durationMs: number;
+    error: unknown;
+} | {
+    type: 'rate_limited';
+    durationMs: number;
+    limit: string;
+    key: string | null;
+    scope: 'global' | 'local';
+    retryAt: Date;
     error: unknown;
 } | {
     type: 'timed_out';
@@ -598,8 +657,8 @@ export type Migration = {
  */
 /**
  * The options of a job name, shared by its producers and workers. A definition overrides the instance `defaults`.
- * @template [P=any] The payload: `defineJob<{ reportId: string }>(…)` types `enqueue`, `handle` and
- *     `globalConcurrencyLimits`.
+ * @template [P=any] The payload: `defineJob<{ reportId: string }>(…)` types `enqueue`, `handle`,
+ *     `globalConcurrencyLimits` and `globalRateLimits`.
  * @typedef {object} JobOptions
  * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
  * @property {number} [maxAttempts] Default: 3.
@@ -612,6 +671,10 @@ export type Migration = {
  * @property {number} [fairShareWeight] 1–1000. The name's share of the free slots of an instance. Default: 1.
  * @property {readonly ConcurrencyLimit[]} [localConcurrencyLimits] Limits that each instance counts for its own jobs.
  *     A job starts only while every one of them has room.
+ * @property {(context: { payload: P }) => readonly (RateLimit | RateLimitKey)[]} [globalRateLimits] Rate limits that
+ *     the whole cluster counts, per key: the starts of jobs. Sync, from the context only; at enqueue. At most 10 keys
+ *     with the global concurrency limits.
+ * @property {readonly RateLimit[]} [localRateLimits] Rate limits that each instance counts for its own starts: keyless.
  * @property {string | JobDefinition} [failureJob] Added when a job fails for good.
  */
 /**
@@ -661,6 +724,8 @@ export type Migration = {
  * @property {string | JobDefinition} [failureJob]
  * @property {readonly (ConcurrencyLimit | ConcurrencyLimitKey)[]} [globalConcurrencyLimits] Replace the global limits
  *     of the definition; `[]` clears them.
+ * @property {readonly (RateLimit | RateLimitKey)[]} [globalRateLimits] Replace the global rate limits of the
+ *     definition; `[]` clears them.
  */
 /**
  * @typedef {object} EnqueueJobIdOption
@@ -728,6 +793,26 @@ export type Migration = {
  * @typedef {Readonly<{ limit: ConcurrencyLimit, key: string }>} ConcurrencyLimitKey
  */
 /**
+ * @typedef {object} RateLimitOptions
+ * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
+ * @property {number} max 1–1,000,000. The most starts per `per`, on average: one every `per / max`.
+ * @property {Duration} per 1 ms to 7 d.
+ * @property {number} [burst] 1–`max`. The starts that may come at once after a pause. Default: 1.
+ */
+/**
+ * The result of `defineRateLimit()`. Frozen.
+ * @typedef {Readonly<{ name: string, max: number, per: number, burst: number }> & {
+ *     readonly key: (value: string | number, options?: { cost?: number }) => RateLimitKey,
+ *     readonly cost: (cost: number) => RateLimitKey,
+ * }} RateLimit `per` in milliseconds. `key(value, { cost })`: a key of a global limit, each with its own count;
+ *     `cost(n)`: the limit itself. A cost (1 to `burst`, default 1) is the starts that a job takes.
+ */
+/**
+ * A key of a global rate limit at a cost: the result of `limit.key()`, or of `limit.cost()` (`key` null: the limit
+ * itself).
+ * @typedef {Readonly<{ limit: RateLimit, key: string | null, cost: number }>} RateLimitKey
+ */
+/**
  * The instance defaults; a definition overrides them.
  * @typedef {object} JobDefaults
  * @property {number} [maxAttempts]
@@ -767,6 +852,8 @@ export type Migration = {
  *     | { type: 'completed', durationMs: number }
  *     | { type: 'retried', durationMs: number, delayMs: number, error: unknown }
  *     | { type: 'failed', durationMs: number, error: unknown }
+ *     | { type: 'rate_limited', durationMs: number, limit: string, key: string | null, scope: 'global' | 'local',
+ *         retryAt: Date, error: unknown }
  *     | { type: 'timed_out', durationMs: number }
  *     | { type: 'stalled' }
  *     | { type: 'released' }

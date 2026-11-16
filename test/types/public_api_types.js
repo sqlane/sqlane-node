@@ -2,7 +2,15 @@
 import mysql from 'mysql2/promise';
 import { Pool } from 'pg';
 import { expectTypeOf } from 'vitest';
-import { createSqlane, defineConcurrencyLimit, defineJob, getMigrations, RetryJobError } from '@sqlane/core';
+import {
+    createSqlane,
+    defineConcurrencyLimit,
+    defineJob,
+    defineRateLimit,
+    getMigrations,
+    RateLimitedError,
+    RetryJobError,
+} from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 import { pgAdapter } from '@sqlane/core/adapter-pg';
 
@@ -167,6 +175,38 @@ export async function publicApiTypes() {
     defineJob({ name: 'a', globalConcurrencyLimits: () => ['a'] });
     // @ts-expect-error mutexKeys was removed in 6.0
     defineJob({ name: 'a', mutexKeys: () => ['a'] });
+
+    // Rate limits: global per key, at a cost; local keyless
+    const github = defineRateLimit({ name: 'github', max: 5000, per: '1h' });
+    const sms = defineRateLimit({ name: 'sms', max: 10, per: 1000, burst: 10 });
+
+    expectTypeOf(github.per).toBeNumber();
+    expectTypeOf(github.burst).toBeNumber();
+    expectTypeOf(github.key('t1', { cost: 1 })).toEqualTypeOf(sms.cost(2));
+    expectTypeOf(sms.cost(2).key).toEqualTypeOf(/** @type {string | null} */ (null));
+    defineJob({
+        name: 'sync_repo',
+        globalRateLimits: ({ payload: repo }) => [sms, sms.cost(2), github.key(repo.tokenId)],
+        localRateLimits: [sms],
+        globalConcurrencyLimits: () => [heavy],
+        timeout: '1m',
+    });
+    // @ts-expect-error per is required
+    defineRateLimit({ name: 'a', max: 1 });
+    // @ts-expect-error a local rate limit is keyless
+    defineJob({ name: 'a', localRateLimits: [github.key('t1')] });
+    // @ts-expect-error globalRateLimits returns rate limits and their keys
+    defineJob({ name: 'a', globalRateLimits: () => [heavy] });
+    // @ts-expect-error a cost is a number
+    github.key('t1', { cost: '1' });
+    await sqlane.enqueue(connection, job, {}, { globalRateLimits: [github.key('t1'), sms] });
+    // @ts-expect-error a global rate limit is a rate limit or its key
+    await sqlane.enqueue(connection, job, {}, { globalRateLimits: ['@github:t1'] });
+    expectTypeOf(new RateLimitedError({ limit: github.key('t1'), retryAfter: '30s' }).retryAfter)
+        .toEqualTypeOf(/** @type {import('@sqlane/core').Duration} */ ('30s'));
+    void new RateLimitedError({ retryAfter: 30_000, cause: new Error('429') });
+    // @ts-expect-error retryAfter is required
+    void new RateLimitedError({ limit: github });
     expectTypeOf(job.name).toBeString();
 
     // errors
@@ -185,6 +225,15 @@ export async function publicApiTypes() {
         onEvent: (event) => {
             if (event.type === 'retried') {
                 expectTypeOf(event.delayMs).toBeNumber();
+            }
+
+            if (event.type === 'rate_limited') {
+                expectTypeOf(event.limit).toBeString();
+                expectTypeOf(event.key).toEqualTypeOf(/** @type {string | null} */ (null));
+                expectTypeOf(event.scope).toEqualTypeOf(/** @type {'global' | 'local'} */ ('global'));
+                expectTypeOf(event.retryAt).toEqualTypeOf(new Date());
+                expectTypeOf(event.durationMs).toBeNumber();
+                expectTypeOf(event.attempt).toBeNumber();
             }
 
             if (event.type === 'error') {

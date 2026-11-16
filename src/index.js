@@ -3,6 +3,7 @@
 export { createSqlane } from './create_sqlane.js';
 export { defineConcurrencyLimit } from './define_concurrency_limit.js';
 export { defineJob } from './define_job.js';
+export { defineRateLimit } from './define_rate_limit.js';
 export {
     ClosedError,
     ConfigError,
@@ -10,11 +11,13 @@ export {
     FatalJobError,
     InvalidConcurrencyLimitError,
     InvalidOptionsError,
+    InvalidRateLimitError,
     JobTimeoutError,
     LeaseLostError,
     MigrationLockTimeoutError,
     MissingPayloadError,
     PayloadTooLargeError,
+    RateLimitedError,
     RetryJobError,
     ShutdownError,
     SqlaneError,
@@ -74,6 +77,9 @@ export { getMigrations } from './migrations.js';
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').Migration} Migration */
+/** @typedef {import('./types.js').RateLimit} RateLimit */
+/** @typedef {import('./types.js').RateLimitKey} RateLimitKey */
+/** @typedef {import('./types.js').RateLimitOptions} RateLimitOptions */
 /** @typedef {import('./types.js').Retention} Retention */
 /** @typedef {import('./types.js').ScheduleFiredEvent} ScheduleFiredEvent */
 /** @typedef {import('./types.js').ScheduleInfo} ScheduleInfo */
