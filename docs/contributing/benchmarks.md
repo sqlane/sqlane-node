@@ -62,10 +62,14 @@ key, if a key has no steady state: on average, its work must stay under 80% of i
 realistic trace is at 16%, of the stress trace at 35%), and its starts under 80% of its rate (4%). So jobs wait on
 their keys in the bursts, and the queue drains between them.
 
-Their warm-up is 30 s and their window 60 s (unless `--warmup` or `--window`): a pair of runs takes about 3.5 minutes,
-the four scenarios about 15 minutes per database, the databases in parallel. The verdict, per completed job, as
-in `run` (a job that ran twice counts once: its second attempt is its cost), uses thresholds of its own (in
-`SCENARIOS` of `ab.mjs`), from the spread of three runs of the same tree on the Linux machine. The report adds:
+Their warm-up is 30 s and their window 60 s (unless `--warmup` or `--window`): a pair of runs takes about 3 minutes,
+a rerun as long again; the four scenarios take 16 to 17 minutes on the Linux machine, the databases in parallel. The
+verdict is per completed job, as in `run` (a job that ran twice counts once: its second attempt is its cost). When jobs
+wait, the work per job depends on the timing, so the same tree spreads by more than the ±5% and ±3% of the other
+scenarios: by up to 14% in instructions and 13% in statements (`contention`) over three runs on the Linux machine.
+Each scenario has thresholds of its own (`CONTENTION_THRESHOLDS` in `ab.mjs`), its spread rounded up: `contention`
+±14% / ±13%, `contention_plain` ±5% / ±5%, `contention_stress` ±9% / ±5%, `contention_stress_plain` ±7% / ±6%. The
+report adds:
 
 - **The penalty of the limits**: instructions and statements per job with limits against without, per tree.
 - **The latency** from the enqueue to the first start, p50, p95 and p99, of the jobs that started in the window: each

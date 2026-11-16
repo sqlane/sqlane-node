@@ -118,6 +118,24 @@ function traceProcesses(profile, limits) {
     ];
 }
 
+/**
+ * The thresholds of the contention scenarios: the spread of the instructions and of the statements per job over 3 runs
+ * of the same tree on the Linux machine ((max − min) / mean of their 6 to 10 runs, the largest of the 3 databases),
+ * rounded up. Above 2%, so the defaults would fail runs of the same code: when jobs wait, the work per job depends on
+ * the timing (which claim blocks a job, how many jobs a claim finds), and on PostgreSQL the statements of the realistic
+ * trace moved by 8% between the two runs of one pair.
+ */
+const CONTENTION_THRESHOLDS = {
+    // Spread: 13.9% and 12.8%
+    realistic: { instructions: 0.14, statements: 0.13 },
+    // 4.6%, 4.6%
+    realisticPlain: { instructions: 0.05, statements: 0.05 },
+    // 8.7%, 4.1%
+    stress: { instructions: 0.09, statements: 0.05 },
+    // 6.2%, 5.1%
+    stressPlain: { instructions: 0.07, statements: 0.06 },
+};
+
 /** @type {Scenario[]} */
 const SCENARIOS = [
     {
@@ -197,6 +215,7 @@ const SCENARIOS = [
         trace: { profile: 'realistic', limits: true },
         warmupS: 30,
         windowS: 60,
+        thresholds: CONTENTION_THRESHOLDS.realistic,
     },
     {
         name: 'contention_plain',
@@ -208,6 +227,7 @@ const SCENARIOS = [
         trace: { profile: 'realistic', limits: false },
         warmupS: 30,
         windowS: 60,
+        thresholds: CONTENTION_THRESHOLDS.realisticPlain,
     },
     {
         name: 'contention_stress',
@@ -220,6 +240,7 @@ const SCENARIOS = [
         trace: { profile: 'stress', limits: true },
         warmupS: 30,
         windowS: 60,
+        thresholds: CONTENTION_THRESHOLDS.stress,
     },
     {
         name: 'contention_stress_plain',
@@ -231,6 +252,7 @@ const SCENARIOS = [
         trace: { profile: 'stress', limits: false },
         warmupS: 30,
         windowS: 60,
+        thresholds: CONTENTION_THRESHOLDS.stressPlain,
     },
 ];
 
@@ -1328,9 +1350,11 @@ try {
         + 'is rerun in the other order, and counts if the rerun confirms it.\n');
     console.log(table(comparisons));
 
-    const thresholds = scenarios.filter(scenario => scenario.thresholds).map(scenario => `${scenario.name} ±${
-        /** @type {{ instructions: number }} */ (scenario.thresholds).instructions * 100}% / ±${
-        /** @type {{ statements: number }} */ (scenario.thresholds).statements * 100}%`);
+    const thresholds = scenarios.filter(scenario => scenario.thresholds).map((scenario) => {
+        const { instructions, statements } = /** @type {NonNullable<Scenario['thresholds']>} */ (scenario.thresholds);
+
+        return `${scenario.name} ±${Math.round(instructions * 100)}% / ±${Math.round(statements * 100)}%`;
+    });
 
     if (thresholds.length > 0) {
         console.log(`\nThresholds of their own (instructions / statements): ${thresholds.join(', ')}.`);
