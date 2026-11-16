@@ -130,14 +130,15 @@ operation ([pnpm bench](../bench/regression/ab.mjs)). CI also checks the stateme
 
 <!-- generated:backends -->
 
-| Per operation: statements · instructions                                                  | PostgreSQL 17.11 | MySQL 8.4.13   | MariaDB 11.8.9 |
-| ----------------------------------------------------------------------------------------- | ---------------- | -------------- | -------------- |
-| `enqueue`, in a transaction of its own                                                    | 1.00 · 0.96 M    | 5.00 · 2.04 M  | 5.00 · 1.57 M  |
-| `enqueueMany` of 100 jobs                                                                 | 1.00 · 20.0 M    | 5.00 · 33.9 M  | 5.00 · 28.2 M  |
-| A job: its enqueue, claim, run and completion, over 1000 job names                        | 3.01 · 2.93 M    | 18.18 · 9.70 M | 18.28 · 7.94 M |
-| A second of a worker with 1000 job names and no job                                       | 0.200 · 0.55 M   | 0.200 · 2.22 M | 0.200 · 0.70 M |
-| A job with one of 100 keys of a global limit of 1: its enqueue, claim, run and completion | 11.05 · 7.94 M   | 25.51 · 14.9 M | 25.86 · 17.0 M |
-| A schedule firing, one of 1000 `every: '10s'` schedules                                   | 0.053 · 0.67 M   | 0.084 · 0.93 M | 0.084 · 0.89 M |
+| Per operation: statements · instructions                                                         | PostgreSQL 17.11 | MySQL 8.4.13   | MariaDB 11.8.9 |
+| ------------------------------------------------------------------------------------------------ | ---------------- | -------------- | -------------- |
+| `enqueue`, in a transaction of its own                                                           | 1.00 · 0.96 M    | 5.00 · 2.07 M  | 5.00 · 1.59 M  |
+| `enqueueMany` of 100 jobs                                                                        | 1.00 · 20.5 M    | 5.00 · 33.6 M  | 5.00 · 26.6 M  |
+| A job: its enqueue, claim, run and completion, over 1000 job names                               | 3.01 · 2.93 M    | 18.25 · 9.81 M | 18.31 · 8.00 M |
+| A second of a worker with 1000 job names and no job                                              | 0.200 · 0.56 M   | 0.200 · 2.25 M | 0.200 · 0.72 M |
+| A job with one of 100 keys of a global limit of 1: its enqueue, claim, run and completion        | 11.01 · 7.89 M   | 25.62 · 15.6 M | 25.84 · 17.8 M |
+| A job with one of 100 keys of a global rate limit of 1/s: its enqueue, claim, run and completion | 9.01 · 8.70 M    | 23.65 · 17.7 M | 23.77 · 21.1 M |
+| A schedule firing, one of 1000 `every: '10s'` schedules                                          | 0.054 · 0.64 M   | 0.086 · 0.97 M | 0.086 · 0.89 M |
 
 Statements and CPU instructions of the sqlane processes and the database server, under steady load (`pnpm
 bench:regression`), without network delay, 16 November 2026, on an AMD Ryzen 5 3600 (6 cores, 12 threads), 64 GB, Linux
