@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { blockedJobs, guard, runsByKey } from './contention.mjs';
+import { blockedJobs, guard, repeatedRuns, runsByKey } from './contention.mjs';
 import { generateTrace, latencyBucket, OUTCOME, percentilesOf, splitmix32 } from './trace.mjs';
 
 // The length of the trace of the contention scenarios: 30 s of warm-up, 60 s of window, 30 s of margin
@@ -237,4 +237,19 @@ test('the blocked jobs: a full key, or a rate key without quota, between the enq
 
     expect(blockedJobs(trace, runs, runsByKey(trace, runs), { from: 1000, to: 2000 }))
         .toStrictEqual({ jobs: 3, blocked: 1 });
+});
+
+test('the repeated runs: beyond one run per job, two for a job that throws once', () => {
+    const trace = tinyTrace();
+
+    trace.jobs[1].outcome = OUTCOME.failsOnce;
+
+    // Job 0 twice at once, job 1 twice (it throws once), job 2 once
+    const runs = {
+        index: [0, 0, 1, 1, 2], start: [1, 1, 2, 300, 4], end: [5, 5, 6, 310, 8], enqueuedAt: [0, 0, 0, 0, 0],
+    };
+
+    expect(repeatedRuns(trace, runs)).toStrictEqual({
+        runs: 5, jobs: 3, repeated: 1, example: { index: 0, starts: [1, 1] },
+    });
 });

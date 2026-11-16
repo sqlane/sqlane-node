@@ -77,6 +77,8 @@ in `run` (a job that ran twice counts once: its second attempt is its cost), use
 - **The guard**, from the same runs: no concurrency key ran more jobs at once than its max, and no rate key started
   more than `max + burst − 1` jobs in any window of its period (less 100 ms: a run starts a little after its claim). A
   violation fails the run.
+- **The repeated runs**: the runs that the trace does not explain (a job runs once, twice if it throws once), in the
+  whole run: a job that ran again after a stall, or twice at once. Reported, not a failure.
 
 ```sh
 pnpm bench:regression --ref . --scenario contention --scenario contention_plain \

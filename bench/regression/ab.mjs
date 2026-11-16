@@ -43,7 +43,7 @@ import { Client } from 'pg';
 import { countersAsync, countsKernel, difference, startCounters, stopCounters } from '../lib/counters.mjs';
 import { statsServer } from '../lib/db_stats.mjs';
 import { startServer } from '../lib/servers.mjs';
-import { blockedJobs, guard, runsByKey } from './contention.mjs';
+import { blockedJobs, guard, repeatedRuns, runsByKey } from './contention.mjs';
 import { generateTrace, percentilesOf, TRACE_SEED } from './trace.mjs';
 
 const HERE = import.meta.dirname;
@@ -426,6 +426,8 @@ function startApp(appArgs, role, log, label = role) {
  * @property {{ keys: number, busiest: { concurrency: string | null, rate: string | null } } | null} guard The keys
  *     of the run, and the closest to its bound of each kind; null without limits. A violation fails the run.
  * @property {{ retried: number, rateLimited: number }} events In the window.
+ * @property {{ runs: number, jobs: number, repeated: number }} runs The runs of the whole run (all of its jobs), and
+ *     those beyond what the trace explains: a job that ran again after a stall, or twice at once.
  */
 
 /**
@@ -681,19 +683,7 @@ async function contentionOf(scenario, children, counts, { from, to, timing }) {
     }
 
     const { samples, values: [p50, p95, p99] } = percentilesOf(histogram, [0.5, 0.95, 0.99]);
-    /** @type {Contention} */
-    const contention = {
-        latency: { samples, p50, p95, p99 },
-        blocked: null,
-        guard: null,
-        events: { retried: counts.retried, rateLimited: counts.rateLimited },
-    };
     const traced = /** @type {NonNullable<Scenario['trace']>} */ (scenario.trace);
-
-    if (!traced.limits) {
-        return contention;
-    }
-
     const replies = await Promise.all(children
         .filter(child => child.role.startsWith('worker'))
         .map(child => child.message('runs')));
@@ -707,6 +697,26 @@ async function contentionOf(scenario, children, counts, { from, to, timing }) {
     }
 
     const trace = traceOf(traced.profile, traceSecondsOf(timing));
+    const { example, ...repeated } = repeatedRuns(trace, runs);
+
+    if (example) {
+        console.error(`${scenario.name}: ${repeated.repeated} runs beyond those of the trace, e.g. job ${
+            example.index} started at ${example.starts.join(', ')}`);
+    }
+
+    /** @type {Contention} */
+    const contention = {
+        latency: { samples, p50, p95, p99 },
+        blocked: null,
+        guard: null,
+        events: { retried: counts.retried, rateLimited: counts.rateLimited },
+        runs: repeated,
+    };
+
+    if (!traced.limits) {
+        return contention;
+    }
+
     const keys = runsByKey(trace, runs);
     const checked = guard(keys);
 
@@ -950,6 +960,11 @@ function meanContention(runs, variant) {
             retried: mean(item => item.events.retried),
             rateLimited: mean(item => item.events.rateLimited),
         },
+        runs: {
+            runs: mean(item => item.runs.runs),
+            jobs: mean(item => item.runs.jobs),
+            repeated: mean(item => item.runs.repeated),
+        },
     };
 }
 
@@ -957,11 +972,12 @@ function meanContention(runs, variant) {
  * @param {Contention} contention
  * @returns {string} Its latencies, its blocked share and its guard, in a line.
  */
-function contentionText({ latency, blocked, guard: checked }) {
+function contentionText({ latency, blocked, guard: checked, runs }) {
     const latencies = `latency p50/p95/p99 ${[latency.p50, latency.p95, latency.p99].map(ms => ms.toFixed(0)).join('/')} ms`;
     const share = blocked ? `, ${(blocked.share * 100).toFixed(1)}% of ${blocked.jobs.toFixed(0)} jobs blocked` : '';
 
-    return `${latencies}${share}${checked ? `, guard ok on ${checked.keys} keys` : ''}`;
+    return `${latencies}${share}${checked ? `, guard ok on ${checked.keys} keys` : ''}, ${
+        runs.repeated} repeated runs`;
 }
 
 /**
@@ -1138,16 +1154,18 @@ function contentionTables(comparisons) {
     const lines = [
         '\nContention (no verdict): the latency from the enqueue to the first start of the jobs that started in the window, '
         + 'the share of them that waited on a full key (estimated from the start and the end of each run), and the guard '
-        + '(a violation fails the run). Baseline → working tree.\n',
-        '| Scenario | Database | Latency p50 / p95 / p99, ms | Blocked | Guard |',
-        '| --- | --- | --- | --- | --- |',
+        + '(a violation fails the run). Repeated runs: runs that the trace does not explain (a job that ran again after a '
+        + 'stall, or twice at once), in the whole run. Baseline → working tree.\n',
+        '| Scenario | Database | Latency p50 / p95 / p99, ms | Blocked | Guard | Repeated runs |',
+        '| --- | --- | --- | --- | --- | --- |',
     ];
 
     for (const row of rows) {
         const { base, current } = /** @type {NonNullable<Comparison['contention']>} */ (row.contention);
 
         lines.push(`| ${row.scenario} | ${row.dialect} | ${latenciesOf(base)} → ${latenciesOf(current)} | ${
-            blockedOf(base)} → ${blockedOf(current)} | ${current.guard ? `ok, ${current.guard.keys} keys` : '–'} |`);
+            blockedOf(base)} → ${blockedOf(current)} | ${current.guard ? `ok, ${current.guard.keys} keys` : '–'} | ${
+            base.runs.repeated} of ${base.runs.runs} → ${current.runs.repeated} of ${current.runs.runs} |`);
     }
 
     /** @type {string[]} */

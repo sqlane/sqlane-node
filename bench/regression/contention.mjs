@@ -1,7 +1,7 @@
 // What the contention scenarios of ab.mjs read from the handler runs of their workers (app.mjs records the job, the
 // start and the end of each run in memory, and sends them once, after the window): the guard of the limits, and the
 // share of the jobs that waited on a full key.
-import { keysOfJob } from './trace.mjs';
+import { keysOfJob, OUTCOME } from './trace.mjs';
 
 /**
  * A run starts after its claim and ends before its completion, so it sees a key free a little earlier than the
@@ -150,6 +150,41 @@ export function guard(keys) {
         violations,
         busiest: { concurrency: busiest.concurrency.text, rate: busiest.rate.text },
     };
+}
+
+/**
+ * The runs beyond those that the trace explains: a job runs once, twice if it throws once or is rate limited (a
+ * RateLimitedError, then a run after it). More is a job that ran again after a stall, or twice at once.
+ * @param {import('./trace.mjs').Trace} trace
+ * @param {Runs} runs
+ * @returns {{ runs: number, jobs: number, repeated: number, example: { index: number, starts: number[] } | null }}
+ *     The runs, the jobs that ran, the runs beyond the explained ones, and a job with such a run.
+ */
+export function repeatedRuns(trace, runs) {
+    /** @type {Map<number, number[]>} */
+    const startsOf = new Map();
+
+    for (let run = 0; run < runs.index.length; run++) {
+        const starts = startsOf.get(runs.index[run]) ?? [];
+
+        starts.push(runs.start[run]);
+        startsOf.set(runs.index[run], starts);
+    }
+
+    let repeated = 0;
+    /** @type {{ index: number, starts: number[] } | null} */
+    let example = null;
+
+    for (const [index, starts] of startsOf) {
+        const extra = starts.length - (trace.jobs[index].outcome === OUTCOME.ok ? 1 : 2);
+
+        if (extra > 0) {
+            repeated += extra;
+            example ??= { index, starts };
+        }
+    }
+
+    return { runs: runs.index.length, jobs: startsOf.size, repeated, example };
 }
 
 /**
