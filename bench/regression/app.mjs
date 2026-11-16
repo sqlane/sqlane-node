@@ -2,9 +2,9 @@
 // `scheduler`. It loads sqlane from `--src`, a source tree: the working tree, or a baseline that ab.mjs extracts from
 // a git ref, with the drivers of this checkout. Only the public API that the baselines have too.
 //
-// Messages from ab.mjs: `pause` (a producer finishes its operation and starts no other one), `resume`, `counts`, and
-// `stop`; each gets a reply with the same `id` and the counts of this process since its start. It sends `ready` once
-// it runs.
+// Messages from ab.mjs: `pause` (a producer finishes its operation and starts no other one), `collect` (a scavenge),
+// `resume`, `counts`, and `stop`; each gets a reply with the same `id` and the counts of this process since its start.
+// It sends `ready` once it runs.
 import { createSocket } from 'node:dgram';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -19,6 +19,7 @@ const { values: args } = parseArgs({
         'url': { type: 'string' },
         'names': { type: 'string', default: '1000' },
         'limit-keys': { type: 'string', default: '0' },
+        'rate-limit-keys': { type: 'string', default: '0' },
         // producer
         'op': { type: 'string', default: 'enqueue' },
         'rate': { type: 'string', default: '20' },
@@ -49,9 +50,10 @@ const dialect = String(args.dialect);
 const role = String(args.role);
 const hintPort = Number(args['hint-port']);
 const limitKeyCount = Number(args['limit-keys']);
+const rateLimitKeyCount = Number(args['rate-limit-keys']);
 // The drivers of this checkout, sqlane of the source tree
 const require = createRequire(join(src, 'package.json'));
-const { createSqlane, defineConcurrencyLimit, defineJob } = await import(join(src, 'src/index.js'));
+const { createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit } = await import(join(src, 'src/index.js'));
 const names = Array.from({ length: Number(args.names) }, (_, index) => `job_${String(index).padStart(4, '0')}`);
 
 /**
@@ -123,9 +125,23 @@ const limitKeyOf = ({ payload }) => account.key(keyOf(payload.index));
 const limits = account
     ? { globalConcurrencyLimits: (/** @type {{ payload: { index: number } }} */ context) => [limitKeyOf(context)] }
     : { mutexKeys: (/** @type {{ index: number }} */ payload) => [`account:${keyOf(payload.index)}`] };
+
+if (rateLimitKeyCount > 0 && !defineRateLimit) {
+    throw new Error(`--rate-limit-keys: the sqlane of ${src} has no defineRateLimit`);
+}
+
+// With --rate-limit-keys: one key of a global rate limit of 1/s per job, `<index mod rate-limit-keys>`
+const api = rateLimitKeyCount > 0 ? defineRateLimit({ name: 'api', max: 1, per: '1s' }) : null;
+/** @type {Record<string, unknown>} */
+const rateLimits = {
+    globalRateLimits: (/** @type {{ payload: { index: number } }} */ { payload }) => [
+        api.key(String(payload.index % rateLimitKeyCount)),
+    ],
+};
 const definitions = names.map(name => defineJob({
     name,
     ...limitKeyCount > 0 && { ...limits, timeout: '1m' },
+    ...rateLimitKeyCount > 0 && { ...rateLimits, timeout: '1m' },
 }));
 const counts = { ops: 0, jobs: 0, completed: 0, fired: 0, errors: 0 };
 
@@ -290,6 +306,9 @@ if (role === 'setup') {
         if (message.type === 'pause' && !producer.paused) {
             producer.paused = Promise.withResolvers();
             await producer.current;
+        } else if (message.type === 'collect') {
+            // A scavenge before the window (--expose-gc)
+            globalThis.gc?.({ type: 'minor' });
         } else if (message.type === 'resume') {
             producer.paused?.resolve();
             producer.paused = null;

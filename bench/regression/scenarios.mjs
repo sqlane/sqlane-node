@@ -199,6 +199,40 @@ export const SCENARIOS = [
         },
     },
     {
+        name: 'global_rate_limits',
+        unit: 'job with a key of 1 of 10 of a global rate limit that none reaches, 100 jobs of 2 names',
+        timing: ROUNDS,
+        async run({ lib, create, pool, measure }) {
+            // A burst of 1000 per key: the 10 starts of each key fit at once, so no job blocks and the counts are
+            // the statements of the rate limit on each job, not of a timer
+            const api = lib.defineRateLimit({ name: 'api', max: 1000, per: '1s', burst: 1000 });
+            const jobs = definitions(lib, 2, {
+                globalRateLimits: (/** @type {{ payload: { key: number } }} */ { payload }) => [api.key(payload.key)],
+                timeout: '1m',
+            });
+            const sqlane = create({ jobs, localMaxConcurrency: 1 });
+
+            handleAll(sqlane, jobs);
+            await sqlane.migrate();
+
+            for (let index = 0; index < 100; index++) {
+                await sqlane.enqueue(pool, jobs[index % 2], { key: index % 10 });
+            }
+
+            const stats = await measure(async () => {
+                const { completed } = await sqlane.drain({ timeout: '60s' });
+
+                if (completed !== 100) {
+                    throw new Error(`global_rate_limits: ${completed} of 100 jobs completed`);
+                }
+            });
+
+            await sqlane.close();
+
+            return { operations: 100, stats };
+        },
+    },
+    {
         name: 'schedule',
         unit: 'slot of 1000 `every: \'10s\'` schedules, in one process that handles none of them',
         async run({ lib, create, measure }) {

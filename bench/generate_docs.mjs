@@ -1000,6 +1000,8 @@ const HOT_PATHS = {
     idle: 'A second of a worker with 1000 job names and no job',
     schedule: 'A schedule firing, one of 1000 `every: \'10s\'` schedules',
     global_limits: 'A job with one of 100 keys of a global limit of 1: its enqueue, claim, run and completion',
+    global_rate_limits:
+        'A job with one of 100 keys of a global rate limit of 1/s: its enqueue, claim, run and completion',
 };
 
 /**
