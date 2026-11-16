@@ -3,13 +3,20 @@
 // a git ref, with the drivers of this checkout. Only the public API that the baselines have too.
 //
 // Messages from ab.mjs: `pause` (a producer finishes its operation and starts no other one), `collect` (a scavenge),
-// `resume`, `counts`, and `stop`; each gets a reply with the same `id` and the counts of this process since its start.
-// It sends `ready` once it runs.
+// `resume`, `counts`, `runs` and `stop`; each gets a reply with the same `id` and the counts of this process since its
+// start. It sends `ready` once it runs.
+//
+// `--trace <profile>`: the contention scenarios. The producer replays the trace of trace.mjs (`--seed`,
+// `--trace-seconds`), each job at its time from the start; the workers run its jobs, each for its duration and with its
+// outcome. With `--trace-limits`, the names have the limits of the profile; without, none. A worker keeps, in memory,
+// a histogram of the latencies from the enqueue to the first start (in its counts: `latency_<bucket>`), and the job,
+// the start and the end of each run, which `runs` returns once, after the window: no message per job.
 import { createSocket } from 'node:dgram';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
+import { generateTrace, keyValueOf, latencyBucket, OUTCOME, RETRY_AFTER_MS, RETRY_DELAY_MS, TRACE_SEED } from './trace.mjs';
 
 const { values: args } = parseArgs({
     options: {
@@ -27,6 +34,16 @@ const { values: args } = parseArgs({
         // scheduler
         'every': { type: 'string', default: '10s' },
         'hint-port': { type: 'string', default: '41234' },
+        'cap': { type: 'string', default: '8' },
+        'pool': { type: 'string', default: '8' },
+        // The contention scenarios
+        'trace': { type: 'string' },
+        'trace-limits': { type: 'boolean', default: false },
+        'seed': { type: 'string', default: String(TRACE_SEED) },
+        'trace-seconds': { type: 'string', default: '120' },
+        // The workers of a lane, each with its port of the hints of MySQL and MariaDB: `--hint-port` + 10 × its index
+        'workers': { type: 'string', default: '1' },
+        'worker-index': { type: 'string', default: '0' },
     },
 });
 
@@ -53,8 +70,15 @@ const limitKeyCount = Number(args['limit-keys']);
 const rateLimitKeyCount = Number(args['rate-limit-keys']);
 // The drivers of this checkout, sqlane of the source tree
 const require = createRequire(join(src, 'package.json'));
-const { createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit } = await import(join(src, 'src/index.js'));
+const {
+    createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit, RateLimitedError, RetryJobError,
+} = await import(join(src, 'src/index.js'));
 const names = Array.from({ length: Number(args.names) }, (_, index) => `job_${String(index).padStart(4, '0')}`);
+const trace = args.trace
+    ? generateTrace({ profile: args.trace, seed: Number(args.seed), seconds: Number(args['trace-seconds']) })
+    : null;
+/** The ports of the hints: one per worker of the lane */
+const hintPorts = Array.from({ length: Number(args.workers) }, (_, index) => hintPort + (10 * index));
 
 /**
  * The pool and the adapter. MySQL and MariaDB have no NOTIFY: a hint over UDP on localhost stands in for Redis.
@@ -65,14 +89,14 @@ async function connect() {
         const { Pool } = require('pg');
         const { pgAdapter } = await import(join(src, 'src/adapters/pg.js'));
         // No idle timeout: the server processes of the connections live through the window
-        const pool = new Pool({ connectionString: args.url, max: 8, idleTimeoutMillis: 0 });
+        const pool = new Pool({ connectionString: args.url, max: Number(args.pool), idleTimeoutMillis: 0 });
 
         return { pool, adapter: pgAdapter(pool, { notify: true }), hint: null };
     }
 
     const mysql = require('mysql2/promise');
     const { mysql2Adapter } = await import(join(src, 'src/adapters/mysql2.js'));
-    const pool = mysql.createPool({ uri: args.url, connectionLimit: 8, maxIdle: 8 });
+    const pool = mysql.createPool({ uri: args.url, connectionLimit: Number(args.pool), maxIdle: Number(args.pool) });
 
     return {
         pool,
@@ -81,9 +105,13 @@ async function connect() {
             publish: async (/** @type {string} */ channel, /** @type {string} */ message) => {
                 const socket = createSocket('udp4');
 
-                await new Promise((resolve) => {
-                    socket.send(`${channel}\n${message}`, hintPort, '127.0.0.1', () => resolve(undefined));
-                });
+                for (const port of hintPorts) {
+                    // oxlint-disable-next-line no-await-in-loop -- a port per worker: 2 in the contention scenarios
+                    await new Promise((resolve) => {
+                        socket.send(`${channel}\n${message}`, port, '127.0.0.1', () => resolve(undefined));
+                    });
+                }
+
                 socket.close();
             },
             subscribe: async (/** @type {string} */ channel, /** @type {(message: string) => void} */ onMessage) => {
@@ -97,7 +125,7 @@ async function connect() {
                     }
                 });
                 await new Promise((resolve) => {
-                    socket.bind(hintPort, '127.0.0.1', () => resolve(undefined));
+                    socket.bind(hintPorts[Number(args['worker-index'])], '127.0.0.1', () => resolve(undefined));
                 });
 
                 return async () => {
@@ -138,12 +166,65 @@ const rateLimits = {
         api.key(String(payload.index % rateLimitKeyCount)),
     ],
 };
-const definitions = names.map(name => defineJob({
-    name,
-    ...limitKeyCount > 0 && { ...limits, timeout: '1m' },
-    ...rateLimitKeyCount > 0 && { ...rateLimits, timeout: '1m' },
-}));
-const counts = { ops: 0, jobs: 0, completed: 0, fired: 0, errors: 0 };
+/** @type {any[]} */
+let definitions;
+
+if (trace) {
+    definitions = traceDefinitions(trace);
+} else {
+    definitions = names.map(name => defineJob({
+        name,
+        ...limitKeyCount > 0 && { ...limits, timeout: '1m' },
+        ...rateLimitKeyCount > 0 && { ...rateLimits, timeout: '1m' },
+    }));
+}
+
+/** @type {Record<string, number>} */
+const counts = { ops: 0, jobs: 0, completed: 0, fired: 0, errors: 0, ...trace && { retried: 0, rateLimited: 0 } };
+
+/**
+ * @param {any} limit
+ * @param {import('./trace.mjs').Limit} settings
+ * @param {import('./trace.mjs').Payload} payload
+ * @returns {unknown} The limit, or its key of the job.
+ */
+function keyed(limit, settings, payload) {
+    const value = keyValueOf(settings, payload);
+
+    return value === null ? limit : limit.key(value);
+}
+
+/**
+ * The definitions of the names of the trace: all with a timeout and a short fixed backoff; with `--trace-limits`, with
+ * their limits, keyed by the payload.
+ * @param {import('./trace.mjs').Trace} traced
+ * @returns {any[]}
+ */
+function traceDefinitions(traced) {
+    if (args['trace-limits'] && !defineRateLimit) {
+        throw new Error(`--trace-limits: the sqlane of ${src} has no defineRateLimit`);
+    }
+
+    const concurrency = traced.limits.concurrency.map(({ name, max }) => defineConcurrencyLimit({ name, max }));
+    const rate = traced.limits.rate.map(({ name, max, perMs, burst }) => defineRateLimit({
+        name, max, per: perMs, burst,
+    }));
+    return traced.names.map(({ name, concurrency: concurrencyOf, rate: rateOf }) => defineJob({
+        name,
+        timeout: '1m',
+        backoff: { type: 'fixed', delay: RETRY_DELAY_MS, jitter: 0 },
+        ...args['trace-limits'] && concurrencyOf.length > 0 && {
+            globalConcurrencyLimits: (/** @type {{ payload: any }} */ { payload }) => concurrencyOf.map(index => keyed(
+                concurrency[index], traced.limits.concurrency[index], payload,
+            )),
+        },
+        ...args['trace-limits'] && rateOf.length > 0 && {
+            globalRateLimits: (/** @type {{ payload: any }} */ { payload }) => rateOf.map(index => keyed(
+                rate[index], traced.limits.rate[index], payload,
+            )),
+        },
+    }));
+}
 
 /**
  * The instance, with its cap as the version of `--src` names it: `localMaxConcurrency` from 6.0, `maxConcurrency` in
@@ -152,15 +233,17 @@ const counts = { ops: 0, jobs: 0, completed: 0, fired: 0, errors: 0 };
  * @returns {any}
  */
 function createInstance(options) {
+    const max = Number(args.cap);
+
     for (const cap of ['localMaxConcurrency', 'maxConcurrency']) {
         try {
-            return createSqlane({ ...options, [cap]: 8 });
+            return createSqlane({ ...options, [cap]: max });
         } catch {
             // An older version: the next name
         }
     }
 
-    return createSqlane({ ...options, concurrency: 8 });
+    return createSqlane({ ...options, concurrency: max });
 }
 
 const sqlane = createInstance({
@@ -172,6 +255,10 @@ const sqlane = createInstance({
             counts.completed++;
         } else if (event.type === 'schedule_fired') {
             counts.fired++;
+        } else if (trace && event.type === 'retried') {
+            counts.retried++;
+        } else if (trace && event.type === 'rate_limited') {
+            counts.rateLimited++;
         } else if (event.type === 'error' || event.type === 'failed') {
             counts.errors++;
             console.error(event);
@@ -226,7 +313,7 @@ async function operation(index, batch) {
  * The producer: one operation every 1/rate s, one after the other. `enqueue`: a job, in a transaction of its own (a
  * pool: sqlane opens it). `enqueue_many`: `--batch` jobs of one name.
  */
-const producer = {
+const fixedProducer = {
     stopped: false,
     /** @type {PromiseWithResolvers<void> | null} A pause: resolved by `resume` */
     paused: null,
@@ -263,6 +350,138 @@ const producer = {
     },
 };
 
+/**
+ * The producer of `--trace`: each job of the trace at its time from the start, without waiting for the jobs before it
+ * (at most `--pool` at once). A pause moves the times that follow by its length. A trace that ends before `stop` is an
+ * error: it must outlast the window.
+ */
+const replayProducer = {
+    stopped: false,
+    /** @type {PromiseWithResolvers<void> | null} */
+    paused: null,
+    /** @type {Set<Promise<void>>} */
+    inFlight: new Set(),
+    /** @returns {Promise<unknown>} The enqueues in flight */
+    get current() {
+        return Promise.all(this.inFlight);
+    },
+    async run() {
+        const jobs = /** @type {import('./trace.mjs').Trace} */ (trace).jobs;
+        const maxInFlight = Number(args.pool);
+        let startedAt = Date.now();
+
+        for (let index = 0; !this.stopped; index++) {
+            if (index === jobs.length) {
+                counts.errors++;
+                console.error(`The trace ended after ${jobs.length} jobs: --trace-seconds is too short`);
+                break;
+            }
+
+            // oxlint-disable-next-line no-await-in-loop -- the jobs at their times
+            await sleep(Math.max(0, startedAt + jobs[index].at - Date.now()));
+
+            if (this.paused) {
+                const pausedAt = Date.now();
+
+                // oxlint-disable-next-line no-await-in-loop -- waits for `resume`
+                await this.paused.promise;
+                startedAt += Date.now() - pausedAt;
+                index--;
+                continue;
+            }
+
+            if (this.stopped) {
+                break;
+            }
+
+            const job = jobs[index];
+            const enqueue = (async () => {
+                try {
+                    await sqlane.enqueue(pool, definitions[job.name], job.payload);
+                    counts.jobs++;
+                    counts.ops++;
+                } catch (error) {
+                    counts.errors++;
+                    console.error(error);
+                }
+            })();
+
+            this.inFlight.add(enqueue);
+            // oxlint-disable-next-line promise/prefer-await-to-then -- not awaited: the next job does not wait for it
+            void enqueue.finally(() => this.inFlight.delete(enqueue));
+
+            if (this.inFlight.size >= maxInFlight) {
+                // oxlint-disable-next-line no-await-in-loop -- at most `--pool` at once
+                await Promise.race(this.inFlight);
+            }
+        }
+
+        await this.current;
+    },
+};
+const producer = trace ? replayProducer : fixedProducer;
+/** The runs of the trace's jobs in a worker, one per attempt; `end` 0 while it runs */
+const runs = { index: /** @type {number[]} */ ([]), start: /** @type {number[]} */ ([]),
+    end: /** @type {number[]} */ ([]), enqueuedAt: /** @type {number[]} */ ([]) };
+/** @type {Map<number, number>} The latencies from the enqueue to the first start: bucket → jobs */
+const latencies = new Map();
+
+/**
+ * The handler of a job of the trace: it runs for the job's duration, then completes or throws, as its outcome says.
+ * A job that throws once fails its first attempt. A rate-limited job throws a RateLimitedError (on its rate limits:
+ * with `--trace-limits`, it waits without using an attempt; without, it is retried after it, with an attempt) when it
+ * starts within RETRY_AFTER_MS of its enqueue: so once, wherever it runs again.
+ * @param {{ payload: import('./trace.mjs').Payload, job: { attempt: number, enqueuedAt?: Date } }} context
+ * @returns {Promise<void>}
+ */
+async function runTraceJob({ payload, job }) {
+    const startedAt = Date.now();
+    const traced = /** @type {import('./trace.mjs').Trace} */ (trace).jobs[payload.i];
+    const enqueuedAt = job.enqueuedAt?.getTime() ?? Number.NaN;
+    const sinceEnqueue = startedAt - enqueuedAt;
+    const rerun = traced.outcome === OUTCOME.rateLimited && sinceEnqueue >= RETRY_AFTER_MS;
+    const run = runs.index.push(payload.i) - 1;
+
+    runs.start.push(startedAt);
+    runs.end.push(0);
+    runs.enqueuedAt.push(enqueuedAt);
+
+    if (job.attempt === 1 && !rerun) {
+        const bucket = latencyBucket(Math.max(0, sinceEnqueue));
+
+        latencies.set(bucket, (latencies.get(bucket) ?? 0) + 1);
+    }
+
+    try {
+        await sleep(traced.durationMs);
+    } finally {
+        runs.end[run] = Date.now();
+    }
+
+    if (traced.outcome === OUTCOME.failsOnce && job.attempt === 1) {
+        throw new Error('The trace: this job fails once');
+    }
+
+    if (traced.outcome === OUTCOME.rateLimited && !rerun) {
+        if (RateLimitedError) {
+            throw new RateLimitedError({ retryAfter: RETRY_AFTER_MS });
+        }
+
+        throw RetryJobError ? new RetryJobError('The trace: rate limited', { delay: RETRY_AFTER_MS }) : new Error('429');
+    }
+}
+
+/**
+ * @returns {Record<string, number>} The counts, with the histogram of the latencies.
+ */
+function countsWithLatencies() {
+    if (!trace) {
+        return counts;
+    }
+
+    return { ...counts, ...Object.fromEntries([...latencies].map(([bucket, jobs]) => [`latency_${bucket}`, jobs])) };
+}
+
 /** @type {Promise<void> | null} */
 let producerDone = null;
 
@@ -270,7 +489,7 @@ if (role === 'setup') {
     await sqlane.migrate();
 } else if (role === 'worker') {
     for (const definition of definitions) {
-        sqlane.handle(definition, async () => {});
+        sqlane.handle(definition, trace ? runTraceJob : async () => {});
     }
 
     await sqlane.start();
@@ -316,7 +535,7 @@ if (role === 'setup') {
             await stop();
         }
 
-        process.send?.({ id: message.id, counts });
+        process.send?.({ id: message.id, counts: countsWithLatencies(), ...message.type === 'runs' && { runs } });
 
         if (message.type === 'stop') {
             process.disconnect();
