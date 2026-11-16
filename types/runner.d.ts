@@ -1,8 +1,6 @@
 export type ClaimedJob = import('./store/store.js').ClaimedJob;
 export type HandlerEntry = import('./registry.js').HandlerEntry;
-export type LimitState = import('./registry.js').LimitState;
-export type RateState = import('./registry.js').RateState;
-export type LocalLimit = LimitState | RateState;
+export type LocalLimit = import('./local_limits.js').LocalLimit;
 export type Timings = {
     leaseMs: number;
     renewIntervalMs: number;

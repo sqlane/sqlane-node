@@ -21,7 +21,16 @@ import {
 import { ANY_NAME } from './hint_channel.js';
 import { chooseRows, fill, rankNames, replayTie, shareNamesOfRequests } from './fair_share.js';
 import { incrementUs, waitUs } from './gcra.js';
-import { nowUs, pauseRate, rateRoom, rateWaitMs, takeRate } from './local_rates.js';
+import {
+    createLocalRateWakes,
+    limitRoom,
+    limitsRoom,
+    localLimitsOf,
+    ratesAdmitBefore,
+    roomOf,
+    shareNamesOf,
+} from './local_limits.js';
+import { nowUs, pauseRate, takeRate } from './local_rates.js';
 import { buildNewJob } from './new_job.js';
 import { parseRateKey, rateKeyOf } from './rate_limit_shape.js';
 import { isRateKey } from './rate_keys.js';
@@ -31,9 +40,7 @@ import { isQuickRetryError, isTransientDbError } from './transient_error.js';
 
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
-/** @typedef {import('./registry.js').LimitState} LimitState */
-/** @typedef {import('./registry.js').RateState} RateState */
-/** @typedef {LimitState | RateState} LocalLimit A local limit, of concurrency or of rate */
+/** @typedef {import('./local_limits.js').LocalLimit} LocalLimit */
 
 /** A turn that fails with a deadlock-like error is retried at once this many times, then reported and backed off */
 const MAX_TRANSIENT_DISPATCH_RETRIES = 3;
@@ -174,80 +181,6 @@ function contextOf(job) {
 }
 
 /**
- * @param {LimitState} limit
- * @returns {number} Its max minus its running jobs.
- */
-function limitRoom(limit) {
-    return limit.limit.max - limit.running;
-}
-
-/**
- * @param {LocalLimit} limit
- * @returns {number} The jobs that it admits now: of a concurrency limit, its max minus its running jobs; of a rate
- *     limit, the starts that its quota admits now.
- */
-function roomOf(limit) {
-    return 'tatUs' in limit ? rateRoom(limit, nowUs()) : limitRoom(limit);
-}
-
-/**
- * @param {HandlerEntry} entry
- * @returns {readonly LocalLimit[]} Its local limits of both kinds.
- */
-function localLimitsOf(entry) {
-    // Most names have no rate limit: no copy
-    return entry.rates.length ? [...entry.limits, ...entry.rates] : entry.limits;
-}
-
-/**
- * @param {HandlerEntry} entry
- * @returns {number} The lowest room of its local limits, of concurrency and of rate; Infinity without one.
- */
-function limitsRoom(entry) {
-    let room = Infinity;
-
-    for (const limit of entry.limits) {
-        room = Math.min(room, limitRoom(limit));
-    }
-
-    if (entry.rates.length) {
-        const now = nowUs();
-
-        for (const rate of entry.rates) {
-            room = Math.min(room, rateRoom(rate, now));
-        }
-    }
-
-    return room;
-}
-
-/**
- * The names of a choice, with their counts now. The names of one limit share one room object; the room of a rate
- * limit is the starts that its quota admits now, one per job.
- * @param {HandlerEntry[]} entries
- * @returns {import('./fair_share.js').ShareName[]}
- */
-function shareNamesOf(entries) {
-    /** @type {Map<LocalLimit, { room: number }>} */
-    const rooms = new Map();
-
-    return entries.map(entry => ({
-        name: entry.name,
-        index: entry.index,
-        weight: entry.weight,
-        running: entry.running,
-        limits: localLimitsOf(entry).map((limit) => {
-            const room = rooms.get(limit) ?? { room: Math.max(0, roomOf(limit)) };
-
-            rooms.set(limit, room);
-
-            return room;
-        }),
-        available: Infinity,
-    }));
-}
-
-/**
  * @param {RunnerParams} params
  * @returns {Runner}
  */
@@ -378,13 +311,16 @@ export function createRunner({
         return timer;
     }
 
+    /** @param {NodeJS.Timeout} timer */
+    function clearTimer(timer) {
+        clearTimeout(timer);
+        timers.delete(timer);
+    }
+
     /** The timer of the rate keys on which this process blocked jobs: an unblock when their next start is due */
     const rateWakes = createRateWakes({
         setTimer,
-        clearTimer: (timer) => {
-            clearTimeout(timer);
-            timers.delete(timer);
-        },
+        clearTimer,
         onDue: (keys) => {
             void runRateUnblock(keys);
         },
@@ -431,55 +367,17 @@ export function createRunner({
      * `nextUnblockMs`). drain() does not wait for them */
     const rateRechecks = createRateWakes({
         setTimer,
-        clearTimer: (timer) => {
-            clearTimeout(timer);
-            timers.delete(timer);
-        },
+        clearTimer,
         onDue: (keys) => {
             void runRateUnblock(keys);
         },
     });
 
-    /** @type {Map<string, RateState>} The local rate limits that wait for their next start, by name */
-    const waitingRates = new Map();
-    /** The timer of the local rate limits that a turn left names out for: a wake of their names when one may start */
-    const localRateWakes = createRateWakes({
+    const { wakeAfterRates, clear: clearLocalRateWakes } = createLocalRateWakes({
         setTimer,
-        clearTimer: (timer) => {
-            clearTimeout(timer);
-            timers.delete(timer);
-        },
-        onDue: (limitNames) => {
-            const names = limitNames.flatMap(name => waitingRates.get(name)?.names ?? []);
-
-            for (const name of limitNames) {
-                waitingRates.delete(name);
-            }
-
-            wakeUp(names, { speculative: true });
-        },
-        batchMs: 0,
+        clearTimer,
+        wake: names => wakeUp(names, { speculative: true }),
     });
-
-    /**
-     * The local rate limits of the name that admit no start now: its names wake when one may start. A name over one of
-     * them is left out of the turns, as a name at its local cap.
-     * @param {HandlerEntry} entry
-     */
-    function wakeAfterRates(entry) {
-        if (!entry.rates.length) {
-            return;
-        }
-
-        const now = nowUs();
-
-        for (const rate of entry.rates) {
-            if (rateRoom(rate, now) <= 0) {
-                waitingRates.set(rate.limit.name, rate);
-                localRateWakes.arm(rate.limit.name, rateWaitMs(rate, now));
-            }
-        }
-    }
 
     /**
      * A timer that runs func again after it settles, while the runner is started.
@@ -2111,19 +2009,6 @@ export function createRunner({
     }
 
     /**
-     * @param {string[]} names
-     * @param {number} at
-     * @returns {boolean} One of the names waits for a local rate limit that admits a start before the time.
-     */
-    function ratesAdmitBefore(names, at) {
-        const now = nowUs();
-
-        return names.some(name => registry.getEntry(name)?.rates.some(
-            rate => rateRoom(rate, now) <= 0 && Date.now() + rateWaitMs(rate, now) < at,
-        ));
-    }
-
-    /**
      * @param {import('./types.js').DrainOptions} [options]
      * @returns {Promise<import('./types.js').DrainResult>}
      */
@@ -2192,7 +2077,7 @@ export function createRunner({
                 // A rate key that this process unblocks, now or before the deadline, or a local rate limit that admits
                 // a due job before it: its jobs are still to run
                 const quiet = !claimed && !lostRace && !running.size && finishedCount === finishedBefore
-                    && !rateUnblocks && !rateWakes.dueBefore(deadline) && !ratesAdmitBefore(due, deadline);
+                    && !rateUnblocks && !rateWakes.dueBefore(deadline) && !ratesAdmitBefore(registry, due, deadline);
 
                 quietRounds = quiet ? quietRounds + 1 : 0;
 
@@ -2330,8 +2215,7 @@ export function createRunner({
         rateRechecks.clear();
         rateFloors.clear();
         idleRateKeys.clear();
-        localRateWakes.clear();
-        waitingRates.clear();
+        clearLocalRateWakes();
 
         for (const timer of timers) {
             clearTimeout(timer);
