@@ -1,7 +1,7 @@
 // Enqueue on MySQL: in the caller's transaction. MySQL has no RETURNING: the rows of this call are the rows with its
 // enqueue token.
 
-/** Rows per INSERT: 15 placeholders a row stay far below the 65,535 of MySQL. */
+/** Rows per INSERT: 12 placeholders a row stay far below the 65,535 of MySQL. */
 const CHUNK_SIZE = 500;
 
 /**
@@ -30,7 +30,7 @@ function runAtSql(job) {
  * @returns {Promise<Set<string>>} The ids that this call created.
  */
 async function insertChunk(executor, p, jobs, enqueueToken) {
-    const values = jobs.map(job => `(?, ?, 'pending', ${runAtSql(job).sql}, ?, ?, ?, ?, ?, ?, ?, ?, `
+    const values = jobs.map(job => `(?, ?, 'pending', ${runAtSql(job).sql}, ?, ?, ?, ?, ?, ?, ?, ?, ?, `
         + 'UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))');
     const params = jobs.flatMap(job => [
         job.id,
@@ -40,6 +40,7 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
         job.maxStalls,
         job.limits.length ? JSON.stringify(job.limits.map(limit => limit.key)) : null,
         job.limits.length ? JSON.stringify(job.limits.map(limit => limit.max)) : null,
+        job.rateLimits.length ? JSON.stringify(job.rateLimits) : null,
         enqueueToken,
         job.completedRetentionMs,
         job.failedRetentionMs,
@@ -49,7 +50,7 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
     // A duplicate id keeps its row: its token is not this one.
     await executor.query(`
         INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, limit_keys, limit_maxes,
-            enqueue_token, completed_retention_ms, failed_retention_ms, failure_job, created_at, updated_at)
+            rate_limits, enqueue_token, completed_retention_ms, failed_retention_ms, failure_job, created_at, updated_at)
         VALUES ${values.join(', ')}
         ON DUPLICATE KEY UPDATE id = id
     `, params);

@@ -135,6 +135,20 @@ export function postgresMigrations(p) {
                 `DROP TABLE IF EXISTS ${p}mutexes`,
             ],
         },
+        {
+            // Rate limits: the next allowed start of each rate key (its theoretical arrival time, GCRA), in µs; the
+            // rate keys of a job, frozen at enqueue with their settings, as a JSON array sorted by key.
+            id: '0007_rate_limits',
+            statements: [
+                `CREATE TABLE IF NOT EXISTS ${p}rate_limits (
+                    limit_key varchar(255) COLLATE "C" NOT NULL PRIMARY KEY,
+                    tat timestamptz(6) NOT NULL
+                )`,
+                // The sweep deletes the rows whose tat passed
+                `CREATE INDEX IF NOT EXISTS ${p}rate_limits_tat ON ${p}rate_limits (tat)`,
+                `ALTER TABLE ${p}jobs ADD COLUMN IF NOT EXISTS rate_limits jsonb`,
+            ],
+        },
     ];
 }
 
