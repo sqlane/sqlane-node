@@ -27,6 +27,7 @@ import {
     shareNamesOf,
 } from './local_limits.js';
 import { nowUs, takeRate } from './local_rates.js';
+import { createMaintenance } from './maintenance.js';
 import { isRateKey } from './rate_keys.js';
 import { isQuickRetryError, isTransientDbError } from './transient_error.js';
 
@@ -72,8 +73,6 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  * elsewhere. More due names wait for the next turns.
  */
 const CLAIM_NAMES_PER_SLOT = 4;
-const STALLED = { name: 'StalledError', message: 'The lease of the job ended: its process stopped or blocked' };
-const BATCH = 1000;
 
 /** @typedef {'idle' | 'started' | 'draining' | 'closing' | 'closed'} RunnerState */
 
@@ -258,6 +257,21 @@ export function createRunner({
         emit,
         reportError,
     });
+    const maintenance = createMaintenance({
+        store,
+        running,
+        timings: t,
+        cleanup,
+        state: () => state,
+        setTimer,
+        emit,
+        reportError,
+        counts,
+        failureJobs,
+        armRateWake,
+        wake: () => wakeUp(),
+        hintChannel,
+    });
     const { runJob } = createJobRuns({
         store,
         defaults,
@@ -272,30 +286,6 @@ export function createRunner({
         wakeAfterRates,
         hintChannel,
     });
-
-    /**
-     * A timer that runs func again after it settles, while the runner is started.
-     * @param {string} operation
-     * @param {() => Promise<unknown>} func
-     * @param {number} intervalMs
-     */
-    function every(operation, func, intervalMs) {
-        const run = async () => {
-            if (state !== 'started') {
-                return;
-            }
-
-            try {
-                await func();
-            } catch (error) {
-                reportError(operation, error);
-            }
-
-            setTimer(run, intervalMs * (0.9 + (Math.random() * 0.2)));
-        };
-
-        setTimer(run, intervalMs * Math.random());
-    }
 
     /**
      * Ends the sleep of the dispatcher. The next turn looks at the given names, or at all names.
@@ -1134,63 +1124,6 @@ export function createRunner({
         }
     }
 
-    // ---- timers ----
-
-    async function recoverStaleJobs() {
-        const ownIds = new Set([...running.values()].map(job => job.claimed.id));
-        let freedKeys = false;
-
-        for (const { id, name } of await store.findStaleJobs(100)) {
-            if (state !== 'started' || ownIds.has(id)) {
-                continue;
-            }
-
-            // oxlint-disable-next-line no-await-in-loop -- small batches, one job per transaction
-            const recovered = await store.recoverStaleJob(id, {
-                leaseMs: t.leaseMs,
-                buildFailureJob: failureJobs.build,
-            });
-
-            if (recovered.result === 'released') {
-                freedKeys = true;
-                emit({ type: 'stalled', jobId: id, jobName: name, attempt: recovered.attempt });
-            } else if (recovered.result === 'failed') {
-                const { attempt, runMs } = recovered;
-
-                freedKeys = true;
-                counts.failed++;
-                emit({ type: 'failed', jobId: id, jobName: name, attempt, durationMs: runMs, error: STALLED });
-                failureJobs.report({ id, name, attempt, failureJob: null }, recovered.failureJob);
-            }
-        }
-
-        const { lingers, orphans, unblocked, rateWaits } = await store.sweepSlots(100);
-
-        // The rate keys whose timer was lost: this process takes it over
-        for (const { key, delayMs } of rateWaits) {
-            armRateWake(key, delayMs);
-        }
-
-        if (freedKeys || lingers || orphans || unblocked) {
-            wakeUp();
-            hintChannel.publish(ANY_NAME);
-        }
-
-        // oxlint-disable-next-line no-unmodified-loop-condition -- close() changes state
-        for (let deleted = BATCH; deleted >= BATCH && state === 'started';) {
-            // oxlint-disable-next-line no-await-in-loop -- batches one after the other
-            deleted = await store.deleteIdleRateKeys(BATCH);
-        }
-    }
-
-    async function deleteExpiredJobs() {
-        // oxlint-disable-next-line no-unmodified-loop-condition -- close() changes state
-        for (let deleted = BATCH; deleted >= BATCH && state === 'started';) {
-            // oxlint-disable-next-line no-await-in-loop -- batches one after the other
-            deleted = await store.deleteExpiredJobs(BATCH);
-        }
-    }
-
     // ---- public ----
 
     /**
@@ -1295,11 +1228,7 @@ export function createRunner({
         tiePointer = Math.floor(random() * handledCount);
         state = 'started';
         unblocks.resume();
-        every('recover_stale_jobs', recoverStaleJobs, t.recoveryIntervalMs);
-
-        if (cleanup) {
-            every('delete_expired_jobs', deleteExpiredJobs, t.cleanupIntervalMs);
-        }
+        maintenance.start();
 
         loopDone = loop();
 
