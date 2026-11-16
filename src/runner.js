@@ -1,14 +1,11 @@
-// The runner of an instance: the dispatcher loop, the handlers, the timers, close() and drain().
+// The runner of an instance: start(), drain() and close(), and the slot of each job that runs in this process. It
+// connects the parts: the dispatcher loop (dispatcher.js), the runs of the jobs and their results (job_runs.js), the
+// leases (leases.js), the unblocks of keys (key_unblocks.js), the local limits (local_limits.js), the re-probes after
+// an enqueue (reprobes.js) and the periodic work (maintenance.js).
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createDispatcher } from './dispatcher.js';
 import { parseDuration } from './duration.js';
-import {
-    ClosedError,
-    ConfigError,
-    DrainTimeoutError,
-    InvalidOptionsError,
-    ShutdownError,
-} from './errors.js';
+import { ClosedError, ConfigError, DrainTimeoutError, InvalidOptionsError, ShutdownError } from './errors.js';
 import { createFailureJobs } from './failure_jobs.js';
 import { ANY_NAME } from './hint_channel.js';
 import { createJobRuns, waitAtMost } from './job_runs.js';
@@ -23,7 +20,6 @@ import { isTransientDbError } from './transient_error.js';
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
 /** @typedef {import('./job_runs.js').RunningJob} RunningJob */
-/** @typedef {import('./local_limits.js').LocalLimit} LocalLimit */
 
 /**
  * @typedef {object} Timings

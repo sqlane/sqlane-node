@@ -1,7 +1,6 @@
 export type ClaimedJob = import('./store/store.js').ClaimedJob;
 export type HandlerEntry = import('./registry.js').HandlerEntry;
 export type RunningJob = import('./job_runs.js').RunningJob;
-export type LocalLimit = import('./local_limits.js').LocalLimit;
 export type Timings = {
     leaseMs: number;
     renewIntervalMs: number;
@@ -20,7 +19,6 @@ export type Timings = {
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
 /** @typedef {import('./job_runs.js').RunningJob} RunningJob */
-/** @typedef {import('./local_limits.js').LocalLimit} LocalLimit */
 /**
  * @typedef {object} Timings
  * @property {number} leaseMs
