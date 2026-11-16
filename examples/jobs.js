@@ -1,5 +1,5 @@
-// The job definitions and their local concurrency limits: imported by producers and workers.
-import { defineConcurrencyLimit, defineJob } from '@sqlane/core';
+// The job definitions and their concurrency and rate limits: imported by producers and workers.
+import { defineConcurrencyLimit, defineJob, defineRateLimit } from '@sqlane/core';
 
 /** At most 2 heavy jobs at once in one process, across the names that list it */
 export const heavy = defineConcurrencyLimit({ name: 'heavy', max: 2 });
@@ -31,11 +31,15 @@ export const syncOrder = defineJob({
     localConcurrencyLimits: [orderSyncs],
 });
 
+/** At most 100 calls a second to the mail API, in the whole cluster: one every 10 ms, or 20 at once after a pause */
+export const mailApi = defineRateLimit({ name: 'mail_api', max: 100, per: '1s', burst: 20 });
+
 export const sendEmail = defineJob({
     name: 'send_email',
     maxAttempts: 10,
     backoff: { type: 'fixed', delay: '30s' },
     fairShareWeight: 3, // 3 times the share of the free slots of a name of weight 1
+    globalRateLimits: () => [mailApi], // no timeout needed: a rate limit holds nothing while the job runs
 });
 
 export const allJobs = [buildReport, reportFailed, syncOrder, sendEmail];

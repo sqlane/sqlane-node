@@ -56,6 +56,10 @@ sqlane claims jobs through its own small pool, so the queue and your app never w
   keys, such as `client:42`, and each key runs at most its max of jobs, across job names and processes. A flood on one
   key never holds back the others, and a limit of 1 is a mutex. Handlers must stop when their `signal` aborts
   ([guarantees](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#guarantees)).
+- **Rate limits per key.** "5000 calls an hour per GitHub token": each key starts at most `max` jobs per period across
+  the cluster, spread evenly. A job over the limit waits without using an attempt, and a handler that gets a 429 throws
+  a [`RateLimitedError`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#errors-that-handlers-throw) to
+  pause the key for every job.
 - **Idle job names are free.** One query per poll finds the names with pending jobs, so 1000 mostly idle names cost
   about what one does.
 - **Fits your stack.** Adapters for mysql2, pg, postgres.js, Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM and
@@ -66,7 +70,8 @@ sqlane claims jobs through its own small pool, so the queue and your app never w
 [delayed and unique jobs](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue),
 [cron](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedule),
 [failure jobs](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#failedjobpayload),
-[per-process limits](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineconcurrencylimit),
+[per-process limits](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineconcurrencylimit) of
+concurrency and [of rate](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineratelimit),
 [typed payloads](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#typed-payloads),
 [crash recovery](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#leases-and-stalls),
 [graceful shutdown](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#close),
@@ -78,14 +83,15 @@ sqlane claims jobs through its own small pool, so the queue and your app never w
 🔬 rows are verified by running each library next to sqlane on PostgreSQL 17; the others come from each library's
 documentation ([full comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/features_vs_other_libs.md)).
 
-|                                        | sqlane | pg-boss | Graphile Worker | BullMQ | Sidequest    | River | Boring Node Queue | Izi Queue |
-| -------------------------------------- | ------ | ------- | --------------- | ------ | ------------ | ----- | ----------------- | --------- |
-| 🔬 Enqueue in the caller's transaction | ✅     | ✅      | ✅              | ❌     | ❌           | ✅    | ✅                | ✅        |
-| 🔬 Multiple mutex keys per job         | ✅     | ❌      | ❌              | ❌     | ❌           | ❌    | ❌                | ❌        |
-| 🔬 Timeout that aborts the handler     | ✅     | ✅      | ❌              | ❌     | ✅           | ✅    | ✅                | ✅        |
-| 🔬 Priority                            | ❌     | ✅      | ✅              | ✅     | 🟠 per queue | ✅    | ✅                | ✅        |
-| Cron                                   | ✅     | ✅      | ✅              | ✅     | ✅           | ✅    | ✅                | ✅        |
-| Dashboard                              | ❌     | ✅      | ❌              | ✅     | ✅           | ✅    | ❌                | ❌        |
+|                                        | sqlane | pg-boss       | Graphile Worker | BullMQ       | Sidequest    | River | Boring Node Queue | Izi Queue |
+| -------------------------------------- | ------ | ------------- | --------------- | ------------ | ------------ | ----- | ----------------- | --------- |
+| 🔬 Enqueue in the caller's transaction | ✅     | ✅            | ✅              | ❌           | ❌           | ✅    | ✅                | ✅        |
+| 🔬 Multiple mutex keys per job         | ✅     | ❌            | ❌              | ❌           | ❌           | ❌    | ❌                | ❌        |
+| 🔬 Timeout that aborts the handler     | ✅     | ✅            | ❌              | ❌           | ✅           | ✅    | ✅                | ✅        |
+| 🔬 Priority                            | ❌     | ✅            | ✅              | ✅           | 🟠 per queue | ✅    | ✅                | ✅        |
+| Rate limit per key                     | ✅     | 🟠 at enqueue | 🟠 community    | 🟠 per queue | ❌           | ❌    | ❌                | ❌        |
+| Cron                                   | ✅     | ✅            | ✅              | ✅           | ✅           | ✅    | ✅                | ✅        |
+| Dashboard                              | ❌     | ✅            | ❌              | ✅           | ✅           | ✅    | ❌                | ❌        |
 
 Supported databases, from each library's documentation:
 
@@ -177,15 +183,18 @@ producers and workers both import; in TypeScript, `defineJob<{ orderId: number }
 
 ```js
 export const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+export const erpApi = defineRateLimit({ name: 'erp_api', max: 100, per: '1m' });
 export const sendReceipt = defineJob({ name: 'send_receipt', maxAttempts: 5, timeout: '1m' });
 export const syncOrder = defineJob({
     name: 'sync_order',
     globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
+    globalRateLimits: () => [erpApi],
     timeout: '2m',
 });
 ```
 
-Two `sync_order` jobs for the same order never run at the same time. A job with global limits needs a `timeout`.
+Two `sync_order` jobs for the same order never run at the same time, and at most 100 start per minute in the whole
+cluster. A job with global concurrency limits needs a `timeout`.
 
 **2. Create the instance and the tables.** Give sqlane its own pool of 2–3 connections. `migrate()` is safe to run
 from several processes at once; to use your own migration tool, take the SQL from `getMigrations()`.

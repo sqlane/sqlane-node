@@ -1,7 +1,7 @@
-// Scenarios: a worker of definitions with local and global limits, weights and timeouts; retry and failure job;
-// graceful shutdown.
-import { FatalJobError, RetryJobError } from '@sqlane/core';
-import { buildReport, reportFailed, sendEmail, syncOrder } from './jobs.js';
+// Scenarios: a worker of definitions with local and global limits, rate limits, weights and timeouts; retry, rate
+// limited and failure job; graceful shutdown.
+import { FatalJobError, RateLimitedError, RetryJobError } from '@sqlane/core';
+import { buildReport, mailApi, reportFailed, sendEmail, syncOrder } from './jobs.js';
 import { sqlane } from './sqlane.js';
 
 sqlane.handle(buildReport, async ({ payload, job, signal }) => {
@@ -11,8 +11,8 @@ sqlane.handle(buildReport, async ({ payload, job, signal }) => {
         throw new FatalJobError(`report ${payload.reportId} does not exist`); // no retries: report_failed runs
     }
 
-    if (response.status === 429) {
-        throw new RetryJobError('rate limited', { delay: '1m' }); // instead of the backoff
+    if (response.status === 503) {
+        throw new RetryJobError('reports are down', { delay: '1m' }); // instead of the backoff
     }
 
     void job.attempt;
@@ -31,7 +31,12 @@ sqlane.handle(syncOrder, async ({ payload, signal }) => {
 });
 
 sqlane.handle(sendEmail, async ({ payload }) => {
-    await fetch('https://mail.example.com/send', { method: 'POST', body: JSON.stringify(payload) });
+    const response = await fetch('https://mail.example.com/send', { method: 'POST', body: JSON.stringify(payload) });
+
+    if (response.status === 429) {
+        // The mail API starts nothing for 30 s, in the whole cluster; this job waits, without using an attempt
+        throw new RateLimitedError({ limit: mailApi, retryAfter: '30s' });
+    }
 });
 
 /**
