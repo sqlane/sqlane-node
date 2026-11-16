@@ -283,6 +283,10 @@ an enqueue in a transaction. With `{ notify: true }`, PostgreSQL wakes the worke
 keep its transform. A reserved connection (`sql.reserve()`) must be in a transaction when you pass it. With `notify`, NOTIFY takes a global lock at the commit, so under a heavy write load it can limit the commit rate of the whole
 database.
 
+**Prepared statements.** sqlane runs its SQL as named prepared statements, as postgres.js runs its tagged queries: each
+connection parses and plans a statement once. `postgres({ prepare: false })`, for a pooler in transaction mode without
+prepared statement support, turns them off for sqlane's SQL too.
+
 ## Knex
 
 ```js

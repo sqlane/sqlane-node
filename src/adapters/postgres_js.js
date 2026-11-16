@@ -1,14 +1,15 @@
 // The adapter for postgres.js 3.4 and 4 (`@sqlane/core/adapter-postgres-js`): `enqueue` takes the `sql` of postgres.js
 // (a transaction of its own) or the `sql` of a transaction (`sql.begin(sql => …)`, also a savepoint). The SQL of sqlane
-// runs through `sql.unsafe(query, parameters)`, with `$1` placeholders. No import of postgres.js: the adapter uses the
-// instance that it gets, and checks what it uses. postgres.js has no after-commit hook: after an enqueue in a
-// transaction, sqlane re-probes; with `{ notify: true }`, NOTIFY wakes the workers at the commit.
+// runs through `sql.unsafe(query, parameters, { prepare: true })`, with `$1` placeholders. No import of postgres.js:
+// the adapter uses the instance that it gets, and checks what it uses. postgres.js has no after-commit hook: after an
+// enqueue in a transaction, sqlane re-probes; with `{ notify: true }`, NOTIFY wakes the workers at the commit.
 import { ConfigError } from '../errors.js';
 
 /**
  * The `sql` of postgres.js: a pool, a transaction or a reserved connection, as far as the adapter reads it.
  * @typedef {object} PostgresJsSql
- * @property {(query: string, parameters?: unknown[]) => Promise<any>} unsafe Resolves to the rows, with `count`.
+ * @property {(query: string, parameters?: unknown[], options?: { prepare?: boolean }) => Promise<any>} unsafe Resolves
+ *     to the rows, with `count`.
  * @property {(options: string, func: (sql: any) => Promise<any>) => Promise<any>} [begin]
  * @property {() => Promise<PostgresJsSql & { release: () => void }>} [reserve] The pool.
  * @property {() => void} [release] A reserved connection.
@@ -30,14 +31,21 @@ import { ConfigError } from '../errors.js';
  */
 
 /**
+ * Named prepared statements, as postgres.js prepares its tagged queries (`unsafe` does not by default): each SQL text
+ * is parsed and planned once per connection. `postgres({ prepare: false })` turns them off, for `unsafe` too: behind a
+ * pooler in transaction mode without prepared statement support.
+ */
+const PREPARE = Object.freeze({ prepare: true });
+
+/**
  * @param {PostgresJsSql} sql
  * @returns {import('../types.js').Executor}
  */
 function executorOf(sql) {
     return {
         // A RowList: an array with `count`
-        query: async (query, params) => [...await sql.unsafe(query, [...params])],
-        run: async (query, params) => Number((await sql.unsafe(query, [...params])).count ?? 0),
+        query: async (query, params) => [...await sql.unsafe(query, [...params], PREPARE)],
+        run: async (query, params) => Number((await sql.unsafe(query, [...params], PREPARE)).count ?? 0),
     };
 }
 

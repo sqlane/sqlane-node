@@ -1,8 +1,11 @@
 export type PostgresJsSql = {
     /**
-     * Resolves to the rows, with `count`.
+     * Resolves
+     * to the rows, with `count`.
      */
-    unsafe: (query: string, parameters?: unknown[]) => Promise<any>;
+    unsafe: (query: string, parameters?: unknown[], options?: {
+        prepare?: boolean;
+    }) => Promise<any>;
     begin?: (options: string, func: (sql: any) => Promise<any>) => Promise<any>;
     /**
      * The pool.
