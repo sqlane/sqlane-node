@@ -1,7 +1,9 @@
 // The final writes on MariaDB: lease renewal, complete, retry, fail, release, stall recovery, sweeps. Each write of a
 // job checks its lock token: a process that lost the lease changes nothing. Each runs in a queue transaction. A copy of
 // the MySQL version, changed where MariaDB differs: keep the two in step.
-import { admitQueue, nextUnblockMs, RATE_UNBLOCK_BATCH, toleranceUs, waitMsOf, waitUs as keyWaitUs } from '../gcra.js';
+import {
+    admitQueue, allowanceUs, incrementUs, nextUnblockMs, RATE_UNBLOCK_BATCH, toleranceUs, waitMsOf, waitUs as keyWaitUs,
+} from '../gcra.js';
 import { isRateKey } from '../rate_keys.js';
 import { isTransientDbError } from '../transient_error.js';
 import { createMonotonicUlid } from '../ulid.js';
@@ -480,10 +482,29 @@ async function unblockRooms(executor, p, rooms) {
 }
 
 /**
+ * The settings of a rate key in a row of a blocked job.
+ * @param {string} key
+ * @param {Record<string, unknown>} row
+ * @returns {import('../rate_keys.js').GlobalRateLimit}
+ */
+function rateLimitOf(key, row) {
+    return {
+        key,
+        max: Number(row.max_starts),
+        per_us: Number(row.per_us),
+        burst: Number(row.burst),
+        cost: Number(row.cost),
+    };
+}
+
+/**
  * Makes the jobs blocked on the rate keys pending again, the oldest first: on each key, as many as its quota allows
  * now, each job by its own settings (gcra.js, `admitQueue`), at most RATE_UNBLOCK_BATCH. It does not take the quota:
- * the claim does, and blocks again a job that another one got ahead of. A read; then a transaction, only when a job
- * may start.
+ * the claim does, and blocks again a job that another one got ahead of. A read of the oldest blocked job of each key,
+ * with the debt of the key: by its settings, `most` jobs fit. Then, only when a job may start, a transaction: the
+ * `most + 1` oldest jobs of the key, locked, and the update of the prefix that fits. So the reads are as long as the
+ * prefix, not as the queue. A job of other settings after the first `most` waits for the next unblock, at once, like
+ * the one after a full batch.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
@@ -494,64 +515,107 @@ async function unblockRooms(executor, p, rooms) {
 export async function unblockRates(executor, p, keys, options = {}) {
     const { inTransaction = func => func(executor), floors = new Map() } = options;
     const unique = [...new Set(keys)];
-    const rows = await executor.query(unique.map(() => `(
-        SELECT j.blocked_on AS limit_key, j.id, TIMESTAMPDIFF(MICROSECOND, '1970-01-01', j.run_at) AS run_at_us,
-               e.max_starts, e.per_us, e.burst, e.cost,
+    const heads = (await executor.query(unique.map(() => `(
+        SELECT j.blocked_on AS limit_key, e.max_starts, e.per_us, e.burst, e.cost,
                COALESCE((
                    SELECT GREATEST(TIMESTAMPDIFF(MICROSECOND, ${NOW_US}, r.tat), 0) FROM ${p}rate_limits r
                     WHERE r.limit_key = j.blocked_on
                ), 0) AS debt_us
           FROM ${p}jobs j FORCE INDEX (${p}jobs_blocked), ${rateLimitsTable('j.rate_limits')}
          WHERE j.status = 'blocked' AND j.blocked_on = ? AND e.limit_key = j.blocked_on
-         ORDER BY j.run_at, j.id LIMIT ${RATE_UNBLOCK_BATCH + 1}
-    )`).join(' UNION ALL '), unique);
-    /** @type {Map<string, { debtUs: number, queue: import('../rate_keys.js').GlobalRateLimit[] }>} */
-    const byKey = new Map();
-
-    const ordered = rows.toSorted((a, b) => Number(a.run_at_us) - Number(b.run_at_us)
-        || (String(a.id) < String(b.id) ? -1 : 1));
-
-    for (const row of ordered) {
+         ORDER BY j.run_at, j.id LIMIT 1
+    )`).join(' UNION ALL '), unique)).map((row) => {
         const key = String(row.limit_key);
-        const entry = byKey.get(key) ?? { debtUs: Number(row.debt_us), queue: [] };
+        const head = rateLimitOf(key, row);
+        const debtUs = Math.max(Number(row.debt_us), floors.get(key) ?? 0);
+        const fit = Math.floor((allowanceUs(head) - debtUs) / incrementUs(head));
 
-        entry.queue.push({
-            key,
-            max: Number(row.max_starts),
-            per_us: Number(row.per_us),
-            burst: Number(row.burst),
-            cost: Number(row.cost),
-        });
-        byKey.set(key, entry);
-    }
-
-    /** @type {{ key: string, room: number }[]} */
-    const rooms = [];
+        return { key, head, debtUs, most: Math.min(Math.max(fit, 0), RATE_UNBLOCK_BATCH) };
+    });
+    const open = heads.filter(({ most }) => most > 0);
+    const { names, admissions } = open.length
+        ? await inTransaction(transaction => admitLocked(transaction, p, open))
+        : { names: [], admissions: new Map() };
     /** @type {import('./postgres_final.js').RateUnblock[]} */
     const waits = [];
 
-    for (const [key, { debtUs, queue }] of byKey) {
-        const admitted = admitQueue(Math.max(debtUs, floors.get(key) ?? 0), queue, RATE_UNBLOCK_BATCH);
-        const { count, waitUs, left } = admitted;
+    for (const { key, head, debtUs, most } of heads) {
+        const admitted = most ? admissions.get(key) : admitQueue(debtUs, [head], 0);
 
-        if (count) {
-            rooms.push({ key, room: count });
+        if (!admitted) {
+            // Its jobs locked by another unblock, or no longer blocked: a check in a second
+            waits.push({ key, delayMs: nextUnblockMs(0, false), unblocked: 0, debtUs: null, left: false });
+            continue;
         }
 
-        if (waitUs !== null) {
-            waits.push({
-                key,
-                delayMs: nextUnblockMs(waitUs, left),
-                unblocked: count,
-                debtUs: count ? admitted.debtUs : null,
-                left,
-            });
+        const { count, waitUs, left } = admitted;
+
+        waits.push({
+            key,
+            delayMs: nextUnblockMs(waitUs ?? 0, left),
+            unblocked: count,
+            debtUs: count ? admitted.debtUs : null,
+            left,
+        });
+    }
+
+    return { names, waits };
+}
+
+/**
+ * Locks the oldest blocked jobs of the keys, `most + 1` of each, and makes the prefix that fits pending.
+ * @param {Executor} executor In a transaction.
+ * @param {string} p
+ * @param {{ key: string, debtUs: number, most: number }[]} keys
+ * @returns {Promise<{ names: string[], admissions: Map<string, import('../gcra.js').RateAdmission> }>} The names of the
+ *     jobs that it made pending; the admission of each key with jobs locked.
+ */
+async function admitLocked(executor, p, keys) {
+    const rows = await executor.query(keys.map(() => `(
+        SELECT j.blocked_on AS limit_key, j.id, j.job_name,
+               TIMESTAMPDIFF(MICROSECOND, '1970-01-01', j.run_at) AS run_at_us,
+               e.max_starts, e.per_us, e.burst, e.cost
+          FROM ${p}jobs j FORCE INDEX (${p}jobs_blocked), ${rateLimitsTable('j.rate_limits')}
+         WHERE j.status = 'blocked' AND j.blocked_on = ? AND e.limit_key = j.blocked_on
+         ORDER BY j.run_at, j.id LIMIT ?
+           FOR UPDATE SKIP LOCKED
+    )`).join(' UNION ALL '), keys.flatMap(({ key, most }) => [key, most + 1]));
+    /** @type {Map<string, Record<string, unknown>[]>} */
+    const queues = new Map();
+
+    for (const row of rows.toSorted((a, b) => Number(a.run_at_us) - Number(b.run_at_us)
+        || (String(a.id) < String(b.id) ? -1 : 1))) {
+        const key = String(row.limit_key);
+        const queue = queues.get(key) ?? [];
+
+        queue.push(row);
+        queues.set(key, queue);
+    }
+
+    /** @type {Map<string, import('../gcra.js').RateAdmission>} */
+    const admissions = new Map();
+    /** @type {Record<string, unknown>[]} */
+    const picked = [];
+
+    for (const { key, debtUs, most } of keys) {
+        const queue = queues.get(key) ?? [];
+
+        if (queue.length) {
+            const admitted = admitQueue(debtUs, queue.map(row => rateLimitOf(key, row)), most);
+
+            admissions.set(key, admitted);
+            picked.push(...queue.slice(0, admitted.count));
         }
     }
 
-    const names = rooms.length ? await inTransaction(transaction => unblockRooms(transaction, p, rooms)) : [];
+    if (picked.length) {
+        await executor.run(`
+            UPDATE ${p}jobs FORCE INDEX (PRIMARY) SET status = 'pending', blocked_on = NULL, updated_at = ${NOW}
+             WHERE id IN (${placeholders(picked.length)}) AND status = 'blocked'
+        `, picked.map(row => String(row.id)));
+    }
 
-    return { names, waits };
+    return { names: [...new Set(picked.map(row => String(row.job_name)))], admissions };
 }
 
 /**
