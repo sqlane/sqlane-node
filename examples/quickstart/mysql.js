@@ -70,7 +70,7 @@ const [[jobs]] = await appPool.query('SELECT COUNT(*) AS n FROM sqlane_jobs WHER
 
 console.log(`   order 2: ${orders.n} rows in orders, ${jobs.n} jobs`);
 
-console.log('3. Mutex keys: 3 syncs of order 1, 1 sync of order 3');
+console.log('3. A global limit of 1 per order: 3 syncs of order 1, 1 sync of order 3');
 done = completions(4);
 await sqlane.enqueueMany(appPool, syncOrder, [1, 1, 1, 3].map(orderId => ({ payload: { orderId } })));
 await done;

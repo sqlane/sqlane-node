@@ -41,5 +41,13 @@
         { matchDepNames: ['typeorm-0.3'], allowedVersions: '<0.4' },
         { matchDepNames: ['drizzle-orm-1'], allowedVersions: '<2' },
         { matchFileNames: ['test/mikro_orm_6/package.json'], allowedVersions: '<7' },
+        {
+            // The quickstart installs the published package: our own releases, proposed at once. CI fails on an old
+            // major (job quickstart).
+            matchFileNames: ['examples/quickstart/package.json'],
+            matchDepNames: ['@sqlane/core'],
+            minimumReleaseAge: null,
+            schedule: ['at any time'],
+        },
     ],
 }
