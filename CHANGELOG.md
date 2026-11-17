@@ -1,5 +1,33 @@
 # @sqlane/core
 
+## 6.1.0
+
+### Minor Changes
+
+- [#123](https://github.com/sqlane/sqlane-node/pull/123) [`dc8be37`](https://github.com/sqlane/sqlane-node/commit/dc8be376f5afb244735fb8c75ec45441a1e8a701) - PostgreSQL: the Knex, Sequelize and MikroORM adapters take `{ prepare: true }`, to run sqlane's SQL as named prepared
+  statements, as the pg adapter does by default: each connection parses and plans a statement once. It is off by default,
+  for poolers in transaction mode without prepared statement support. In MikroORM 7 (7.2 and later), it covers the
+  queue's own SQL; an enqueue still runs through Kysely, unnamed. On MySQL and MariaDB, `prepare` throws a `ConfigError`.
+
+### Patch Changes
+
+- [#121](https://github.com/sqlane/sqlane-node/pull/121) [`a078aa2`](https://github.com/sqlane/sqlane-node/commit/a078aa200232e2788a386c319ad63e62f4ee1f9a) - MySQL and MariaDB: a worker that handles more than 100 job names no longer runs a job twice. A turn that probed more
+  than 100 names could request a name twice, and the claim then locked and started its due jobs twice, in the same
+  process. The worker now requests each name once, the store ignores a repeated name, and a job given twice by one claim
+  runs once, with an `error` event.
+
+- [#124](https://github.com/sqlane/sqlane-node/pull/124) [`e214916`](https://github.com/sqlane/sqlane-node/commit/e21491689fb6dacfc13e6cb8594bc72548db180f) - The stall recovery, about every 30 s, starts with one read of its work: the stale jobs, and whether there are ended
+  lingers, orphan slots, blocked jobs or expired rate rows. Only the parts with work run, so an idle recovery is one
+  statement instead of 9 (PostgreSQL) or 11 (MySQL, MariaDB), with their two transactions.
+
+- [#123](https://github.com/sqlane/sqlane-node/pull/123) [`dc8be37`](https://github.com/sqlane/sqlane-node/commit/dc8be376f5afb244735fb8c75ec45441a1e8a701) - PostgreSQL: `migrate({ lockTimeout })` sets the timeout of its lock with one SQL text and a parameter
+  (`set_config('lock_timeout', $1, true)`), no longer with the value in the SQL. Each distinct timeout made a new named
+  prepared statement on the connection.
+
+- [#121](https://github.com/sqlane/sqlane-node/pull/121) [`a078aa2`](https://github.com/sqlane/sqlane-node/commit/a078aa200232e2788a386c319ad63e62f4ee1f9a) - The stall recovery no longer reports deadlocks of its sweep of the concurrency slots as `error` events under load. On
+  MySQL the sweep skips the slots that claims and releases hold instead of waiting for them, and on all databases a
+  deadlock of the sweep runs it again at once, up to 3 times, as the dispatcher does for its claims.
+
 ## 6.0.0
 
 ### Major Changes
