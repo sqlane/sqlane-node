@@ -11,8 +11,12 @@ import {
     RateLimitedError,
     RetryJobError,
 } from '@sqlane/core';
+import knex from 'knex';
+import { knexAdapter } from '@sqlane/core/adapter-knex';
+import { mikroOrmAdapter } from '@sqlane/core/adapter-mikro-orm';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 import { pgAdapter } from '@sqlane/core/adapter-pg';
+import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
 
 /** The type tests: never called. */
 export async function publicApiTypes() {
@@ -53,6 +57,23 @@ export async function publicApiTypes() {
     await pgSqlane.enqueue(await pgPool.connect(), job, {});
     // @ts-expect-error a mysql2 connection is not a connection of the pg adapter
     await pgSqlane.enqueue(connection, job, {});
+
+    // Named prepared statements: opt-in for knex, Sequelize and MikroORM (PostgreSQL)
+    const pgKnex = knex({ client: 'pg' });
+    const sequelize = /** @type {Parameters<typeof sequelizeAdapter>[0]} */ (/** @type {unknown} */ ({}));
+    const em = /** @type {Parameters<typeof mikroOrmAdapter>[0]} */ (/** @type {unknown} */ ({}));
+
+    pgAdapter(pgPool, { prepare: false });
+    knexAdapter(pgKnex, { prepare: true });
+    knexAdapter(pgKnex, { dialect: 'mariadb' });
+    sequelizeAdapter(sequelize, { prepare: true });
+    mikroOrmAdapter(em, { dialect: 'postgres', prepare: true });
+    // @ts-expect-error prepare is a boolean
+    knexAdapter(pgKnex, { prepare: 'yes' });
+    // @ts-expect-error prepare is a boolean
+    sequelizeAdapter(sequelize, { prepare: 1 });
+    // @ts-expect-error the dialect of MikroORM is required
+    mikroOrmAdapter(em, { prepare: true });
 
     // enqueue: JSON payloads
     /**

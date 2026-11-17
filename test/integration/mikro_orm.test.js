@@ -12,6 +12,7 @@ import { connectTestDatabase } from '../support/test_database.js';
 import { mikroOrmAdapter } from '../../src/adapters/mikro_orm.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
+import { preparedAfterAJob } from './helpers/prepared_statements.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -91,13 +92,16 @@ describe.each([
     /** @type {any} The queue's own MikroORM */
     let queueOrm;
 
-    /** @returns {Promise<any>} An initialized MikroORM on the test database. */
-    async function createOrm() {
+    /**
+     * @param {number} [max] The connections of its pool. Default: 4.
+     * @returns {Promise<any>} An initialized MikroORM on the test database.
+     */
+    async function createOrm(max = 4) {
         const created = await MikroORM.init({
             clientUrl: inject('databaseUrl'),
             entities: [],
             discovery: { warnWhenNoEntities: false },
-            pool: { min: 0, max: 4 },
+            pool: { min: 0, max },
         });
 
         orms.push(created);
@@ -136,6 +140,11 @@ describe.each([
 
     test('the queue transaction is READ COMMITTED', async () => {
         await expect(readsAcrossCommit(mikroOrmAdapter(queueOrm.em, { dialect }), database))
+            .resolves.toStrictEqual([0, 1]);
+    });
+
+    test.runIf(dialect === 'postgres')('prepare: the queue transaction is READ COMMITTED', async () => {
+        await expect(readsAcrossCommit(mikroOrmAdapter(queueOrm.em, { dialect, prepare: true }), database))
             .resolves.toStrictEqual([0, 1]);
     });
 
@@ -281,5 +290,35 @@ describe.each([
         expect(failures).toStrictEqual(['failing']);
         await expect(sqlane.getStats()).resolves.toMatchObject([{ name: 'failing', pending: 0, failed: 1 }]);
         expect((await statuses(p)).toSorted()).toStrictEqual(['completed', 'completed', 'completed', 'failed']);
+    });
+
+    // MikroORM 6: all of sqlane's SQL through knex; MikroORM 7: the queue's own SQL on the pg pool under Kysely
+    test.runIf(dialect === 'postgres').each([
+        { prepare: true, named: true },
+        { prepare: false, named: false },
+        { prepare: undefined, named: false },
+    ])('prepare: $prepare: named prepared statements on the queue\'s connection: $named', async ({ prepare, named }) => {
+        // One connection: pg_prepared_statements is of the session that reads it
+        const queueOne = await createOrm(1);
+
+        prefixCount++;
+
+        const sqlane = createSqlane({
+            adapter: mikroOrmAdapter(queueOne.em, { dialect, prepare }),
+            tablePrefix: `${database.tablePrefix}${prefixCount}_`,
+        });
+
+        try {
+            /**
+             * @param {string} sql
+             * @returns {Promise<Record<string, unknown>[]>}
+             */
+            const query = sql => queueOne.em.getConnection().execute(sql);
+            const statements = await preparedAfterAJob(sqlane, queueOne.em, query);
+
+            expect(statements > 0).toBe(named);
+        } finally {
+            await sqlane.close({ deadline: 0, mode: 'abandon' });
+        }
     });
 });

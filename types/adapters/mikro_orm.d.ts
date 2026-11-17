@@ -20,6 +20,13 @@ export type MikroOrmAdapterOptions = {
      * `'postgres'` with `@mikro-orm/postgresql`.
      */
     dialect: import('../types.js').Dialect;
+    /**
+     * PostgreSQL: named prepared statements, each SQL text parsed and planned once per
+     * connection. MikroORM 6: all of sqlane's SQL. MikroORM 7.2+: the queue's own SQL, on the pg pool under Kysely
+     * (an enqueue runs through Kysely, unnamed). Opt-in: not behind a pooler in transaction mode without prepared
+     * statement support (PgBouncer before 1.21). Default: false.
+     */
+    prepare?: boolean;
 };
 /**
  * The adapter for MikroORM 6 or 7 (MySQL or PostgreSQL). `enqueue` then takes an EntityManager: of a transaction (the

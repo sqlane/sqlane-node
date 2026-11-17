@@ -48,3 +48,12 @@ test.each([
 ])('$label: a ConfigError', ({ sequelize, message }) => {
     expect(() => sequelizeAdapter(sequelize)).toThrow(message);
 });
+
+test('postgres: { prepare: true } is accepted', () => {
+    expect(sequelizeAdapter(fakeSequelize('postgres', '6.37.8'), { prepare: true }).dialect).toBe('postgres');
+});
+
+test.each(['mysql', 'mariadb'])('{ prepare: true } on the "%s" dialect: a ConfigError', (dialect) => {
+    expect(() => sequelizeAdapter(fakeSequelize(dialect, '6.37.8'), { prepare: true }))
+        .toThrow('"prepare" is for the "postgres" dialect');
+});

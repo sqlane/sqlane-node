@@ -17,15 +17,27 @@ export type SequelizeTransactionLike = {
     parent?: SequelizeTransactionLike | undefined;
     afterCommit: (func: () => unknown) => void;
 };
+export type SequelizeAdapterOptions = {
+    /**
+     * The "mysql" dialect of Sequelize (mysql2): `'mariadb'` on MariaDB. Default:
+     * `'mysql'`. The "mariadb" dialect of Sequelize is MariaDB without it.
+     */
+    dialect?: 'mysql' | 'mariadb';
+    /**
+     * The "postgres" dialect: named prepared statements, each SQL text parsed and planned
+     * once per connection. Opt-in: not behind a pooler in transaction mode without prepared statement support
+     * (PgBouncer before 1.21). Default: false.
+     */
+    prepare?: boolean;
+};
 export type SequelizeConnection = SequelizeLike | SequelizeTransactionLike;
 /**
  * The adapter for Sequelize 6 (MySQL, MariaDB or PostgreSQL). `enqueue` then takes a Sequelize instance (a transaction
  * of its own) or a Sequelize transaction, also nested (the caller's: the job commits with it).
  * @param {SequelizeLike} sequelize The queue's own Sequelize instance: claims, leases, results. A small pool of its
  *     own is best.
- * @param {import('./dialect.js').MysqlFamilyOptions} [options] The "mysql" dialect of Sequelize (mysql2):
- *     `{ dialect: 'mariadb' }` on MariaDB. The "mariadb" dialect of Sequelize (the mariadb driver) is MariaDB without
- *     it.
+ * @param {SequelizeAdapterOptions} [options] The "mysql" dialect of Sequelize (mysql2): `{ dialect: 'mariadb' }` on
+ *     MariaDB. The "postgres" dialect: `{ prepare: true }`, named prepared statements.
  * @returns {import('../types.js').Adapter<SequelizeConnection>}
  */
-export declare function sequelizeAdapter(sequelize: SequelizeLike, options?: import('./dialect.js').MysqlFamilyOptions): import('../types.js').Adapter<SequelizeConnection>;
+export declare function sequelizeAdapter(sequelize: SequelizeLike, options?: SequelizeAdapterOptions): import('../types.js').Adapter<SequelizeConnection>;
