@@ -5,7 +5,7 @@
 // the outermost transaction (its `afterCommit` hook), the workers wake at once. With CLS (`Sequelize.useCLS()`), an
 // instance means its CLS transaction, if one runs: as for the queries of Sequelize.
 import { ConfigError } from '../errors.js';
-import { mysqlFamilyDialect } from './dialect.js';
+import { checkAdapterDialect, matchLibraryDialect } from './dialect.js';
 import { mariadbExecutor, mysql2Executor, pgExecutor } from './executors.js';
 
 /**
@@ -26,8 +26,12 @@ import { mariadbExecutor, mysql2Executor, pgExecutor } from './executors.js';
 
 /**
  * @typedef {object} SequelizeAdapterOptions
- * @property {'mysql' | 'mariadb'} [dialect] The "mysql" dialect of Sequelize (mysql2): `'mariadb'` on MariaDB. Default:
- *     `'mysql'`. The "mariadb" dialect of Sequelize is MariaDB without it.
+ * @property {import('../types.js').Dialect} dialect The database: `'mysql'` or `'mariadb'` with the "mysql" dialect of
+ *     Sequelize (mysql2), `'mariadb'` with its "mariadb" dialect, `'postgres'` with its "postgres" dialect.
+ * @property {boolean} [allowUnsupportedDbVersion] Runs on a server below the supported minimum, with a warning.
+ *     Default: false.
+ * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: runs with a `sql_mode` that lacks a required
+ *     flag, or has `ALLOW_INVALID_DATES`, with a warning. Never with `NO_BACKSLASH_ESCAPES`. Default: false.
  * @property {boolean} [prepare] The "postgres" dialect: named prepared statements, each SQL text parsed and planned
  *     once per connection. Opt-in: not behind a pooler in transaction mode without prepared statement support
  *     (PgBouncer before 1.21). Default: false.
@@ -37,6 +41,13 @@ import { mariadbExecutor, mysql2Executor, pgExecutor } from './executors.js';
  * The connections that `enqueue` takes: a Sequelize instance (a transaction of its own) or a Sequelize transaction.
  * @typedef {SequelizeLike | SequelizeTransactionLike} SequelizeConnection
  */
+
+/** @type {Record<string, import('../types.js').Dialect[]>} By the dialect of Sequelize */
+const DIALECTS_BY_SEQUELIZE_DIALECT = {
+    mysql: ['mysql', 'mariadb'],
+    mariadb: ['mariadb'],
+    postgres: ['postgres'],
+};
 
 /**
  * @param {SequelizeConnection} connection
@@ -88,8 +99,8 @@ function checkSequelize(sequelize) {
  * of its own) or a Sequelize transaction, also nested (the caller's: the job commits with it).
  * @param {SequelizeLike} sequelize The queue's own Sequelize instance: claims, leases, results. A small pool of its
  *     own is best.
- * @param {SequelizeAdapterOptions} [options] The "mysql" dialect of Sequelize (mysql2): `{ dialect: 'mariadb' }` on
- *     MariaDB. The "postgres" dialect: `{ prepare: true }`, named prepared statements.
+ * @param {SequelizeAdapterOptions} options `{ dialect }`. The "postgres" dialect: `{ prepare: true }`, named prepared
+ *     statements.
  * @returns {import('../types.js').Adapter<SequelizeConnection>}
  */
 export function sequelizeAdapter(sequelize, options) {
@@ -107,17 +118,19 @@ export function sequelizeAdapter(sequelize, options) {
         );
     }
 
-    if (sequelizeDialect !== 'mysql' && options?.dialect !== undefined) {
-        throw new ConfigError('sequelizeAdapter: "dialect" is for the "mysql" dialect of Sequelize (MySQL or MariaDB)');
-    }
+    const checked = checkAdapterDialect(options, 'sequelizeAdapter', ['mysql', 'mariadb', 'postgres']);
+    const dialect = matchLibraryDialect(
+        checked.dialect,
+        DIALECTS_BY_SEQUELIZE_DIALECT[sequelizeDialect],
+        'sequelizeAdapter',
+        `the dialect of Sequelize is "${sequelizeDialect}"`,
+    );
 
-    if (sequelizeDialect !== 'postgres' && options?.prepare) {
+    if (sequelizeDialect !== 'postgres' && options.prepare) {
         throw new ConfigError('sequelizeAdapter: "prepare" is for the "postgres" dialect of Sequelize (PostgreSQL)');
     }
 
-    const prepare = options?.prepare ?? false;
-    /** @type {import('../types.js').Dialect} */
-    const dialect = sequelizeDialect === 'mysql' ? mysqlFamilyDialect(options, 'sequelizeAdapter') : sequelizeDialect;
+    const prepare = options.prepare ?? false;
 
     /** @type {Record<string, (connection: any) => import('../types.js').Executor>} By the dialect of Sequelize */
     const executorByDialect = {
@@ -164,6 +177,8 @@ export function sequelizeAdapter(sequelize, options) {
 
     return {
         dialect,
+        allowUnsupportedDbVersion: checked.allowUnsupportedDbVersion,
+        allowUnsupportedDbConfiguration: checked.allowUnsupportedDbConfiguration,
         wrap: connection => executorOf(resolveConnection(connection)),
         queue: executorOf(sequelize),
         withConnection: func => onConnection(sequelize, func),

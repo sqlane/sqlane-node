@@ -170,14 +170,17 @@ async function migratePostgres(executor, p, lockTimeoutMs, inTransaction) {
  * @param {import('./types.js').Adapter<C>} adapter
  * @param {string} tablePrefix Checked.
  * @param {import('./types.js').MigrateOptions} [options]
+ * @param {() => Promise<void>} [checkServer] Runs after the options are checked, before the migration.
  * @returns {Promise<string[]>} The ids of the applied migrations.
  */
-export function runMigrations(adapter, tablePrefix, options = {}) {
+export async function runMigrations(adapter, tablePrefix, options = {}, checkServer = async () => {}) {
     const lockTimeoutMs = parseDuration(options.lockTimeout ?? '10m');
 
     if (lockTimeoutMs === null) {
-        return Promise.reject(new InvalidOptionsError('migrate: "lockTimeout" must be a duration'));
+        throw new InvalidOptionsError('migrate: "lockTimeout" must be a duration');
     }
+
+    await checkServer();
 
     return adapter.withConnection((executor) => {
         if (adapter.dialect === 'mysql') {

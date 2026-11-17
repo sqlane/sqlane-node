@@ -65,7 +65,8 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
 
 /**
  * @typedef {object} Runner
- * @property {() => Promise<void>} start
+ * @property {(options?: { serverCheck?: (() => Promise<void>) | null }) => Promise<void>} start `serverCheck`: the
+ *     check of the server that did not run (the database was down): the dispatcher runs it before its first turn.
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
  * @property {() => void} wake
@@ -375,7 +376,10 @@ export function createRunner({
         return names.some(name => name === ANY_NAME || registry.getEntry(name));
     }
 
-    async function start() {
+    /**
+     * @param {{ serverCheck?: (() => Promise<void>) | null }} [options]
+     */
+    async function start({ serverCheck = null } = {}) {
         if (state === 'closing' || state === 'closed') {
             throw new ClosedError('start() after close()');
         }
@@ -390,7 +394,7 @@ export function createRunner({
         unblocks.resume();
         maintenance.start();
 
-        loopDone = dispatcher.run();
+        loopDone = dispatcher.run(serverCheck);
 
         try {
             // NOTIFY comes after the commit: the job is visible. Another hint is sent before the commit of its enqueue:

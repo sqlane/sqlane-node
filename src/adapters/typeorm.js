@@ -5,6 +5,7 @@
 // at once.
 
 import { ConfigError } from '../errors.js';
+import { checkAdapterDialect, matchLibraryDialect } from './dialect.js';
 
 /** @typedef {{ records: any[], affected?: number }} StructuredResult The result of `query(…, true)` */
 
@@ -26,6 +27,23 @@ import { ConfigError } from '../errors.js';
  * is in a transaction), or a QueryRunner in a transaction.
  * @typedef {any} TypeOrmConnection
  */
+
+/**
+ * @typedef {object} TypeOrmAdapterOptions
+ * @property {import('../types.js').Dialect} dialect The database: `'mysql'` or `'mariadb'` with the type `"mysql"`,
+ *     `'mariadb'` with the type `"mariadb"`, `'postgres'` with the type `"postgres"`.
+ * @property {boolean} [allowUnsupportedDbVersion] Runs on a server below the supported minimum, with a warning.
+ *     Default: false.
+ * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: runs with a `sql_mode` that lacks a required
+ *     flag, or has `ALLOW_INVALID_DATES`, with a warning. Never with `NO_BACKSLASH_ESCAPES`. Default: false.
+ */
+
+/** @type {Record<string, import('../types.js').Dialect[]>} By the type of the DataSource */
+const DIALECTS_BY_TYPE = {
+    mysql: ['mysql', 'mariadb'],
+    mariadb: ['mariadb'],
+    postgres: ['postgres'],
+};
 
 /** The TypeORM data sources that have the subscriber of the adapter */
 const subscribed = new WeakSet();
@@ -113,13 +131,14 @@ async function onRunner(source, func) {
 }
 
 /**
- * The adapter for TypeORM (MySQL or MariaDB with mysql2, or PostgreSQL). The type of the DataSource tells the database:
- * `"mariadb"` for MariaDB. `enqueue` then takes a DataSource (a transaction of its own), the EntityManager of a
- * transaction (`dataSource.transaction(manager => …)`), or a QueryRunner in a transaction.
+ * The adapter for TypeORM (MySQL or MariaDB with mysql2, or PostgreSQL). `enqueue` then takes a DataSource (a
+ * transaction of its own), the EntityManager of a transaction (`dataSource.transaction(manager => …)`), or a
+ * QueryRunner in a transaction.
  * @param {any} dataSource The queue's own DataSource, initialized: claims, leases, results.
+ * @param {TypeOrmAdapterOptions} options
  * @returns {import('../types.js').Adapter<TypeOrmConnection>}
  */
-export function typeOrmAdapter(dataSource) {
+export function typeOrmAdapter(dataSource, options) {
     if (!isDataSource(dataSource) || typeof dataSource.transaction !== 'function') {
         throw new ConfigError('typeOrmAdapter: expects a TypeORM DataSource (TypeORM 0.3 or 1.x)');
     }
@@ -132,6 +151,14 @@ export function typeOrmAdapter(dataSource) {
         );
     }
 
+    const checked = checkAdapterDialect(options, 'typeOrmAdapter', ['mysql', 'mariadb', 'postgres']);
+    const dialect = matchLibraryDialect(
+        checked.dialect,
+        DIALECTS_BY_TYPE[type],
+        'typeOrmAdapter',
+        `the type of the DataSource is "${type}"`,
+    );
+
     /**
      * @param {TypeOrmConnection} connection
      * @returns {any} The DataSource of a DataSource, an EntityManager or a QueryRunner.
@@ -143,7 +170,9 @@ export function typeOrmAdapter(dataSource) {
     }
 
     return {
-        dialect: type,
+        dialect,
+        allowUnsupportedDbVersion: checked.allowUnsupportedDbVersion,
+        allowUnsupportedDbConfiguration: checked.allowUnsupportedDbConfiguration,
         wrap: (connection) => {
             const runner = transactionRunnerOf(connection);
 

@@ -74,7 +74,7 @@ export const adapter = {
             // One adapter type for both: the connections are the caller's (any)
             adapter: /** @type {import('../../../src/types.js').Adapter<any>} */ (mysql
                 ? mysql2Adapter(/** @type {import('mysql2/promise').Pool} */ (pool), { dialect })
-                : pgAdapter(/** @type {Pool} */ (pool), { notify: true })),
+                : pgAdapter(/** @type {Pool} */ (pool), { dialect: 'postgres', notify: true })),
             ...mysql && { hint: udpHint(Number(new URL(url).port) - 10_000) },
             localMaxConcurrency: concurrency,
             pollInterval: pollIntervalMs,

@@ -11,7 +11,7 @@ export const appPool = mysql.createPool({ uri: 'mysql://app@localhost/app', conn
 const queuePool = mysql.createPool({ uri: 'mysql://app@localhost/app', connectionLimit: 3 });
 
 export const sqlane = createSqlane({
-    adapter: mysql2Adapter(queuePool),
+    adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }),
     jobs: allJobs,
     localMaxConcurrency: 10,
     defaults: { timeout: '10m' },

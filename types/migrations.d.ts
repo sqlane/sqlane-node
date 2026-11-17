@@ -17,6 +17,7 @@ export declare function getMigrations({ dialect, tablePrefix }: {
  * @param {import('./types.js').Adapter<C>} adapter
  * @param {string} tablePrefix Checked.
  * @param {import('./types.js').MigrateOptions} [options]
+ * @param {() => Promise<void>} [checkServer] Runs after the options are checked, before the migration.
  * @returns {Promise<string[]>} The ids of the applied migrations.
  */
-export declare function runMigrations<C>(adapter: import('./types.js').Adapter<C>, tablePrefix: string, options?: import('./types.js').MigrateOptions): Promise<string[]>;
+export declare function runMigrations<C>(adapter: import('./types.js').Adapter<C>, tablePrefix: string, options?: import('./types.js').MigrateOptions, checkServer?: () => Promise<void>): Promise<string[]>;

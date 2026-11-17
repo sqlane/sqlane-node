@@ -2,6 +2,7 @@
 // allow, by the share of their names, and starts them. See docs/design.md › Dispatcher: one loop per process, Claim.
 import { hostname } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { ConfigError } from './errors.js';
 import { chooseRows, fill, rankNames, replayTie, shareNamesOfRequests } from './fair_share.js';
 import { incrementUs, waitUs } from './gcra.js';
 import { ANY_NAME } from './hint_channel.js';
@@ -32,8 +33,10 @@ const CLAIM_NAMES_PER_SLOT = 4;
  *     loop. The next turn looks at the given names, or at all names.
  * @property {() => void} prepare For start() and drain(), after the check of the registry: reads the handled names,
  *     and starts the tie pointer at a random name.
- * @property {() => Promise<void>} run The loop: one turn after the other, while the runner is started. An error of a
- *     turn is retried, or reported and backed off.
+ * @property {(serverCheck?: (() => Promise<void>) | null) => Promise<void>} run The loop: one turn after the other,
+ *     while the runner is started. An error of a turn is retried, or reported and backed off. `serverCheck`: the check
+ *     of the server that start() could not run (the database was down): no turn before it passes; a `ConfigError` of
+ *     it ends the loop.
  * @property {(dueNames: string[]) => Promise<{ candidates: number, claimed: number }>} claimAndStart Claims the due
  *     jobs of the names, by share within the free slots, and starts them. For drain().
  * @property {(entry: HandlerEntry) => number} freeSlots The jobs of the name that can start now: under its local
@@ -837,13 +840,33 @@ export function createDispatcher({
     }
 
     /** @type {Dispatcher['run']} */
-    async function run() {
+    async function run(serverCheck = null) {
         /** The transient errors in a row that the next turns retry at once */
         let transientRetries = 0;
+        let pendingCheck = serverCheck;
 
         while (state() === 'started') {
             const seenWakes = wakeCount;
             let delayMs;
+
+            if (pendingCheck) {
+                try {
+                    // oxlint-disable-next-line no-await-in-loop -- once, before the first turn
+                    await pendingCheck();
+                    pendingCheck = null;
+                } catch (error) {
+                    reportError('server_check', error);
+
+                    if (error instanceof ConfigError) {
+                        // A wrong dialect or an unsupported version: no claim, ever
+                        return;
+                    }
+
+                    // oxlint-disable-next-line no-await-in-loop -- one try after the other
+                    await sleepUntilWake(Math.min(t.pollIntervalMs, 1000), seenWakes);
+                    continue;
+                }
+            }
 
             try {
                 // oxlint-disable-next-line no-await-in-loop -- one turn after the other

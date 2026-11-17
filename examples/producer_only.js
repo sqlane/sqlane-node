@@ -6,7 +6,7 @@ import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 const pool = mysql.createPool({ uri: 'mysql://app@localhost/app', connectionLimit: 2 });
 
 // No jobs, no handlers, no start(): this process only adds jobs.
-const sqlane = createSqlane({ adapter: mysql2Adapter(pool) });
+const sqlane = createSqlane({ adapter: mysql2Adapter(pool, { dialect: 'mysql' }) });
 
 /**
  * Re-sends the emails of the given users. The name is not known here: the job gets the instance defaults, and

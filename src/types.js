@@ -344,7 +344,12 @@
  * The connections that `enqueue` accepts (C), and the queue's own pool. Made by `mysql2Adapter()` or `pgAdapter()`.
  * @template C
  * @typedef {object} Adapter
- * @property {Dialect} dialect
+ * @property {Dialect} dialect The database, as the app named it. The first `start()` or `migrate()` of an instance
+ *     checks it against the server.
+ * @property {boolean} [allowUnsupportedDbVersion] A server below the supported minimum (MySQL 8.4, MariaDB 10.11,
+ *     PostgreSQL 15) logs a warning instead of a `ConfigError`.
+ * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: a `sql_mode` that lacks a required flag,
+ *     or has `ALLOW_INVALID_DATES`, logs a warning instead of a `ConfigError`. `NO_BACKSLASH_ESCAPES` is always one.
  * @property {(connection: C) => Executor} wrap Used by sqlane: wraps a connection given to `enqueue`.
  * @property {Executor} queue Used by sqlane: the queue's own pool.
  * @property {<T>(func: (executor: Executor) => Promise<T>) => Promise<T>} withConnection Used by sqlane: runs func on

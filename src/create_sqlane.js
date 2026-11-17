@@ -8,6 +8,7 @@ import { createRegistry } from './registry.js';
 import { createRunner } from './runner.js';
 import { checkSchedule } from './schedule.js';
 import { createScheduler } from './scheduler.js';
+import { checkServer } from './server_check.js';
 import { createStore } from './store/store.js';
 import { isMissingTableError } from './transient_error.js';
 import { checkDuration, checkInteger, checkObject, checkTablePrefix, isPlainObject } from './validate.js';
@@ -235,6 +236,26 @@ export function createSqlane(options) {
     let startPromise = null;
     /** @type {Promise<void> | null} */
     let closePromise = null;
+    /** @type {Promise<void> | null} The check of the server: once per instance, again after a failure */
+    let serverChecked = null;
+
+    /**
+     * Checks the server once: the first `start()` or `migrate()`, then their calls share the result.
+     * @param {string} where The caller, for the errors.
+     * @returns {Promise<void>}
+     */
+    function checkServerOnce(where) {
+        serverChecked ??= (async () => {
+            try {
+                await checkServer(adapter, where, options.logger);
+            } catch (error) {
+                serverChecked = null;
+                throw error;
+            }
+        })();
+
+        return serverChecked;
+    }
 
     /**
      * Registers the schedules, then starts the runner and the scheduler. Nothing runs before the runner starts: a
@@ -243,6 +264,22 @@ export function createSqlane(options) {
      */
     async function startOnce() {
         scheduler.prepare();
+
+        /** @type {(() => Promise<void>) | null} */
+        let serverCheck = null;
+
+        try {
+            await checkServerOnce('start()');
+        } catch (error) {
+            if (error instanceof ConfigError) {
+                throw error;
+            }
+
+            // The database is down: start anyway, as for the schedules. The dispatcher checks again before its first
+            // turn, and claims nothing before the check passes
+            reportError('server_check', error);
+            serverCheck = () => checkServerOnce('start()');
+        }
 
         /** @type {import('./store/store.js').ScheduleRead | null} */
         let read = null;
@@ -267,7 +304,7 @@ export function createSqlane(options) {
             return;
         }
 
-        await runner.start();
+        await runner.start({ serverCheck });
 
         // close() ran during runner.start()
         if (!runner.isClosed()) {
@@ -362,7 +399,7 @@ export function createSqlane(options) {
             return closePromise;
         },
         migrate: async migrateOptions => ({
-            applied: await runMigrations(adapter, tablePrefix, migrateOptions),
+            applied: await runMigrations(adapter, tablePrefix, migrateOptions, () => checkServerOnce('migrate()')),
         }),
         getStats: () => store.getStats(),
         wake: () => runner.wake(),

@@ -238,7 +238,7 @@ describe('hints', () => {
 
     test.runIf(inject('databaseDialect') === 'postgres')('PostgreSQL NOTIFY: delivered on commit', async () => {
         const p = nextPrefix();
-        const adapter = pgAdapter(testAdapter.pool, { notify: true });
+        const adapter = pgAdapter(testAdapter.pool, { dialect: 'postgres', notify: true });
         const producer = sqlaneOn(p, { adapter });
         const worker = sqlaneOn(p, { adapter, pollInterval: '10s' });
 

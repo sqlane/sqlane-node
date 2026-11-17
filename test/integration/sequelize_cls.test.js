@@ -5,7 +5,7 @@ import { createNamespace } from 'cls-hooked';
 import { Sequelize } from 'sequelize';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
-import { mysqlFamilyOptions } from './helpers/test_adapter.js';
+import { dialectOptions } from './helpers/test_adapter.js';
 import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane } from '../../src/index.js';
 
@@ -90,8 +90,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         /** @type {SqlaneEvent[]} */
         const events = [];
         const sqlane = createSqlane({
-            // The mariadb dialect of Sequelize tells MariaDB; its mysql dialect needs the option
-            adapter: sequelizeAdapter(queueSequelize, sequelizeDialect === 'mariadb' ? undefined : mysqlFamilyOptions()),
+            adapter: sequelizeAdapter(queueSequelize, dialectOptions()),
             tablePrefix: p,
             onEvent: event => events.push(event),
             ...options,

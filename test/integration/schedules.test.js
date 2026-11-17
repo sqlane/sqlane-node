@@ -363,7 +363,7 @@ function slotWithOffset(now) {
  */
 function wakeOptions() {
     if (isPostgres) {
-        return { adapter: pgAdapter(testAdapter.pool, { notify: true }), pollInterval: '1m' };
+        return { adapter: pgAdapter(testAdapter.pool, { dialect: 'postgres', notify: true }), pollInterval: '1m' };
     }
 
     /** @type {Set<(message: string) => void>} */

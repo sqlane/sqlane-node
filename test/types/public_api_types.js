@@ -12,11 +12,16 @@ import {
     RetryJobError,
 } from '@sqlane/core';
 import knex from 'knex';
+import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
 import { knexAdapter } from '@sqlane/core/adapter-knex';
+import { kyselyAdapter } from '@sqlane/core/adapter-kysely';
 import { mikroOrmAdapter } from '@sqlane/core/adapter-mikro-orm';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 import { pgAdapter } from '@sqlane/core/adapter-pg';
+import { postgresJsAdapter } from '@sqlane/core/adapter-postgres-js';
+import { prismaAdapter } from '@sqlane/core/adapter-prisma';
 import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
+import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm';
 
 /** The type tests: never called. */
 export async function publicApiTypes() {
@@ -31,7 +36,7 @@ export async function publicApiTypes() {
         fairShareWeight: 2,
         localConcurrencyLimits: [heavy],
     });
-    const sqlane = createSqlane({ adapter: mysql2Adapter(mysqlPool), localMaxConcurrency: 10 });
+    const sqlane = createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), localMaxConcurrency: 10 });
 
     // enqueue: the result
     expectTypeOf(await sqlane.enqueue(connection, job, { reportId: 'r1' }))
@@ -45,7 +50,7 @@ export async function publicApiTypes() {
     // @ts-expect-error a pg client is not a connection of the mysql2 adapter
     await sqlane.enqueue(await pgPool.connect(), job, {});
 
-    const pgSqlane = createSqlane({ adapter: pgAdapter(pgPool, { notify: true }) });
+    const pgSqlane = createSqlane({ adapter: pgAdapter(pgPool, { dialect: 'postgres', notify: true }) });
 
     // MariaDB: the mysql2 adapter with its dialect
     expectTypeOf(mysql2Adapter(mysqlPool, { dialect: 'mariadb' }).dialect)
@@ -63,17 +68,109 @@ export async function publicApiTypes() {
     const sequelize = /** @type {Parameters<typeof sequelizeAdapter>[0]} */ (/** @type {unknown} */ ({}));
     const em = /** @type {Parameters<typeof mikroOrmAdapter>[0]} */ (/** @type {unknown} */ ({}));
 
-    pgAdapter(pgPool, { prepare: false });
-    knexAdapter(pgKnex, { prepare: true });
-    knexAdapter(pgKnex, { dialect: 'mariadb' });
-    sequelizeAdapter(sequelize, { prepare: true });
+    pgAdapter(pgPool, { dialect: 'postgres', prepare: false });
+    knexAdapter(pgKnex, { dialect: 'postgres', prepare: true });
+    sequelizeAdapter(sequelize, { dialect: 'postgres', prepare: true });
     mikroOrmAdapter(em, { dialect: 'postgres', prepare: true });
     // @ts-expect-error prepare is a boolean
-    knexAdapter(pgKnex, { prepare: 'yes' });
+    knexAdapter(pgKnex, { dialect: 'postgres', prepare: 'yes' });
     // @ts-expect-error prepare is a boolean
-    sequelizeAdapter(sequelize, { prepare: 1 });
-    // @ts-expect-error the dialect of MikroORM is required
+    sequelizeAdapter(sequelize, { dialect: 'postgres', prepare: 1 });
+
+    // The dialect: required on every adapter, one of the dialects of the adapter
+    const sql = /** @type {Parameters<typeof postgresJsAdapter>[0]} */ (/** @type {unknown} */ ({}));
+    const kysely = /** @type {Parameters<typeof kyselyAdapter>[0]} */ (/** @type {unknown} */ ({}));
+    const drizzle = /** @type {Parameters<typeof drizzleAdapter>[0]} */ (/** @type {unknown} */ ({}));
+    const prisma = /** @type {Parameters<typeof prismaAdapter>[0]} */ (/** @type {unknown} */ ({}));
+    const dataSource = {};
+
+    mysql2Adapter(mysqlPool, { dialect: 'mysql' });
+    postgresJsAdapter(sql, { dialect: 'postgres', notify: true });
+    knexAdapter(pgKnex, { dialect: 'mariadb' });
+    kyselyAdapter(kysely, { dialect: 'mysql' });
+    drizzleAdapter(drizzle, { dialect: 'mariadb' });
+    prismaAdapter(prisma, { dialect: 'postgres' });
+    sequelizeAdapter(sequelize, { dialect: 'mysql' });
+    typeOrmAdapter(dataSource, { dialect: 'mariadb' });
+    mikroOrmAdapter(em, { dialect: 'mysql' });
+    // @ts-expect-error the options are required
+    mysql2Adapter(mysqlPool);
+    // @ts-expect-error the options are required
+    pgAdapter(pgPool);
+    // @ts-expect-error the options are required
+    postgresJsAdapter(sql);
+    // @ts-expect-error the options are required
+    knexAdapter(pgKnex);
+    // @ts-expect-error the options are required
+    kyselyAdapter(kysely);
+    // @ts-expect-error the options are required
+    drizzleAdapter(drizzle);
+    // @ts-expect-error the options are required
+    prismaAdapter(prisma);
+    // @ts-expect-error the options are required
+    sequelizeAdapter(sequelize);
+    // @ts-expect-error the options are required
+    typeOrmAdapter(dataSource);
+    // @ts-expect-error the options are required
+    mikroOrmAdapter(em);
+    // @ts-expect-error the dialect is required
+    pgAdapter(pgPool, { notify: true });
+    // @ts-expect-error the dialect is required
+    postgresJsAdapter(sql, { notify: true });
+    // @ts-expect-error the dialect is required
+    knexAdapter(pgKnex, { prepare: true });
+    // @ts-expect-error the dialect is required
+    kyselyAdapter(kysely, {});
+    // @ts-expect-error the dialect is required
+    drizzleAdapter(drizzle, { notify: true });
+    // @ts-expect-error the dialect is required
+    prismaAdapter(prisma, {});
+    // @ts-expect-error the dialect is required
+    sequelizeAdapter(sequelize, { prepare: true });
+    // @ts-expect-error the dialect is required
+    typeOrmAdapter(dataSource, {});
+    // @ts-expect-error the dialect is required
     mikroOrmAdapter(em, { prepare: true });
+    // @ts-expect-error pg is a PostgreSQL driver
+    pgAdapter(pgPool, { dialect: 'mysql' });
+    // @ts-expect-error postgres.js is a PostgreSQL driver
+    postgresJsAdapter(sql, { dialect: 'mariadb' });
+    // @ts-expect-error no aliases: 'postgres'
+    knexAdapter(pgKnex, { dialect: 'postgresql' });
+    // @ts-expect-error no aliases: 'postgres'
+    prismaAdapter(prisma, { dialect: 'postgresql' });
+    // @ts-expect-error not a dialect of sqlane
+    kyselyAdapter(kysely, { dialect: 'sqlite' });
+
+    // allowUnsupportedDbVersion: a boolean, on every adapter
+    expectTypeOf(pgAdapter(pgPool, { dialect: 'postgres', allowUnsupportedDbVersion: true }).allowUnsupportedDbVersion)
+        .toEqualTypeOf(/** @type {boolean | undefined} */ (true));
+    mysql2Adapter(mysqlPool, { dialect: 'mysql', allowUnsupportedDbVersion: true });
+    postgresJsAdapter(sql, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    knexAdapter(pgKnex, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    kyselyAdapter(kysely, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    drizzleAdapter(drizzle, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    prismaAdapter(prisma, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    sequelizeAdapter(sequelize, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    typeOrmAdapter(dataSource, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    mikroOrmAdapter(em, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    // @ts-expect-error allowUnsupportedDbVersion is a boolean
+    mysql2Adapter(mysqlPool, { dialect: 'mysql', allowUnsupportedDbVersion: 'yes' });
+
+    // allowUnsupportedDbConfiguration: a boolean, on every adapter
+    expectTypeOf(mysql2Adapter(mysqlPool, { dialect: 'mysql', allowUnsupportedDbConfiguration: true })
+        .allowUnsupportedDbConfiguration).toEqualTypeOf(/** @type {boolean | undefined} */ (true));
+    pgAdapter(pgPool, { dialect: 'postgres', allowUnsupportedDbConfiguration: true });
+    postgresJsAdapter(sql, { dialect: 'postgres', allowUnsupportedDbConfiguration: true });
+    knexAdapter(pgKnex, { dialect: 'postgres', allowUnsupportedDbConfiguration: true });
+    kyselyAdapter(kysely, { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+    drizzleAdapter(drizzle, { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+    prismaAdapter(prisma, { dialect: 'mariadb', allowUnsupportedDbConfiguration: true });
+    sequelizeAdapter(sequelize, { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+    typeOrmAdapter(dataSource, { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+    mikroOrmAdapter(em, { dialect: 'mariadb', allowUnsupportedDbVersion: true, allowUnsupportedDbConfiguration: true });
+    // @ts-expect-error allowUnsupportedDbConfiguration is a boolean
+    mysql2Adapter(mysqlPool, { dialect: 'mysql', allowUnsupportedDbConfiguration: 'yes' });
 
     // enqueue: JSON payloads
     /**
@@ -120,9 +217,9 @@ export async function publicApiTypes() {
     // @ts-expect-error a local limit is an object from defineConcurrencyLimit()
     defineJob({ name: 'a', localConcurrencyLimits: ['heavy'] });
     // @ts-expect-error lanes were removed in 5.0
-    createSqlane({ adapter: mysql2Adapter(mysqlPool), lanes: { heavy: { concurrency: 2 } } });
+    createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), lanes: { heavy: { concurrency: 2 } } });
     // @ts-expect-error maxConcurrency is now localMaxConcurrency
-    createSqlane({ adapter: mysql2Adapter(mysqlPool), maxConcurrency: 2 });
+    createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), maxConcurrency: 2 });
     expectTypeOf(heavy.max).toBeNumber();
 
     /** @type {import('@sqlane/core').Sqlane<import('@sqlane/core/adapter-mysql2').Mysql2Connection>} */
@@ -240,9 +337,9 @@ export async function publicApiTypes() {
     // @ts-expect-error the adapter is required
     createSqlane({});
     // @ts-expect-error an unknown unknownJobs value
-    createSqlane({ adapter: mysql2Adapter(mysqlPool), unknownJobs: 'warn' });
+    createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), unknownJobs: 'warn' });
     createSqlane({
-        adapter: mysql2Adapter(mysqlPool),
+        adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }),
         onEvent: (event) => {
             if (event.type === 'retried') {
                 expectTypeOf(event.delayMs).toBeNumber();
@@ -341,7 +438,7 @@ export async function publicApiTypes() {
 
     // The event of a slot
     createSqlane({
-        adapter: mysql2Adapter(mysqlPool),
+        adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }),
         onEvent: (event) => {
             if (event.type === 'schedule_fired') {
                 expectTypeOf(event.scheduledAt).toEqualTypeOf(new Date());

@@ -189,7 +189,7 @@ import { createSqlane } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
 const sqlane = createSqlane({
-    adapter: mysql2Adapter(queuePool),
+    adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }),
     jobs: [buildReport, syncOrder],
     localMaxConcurrency: 10,
     defaults: { timeout: '10m' },
@@ -752,6 +752,11 @@ With schedules, `start` registers them first. It rejects with a `ConfigError` fo
 `start` resolves anyway, emits an `error` event, and registers the schedules when the database is back. A rejected
 `start` can be called again.
 
+The first `start()` or `migrate()` of an instance checks the server: it rejects with a `ConfigError` if the server is
+not the database of the adapter's `dialect`, is below the supported version, or has a `sql_mode` that sqlane does not
+support ([server check](adapters.md#the-dialect-and-the-server-check)). If the database is down, `start` resolves
+anyway and emits an `error` event.
+
 `start` rejects with a `ConfigError` if a handled definition has a `failureJob` that is neither in `jobs` nor handled.
 It also rejects with one if a failure job has a `failureJob` of its own. It checks all the handlers together, so the
 order of the `handle()` calls does not matter. `start` rejects with a `ClosedError` after `close()`.
@@ -835,7 +840,10 @@ lock, so several processes can call it at the same time. It uses a connection of
 | ------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------ |
 | `lockTimeout` | `Duration` | `'10m'` | How long `migrate` waits for the lock. After it, `migrate` rejects with a `MigrationLockTimeoutError`. |
 
-`migrate` rejects with an `InvalidOptionsError` for a bad `lockTimeout`. If you prefer your own migration tool, use
+`migrate` rejects with an `InvalidOptionsError` for a bad `lockTimeout`. It rejects with a `ConfigError` if the server
+is not the database of the adapter's `dialect`, is below the supported version, or has a `sql_mode` that sqlane does
+not support: the first `migrate()` or `start()` of an instance checks it
+([server check](adapters.md#the-dialect-and-the-server-check)). If you prefer your own migration tool, use
 [`getMigrations`](#getmigrations) instead.
 
 ```js
@@ -911,7 +919,7 @@ exported from `@sqlane/core`.
 
 | Class                          | `code`                      | When                                                                                                                                                                                                                                                                                              |
 | ------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ConfigError`                  | `CONFIG`                    | The options of `createSqlane`, `defineJob`, `handle()`, `schedule()`, an adapter or `getMigrations` are bad. `start()` and `drain()` also throw it for a bad failure job. `start()` throws it for a bad schedule, or a missing table of the schedules.                                            |
+| `ConfigError`                  | `CONFIG`                    | The options of `createSqlane`, `defineJob`, `handle()`, `schedule()`, an adapter or `getMigrations` are bad. `start()` and `drain()` also throw it for a bad failure job. `start()` throws it for a bad schedule or a missing table of the schedules; with `migrate()`, for a wrong server.       |
 | `InvalidOptionsError`          | `INVALID_OPTIONS`           | The arguments of `enqueue` or `enqueueMany` are bad, for example a bad name or `jobId`, a `jobId` with the reserved prefix `schedule:`, `slot` with `jobId`, `delay` with `runAt`, or a payload that is not JSON.                                                                                 |
 | `PayloadTooLargeError`         | `PAYLOAD_TOO_LARGE`         | The payload is larger than `maxPayloadBytes`.                                                                                                                                                                                                                                                     |
 | `InvalidConcurrencyLimitError` | `INVALID_CONCURRENCY_LIMIT` | A job has more than 10 global keys, a key breaks the rules, a key has two maxes, or a global limit is not from `defineConcurrencyLimit`.                                                                                                                                                          |
@@ -1144,22 +1152,24 @@ An adapter connects sqlane to your driver or ORM. You create it over the queue's
 library. Each adapter is a subpath of `@sqlane/core`, so you install no extra package. [Adapters](adapters.md) explains
 each adapter in detail.
 
-| Import                             | Function                                    | Library                                                                   |
-| ---------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------- |
-| `@sqlane/core/adapter-mysql2`      | `mysql2Adapter(pool, { dialect? })`         | [mysql2](adapters.md#mysql2)                                              |
-| `@sqlane/core/adapter-pg`          | `pgAdapter(pool, { notify? })`              | [pg](adapters.md#pg) (node-postgres)                                      |
-| `@sqlane/core/adapter-postgres-js` | `postgresJsAdapter(sql, { notify? })`       | [postgres.js](adapters.md#postgresjs)                                     |
-| `@sqlane/core/adapter-knex`        | `knexAdapter(knex, { dialect? })`           | [Knex](adapters.md#knex), with mysql2, mariadb or pg                      |
-| `@sqlane/core/adapter-kysely`      | `kyselyAdapter(db, { dialect })`            | [Kysely](adapters.md#kysely)                                              |
-| `@sqlane/core/adapter-drizzle`     | `drizzleAdapter(db, { notify?, dialect? })` | [Drizzle](adapters.md#drizzle), with mysql2, node-postgres or postgres.js |
-| `@sqlane/core/adapter-prisma`      | `prismaAdapter(prisma, { dialect })`        | [Prisma](adapters.md#prisma)                                              |
-| `@sqlane/core/adapter-sequelize`   | `sequelizeAdapter(sequelize, { dialect? })` | [Sequelize](adapters.md#sequelize)                                        |
-| `@sqlane/core/adapter-typeorm`     | `typeOrmAdapter(dataSource)`                | [TypeORM](adapters.md#typeorm)                                            |
-| `@sqlane/core/adapter-mikro-orm`   | `mikroOrmAdapter(em, { dialect })`          | [MikroORM](adapters.md#mikroorm)                                          |
+| Import                             | Function                                             | Library                                                                   |
+| ---------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------- |
+| `@sqlane/core/adapter-mysql2`      | `mysql2Adapter(pool, { dialect })`                   | [mysql2](adapters.md#mysql2)                                              |
+| `@sqlane/core/adapter-pg`          | `pgAdapter(pool, { dialect, notify?, prepare? })`    | [pg](adapters.md#pg) (node-postgres)                                      |
+| `@sqlane/core/adapter-postgres-js` | `postgresJsAdapter(sql, { dialect, notify? })`       | [postgres.js](adapters.md#postgresjs)                                     |
+| `@sqlane/core/adapter-knex`        | `knexAdapter(knex, { dialect, prepare? })`           | [Knex](adapters.md#knex), with mysql2, mariadb or pg                      |
+| `@sqlane/core/adapter-kysely`      | `kyselyAdapter(db, { dialect })`                     | [Kysely](adapters.md#kysely)                                              |
+| `@sqlane/core/adapter-drizzle`     | `drizzleAdapter(db, { dialect, notify? })`           | [Drizzle](adapters.md#drizzle), with mysql2, node-postgres or postgres.js |
+| `@sqlane/core/adapter-prisma`      | `prismaAdapter(prisma, { dialect })`                 | [Prisma](adapters.md#prisma)                                              |
+| `@sqlane/core/adapter-sequelize`   | `sequelizeAdapter(sequelize, { dialect, prepare? })` | [Sequelize](adapters.md#sequelize)                                        |
+| `@sqlane/core/adapter-typeorm`     | `typeOrmAdapter(dataSource, { dialect })`            | [TypeORM](adapters.md#typeorm)                                            |
+| `@sqlane/core/adapter-mikro-orm`   | `mikroOrmAdapter(em, { dialect, prepare? })`         | [MikroORM](adapters.md#mikroorm)                                          |
 
-The `dialect` option is `'mysql'`, `'mariadb'` or `'postgres'`. Kysely, Prisma and MikroORM need it because they do not
-expose the database. The adapters over mysql2 (mysql2, Knex, Drizzle and Sequelize) take an optional `dialect`:
-`'mysql'` (the default) or `'mariadb'`. Over the mariadb driver (Knex and Sequelize), the database is MariaDB. TypeORM
-reads it from the `type` of the DataSource. See [MariaDB](adapters.md#mariadb). The `notify` option is for PostgreSQL only. When it is `true`, sqlane sends hints with LISTEN/NOTIFY, and you
+Every adapter requires `dialect`: `'mysql'`, `'mariadb'` or `'postgres'`. pg and postgres.js take `'postgres'`, mysql2
+`'mysql'` or `'mariadb'`. Knex, Drizzle, Sequelize, TypeORM and MikroORM check it against the database of the library.
+Every adapter also takes `allowUnsupportedDbVersion` (default `false`): `true` runs on a server below the supported
+version, with a warning. On MySQL and MariaDB, `allowUnsupportedDbConfiguration` (default `false`) does the same for a
+`sql_mode` that lacks a required flag ([server check](adapters.md#the-dialect-and-the-server-check)). The `notify`
+option is for PostgreSQL only. When it is `true`, sqlane sends hints with LISTEN/NOTIFY, and you
 must not set the `hint` option. An adapter throws a `ConfigError` if it gets an object or a version that it does not
 support.

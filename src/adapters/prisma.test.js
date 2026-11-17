@@ -20,11 +20,38 @@ test.each([{ dialect: 'mysql' }, { dialect: 'mariadb' }, { dialect: 'postgres' }
 });
 
 test.each([
-    { label: 'no options', options: undefined },
-    { label: 'the provider name of Prisma', options: { dialect: 'postgresql' } },
-])('$label: a ConfigError', ({ options }) => {
-    expect(() => prismaAdapter(fakePrisma(), /** @type {any} */ (options)))
-        .toThrow('"dialect" must be "mysql", "mariadb" or "postgres"');
+    { label: 'no options', options: undefined, message: '"dialect" is required: "mysql", "mariadb" or "postgres"' },
+    {
+        label: 'the provider name of Prisma',
+        options: { dialect: 'postgresql' },
+        message: '"dialect" must be "mysql", "mariadb" or "postgres", not "postgresql"',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedDbVersion',
+        options: { dialect: 'mysql', allowUnsupportedDbVersion: 1 },
+        message: '"allowUnsupportedDbVersion" must be a boolean',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedDbConfiguration',
+        options: { dialect: 'mysql', allowUnsupportedDbConfiguration: 1 },
+        message: '"allowUnsupportedDbConfiguration" must be a boolean',
+    },
+])('$label: a ConfigError', ({ options, message }) => {
+    expect(() => prismaAdapter(fakePrisma(), /** @type {any} */ (options))).toThrow(`prismaAdapter: ${message}`);
+});
+
+test.each([
+    { options: { dialect: /** @type {const} */ ('mariadb') }, expected: false },
+    { options: { dialect: /** @type {const} */ ('mariadb'), allowUnsupportedDbVersion: true }, expected: true },
+])('allowUnsupportedDbVersion: $expected', ({ options, expected }) => {
+    expect(prismaAdapter(fakePrisma(), options).allowUnsupportedDbVersion).toBe(expected);
+});
+
+test.each([
+    { options: { dialect: /** @type {const} */ ('mariadb') }, expected: false },
+    { options: { dialect: /** @type {const} */ ('mariadb'), allowUnsupportedDbConfiguration: true }, expected: true },
+])('allowUnsupportedDbConfiguration: $expected', ({ options, expected }) => {
+    expect(prismaAdapter(fakePrisma(), options).allowUnsupportedDbConfiguration).toBe(expected);
 });
 
 test.each([

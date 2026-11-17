@@ -33,7 +33,7 @@ const db = knex({ client: 'pg', connection: process.env.DATABASE_URL }); // your
 const queueDb = knex({ client: 'pg', connection: process.env.DATABASE_URL, pool: { max: 3 } }); // sqlane's own small pool
 
 const sendReceipt = defineJob({ name: 'send_receipt' });
-const sqlane = createSqlane({ adapter: knexAdapter(queueDb), jobs: [sendReceipt] });
+const sqlane = createSqlane({ adapter: knexAdapter(queueDb, { dialect: 'postgres' }), jobs: [sendReceipt] });
 await sqlane.migrate(); // creates the sqlane_* tables
 
 // Worker: runs the job after the commit, in this process or another
@@ -148,15 +148,20 @@ npm install @sqlane/core
 
 ## Supported databases
 
-| Database   | Versions | Wake-up in other processes                   | Notes                                                                                        |
-| ---------- | -------- | -------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| PostgreSQL | 15+      | NOTIFY (pg, postgres.js, Drizzle), or a hint |                                                                                              |
-| MySQL      | 8.4+     | A hint                                       |                                                                                              |
-| MariaDB    | 10.11+   | A hint                                       | [Tell the adapter](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mariadb) |
+| Database   | Versions | Wake-up in other processes                   |
+| ---------- | -------- | -------------------------------------------- |
+| PostgreSQL | 15+      | NOTIFY (pg, postgres.js, Drizzle), or a hint |
+| MySQL      | 8.4+     | A hint                                       |
+| MariaDB    | 10.11+   | A hint                                       |
 
 A hint is a message over Redis or another publish/subscribe service
 ([wake-up](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#wake-up-after-the-commit)). Without NOTIFY
 or a hint, other processes find new jobs at their next poll, every 5 seconds by default. SQLite is not supported.
+
+Each adapter takes the database as `dialect`: `'postgres'`, `'mysql'` or `'mariadb'`. The worker and `migrate()` check
+it against the server, with its version. On MySQL and MariaDB, they also check its `sql_mode`: the default mode of the
+database passes, the default parameter group of Amazon RDS MySQL does not
+([server check](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#the-dialect-and-the-server-check)).
 
 ## Supported drivers and ORMs
 
@@ -201,7 +206,10 @@ from several processes at once; to use your own migration tool, take the SQL fro
 
 ```js
 const queueDb = knex({ client: 'pg', connection: process.env.DATABASE_URL, pool: { max: 3 } });
-export const sqlane = createSqlane({ adapter: knexAdapter(queueDb), jobs: [sendReceipt, syncOrder] });
+export const sqlane = createSqlane({
+    adapter: knexAdapter(queueDb, { dialect: 'postgres' }),
+    jobs: [sendReceipt, syncOrder],
+});
 await sqlane.migrate();
 ```
 

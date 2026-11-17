@@ -7,6 +7,7 @@ import { checkSchedules } from './helpers/schedule_checks.js';
 import { typeOrmAdapter } from '../../src/adapters/typeorm.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
+import { dialectOptions } from './helpers/test_adapter.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -107,7 +108,7 @@ describe.each([
         /** @type {SqlaneEvent[]} */
         const events = [];
         const sqlane = createSqlane({
-            adapter: typeOrmAdapter(queueDataSource),
+            adapter: typeOrmAdapter(queueDataSource, dialectOptions()),
             tablePrefix: p,
             onEvent: event => events.push(event),
             ...options,
@@ -126,7 +127,8 @@ describe.each([
     });
 
     test('the queue transaction is READ COMMITTED', async () => {
-        await expect(readsAcrossCommit(typeOrmAdapter(queueDataSource), database)).resolves.toStrictEqual([0, 1]);
+        await expect(readsAcrossCommit(typeOrmAdapter(queueDataSource, dialectOptions()), database))
+            .resolves.toStrictEqual([0, 1]);
     });
 
     test('enqueue with the EntityManager of a transaction: the job commits with it, and rolls back with it', async () => {

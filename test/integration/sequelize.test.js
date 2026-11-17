@@ -3,7 +3,7 @@ import { QueryTypes, Sequelize } from 'sequelize';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
-import { mysqlFamilyOptions } from './helpers/test_adapter.js';
+import { dialectOptions } from './helpers/test_adapter.js';
 import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
@@ -48,8 +48,7 @@ function createPostgresSequelize(max) {
 }
 
 describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) => {
-    // The mariadb dialect of Sequelize tells MariaDB; its mysql dialect needs the option
-    const adapterOptions = sequelizeDialect === 'mariadb' ? undefined : mysqlFamilyOptions();
+    const adapterOptions = dialectOptions();
     /** @type {import('../support/test_database.js').TestDatabaseConnection} */
     let database;
     /** @type {Sequelize} The app's Sequelize */
@@ -99,11 +98,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         /** @type {SqlaneEvent[]} */
         const events = [];
         const sqlane = createSqlane({
-            // The mariadb dialect of Sequelize tells MariaDB; its mysql dialect needs the option
-            adapter: sequelizeAdapter(
-                /** @type {any} */ (queueSequelize),
-                sequelizeDialect === 'mariadb' ? undefined : mysqlFamilyOptions(),
-            ),
+            adapter: sequelizeAdapter(/** @type {any} */ (queueSequelize), adapterOptions),
             tablePrefix: p,
             onEvent: event => events.push(event),
             ...options,
@@ -252,7 +247,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         prefixCount++;
 
         const sqlane = createSqlane({
-            adapter: sequelizeAdapter(/** @type {any} */ (queueOne), { prepare }),
+            adapter: sequelizeAdapter(/** @type {any} */ (queueOne), { dialect: 'postgres', prepare }),
             tablePrefix: `${database.tablePrefix}${prefixCount}_`,
         });
 

@@ -15,10 +15,12 @@ export type Dispatcher = {
      */
     prepare: () => void;
     /**
-     * The loop: one turn after the other, while the runner is started. An error of a
-     * turn is retried, or reported and backed off.
+     * The loop: one turn after the other,
+     * while the runner is started. An error of a turn is retried, or reported and backed off. `serverCheck`: the check
+     * of the server that start() could not run (the database was down): no turn before it passes; a `ConfigError` of
+     * it ends the loop.
      */
-    run: () => Promise<void>;
+    run: (serverCheck?: (() => Promise<void>) | null) => Promise<void>;
     /**
      * Claims the due
      * jobs of the names, by share within the free slots, and starts them. For drain().
@@ -43,8 +45,10 @@ export type Dispatcher = {
  *     loop. The next turn looks at the given names, or at all names.
  * @property {() => void} prepare For start() and drain(), after the check of the registry: reads the handled names,
  *     and starts the tie pointer at a random name.
- * @property {() => Promise<void>} run The loop: one turn after the other, while the runner is started. An error of a
- *     turn is retried, or reported and backed off.
+ * @property {(serverCheck?: (() => Promise<void>) | null) => Promise<void>} run The loop: one turn after the other,
+ *     while the runner is started. An error of a turn is retried, or reported and backed off. `serverCheck`: the check
+ *     of the server that start() could not run (the database was down): no turn before it passes; a `ConfigError` of
+ *     it ends the loop.
  * @property {(dueNames: string[]) => Promise<{ candidates: number, claimed: number }>} claimAndStart Claims the due
  *     jobs of the names, by share within the free slots, and starts them. For drain().
  * @property {(entry: HandlerEntry) => number} freeSlots The jobs of the name that can start now: under its local
