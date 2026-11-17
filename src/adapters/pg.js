@@ -1,9 +1,13 @@
+import { checkAdapterDialect } from './dialect.js';
 import { pgExecutor } from './executors.js';
 
 /** @typedef {import('pg').Pool | import('pg').PoolClient | import('pg').Client} PgConnection */
 
 /**
  * @typedef {object} PgAdapterOptions
+ * @property {'postgres'} dialect The database: PostgreSQL 15 or later.
+ * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
+ *     false.
  * @property {boolean} [notify] Hints by LISTEN/NOTIFY: `pg_notify` in the enqueue transaction, delivered on commit.
  *     Default: false.
  * @property {boolean} [prepare] Named prepared statements: each SQL text is parsed and planned once per connection.
@@ -124,10 +128,11 @@ async function listen(pool, channel, onMessage) {
 /**
  * The adapter for pg. `enqueue` then takes a `Client`, a `PoolClient` (in a transaction) or a `Pool`.
  * @param {import('pg').Pool} pool The queue's own pool: claims, leases, results.
- * @param {PgAdapterOptions} [options]
+ * @param {PgAdapterOptions} options
  * @returns {import('../types.js').Adapter<PgConnection>}
  */
-export function pgAdapter(pool, options = {}) {
+export function pgAdapter(pool, options) {
+    const { dialect, allowUnsupportedVersion } = checkAdapterDialect(options, 'pgAdapter', ['postgres']);
     const prepare = options.prepare ?? true;
     /**
      * @param {PgConnection} connection
@@ -136,7 +141,8 @@ export function pgAdapter(pool, options = {}) {
     const toExecutor = connection => pgExecutor(connection, { prepare });
 
     return {
-        dialect: 'postgres',
+        dialect,
+        allowUnsupportedVersion,
         wrap: toExecutor,
         queue: toExecutor(pool),
         withConnection: async (func) => {

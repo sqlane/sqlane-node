@@ -1,10 +1,18 @@
-import { mysqlFamilyDialect } from './dialect.js';
+import { checkAdapterDialect } from './dialect.js';
 import { mysql2Executor as toExecutor } from './executors.js';
 
 /**
  * @typedef {import('mysql2/promise').Pool
  *     | import('mysql2/promise').PoolConnection
  *     | import('mysql2/promise').Connection} Mysql2Connection
+ */
+
+/**
+ * @typedef {object} Mysql2AdapterOptions
+ * @property {'mysql' | 'mariadb'} dialect The database: MySQL 8.4 or later, or MariaDB 10.11 or later. mysql2 speaks
+ *     to both, so the app tells which.
+ * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
+ *     false.
  */
 
 /**
@@ -53,14 +61,15 @@ async function inOwnTransaction(pool, func, readCommitted = false) {
  * The adapter for mysql2 (its promise API). `enqueue` then takes a `Connection`, a `PoolConnection` (in a
  * transaction) or a `Pool`.
  * @param {import('mysql2/promise').Pool} pool The queue's own pool: claims, leases, results.
- * @param {import('./dialect.js').MysqlFamilyOptions} [options] `{ dialect: 'mariadb' }` on MariaDB.
+ * @param {Mysql2AdapterOptions} options `{ dialect: 'mysql' }` or `{ dialect: 'mariadb' }`.
  * @returns {import('../types.js').Adapter<Mysql2Connection>}
  */
 export function mysql2Adapter(pool, options) {
-    const dialect = mysqlFamilyDialect(options, 'mysql2Adapter');
+    const { dialect, allowUnsupportedVersion } = checkAdapterDialect(options, 'mysql2Adapter', ['mysql', 'mariadb']);
 
     return {
         dialect,
+        allowUnsupportedVersion,
         wrap: toExecutor,
         queue: toExecutor(pool),
         withConnection: async (func) => {

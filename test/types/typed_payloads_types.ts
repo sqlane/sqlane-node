@@ -13,7 +13,7 @@ const handler: Handler<Report> = ({ payload }) => payload.reportId;
 /** The type tests: never called. */
 export async function typedPayloadsTypes() {
     const pool = mysql.createPool({});
-    const sqlane = createSqlane({ adapter: mysql2Adapter(pool) });
+    const sqlane = createSqlane({ adapter: mysql2Adapter(pool, { dialect: 'mysql' }) });
     const reportLimit = defineConcurrencyLimit({ name: 'report', max: 1 });
     const buildReport = defineJob<Report>({
         name: 'build_report',
@@ -35,7 +35,7 @@ export async function typedPayloadsTypes() {
     sqlane.handle(buildReport, handler);
 
     // A typed definition in the lists of definitions
-    createSqlane({ adapter: mysql2Adapter(pool), jobs: [buildReport, defineJob({ name: 'other' })] });
+    createSqlane({ adapter: mysql2Adapter(pool, { dialect: 'mysql' }), jobs: [buildReport, defineJob({ name: 'other' })] });
     defineJob({ name: 'with_failure_job', failureJob: buildReport });
 
     defineJob<Report>({

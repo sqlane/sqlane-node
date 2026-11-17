@@ -4,13 +4,19 @@
 // adapter reads the kind that Drizzle gives its classes (a global symbol), and checks what it uses. Drizzle has no
 // after-commit hook: after an enqueue in a transaction, sqlane re-probes.
 import { ConfigError } from '../errors.js';
-import { mysqlFamilyDialect } from './dialect.js';
+import { checkAdapterDialect, matchLibraryDialect } from './dialect.js';
 import { mysql2Adapter } from './mysql2.js';
 import { pgAdapter } from './pg.js';
 import { postgresJsAdapter } from './postgres_js.js';
 
 /** The kind of a Drizzle class: `MySql2Session`, `NodePgTransaction`, … */
 const ENTITY_KIND = Symbol.for('drizzle:entityKind');
+/** @type {Record<string, { driver: string, dialects: import('../types.js').Dialect[] }>} By the kind of the session */
+const DRIVER_BY_SESSION = {
+    MySql2Session: { driver: 'mysql2', dialects: ['mysql', 'mariadb'] },
+    NodePgSession: { driver: 'node-postgres', dialects: ['postgres'] },
+    PostgresJsSession: { driver: 'postgres.js', dialects: ['postgres'] },
+};
 
 /**
  * A Drizzle database or transaction, as far as the adapter reads it.
@@ -27,8 +33,12 @@ const ENTITY_KIND = Symbol.for('drizzle:entityKind');
 
 /**
  * @typedef {object} DrizzleAdapterOptions
- * @property {boolean} [notify] PostgreSQL: hints by LISTEN/NOTIFY, as `pgAdapter(pool, { notify: true })`.
- * @property {'mysql' | 'mariadb'} [dialect] mysql2: `'mariadb'` on MariaDB. Default: `'mysql'`.
+ * @property {import('../types.js').Dialect} dialect The database: `'mysql'` or `'mariadb'` with mysql2, `'postgres'`
+ *     with node-postgres or postgres.js.
+ * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
+ *     false.
+ * @property {boolean} [notify] PostgreSQL: hints by LISTEN/NOTIFY, as `pgAdapter(pool, { dialect: 'postgres', notify:
+ *     true })`.
  */
 
 /**
@@ -71,10 +81,10 @@ function clientOf(connection) {
  * transaction of its own) or a Drizzle transaction, also nested (the caller's: the job commits with it).
  * @param {DrizzleDatabase} db The queue's own Drizzle database, over a pool: claims, leases, results. A small pool of
  *     its own is best.
- * @param {DrizzleAdapterOptions} [options]
+ * @param {DrizzleAdapterOptions} options
  * @returns {import('../types.js').Adapter<DrizzleConnection>}
  */
-export function drizzleAdapter(db, options = {}) {
+export function drizzleAdapter(db, options) {
     const sessionKind = kindOf(db?.session);
     const pool = clientOf(db);
 
@@ -87,6 +97,11 @@ export function drizzleAdapter(db, options = {}) {
             JSON.stringify(sessionKind ?? null)
         }`);
     }
+
+    const checked = checkAdapterDialect(options, 'drizzleAdapter', ['mysql', 'mariadb', 'postgres']);
+    const { driver, dialects } = DRIVER_BY_SESSION[sessionKind];
+    const dialect = matchLibraryDialect(checked.dialect, dialects, 'drizzleAdapter', `Drizzle uses ${driver}`);
+    const { allowUnsupportedVersion } = checked;
 
     const isMysql = sessionKind === 'MySql2Session';
     /** @type {Record<string, boolean>} The queue's client is a pool */
@@ -105,17 +120,16 @@ export function drizzleAdapter(db, options = {}) {
         throw new ConfigError('drizzleAdapter: "notify" is for PostgreSQL');
     }
 
-    if (!isMysql && options.dialect !== undefined) {
-        throw new ConfigError('drizzleAdapter: "dialect" is for mysql2 (MySQL or MariaDB)');
-    }
-
     // The queue's pool: claims, leases, results
     const notify = options.notify ?? false;
     /** @type {Record<string, () => import('../types.js').Adapter<any>>} */
     const baseByKind = {
-        MySql2Session: () => mysql2Adapter(pool, { dialect: mysqlFamilyDialect(options, 'drizzleAdapter') }),
-        NodePgSession: () => pgAdapter(pool, { notify }),
-        PostgresJsSession: () => postgresJsAdapter(pool, { notify }),
+        MySql2Session: () => mysql2Adapter(pool, {
+            dialect: /** @type {'mysql' | 'mariadb'} */ (dialect),
+            allowUnsupportedVersion,
+        }),
+        NodePgSession: () => pgAdapter(pool, { dialect: 'postgres', allowUnsupportedVersion, notify }),
+        PostgresJsSession: () => postgresJsAdapter(pool, { dialect: 'postgres', allowUnsupportedVersion, notify }),
     };
     const base = baseByKind[sessionKind]();
 

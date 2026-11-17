@@ -98,7 +98,7 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
         /** @type {SqlaneEvent[]} */
         const events = [];
         const sqlane = createSqlane({
-            adapter: postgresJsAdapter(queueSql),
+            adapter: postgresJsAdapter(queueSql, { dialect: 'postgres' }),
             tablePrefix: p,
             onEvent: event => events.push(event),
             ...options,
@@ -179,9 +179,9 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
     });
 
     test('notify: another process wakes at the commit of the transaction', async () => {
-        const { sqlane: producer, p } = await freshSqlane({ adapter: postgresJsAdapter(queueSql, { notify: true }) });
+        const { sqlane: producer, p } = await freshSqlane({ adapter: postgresJsAdapter(queueSql, { dialect: 'postgres', notify: true }) });
         const { sqlane: worker, events } = await freshSqlane({
-            adapter: postgresJsAdapter(queueSql, { notify: true }),
+            adapter: postgresJsAdapter(queueSql, { dialect: 'postgres', notify: true }),
             pollInterval: '10s',
         }, p);
 
@@ -203,7 +203,7 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
     test('a transform of results: an error for the queue\'s postgres.js, none for the app\'s', async () => {
         const camel = createSql({ transform: /** @type {any} */ (postgres).camel });
 
-        expect(() => postgresJsAdapter(camel)).toThrow('must not transform results');
+        expect(() => postgresJsAdapter(camel, { dialect: 'postgres' })).toThrow('must not transform results');
 
         const { sqlane, p } = await freshSqlane();
 

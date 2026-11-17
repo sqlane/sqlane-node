@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, expect, inject, test } from 'vitest';
-import { createSqlane, defineRateLimit, getMigrations, MigrationLockTimeoutError } from '../../src/index.js';
+import {
+    ConfigError,
+    createSqlane,
+    defineRateLimit,
+    getMigrations,
+    MigrationLockTimeoutError,
+} from '../../src/index.js';
+import { parseServerVersion, SERVER_VERSION_SQL } from '../../src/server_check.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
 
@@ -277,4 +284,26 @@ test('getMigrations gives the statements that migrate() applies', async () => {
     await expect(listTables(tablePrefix)).resolves.toStrictEqual(
         ['jobs', 'mutexes', 'payloads'].map(table => `${tablePrefix}${table}`),
     );
+});
+
+test('the check of the server: the version of the database, through the adapter', async () => {
+    const [{ version }] = await testAdapter.adapter.queue.query(SERVER_VERSION_SQL, []);
+    const server = parseServerVersion(String(version));
+    // `mysql-8.4`, `mariadb-10.11`, `postgres-15`
+    const [, major] = database.name.split('-');
+
+    expect(server.dialect).toBe(database.dialect);
+    expect(`${server.version}.`.startsWith(`${major}.`)).toBe(true);
+});
+
+test('the check of the server: another dialect, a ConfigError before any table', async () => {
+    const other = /** @type {const} */ ({ mysql: 'mariadb', mariadb: 'mysql', postgres: 'mysql' })[database.dialect];
+    const p = nextPrefix();
+    const sqlane = createSqlane({ adapter: { ...testAdapter.adapter, dialect: other }, tablePrefix: p });
+
+    await expect(sqlane.migrate()).rejects.toThrow(ConfigError);
+    await expect(sqlane.migrate()).rejects.toThrow(`migrate(): "dialect" is "${other}", but the database is `);
+    await expect(sqlane.start()).rejects.toThrow(ConfigError);
+    await sqlane.close({ deadline: 0 });
+    await expect(listTables(p)).resolves.toStrictEqual([]);
 });

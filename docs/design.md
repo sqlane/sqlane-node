@@ -743,7 +743,8 @@ jobs whose retention has ended. It deletes them in batches of 1000 with SKIP LOC
 ### MariaDB
 
 MariaDB speaks the MySQL protocol, so the app tells the adapter (`{ dialect: 'mariadb' }`, see
-[Adapters](adapters.md#mariadb)). MariaDB has SQL files of its own: `store/mariadb_*.js` and `schema/mariadb.js` are
+[Adapters](adapters.md#the-dialect-and-the-server-check)), and the first `start()` or `migrate()` checks it against
+`VERSION()`. MariaDB has SQL files of its own: `store/mariadb_*.js` and `schema/mariadb.js` are
 copies of the MySQL files, changed where MariaDB differs. A change of the MySQL SQL must be made in the copies too.
 
 - **Upserts.** MariaDB has no row alias (`INSERT … AS new`), so the upserts read the new values with `VALUES(column)`.

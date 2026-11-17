@@ -12,38 +12,66 @@ function fakeKnex(dialect, driverName) {
 }
 
 test.each([
-    { dialect: 'mysql', driverName: 'mysql2', expected: 'mysql' },
-    { dialect: 'postgresql', driverName: 'pg', expected: 'postgres' },
-    { dialect: 'mysql', driverName: 'mariadb', expected: 'mariadb' },
-])('the dialect of a $driverName knex: $expected', ({ dialect, driverName, expected }) => {
-    expect(knexAdapter(fakeKnex(dialect, driverName)).dialect).toBe(expected);
-});
-
-test('MariaDB: a mysql2 knex, with { dialect: \'mariadb\' }', () => {
-    expect(knexAdapter(fakeKnex('mysql', 'mysql2'), { dialect: 'mariadb' }).dialect).toBe('mariadb');
+    { dialect: 'mysql', driverName: 'mysql2', given: 'mysql' },
+    { dialect: 'mysql', driverName: 'mysql2', given: 'mariadb' },
+    { dialect: 'mysql', driverName: 'mariadb', given: 'mariadb' },
+    { dialect: 'postgresql', driverName: 'pg', given: 'postgres' },
+])('a $driverName knex, dialect $given', ({ dialect, driverName, given }) => {
+    expect(knexAdapter(fakeKnex(dialect, driverName), /** @type {any} */ ({ dialect: given })))
+        .toMatchObject({ dialect: given, allowUnsupportedVersion: false });
 });
 
 test.each([
     {
-        label: '"dialect" on a pg knex',
-        knex: fakeKnex('postgresql', 'pg'),
-        dialect: 'mariadb',
-        message: '"dialect" is for mysql2',
-    },
-    {
-        label: '"dialect": "mysql" on a mariadb knex',
-        knex: fakeKnex('mysql', 'mariadb'),
-        dialect: 'mysql',
-        message: '"dialect" must be "mariadb"',
-    },
-    {
-        label: 'another "dialect"',
+        label: 'no options',
         knex: fakeKnex('mysql', 'mysql2'),
-        dialect: 'sqlite',
-        message: '"dialect" must be "mysql" or "mariadb"',
+        options: undefined,
+        message: 'knexAdapter: "dialect" is required: "mysql", "mariadb" or "postgres"',
     },
-])('$label: a ConfigError', ({ knex, dialect, message }) => {
-    expect(() => knexAdapter(knex, /** @type {any} */ ({ dialect }))).toThrow(message);
+    {
+        label: 'no dialect on a pg knex',
+        knex: fakeKnex('postgresql', 'pg'),
+        options: { prepare: true },
+        message: 'knexAdapter: "dialect" is required: "mysql", "mariadb" or "postgres"',
+    },
+    {
+        label: 'the client name of knex',
+        knex: fakeKnex('postgresql', 'pg'),
+        options: { dialect: 'postgresql' },
+        message: 'knexAdapter: "dialect" must be "mysql", "mariadb" or "postgres", not "postgresql"',
+    },
+    {
+        label: '"postgres" on a mysql2 knex',
+        knex: fakeKnex('mysql', 'mysql2'),
+        options: { dialect: 'postgres' },
+        message: 'knexAdapter: "dialect" is "postgres", but the client of knex is "mysql2": "mysql" or "mariadb"',
+    },
+    {
+        label: '"mysql" on a mariadb knex',
+        knex: fakeKnex('mysql', 'mariadb'),
+        options: { dialect: 'mysql' },
+        message: 'knexAdapter: "dialect" is "mysql", but the client of knex is "mariadb": "mariadb"',
+    },
+    {
+        label: '"mariadb" on a pg knex',
+        knex: fakeKnex('postgresql', 'pg'),
+        options: { dialect: 'mariadb' },
+        message: 'knexAdapter: "dialect" is "mariadb", but the client of knex is "pg": "postgres"',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedVersion',
+        knex: fakeKnex('mysql', 'mysql2'),
+        options: { dialect: 'mysql', allowUnsupportedVersion: 'yes' },
+        message: 'knexAdapter: "allowUnsupportedVersion" must be a boolean',
+    },
+])('$label: a ConfigError', ({ knex, options, message }) => {
+    expect(() => knexAdapter(knex, /** @type {any} */ (options))).toThrow(new ConfigError(message));
+});
+
+test('allowUnsupportedVersion: true', () => {
+    const adapter = knexAdapter(fakeKnex('postgresql', 'pg'), { dialect: 'postgres', allowUnsupportedVersion: true });
+
+    expect(adapter.allowUnsupportedVersion).toBe(true);
 });
 
 test.each([
@@ -51,25 +79,25 @@ test.each([
     { dialect: 'sqlite3', driverName: 'sqlite3' },
     { dialect: 'postgresql', driverName: 'pgnative' },
 ])('a $driverName knex: a ConfigError', ({ dialect, driverName }) => {
-    expect(() => knexAdapter(fakeKnex(dialect, driverName))).toThrow(ConfigError);
+    expect(() => knexAdapter(fakeKnex(dialect, driverName), { dialect: 'mysql' })).toThrow(ConfigError);
 });
 
 test.each([
     { label: 'no knex', knex: undefined },
     { label: 'a mysql2 pool', knex: { query: () => {} } },
 ])('$label: a ConfigError', ({ knex }) => {
-    expect(() => knexAdapter(/** @type {any} */ (knex))).toThrow('expects a knex instance (knex 3)');
+    expect(() => knexAdapter(/** @type {any} */ (knex), { dialect: 'mysql' })).toThrow('expects a knex instance (knex 3)');
 });
 
 test('pg: { prepare: true } is accepted', () => {
-    expect(knexAdapter(fakeKnex('postgresql', 'pg'), { prepare: true }).dialect).toBe('postgres');
+    expect(knexAdapter(fakeKnex('postgresql', 'pg'), { dialect: 'postgres', prepare: true }).dialect).toBe('postgres');
 });
 
 test.each([
     { dialect: 'mysql', driverName: 'mysql2' },
     { dialect: 'mysql', driverName: 'mariadb' },
 ])('{ prepare: true } on a $driverName knex: a ConfigError', ({ dialect, driverName }) => {
-    expect(() => knexAdapter(fakeKnex(dialect, driverName), { prepare: true }))
+    expect(() => knexAdapter(fakeKnex(dialect, driverName), { dialect: 'mariadb', prepare: true }))
         .toThrow('"prepare" is for PostgreSQL');
 });
 
@@ -99,7 +127,7 @@ test.each([
         },
     });
 
-    await knexAdapter(knex, { prepare }).queue.query('SELECT 1', []);
+    await knexAdapter(knex, { dialect: 'postgres', prepare }).queue.query('SELECT 1', []);
 
     expect(sent).toStrictEqual([expected]);
 });

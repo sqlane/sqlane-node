@@ -2,7 +2,7 @@
 // of sqlane runs on the raw driver connection under knex (mysql2, mariadb or pg): knex does not run it, nor log it. No
 // import of knex: the adapter uses the instance it gets, and checks what it uses.
 import { ConfigError } from '../errors.js';
-import { mysqlFamilyDialect } from './dialect.js';
+import { checkAdapterDialect, matchLibraryDialect } from './dialect.js';
 import { mariadbExecutor, pgExecutor } from './executors.js';
 
 /** @typedef {import('knex').Knex} Knex */
@@ -16,8 +16,10 @@ import { mariadbExecutor, pgExecutor } from './executors.js';
 
 /**
  * @typedef {object} KnexAdapterOptions
- * @property {'mysql' | 'mariadb'} [dialect] mysql2: `'mariadb'` on MariaDB. Default: `'mysql'`. The mariadb client is
- *     MariaDB without it.
+ * @property {import('../types.js').Dialect} dialect The database: `'mysql'` or `'mariadb'` with the mysql2 client,
+ *     `'mariadb'` with the mariadb client, `'postgres'` with the pg client.
+ * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
+ *     false.
  * @property {boolean} [prepare] pg: named prepared statements, each SQL text parsed and planned once per connection.
  *     Opt-in: not behind a pooler in transaction mode without prepared statement support (PgBouncer before 1.21).
  *     Default: false.
@@ -94,52 +96,70 @@ function executorOf(knex, toExecutor) {
 }
 
 /**
+ * The driver of a knex instance, and the dialects that it can run.
  * @param {Knex} knex
- * @param {KnexAdapterOptions | undefined} options
- * @returns {{ dialect: import('../types.js').Dialect, toExecutor: ToExecutor }}
+ * @param {string} where The adapter, for the error.
+ * @returns {{ driverName: 'mysql2' | 'mariadb' | 'pg', dialects: import('../types.js').Dialect[] }}
  */
-function resolveDriver(knex, options) {
+export function knexDriverOf(knex, where) {
     const client = /** @type {{ dialect?: unknown, driverName?: unknown, acquireConnection?: unknown } | undefined} */ (
         knex?.client
     );
 
     if (typeof knex?.transaction !== 'function' || typeof client?.acquireConnection !== 'function') {
-        throw new ConfigError('knexAdapter: expects a knex instance (knex 3)');
+        throw new ConfigError(`${where}: expects a knex instance (knex 3)`);
     }
 
-    const isPg = client?.dialect === 'postgresql' && client.driverName === 'pg';
-
-    if (options?.prepare && !isPg) {
-        throw new ConfigError('knexAdapter: "prepare" is for PostgreSQL (the pg client)');
-    }
-
-    if (client?.dialect === 'mysql' && client.driverName === 'mysql2') {
-        return { dialect: mysqlFamilyDialect(options, 'knexAdapter'), toExecutor: mysql2Executor };
+    if (client.dialect === 'mysql' && client.driverName === 'mysql2') {
+        return { driverName: 'mysql2', dialects: ['mysql', 'mariadb'] };
     }
 
     // The mariadb client of knex (and of MikroORM 6): MariaDB, on the callback API of the mariadb driver
-    if (client?.dialect === 'mysql' && client.driverName === 'mariadb') {
-        if (options?.dialect !== undefined && options.dialect !== 'mariadb') {
-            throw new ConfigError('knexAdapter: the mariadb client is for MariaDB: "dialect" must be "mariadb"');
-        }
-
-        return { dialect: 'mariadb', toExecutor: connection => mariadbExecutor(connection, 'callback') };
+    if (client.dialect === 'mysql' && client.driverName === 'mariadb') {
+        return { driverName: 'mariadb', dialects: ['mariadb'] };
     }
 
-    if (isPg) {
-        if (options?.dialect !== undefined) {
-            throw new ConfigError('knexAdapter: "dialect" is for mysql2 (MySQL or MariaDB)');
-        }
-
-        const prepare = options?.prepare ?? false;
-
-        // A pg Client: named statements through query({ name, text, values })
-        return { dialect: 'postgres', toExecutor: connection => pgExecutor(connection, { prepare }) };
+    if (client.dialect === 'postgresql' && client.driverName === 'pg') {
+        return { driverName: 'pg', dialects: ['postgres'] };
     }
 
     throw new ConfigError(
-        `knexAdapter: the client of knex must be "mysql2", "mariadb" or "pg", not ${JSON.stringify(client?.driverName ?? null)}`,
+        `${where}: the client of knex must be "mysql2", "mariadb" or "pg", not ${JSON.stringify(client.driverName ?? null)}`,
     );
+}
+
+/**
+ * @param {Knex} knex
+ * @param {KnexAdapterOptions} options
+ * @returns {{ dialect: import('../types.js').Dialect, allowUnsupportedVersion: boolean, toExecutor: ToExecutor }}
+ */
+function resolveDriver(knex, options) {
+    const { driverName, dialects } = knexDriverOf(knex, 'knexAdapter');
+    const checked = checkAdapterDialect(options, 'knexAdapter', ['mysql', 'mariadb', 'postgres']);
+    const dialect = matchLibraryDialect(
+        checked.dialect,
+        dialects,
+        'knexAdapter',
+        `the client of knex is ${JSON.stringify(driverName)}`,
+    );
+
+    if (options.prepare && driverName !== 'pg') {
+        throw new ConfigError('knexAdapter: "prepare" is for PostgreSQL (the pg client)');
+    }
+
+    /** @type {Record<typeof driverName, ToExecutor>} */
+    const executorByDriver = {
+        mysql2: mysql2Executor,
+        mariadb: connection => mariadbExecutor(connection, 'callback'),
+        // A pg Client: named statements through query({ name, text, values })
+        pg: connection => pgExecutor(connection, { prepare: options.prepare ?? false }),
+    };
+
+    return {
+        dialect,
+        allowUnsupportedVersion: checked.allowUnsupportedVersion,
+        toExecutor: executorByDriver[driverName],
+    };
 }
 
 /**
@@ -147,15 +167,15 @@ function resolveDriver(knex, options) {
  * knex transaction (the caller's: the job commits with it). After the commit of the outermost transaction, the
  * processes wake at once.
  * @param {Knex} knex The queue's own knex: claims, leases, results. A small pool of its own is best.
- * @param {KnexAdapterOptions} [options] mysql2: `{ dialect: 'mariadb' }` on MariaDB. pg: `{ prepare: true }`, named
- *     prepared statements.
+ * @param {KnexAdapterOptions} options `{ dialect }`. pg: `{ prepare: true }`, named prepared statements.
  * @returns {import('../types.js').Adapter<KnexConnection>}
  */
 export function knexAdapter(knex, options) {
-    const { dialect, toExecutor } = resolveDriver(knex, options);
+    const { dialect, allowUnsupportedVersion, toExecutor } = resolveDriver(knex, options);
 
     return {
         dialect,
+        allowUnsupportedVersion,
         wrap: connection => executorOf(connection, toExecutor),
         queue: executorOf(knex, toExecutor),
         withConnection: async (func) => {

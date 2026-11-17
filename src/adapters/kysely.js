@@ -3,6 +3,7 @@
 // that sqlane reads), with the placeholders of the driver. No import of kysely: the adapter uses the instance that it
 // gets, and checks what it uses. Kysely has no after-commit hook: after an enqueue in a transaction, sqlane re-probes.
 import { ConfigError } from '../errors.js';
+import { checkAdapterDialect } from './dialect.js';
 
 /** @typedef {import('kysely').Kysely<any>} Kysely */
 /** @typedef {import('kysely').Transaction<any>} KyselyTransaction */
@@ -16,6 +17,8 @@ import { ConfigError } from '../errors.js';
 /**
  * @typedef {object} KyselyAdapterOptions
  * @property {import('../types.js').Dialect} dialect The database of the Kysely instance: Kysely does not tell it.
+ * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
+ *     false.
  */
 
 /**
@@ -69,14 +72,15 @@ export function kyselyAdapter(db, options) {
         throw new ConfigError('kyselyAdapter: expects a Kysely instance (kysely 0.28+)');
     }
 
-    const dialect = options?.dialect;
-
-    if (dialect !== 'mysql' && dialect !== 'mariadb' && dialect !== 'postgres') {
-        throw new ConfigError('kyselyAdapter: "dialect" must be "mysql", "mariadb" or "postgres"');
-    }
+    const { dialect, allowUnsupportedVersion } = checkAdapterDialect(
+        options,
+        'kyselyAdapter',
+        ['mysql', 'mariadb', 'postgres'],
+    );
 
     return {
         dialect,
+        allowUnsupportedVersion,
         wrap: executorOf,
         queue: executorOf(db),
         withConnection: func => db.connection().execute(connection => func(executorOf(connection))),

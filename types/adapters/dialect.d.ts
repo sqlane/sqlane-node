@@ -1,16 +1,23 @@
-export type MysqlFamilyOptions = {
-    /**
-     * Default: `'mysql'`. `'mariadb'` for MariaDB 10.11+.
-     */
-    dialect?: 'mysql' | 'mariadb';
+export type AdapterDialect<D extends import('../types.js').Dialect> = {
+    dialect: D;
+    allowUnsupportedVersion: boolean;
 };
 /**
- * @typedef {object} MysqlFamilyOptions
- * @property {'mysql' | 'mariadb'} [dialect] Default: `'mysql'`. `'mariadb'` for MariaDB 10.11+.
- */
-/**
- * @param {MysqlFamilyOptions | undefined} options
+ * Checks `dialect` and `allowUnsupportedVersion` of the options of an adapter.
+ * @template {import('../types.js').Dialect} D
+ * @param {unknown} options
  * @param {string} where The adapter, for the error.
- * @returns {'mysql' | 'mariadb'}
+ * @param {readonly D[]} allowed The dialects of the adapter.
+ * @returns {AdapterDialect<D>}
  */
-export declare function mysqlFamilyDialect(options: MysqlFamilyOptions | undefined, where: string): 'mysql' | 'mariadb';
+export declare function checkAdapterDialect<D extends import('../types.js').Dialect>(options: unknown, where: string, allowed: readonly D[]): AdapterDialect<D>;
+/**
+ * Checks the dialect against the database that the library tells.
+ * @template {import('../types.js').Dialect} D
+ * @param {D} dialect Checked.
+ * @param {readonly import('../types.js').Dialect[]} possible The dialects of the library's database.
+ * @param {string} where The adapter, for the error.
+ * @param {string} library What tells the database, for the error: `the client of knex is "mariadb"`.
+ * @returns {D}
+ */
+export declare function matchLibraryDialect<D extends import('../types.js').Dialect>(dialect: D, possible: readonly import('../types.js').Dialect[], where: string, library: string): D;

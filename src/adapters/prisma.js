@@ -4,6 +4,7 @@
 // the client that it gets. Prisma has no connection outside a transaction, so `withConnection` (the migration) runs
 // in one; and no after-commit hook: after an enqueue in a transaction, sqlane re-probes.
 import { ConfigError } from '../errors.js';
+import { checkAdapterDialect } from './dialect.js';
 
 /** Marks the client of an interactive transaction; only to wake at once after an enqueue in a transaction of its own */
 const TRANSACTION_SCOPE = Symbol.for('prisma.client.transaction.scope_context');
@@ -25,6 +26,8 @@ const MAX_WAIT_MS = 10_000;
 /**
  * @typedef {object} PrismaAdapterOptions
  * @property {import('../types.js').Dialect} dialect The database of the client: Prisma tells it in no public API.
+ * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
+ *     false.
  */
 
 /**
@@ -65,14 +68,15 @@ export function prismaAdapter(prisma, options) {
         throw new ConfigError('prismaAdapter: expects a Prisma client (Prisma 7)');
     }
 
-    const dialect = options?.dialect;
-
-    if (dialect !== 'mysql' && dialect !== 'mariadb' && dialect !== 'postgres') {
-        throw new ConfigError('prismaAdapter: "dialect" must be "mysql", "mariadb" or "postgres"');
-    }
+    const { dialect, allowUnsupportedVersion } = checkAdapterDialect(
+        options,
+        'prismaAdapter',
+        ['mysql', 'mariadb', 'postgres'],
+    );
 
     return {
         dialect,
+        allowUnsupportedVersion,
         wrap: executorOf,
         queue: executorOf(prisma),
         withConnection: func => prisma.$transaction(tx => func(executorOf(tx)), {

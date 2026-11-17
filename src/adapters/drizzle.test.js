@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+import { ConfigError } from '../errors.js';
 import { drizzleAdapter } from './drizzle.js';
 
 /**
@@ -25,12 +26,73 @@ function fakeDb(sessionKind, client) {
 
 const mysqlPool = { getConnection: () => {} };
 const pgPool = { totalCount: 0, connect: () => {} };
+const postgresJsPool = { unsafe: () => {}, begin: () => {}, reserve: () => {} };
 
 test.each([
     { sessionKind: 'MySql2Session', client: mysqlPool, dialect: 'mysql' },
+    { sessionKind: 'MySql2Session', client: mysqlPool, dialect: 'mariadb' },
     { sessionKind: 'NodePgSession', client: pgPool, dialect: 'postgres' },
+    { sessionKind: 'PostgresJsSession', client: postgresJsPool, dialect: 'postgres' },
 ])('$sessionKind: $dialect', ({ sessionKind, client, dialect }) => {
-    expect(drizzleAdapter(fakeDb(sessionKind, client)).dialect).toBe(dialect);
+    expect(drizzleAdapter(fakeDb(sessionKind, client), /** @type {any} */ ({ dialect })))
+        .toMatchObject({ dialect, allowUnsupportedVersion: false });
+});
+
+test.each([
+    { sessionKind: 'MySql2Session', client: mysqlPool, dialect: 'mariadb' },
+    { sessionKind: 'NodePgSession', client: pgPool, dialect: 'postgres' },
+    { sessionKind: 'PostgresJsSession', client: postgresJsPool, dialect: 'postgres' },
+])('$sessionKind: allowUnsupportedVersion reaches the adapter', ({ sessionKind, client, dialect }) => {
+    const options = /** @type {any} */ ({ dialect, allowUnsupportedVersion: true });
+
+    expect(drizzleAdapter(fakeDb(sessionKind, client), options).allowUnsupportedVersion).toBe(true);
+});
+
+test.each([
+    {
+        label: 'no options',
+        db: fakeDb('MySql2Session', mysqlPool),
+        options: undefined,
+        message: 'drizzleAdapter: "dialect" is required: "mysql", "mariadb" or "postgres"',
+    },
+    {
+        label: 'no dialect',
+        db: fakeDb('NodePgSession', pgPool),
+        options: { notify: true },
+        message: 'drizzleAdapter: "dialect" is required: "mysql", "mariadb" or "postgres"',
+    },
+    {
+        label: 'another dialect',
+        db: fakeDb('NodePgSession', pgPool),
+        options: { dialect: 'pg' },
+        message: 'drizzleAdapter: "dialect" must be "mysql", "mariadb" or "postgres", not "pg"',
+    },
+    {
+        label: '"mariadb" on node-postgres',
+        db: fakeDb('NodePgSession', pgPool),
+        options: { dialect: 'mariadb' },
+        message: 'drizzleAdapter: "dialect" is "mariadb", but Drizzle uses node-postgres: "postgres"',
+    },
+    {
+        label: '"mysql" on postgres.js',
+        db: fakeDb('PostgresJsSession', postgresJsPool),
+        options: { dialect: 'mysql' },
+        message: 'drizzleAdapter: "dialect" is "mysql", but Drizzle uses postgres.js: "postgres"',
+    },
+    {
+        label: '"postgres" on mysql2',
+        db: fakeDb('MySql2Session', mysqlPool),
+        options: { dialect: 'postgres' },
+        message: 'drizzleAdapter: "dialect" is "postgres", but Drizzle uses mysql2: "mysql" or "mariadb"',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedVersion',
+        db: fakeDb('MySql2Session', mysqlPool),
+        options: { dialect: 'mysql', allowUnsupportedVersion: 'yes' },
+        message: 'drizzleAdapter: "allowUnsupportedVersion" must be a boolean',
+    },
+])('$label: a ConfigError', ({ db, options, message }) => {
+    expect(() => drizzleAdapter(db, /** @type {any} */ (options))).toThrow(new ConfigError(message));
 });
 
 test.each([
@@ -48,17 +110,10 @@ test.each([
         message: 'not a transaction',
     },
 ])('$label: a ConfigError', ({ db, message }) => {
-    expect(() => drizzleAdapter(db)).toThrow(message);
-});
-
-test('MariaDB: a mysql2 Drizzle, with { dialect: \'mariadb\' }', () => {
-    expect(drizzleAdapter(fakeDb('MySql2Session', mysqlPool), { dialect: 'mariadb' }).dialect).toBe('mariadb');
-});
-
-test('"dialect" on PostgreSQL: a ConfigError', () => {
-    expect(() => drizzleAdapter(fakeDb('NodePgSession', pgPool), { dialect: 'mariadb' })).toThrow('"dialect" is for mysql2');
+    expect(() => drizzleAdapter(db, { dialect: 'postgres' })).toThrow(message);
 });
 
 test('notify on MySQL: a ConfigError', () => {
-    expect(() => drizzleAdapter(fakeDb('MySql2Session', mysqlPool), { notify: true })).toThrow('"notify" is for PostgreSQL');
+    expect(() => drizzleAdapter(fakeDb('MySql2Session', mysqlPool), { dialect: 'mysql', notify: true }))
+        .toThrow('"notify" is for PostgreSQL');
 });

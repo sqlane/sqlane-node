@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from '
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
-import { mysqlFamilyOptions } from './helpers/test_adapter.js';
+import { dialectOptions } from './helpers/test_adapter.js';
 import { knexAdapter } from '../../src/adapters/knex.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
 import { preparedAfterAJob, SQLANE_STATEMENTS_SQL } from './helpers/prepared_statements.js';
@@ -35,8 +35,7 @@ async function waitFor(condition) {
 const CLIENTS = { mysql: ['mysql2'], mariadb: ['mysql2', 'mariadb'], postgres: ['pg'] }[inject('databaseDialect')];
 
 describe.each(CLIENTS)('knex, client %s', (client) => {
-    // The mariadb client tells MariaDB; mysql2 needs the option
-    const adapterOptions = client === 'mariadb' ? undefined : mysqlFamilyOptions();
+    const adapterOptions = dialectOptions();
     /** @type {import('../support/test_database.js').TestDatabaseConnection} */
     let database;
     /** @type {import('knex').Knex} The app's knex */
@@ -86,7 +85,7 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         const events = [];
         const sqlane = createSqlane({
             // The mariadb client tells MariaDB; mysql2 needs the option
-            adapter: knexAdapter(queueKnex, client === 'mariadb' ? undefined : mysqlFamilyOptions()),
+            adapter: knexAdapter(queueKnex, adapterOptions),
             tablePrefix: p,
             onEvent: event => events.push(event),
             ...options,
@@ -234,7 +233,7 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         prefixCount++;
 
         const sqlane = createSqlane({
-            adapter: knexAdapter(queueOne, { prepare }),
+            adapter: knexAdapter(queueOne, { dialect: 'postgres', prepare }),
             tablePrefix: `${database.tablePrefix}${prefixCount}_`,
         });
 

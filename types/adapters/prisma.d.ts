@@ -8,6 +8,11 @@ export type PrismaAdapterOptions = {
      * The database of the client: Prisma tells it in no public API.
      */
     dialect: import('../types.js').Dialect;
+    /**
+     * Runs on a server below the supported minimum, with a warning. Default:
+     * false.
+     */
+    allowUnsupportedVersion?: boolean;
 };
 /**
  * The adapter for Prisma 7 (MySQL or PostgreSQL). `enqueue` then takes a Prisma client (a transaction of its own) or

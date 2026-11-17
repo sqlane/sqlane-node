@@ -5,6 +5,7 @@ An adapter connects sqlane to the database driver or ORM that your app already u
 wake up after a commit, and the details of each library.
 
 - [Two pools](#two-pools)
+- [The dialect and the server check](#the-dialect-and-the-server-check)
 - [What `enqueue` accepts](#what-enqueue-accepts)
 - [Wake-up after the commit](#wake-up-after-the-commit)
 - [Logs and plugins of your ORM](#logs-and-plugins-of-your-orm)
@@ -36,10 +37,52 @@ import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 const appPool = mysql.createPool({ uri: process.env.DATABASE_URL }); // your app's connection pool
 const queuePool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 3 }); // the queue's own pool
 
-const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }), jobs: [buildReport] });
 ```
 
 `close()` never ends your pools. Close them yourself after `sqlane.close()`.
+
+## The dialect and the server check
+
+Each adapter takes the database as `dialect`: `'postgres'`, `'mysql'` or `'mariadb'`. It has no default. sqlane runs
+SQL of its own for each database, so the dialect must match the server. Without it, or with another value, the adapter
+throws a `ConfigError`.
+
+| Library     | `dialect`                                                                                                                          |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| mysql2      | `'mysql'` or `'mariadb'`                                                                                                           |
+| pg          | `'postgres'`                                                                                                                       |
+| postgres.js | `'postgres'`                                                                                                                       |
+| Knex        | `'mysql'` or `'mariadb'` with the `mysql2` client, `'mariadb'` with the `mariadb` client, `'postgres'` with `pg`                   |
+| Kysely      | Any of the three: Kysely does not tell its database                                                                                |
+| Drizzle     | `'mysql'` or `'mariadb'` with mysql2, `'postgres'` with node-postgres or postgres.js                                               |
+| Prisma      | Any of the three: Prisma does not tell its database                                                                                |
+| Sequelize   | `'mysql'` or `'mariadb'` with the `mysql` dialect, `'mariadb'` with `mariadb`, `'postgres'` with `postgres`                        |
+| TypeORM     | `'mysql'` or `'mariadb'` with the type `mysql`, `'mariadb'` with `mariadb`, `'postgres'` with `postgres`                           |
+| MikroORM    | `'mysql'` or `'mariadb'` with `@mikro-orm/mysql`, `'mariadb'` with `@mikro-orm/mariadb`, `'postgres'` with `@mikro-orm/postgresql` |
+
+When the library tells its database, the adapter checks the dialect against it, and throws a `ConfigError` on a
+mismatch. Knex, Drizzle, Sequelize and TypeORM check when you create the adapter, MikroORM 6 at its first query.
+
+**The server check.** The first `start()` or `migrate()` of an instance asks the server for its version, in one
+statement. It checks two things:
+
+- The server is the database of `dialect`. MariaDB is the server whose version contains `MariaDB`. PostgreSQL is the
+  server whose `version()` starts with `PostgreSQL`: a compatible database that says so passes (YugabyteDB), one that
+  does not fails (CockroachDB).
+- The version is supported: MySQL 8.4, MariaDB 10.11 or PostgreSQL 15, or later.
+
+If a check fails, `start()` or `migrate()` rejects with a `ConfigError`. The instance keeps the result, so `migrate()`
+then `start()` asks once. A process that only enqueues never asks. If the database is down, `start()` resolves anyway
+and emits an `error` event with the operation `server_check`; the next `migrate()` checks again.
+
+**Older versions.** With `allowUnsupportedVersion: true`, the adapter runs on a server below the supported version.
+sqlane then logs a warning once per instance, through the `logger` of `createSqlane`. It still checks the database.
+sqlane is not tested on these versions.
+
+```js
+const adapter = mysql2Adapter(queuePool, { dialect: 'mysql', allowUnsupportedVersion: true }); // MySQL 8.0
+```
 
 ## What `enqueue` accepts
 
@@ -116,23 +159,7 @@ Prisma client extensions can see it.
 
 ## MariaDB
 
-sqlane supports MariaDB 10.11 and later, through the mysql2 driver or the mariadb driver (MariaDB Connector/Node.js).
-MariaDB speaks the MySQL protocol, so an adapter over mysql2 cannot tell it from MySQL, and you tell it. sqlane then
-runs SQL of its own for MariaDB. Without this setting, sqlane runs the SQL of MySQL, and MariaDB rejects it with a
-syntax error. The mariadb driver needs no setting: it means MariaDB.
-
-| Library   | On MariaDB                                                                                                                       |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| mysql2    | `mysql2Adapter(pool, { dialect: 'mariadb' })`                                                                                    |
-| Knex      | the `mariadb` client: `knexAdapter(knex)`; the `mysql2` client: `knexAdapter(knex, { dialect: 'mariadb' })`                      |
-| Kysely    | `kyselyAdapter(db, { dialect: 'mariadb' })`, with `MysqlDialect`                                                                 |
-| Drizzle   | `drizzleAdapter(db, { dialect: 'mariadb' })`, with mysql2                                                                        |
-| Prisma    | `prismaAdapter(prisma, { dialect: 'mariadb' })`, with the `mysql` provider                                                       |
-| Sequelize | the `mariadb` dialect: `sequelizeAdapter(sequelize)`; the `mysql` dialect: `sequelizeAdapter(sequelize, { dialect: 'mariadb' })` |
-| TypeORM   | `typeOrmAdapter(dataSource)`, with `type: 'mariadb'` in the DataSource                                                           |
-| MikroORM  | `mikroOrmAdapter(em, { dialect: 'mariadb' })`, with `@mikro-orm/mariadb` or `@mikro-orm/mysql`                                   |
-
-If you apply the schema with your own migration tool, use `getMigrations({ dialect: 'mariadb' })`.
+On MariaDB 10.11 and later, pass `dialect: 'mariadb'` to the adapter, with the mariadb driver too.
 
 ## mysql2
 
@@ -140,7 +167,8 @@ If you apply the schema with your own migration tool, use `getMigrations({ diale
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 ```
 
-The adapter supports mysql2 3.11 and later, with its promise API. `mysql2Adapter(pool)` takes the queue's own `Pool`.
+The adapter supports mysql2 3.11 and later, with its promise API. `mysql2Adapter(pool, { dialect })` takes the queue's
+own `Pool`, and `dialect` is `'mysql'` or `'mariadb'`.
 
 `enqueue` accepts a `Connection` or a `PoolConnection` in a transaction, or a `Pool`.
 
@@ -159,7 +187,7 @@ export const buildReport = defineJob({
 
 const appPool = mysql.createPool({ uri: process.env.DATABASE_URL }); // your app's connection pool
 const queuePool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 3 }); // the queue's own pool
-const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }), jobs: [buildReport] });
 
 await sqlane.migrate(); // or getMigrations({ dialect: 'mysql' }) for your own migration tool
 
@@ -202,8 +230,8 @@ this.
 import { pgAdapter } from '@sqlane/core/adapter-pg';
 ```
 
-The adapter supports pg (node-postgres) 8.13 and later. `pgAdapter(pool, { notify, prepare })` takes the queue's own
-`Pool`.
+The adapter supports pg (node-postgres) 8.13 and later. `pgAdapter(pool, { dialect: 'postgres', notify, prepare })`
+takes the queue's own `Pool`.
 
 `enqueue` accepts a `Client` or a `PoolClient` in a transaction, or a `Pool`.
 
@@ -214,7 +242,10 @@ import { pgAdapter } from '@sqlane/core/adapter-pg';
 
 const appPool = new Pool({ connectionString: process.env.DATABASE_URL }); // your app's connection pool
 const queuePool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }); // the queue's own pool
-const sqlane = createSqlane({ adapter: pgAdapter(queuePool, { notify: true }), jobs: [buildReport] });
+const sqlane = createSqlane({
+    adapter: pgAdapter(queuePool, { dialect: 'postgres', notify: true }),
+    jobs: [buildReport],
+});
 
 const client = await appPool.connect();
 
@@ -261,8 +292,8 @@ import { postgresJsAdapter } from '@sqlane/core/adapter-postgres-js';
 ```
 
 The adapter supports postgres.js (the `postgres` package) 3.4 and later, including version 4.
-`postgresJsAdapter(sql, { notify })` takes the `sql` function that `postgres(…)` returns for the queue's own connection
-pool.
+`postgresJsAdapter(sql, { dialect: 'postgres', notify })` takes the `sql` function that `postgres(…)` returns for the
+queue's own connection pool.
 
 `enqueue` accepts the `sql` of a transaction from `sql.begin(…)`, including a savepoint. It also accepts a reserved
 connection in a transaction, or the `sql` of `postgres(…)`.
@@ -276,7 +307,10 @@ const sql = postgres(process.env.DATABASE_URL); // your app's connection pool
 const queueSql = postgres(process.env.DATABASE_URL, { max: 3 }); // the queue's own pool, which must not transform results
 
 // With { notify: true }, NOTIFY wakes the workers at the commit. This also works after an enqueue in a transaction.
-const sqlane = createSqlane({ adapter: postgresJsAdapter(queueSql, { notify: true }), jobs: [buildReport] });
+const sqlane = createSqlane({
+    adapter: postgresJsAdapter(queueSql, { dialect: 'postgres', notify: true }),
+    jobs: [buildReport],
+});
 
 await sql.begin(async (sql) => {
     await sql`INSERT INTO reports ${sql({ id: reportId })}`;
@@ -307,7 +341,7 @@ import { knexAdapter } from '@sqlane/core/adapter-knex';
 ```
 
 The adapter supports knex 3 with the `mysql2`, `mariadb` or `pg` client. `knexAdapter(knex, { dialect, prepare })` takes
-the queue's own knex instance. On MariaDB, see [MariaDB](#mariadb).
+the queue's own knex instance. The dialect must match the client ([dialect](#the-dialect-and-the-server-check)).
 
 `enqueue` accepts a knex instance or a knex transaction. The transaction can be nested.
 
@@ -318,7 +352,7 @@ import { knexAdapter } from '@sqlane/core/adapter-knex';
 
 const db = knex({ client: 'pg', connection: process.env.DATABASE_URL }); // your app's connection pool
 const queueDb = knex({ client: 'pg', connection: process.env.DATABASE_URL, pool: { max: 3 } }); // the queue's own pool
-const sqlane = createSqlane({ adapter: knexAdapter(queueDb), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: knexAdapter(queueDb, { dialect: 'postgres' }), jobs: [buildReport] });
 
 await db.transaction(async (trx) => {
     await trx('reports').insert({ id: reportId });
@@ -375,8 +409,8 @@ await db.transaction().execute(async (trx) => {
 **Wake-up.** Kysely has no after-commit hook. After an enqueue in a transaction, the workers of this process check the
 database a few times. Other processes need a [hint](api.md#hint).
 
-**Caveats.** The `dialect` option is required and must be `'mysql'` or `'postgres'`. sqlane runs its SQL without your
-Kysely plugins, so a `CamelCasePlugin` does not rename the columns that sqlane reads.
+**Caveats.** sqlane runs its SQL without your Kysely plugins, so a `CamelCasePlugin` does not rename the columns that
+sqlane reads.
 
 **Prepared statements.** Kysely sends unnamed statements, and sqlane cannot name its own through it: on PostgreSQL, each
 run of a statement is parsed and planned again.
@@ -388,7 +422,7 @@ import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
 ```
 
 The adapter supports drizzle-orm 0.45 and 1.0 (release candidate), over mysql2, node-postgres or postgres.js.
-`drizzleAdapter(db, { notify })` takes the queue's own Drizzle database.
+`drizzleAdapter(db, { dialect, notify })` takes the queue's own Drizzle database. The dialect must match its driver.
 
 `enqueue` accepts a Drizzle database or a Drizzle transaction. The transaction can be nested.
 
@@ -401,7 +435,7 @@ import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
 // queueDb is the queue's own Drizzle database, and it must use a pool.
 const queueDb = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) });
 // On PostgreSQL, you can also pass { notify: true }.
-const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }), jobs: [buildReport] });
 
 await db.transaction(async (tx) => {
     await tx.insert(reports).values({ id: reportId });
@@ -467,8 +501,7 @@ export default defineConfig({
 });
 ```
 
-Prisma has no connection outside a transaction, so `migrate()` runs in one transaction. The `dialect` option is
-required and must be `'mysql'` or `'postgres'`.
+Prisma has no connection outside a transaction, so `migrate()` runs in one transaction.
 
 **Prepared statements.** sqlane runs its SQL through Prisma's raw queries and has no option for them. On PostgreSQL,
 `@prisma/adapter-pg` sends unnamed statements unless you give it a `statementNameGenerator`, which then names sqlane's
@@ -481,8 +514,8 @@ import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
 ```
 
 The adapter supports Sequelize 6 with MySQL (mysql2), MariaDB (mysql2 or mariadb) or PostgreSQL (pg).
-`sequelizeAdapter(sequelize, { dialect, prepare })` takes the queue's own Sequelize instance. On MariaDB, see
-[MariaDB](#mariadb).
+`sequelizeAdapter(sequelize, { dialect, prepare })` takes the queue's own Sequelize instance. The dialect must match the
+dialect of Sequelize ([dialect](#the-dialect-and-the-server-check)).
 
 `enqueue` accepts a Sequelize instance or a Sequelize transaction. The transaction can be nested.
 
@@ -491,7 +524,7 @@ import { createSqlane } from '@sqlane/core';
 import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
 
 // queueSequelize is the queue's own Sequelize instance.
-const sqlane = createSqlane({ adapter: sequelizeAdapter(queueSequelize), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: sequelizeAdapter(queueSequelize, { dialect: 'postgres' }), jobs: [buildReport] });
 
 await sequelize.transaction(async (t) => {
     await Report.create({ id: reportId }, { transaction: t });
@@ -535,8 +568,9 @@ reason. With the `mysql` or `mariadb` dialect, `prepare` throws a `ConfigError`.
 import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm';
 ```
 
-The adapter supports TypeORM 0.3 and 1.x, with MySQL (mysql2) or PostgreSQL. `typeOrmAdapter(dataSource)` takes the
-queue's own `DataSource`, which must be initialized.
+The adapter supports TypeORM 0.3 and 1.x, with MySQL or MariaDB (mysql2) or PostgreSQL.
+`typeOrmAdapter(dataSource, { dialect })` takes the queue's own `DataSource`, which must be initialized. The dialect
+must match the type of the `DataSource` ([dialect](#the-dialect-and-the-server-check)).
 
 `enqueue` accepts the `EntityManager` of a transaction, a `QueryRunner` in a transaction, or a `DataSource`. An
 `EntityManager` outside a transaction gets a transaction of its own.
@@ -546,7 +580,7 @@ import { createSqlane } from '@sqlane/core';
 import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm';
 
 // queueDataSource must be initialized.
-const sqlane = createSqlane({ adapter: typeOrmAdapter(queueDataSource), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: typeOrmAdapter(queueDataSource, { dialect: 'postgres' }), jobs: [buildReport] });
 
 await dataSource.transaction(async (manager) => {
     await manager.save(Report, { id: reportId });
@@ -593,7 +627,7 @@ nested transaction (a savepoint) cannot see the outer commit, so the workers che
 
 **Caveats.** Inside `em.transactional()`, the global `EntityManager` refers to the current transaction, as it does
 for MikroORM's own queries. So `sqlane.enqueue(orm.em, …)` there commits or rolls back with that transaction. `em.begin()` and
-`em.commit()` on a fork work too. The `dialect` option is required and must match the driver of MikroORM.
+`em.commit()` on a fork work too.
 
 **Prepared statements.** With `@mikro-orm/postgresql`, `{ prepare: true }` runs sqlane's SQL as named prepared
 statements (`sqlane_<hash>`). In MikroORM 6, this covers all of sqlane's SQL, through knex. MikroORM 7 sends its SQL

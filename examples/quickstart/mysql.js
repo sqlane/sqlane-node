@@ -24,7 +24,7 @@ const syncOrder = defineJob({
 
 const events = new EventEmitter();
 const sqlane = createSqlane({
-    adapter: mysql2Adapter(queuePool),
+    adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }), // or 'mariadb' on MariaDB
     jobs: [sendReceipt, syncOrder],
     onEvent: event => events.emit(event.type, event),
 });

@@ -24,7 +24,8 @@ const syncOrder = defineJob({
 
 const events = new EventEmitter();
 const sqlane = createSqlane({
-    adapter: pgAdapter(queuePool, { notify: true }), // NOTIFY wakes the workers of other processes at the commit
+    // NOTIFY wakes the workers of other processes at the commit
+    adapter: pgAdapter(queuePool, { dialect: 'postgres', notify: true }),
     jobs: [sendReceipt, syncOrder],
     onEvent: event => events.emit(event.type, event),
 });

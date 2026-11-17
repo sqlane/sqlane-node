@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+import { ConfigError } from '../errors.js';
 import { mikroOrmAdapter } from './mikro_orm.js';
 
 function method() {}
@@ -32,10 +33,90 @@ test.each([
         options: { dialect: 'mysql' },
         message: 'with a SQL driver',
     },
-    { label: 'no dialect', em: fakeEntityManager(), options: undefined, message: '"dialect" must be' },
-    { label: 'SQLite', em: fakeEntityManager(), options: { dialect: 'sqlite' }, message: '"dialect" must be' },
+    {
+        label: 'no options',
+        em: fakeEntityManager(),
+        options: undefined,
+        message: 'mikroOrmAdapter: "dialect" is required: "mysql", "mariadb" or "postgres"',
+    },
+    {
+        label: 'no dialect',
+        em: fakeEntityManager(),
+        options: { prepare: false },
+        message: 'mikroOrmAdapter: "dialect" is required: "mysql", "mariadb" or "postgres"',
+    },
+    {
+        label: 'SQLite',
+        em: fakeEntityManager(),
+        options: { dialect: 'sqlite' },
+        message: 'mikroOrmAdapter: "dialect" must be "mysql", "mariadb" or "postgres", not "sqlite"',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedVersion',
+        em: fakeEntityManager(),
+        options: { dialect: 'mysql', allowUnsupportedVersion: 'yes' },
+        message: 'mikroOrmAdapter: "allowUnsupportedVersion" must be a boolean',
+    },
 ])('$label: a ConfigError', ({ em, options, message }) => {
     expect(() => mikroOrmAdapter(em, /** @type {any} */ (options))).toThrow(message);
+});
+
+test.each([
+    { options: { dialect: /** @type {const} */ ('mysql') }, expected: false },
+    { options: { dialect: /** @type {const} */ ('mysql'), allowUnsupportedVersion: true }, expected: true },
+])('allowUnsupportedVersion: $expected', ({ options, expected }) => {
+    expect(mikroOrmAdapter(fakeEntityManager(), options)).toMatchObject({ dialect: 'mysql', allowUnsupportedVersion: expected });
+});
+
+/**
+ * An EntityManager of MikroORM 6, over a knex instance of a client.
+ * @param {string} dialect The dialect of the knex client.
+ * @param {string} driverName
+ * @returns {any}
+ */
+function fakeEntityManager6(dialect, driverName) {
+    const client = { dialect, driverName, acquireConnection: async () => ({}), releaseConnection: async () => {} };
+    const knex = { transaction: method, client };
+
+    return {
+        ...fakeEntityManager(),
+        getConnection: () => ({ getKnex: () => knex, ensureConnection: method }),
+    };
+}
+
+test.each([
+    {
+        label: '"postgres" on mysql2',
+        em: fakeEntityManager6('mysql', 'mysql2'),
+        dialect: 'postgres',
+        message: 'mikroOrmAdapter: "dialect" is "postgres", but the driver of MikroORM is "mysql2": "mysql" or "mariadb"',
+    },
+    {
+        label: '"mysql" on the mariadb driver',
+        em: fakeEntityManager6('mysql', 'mariadb'),
+        dialect: 'mysql',
+        message: 'mikroOrmAdapter: "dialect" is "mysql", but the driver of MikroORM is "mariadb": "mariadb"',
+    },
+    {
+        label: '"mariadb" on pg',
+        em: fakeEntityManager6('postgresql', 'pg'),
+        dialect: 'mariadb',
+        message: 'mikroOrmAdapter: "dialect" is "mariadb", but the driver of MikroORM is "pg": "postgres"',
+    },
+])('MikroORM 6, $label: a ConfigError at the first use', async ({ em, dialect, message }) => {
+    const adapter = mikroOrmAdapter(em, /** @type {any} */ ({ dialect }));
+
+    await expect(adapter.queue.query('SELECT 1', [])).rejects.toThrow(new ConfigError(message));
+});
+
+test.each([
+    { em: fakeEntityManager6('mysql', 'mysql2'), dialect: 'mariadb' },
+    { em: fakeEntityManager6('mysql', 'mariadb'), dialect: 'mariadb' },
+    { em: fakeEntityManager6('postgresql', 'pg'), dialect: 'postgres' },
+])('MikroORM 6, $dialect on its driver: accepted', async ({ em, dialect }) => {
+    const adapter = mikroOrmAdapter(em, /** @type {any} */ ({ dialect }));
+
+    await expect(adapter.withConnection(async () => 'ran')).resolves.toBe('ran');
 });
 
 test('afterCommit, MikroORM 7: the commit of the transaction wakes; not the release of a savepoint', () => {

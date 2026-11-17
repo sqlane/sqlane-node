@@ -17,9 +17,14 @@ export type EntityManagerLike = {
 export type MikroOrmAdapterOptions = {
     /**
      * The database: `'mysql'` or `'mariadb'` with `@mikro-orm/mysql`,
-     * `'postgres'` with `@mikro-orm/postgresql`.
+     * `'mariadb'` with `@mikro-orm/mariadb`, `'postgres'` with `@mikro-orm/postgresql`.
      */
     dialect: import('../types.js').Dialect;
+    /**
+     * Runs on a server below the supported minimum, with a warning. Default:
+     * false.
+     */
+    allowUnsupportedVersion?: boolean;
     /**
      * PostgreSQL: named prepared statements, each SQL text parsed and planned once per
      * connection. MikroORM 6: all of sqlane's SQL. MikroORM 7.2+: the queue's own SQL, on the pg pool under Kysely

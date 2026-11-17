@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+import { ConfigError } from '../errors.js';
 import { sequelizeAdapter } from './sequelize.js';
 
 function method() {}
@@ -18,27 +19,62 @@ function fakeSequelize(dialect, version) {
     });
 }
 
-test.each([{ dialect: 'mysql' }, { dialect: 'mariadb' }, { dialect: 'postgres' }])('dialect $dialect', ({ dialect }) => {
-    expect(sequelizeAdapter(fakeSequelize(dialect, '6.37.8')).dialect).toBe(dialect);
+test.each([
+    { sequelizeDialect: 'mysql', dialect: 'mysql' },
+    { sequelizeDialect: 'mysql', dialect: 'mariadb' },
+    { sequelizeDialect: 'mariadb', dialect: 'mariadb' },
+    { sequelizeDialect: 'postgres', dialect: 'postgres' },
+])('the "$sequelizeDialect" dialect of Sequelize, dialect $dialect', ({ sequelizeDialect, dialect }) => {
+    expect(sequelizeAdapter(fakeSequelize(sequelizeDialect, '6.37.8'), /** @type {any} */ ({ dialect })))
+        .toMatchObject({ dialect, allowUnsupportedVersion: false });
 });
 
-test('MariaDB: the "mysql" dialect of Sequelize, with { dialect: \'mariadb\' }', () => {
-    expect(sequelizeAdapter(fakeSequelize('mysql', '6.37.8'), { dialect: 'mariadb' }).dialect).toBe('mariadb');
+test('allowUnsupportedVersion: true', () => {
+    const options = /** @type {const} */ ({ dialect: 'mysql', allowUnsupportedVersion: true });
+
+    expect(sequelizeAdapter(fakeSequelize('mysql', '6.37.8'), options).allowUnsupportedVersion).toBe(true);
 });
 
 test.each([
     {
-        label: '"dialect" on the "mariadb" dialect',
-        sequelize: fakeSequelize('mariadb', '6.37.8'),
-        options: { dialect: 'mariadb' },
-        message: '"dialect" is for the "mysql" dialect',
+        label: 'no options',
+        sequelize: fakeSequelize('mysql', '6.37.8'),
+        options: undefined,
+        message: 'sequelizeAdapter: "dialect" is required: "mysql", "mariadb" or "postgres"',
     },
-    { label: '"dialect" on PostgreSQL', sequelize: fakeSequelize('postgres', '6.37.8'), options: { dialect: 'mariadb' },
-        message: '"dialect" is for the "mysql" dialect' },
-    { label: 'another "dialect"', sequelize: fakeSequelize('mysql', '6.37.8'), options: { dialect: 'sqlite' },
-        message: '"dialect" must be "mysql" or "mariadb"' },
+    {
+        label: 'another dialect',
+        sequelize: fakeSequelize('mysql', '6.37.8'),
+        options: { dialect: 'sqlite' },
+        message: 'sequelizeAdapter: "dialect" must be "mysql", "mariadb" or "postgres", not "sqlite"',
+    },
+    {
+        label: '"mysql" on the "mariadb" dialect',
+        sequelize: fakeSequelize('mariadb', '6.37.8'),
+        options: { dialect: 'mysql' },
+        message: 'sequelizeAdapter: "dialect" is "mysql", but the dialect of Sequelize is "mariadb": "mariadb"',
+    },
+    {
+        label: '"mariadb" on the "postgres" dialect',
+        sequelize: fakeSequelize('postgres', '6.37.8'),
+        options: { dialect: 'mariadb' },
+        message: 'sequelizeAdapter: "dialect" is "mariadb", but the dialect of Sequelize is "postgres": "postgres"',
+    },
+    {
+        label: '"postgres" on the "mysql" dialect',
+        sequelize: fakeSequelize('mysql', '6.37.8'),
+        options: { dialect: 'postgres' },
+        message: 'sequelizeAdapter: "dialect" is "postgres", but the dialect of Sequelize is "mysql": "mysql" or '
+            + '"mariadb"',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedVersion',
+        sequelize: fakeSequelize('postgres', '6.37.8'),
+        options: { dialect: 'postgres', allowUnsupportedVersion: 'yes' },
+        message: 'sequelizeAdapter: "allowUnsupportedVersion" must be a boolean',
+    },
 ])('$label: a ConfigError', ({ sequelize, options, message }) => {
-    expect(() => sequelizeAdapter(sequelize, /** @type {any} */ (options))).toThrow(message);
+    expect(() => sequelizeAdapter(sequelize, /** @type {any} */ (options))).toThrow(new ConfigError(message));
 });
 
 test.each([
@@ -46,14 +82,15 @@ test.each([
     { label: 'Sequelize 7', sequelize: fakeSequelize('postgres', '7.0.0-alpha.48'), message: 'not "7.0.0-alpha.48"' },
     { label: 'SQLite', sequelize: fakeSequelize('sqlite', '6.37.8'), message: 'not "sqlite"' },
 ])('$label: a ConfigError', ({ sequelize, message }) => {
-    expect(() => sequelizeAdapter(sequelize)).toThrow(message);
+    expect(() => sequelizeAdapter(sequelize, { dialect: 'postgres' })).toThrow(message);
 });
 
 test('postgres: { prepare: true } is accepted', () => {
-    expect(sequelizeAdapter(fakeSequelize('postgres', '6.37.8'), { prepare: true }).dialect).toBe('postgres');
+    expect(sequelizeAdapter(fakeSequelize('postgres', '6.37.8'), { dialect: 'postgres', prepare: true }).dialect)
+        .toBe('postgres');
 });
 
 test.each(['mysql', 'mariadb'])('{ prepare: true } on the "%s" dialect: a ConfigError', (dialect) => {
-    expect(() => sequelizeAdapter(fakeSequelize(dialect, '6.37.8'), { prepare: true }))
+    expect(() => sequelizeAdapter(fakeSequelize(dialect, '6.37.8'), { dialect: 'mariadb', prepare: true }))
         .toThrow('"prepare" is for the "postgres" dialect');
 });

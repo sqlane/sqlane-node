@@ -91,7 +91,7 @@ async function connect() {
         // No idle timeout: the server processes of the connections live through the window
         const pool = new Pool({ connectionString: args.url, max: Number(args.pool), idleTimeoutMillis: 0 });
 
-        return { pool, adapter: pgAdapter(pool, { notify: true }), hint: null };
+        return { pool, adapter: pgAdapter(pool, { dialect: 'postgres', notify: true }), hint: null };
     }
 
     const mysql = require('mysql2/promise');

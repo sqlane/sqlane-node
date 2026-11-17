@@ -7,6 +7,11 @@ export type KyselyAdapterOptions = {
      * The database of the Kysely instance: Kysely does not tell it.
      */
     dialect: import('../types.js').Dialect;
+    /**
+     * Runs on a server below the supported minimum, with a warning. Default:
+     * false.
+     */
+    allowUnsupportedVersion?: boolean;
 };
 /**
  * The adapter for Kysely (its MySQL or PostgreSQL dialect). `enqueue` then takes a Kysely instance (a transaction of

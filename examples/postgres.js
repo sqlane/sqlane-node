@@ -6,7 +6,7 @@ import { pgAdapter } from '@sqlane/core/adapter-pg';
 const queuePool = new Pool({ connectionString: 'postgres://app@localhost/app', max: 3 });
 
 export const sqlane = createSqlane({
-    adapter: pgAdapter(queuePool, { notify: true }),
+    adapter: pgAdapter(queuePool, { dialect: 'postgres', notify: true }),
 });
 
 /** @returns {Promise<void>} */

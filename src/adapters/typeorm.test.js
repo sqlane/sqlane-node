@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+import { ConfigError } from '../errors.js';
 import { typeOrmAdapter } from './typeorm.js';
 
 function method() {}
@@ -19,21 +20,75 @@ function fakeRunner(dataSource) {
     return { dataSource, isTransactionActive: true, startTransaction: method, query: method, release: method };
 }
 
-test.each([{ type: 'mysql' }, { type: 'mariadb' }, { type: 'postgres' }])('type $type', ({ type }) => {
-    expect(typeOrmAdapter(fakeDataSource(type)).dialect).toBe(type);
+test.each([
+    { type: 'mysql', dialect: 'mysql' },
+    { type: 'mysql', dialect: 'mariadb' },
+    { type: 'mariadb', dialect: 'mariadb' },
+    { type: 'postgres', dialect: 'postgres' },
+])('type $type, dialect $dialect', ({ type, dialect }) => {
+    expect(typeOrmAdapter(fakeDataSource(type), /** @type {any} */ ({ dialect })))
+        .toMatchObject({ dialect, allowUnsupportedVersion: false });
+});
+
+test('allowUnsupportedVersion: true', () => {
+    const adapter = typeOrmAdapter(fakeDataSource('postgres'), { dialect: 'postgres', allowUnsupportedVersion: true });
+
+    expect(adapter.allowUnsupportedVersion).toBe(true);
 });
 
 test.each([
     { label: 'no DataSource', dataSource: undefined, message: 'expects a TypeORM DataSource' },
     { label: 'CockroachDB', dataSource: fakeDataSource('cockroachdb'), message: 'not "cockroachdb"' },
 ])('$label: a ConfigError', ({ dataSource, message }) => {
-    expect(() => typeOrmAdapter(dataSource)).toThrow(message);
+    expect(() => typeOrmAdapter(dataSource, { dialect: 'postgres' })).toThrow(message);
+});
+
+test.each([
+    {
+        label: 'no options',
+        type: 'mysql',
+        options: undefined,
+        message: 'typeOrmAdapter: "dialect" is required: "mysql", "mariadb" or "postgres"',
+    },
+    {
+        label: 'the type name of TypeORM',
+        type: 'postgres',
+        options: { dialect: 'postgresql' },
+        message: 'typeOrmAdapter: "dialect" must be "mysql", "mariadb" or "postgres", not "postgresql"',
+    },
+    {
+        label: '"mysql" on the type "mariadb"',
+        type: 'mariadb',
+        options: { dialect: 'mysql' },
+        message: 'typeOrmAdapter: "dialect" is "mysql", but the type of the DataSource is "mariadb": "mariadb"',
+    },
+    {
+        label: '"postgres" on the type "mysql"',
+        type: 'mysql',
+        options: { dialect: 'postgres' },
+        message: 'typeOrmAdapter: "dialect" is "postgres", but the type of the DataSource is "mysql": "mysql" or '
+            + '"mariadb"',
+    },
+    {
+        label: '"mariadb" on the type "postgres"',
+        type: 'postgres',
+        options: { dialect: 'mariadb' },
+        message: 'typeOrmAdapter: "dialect" is "mariadb", but the type of the DataSource is "postgres": "postgres"',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedVersion',
+        type: 'mysql',
+        options: { dialect: 'mysql', allowUnsupportedVersion: 'yes' },
+        message: 'typeOrmAdapter: "allowUnsupportedVersion" must be a boolean',
+    },
+])('$label: a ConfigError', ({ type, options, message }) => {
+    expect(() => typeOrmAdapter(fakeDataSource(type), /** @type {any} */ (options))).toThrow(new ConfigError(message));
 });
 
 test('afterCommit: the outermost commit wakes; the release of a savepoint does not', () => {
     const dataSource = fakeDataSource('postgres');
     const runner = fakeRunner(dataSource);
-    const adapter = typeOrmAdapter(dataSource);
+    const adapter = typeOrmAdapter(dataSource, { dialect: dataSource.options.type });
     let wakes = 0;
 
     expect(adapter.afterCommit?.(runner, () => wakes++)).toBe(true);
@@ -52,7 +107,7 @@ test('afterCommit: the outermost commit wakes; the release of a savepoint does n
 test('afterCommit: a rollback drops the wakes; one subscriber for a DataSource', () => {
     const dataSource = fakeDataSource('mysql');
     const runner = fakeRunner(dataSource);
-    const adapter = typeOrmAdapter(dataSource);
+    const adapter = typeOrmAdapter(dataSource, { dialect: dataSource.options.type });
     let wakes = 0;
 
     adapter.afterCommit?.(runner, () => wakes++);
@@ -69,6 +124,6 @@ test('afterCommit: a DataSource, outside a transaction, wakes at once', () => {
     const dataSource = fakeDataSource('mysql');
     let wakes = 0;
 
-    expect(typeOrmAdapter(dataSource).afterCommit?.(dataSource, () => wakes++)).toBe(true);
+    expect(typeOrmAdapter(dataSource, { dialect: 'mysql' }).afterCommit?.(dataSource, () => wakes++)).toBe(true);
     expect(wakes).toBe(1);
 });

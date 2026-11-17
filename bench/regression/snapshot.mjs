@@ -96,7 +96,7 @@ async function runScenario(database, stats, adminUrl, scenario) {
 
     /** @type {any} */
     const adapter = database.dialect === 'postgres'
-        ? pgAdapter(pool)
+        ? pgAdapter(pool, { dialect: 'postgres' })
         : mysql2Adapter(pool, { dialect: database.dialect });
 
     try {

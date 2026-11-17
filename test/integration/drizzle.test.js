@@ -10,7 +10,7 @@ import { Pool } from 'pg';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
-import { mysqlFamilyOptions } from './helpers/test_adapter.js';
+import { dialectOptions } from './helpers/test_adapter.js';
 import { drizzleAdapter } from '../../src/adapters/drizzle.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
@@ -129,7 +129,7 @@ describe.each([
         /** @type {SqlaneEvent[]} */
         const events = [];
         const sqlane = createSqlane({
-            adapter: drizzleAdapter(queueDb, mysqlFamilyOptions()),
+            adapter: drizzleAdapter(queueDb, dialectOptions()),
             tablePrefix: p,
             onEvent: event => events.push(event),
             ...options,
@@ -142,7 +142,7 @@ describe.each([
     }
 
     test('the queue transaction is READ COMMITTED', async () => {
-        await expect(readsAcrossCommit(drizzleAdapter(queueDb, mysqlFamilyOptions()), database))
+        await expect(readsAcrossCommit(drizzleAdapter(queueDb, dialectOptions()), database))
             .resolves.toStrictEqual([0, 1]);
     });
 
@@ -212,9 +212,9 @@ describe.each([
     });
 
     test.runIf(inject('databaseDialect') === 'postgres')('notify: another process wakes on the commit', async () => {
-        const { sqlane: producer, p } = await freshSqlane({ adapter: drizzleAdapter(queueDb, { notify: true }) });
+        const { sqlane: producer, p } = await freshSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres', notify: true }) });
         const { sqlane: worker, events } = await freshSqlane({
-            adapter: drizzleAdapter(queueDb, { notify: true }),
+            adapter: drizzleAdapter(queueDb, { dialect: 'postgres', notify: true }),
             pollInterval: '10s',
         }, p);
 

@@ -3,6 +3,8 @@ import { postgresJsAdapter } from './postgres_js.js';
 
 function method() {}
 
+const OPTIONS = /** @type {const} */ ({ dialect: 'postgres' });
+
 /**
  * @param {object} [options] The options of postgres.js.
  * @returns {any} The sql of postgres(…), as far as the adapter reads it.
@@ -22,17 +24,42 @@ test.each([
     },
     { label: 'a transform of rows', sql: fakeSql({ transform: { row: { from: method } } }), message: 'must not transform' },
 ])('$label: a ConfigError', ({ sql, message }) => {
-    expect(() => postgresJsAdapter(/** @type {any} */ (sql))).toThrow(message);
+    expect(() => postgresJsAdapter(/** @type {any} */ (sql), OPTIONS)).toThrow(message);
+});
+
+test.each([
+    { label: 'no options', options: undefined, message: 'postgresJsAdapter: "dialect" is required: "postgres"' },
+    { label: 'no dialect', options: { notify: true }, message: 'postgresJsAdapter: "dialect" is required: "postgres"' },
+    {
+        label: 'the alias postgresql',
+        options: { dialect: 'postgresql' },
+        message: 'postgresJsAdapter: "dialect" must be "postgres", not "postgresql"',
+    },
+    { label: 'MariaDB', options: { dialect: 'mariadb' }, message: '"dialect" must be "postgres", not "mariadb"' },
+    {
+        label: 'a non-boolean allowUnsupportedVersion',
+        options: { dialect: 'postgres', allowUnsupportedVersion: 'no' },
+        message: '"allowUnsupportedVersion" must be a boolean',
+    },
+])('$label: a ConfigError', ({ options, message }) => {
+    expect(() => postgresJsAdapter(fakeSql(), /** @type {any} */ (options))).toThrow(message);
+});
+
+test.each([
+    { options: OPTIONS, expected: false },
+    { options: { ...OPTIONS, allowUnsupportedVersion: true }, expected: true },
+])('allowUnsupportedVersion: $expected', ({ options, expected }) => {
+    expect(postgresJsAdapter(fakeSql(), options)).toMatchObject({ dialect: 'postgres', allowUnsupportedVersion: expected });
 });
 
 test('a transform of the values sent only: accepted', () => {
     const sql = fakeSql({ transform: { undefined: null, column: { from: undefined, to: method } } });
 
-    expect(postgresJsAdapter(sql).dialect).toBe('postgres');
+    expect(postgresJsAdapter(sql, OPTIONS).dialect).toBe('postgres');
 });
 
 test('afterCommit: the pool wakes at once; a transaction has no hook', () => {
-    const adapter = postgresJsAdapter(fakeSql());
+    const adapter = postgresJsAdapter(fakeSql(), OPTIONS);
     let wakes = 0;
 
     expect(adapter.afterCommit?.(fakeSql(), () => wakes++)).toBe(true);

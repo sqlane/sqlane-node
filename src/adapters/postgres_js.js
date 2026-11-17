@@ -4,6 +4,7 @@
 // the adapter uses the instance that it gets, and checks what it uses. postgres.js has no after-commit hook: after an
 // enqueue in a transaction, sqlane re-probes; with `{ notify: true }`, NOTIFY wakes the workers at the commit.
 import { ConfigError } from '../errors.js';
+import { checkAdapterDialect } from './dialect.js';
 
 /**
  * The `sql` of postgres.js: a pool, a transaction or a reserved connection, as far as the adapter reads it.
@@ -26,6 +27,9 @@ import { ConfigError } from '../errors.js';
 
 /**
  * @typedef {object} PostgresJsAdapterOptions
+ * @property {'postgres'} dialect The database: PostgreSQL 15 or later.
+ * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
+ *     false.
  * @property {boolean} [notify] Hints by LISTEN/NOTIFY: `pg_notify` in the enqueue transaction, delivered on commit.
  *     Default: false.
  */
@@ -72,10 +76,10 @@ function transformsResults(transform) {
  * a transaction (the caller's: the job commits with it).
  * @param {PostgresJsSql} sql The queue's own `postgres(…)`: claims, leases, results. A small pool of its own is best,
  *     without a `transform` of results (sqlane reads its own columns).
- * @param {PostgresJsAdapterOptions} [options]
+ * @param {PostgresJsAdapterOptions} options
  * @returns {import('../types.js').Adapter<PostgresJsConnection>}
  */
-export function postgresJsAdapter(sql, options = {}) {
+export function postgresJsAdapter(sql, options) {
     if (typeof sql?.unsafe !== 'function' || typeof sql.begin !== 'function' || !isPool(sql)) {
         throw new ConfigError('postgresJsAdapter: expects the sql of postgres(…) (postgres.js 3.4 or 4), not a transaction');
     }
@@ -84,10 +88,12 @@ export function postgresJsAdapter(sql, options = {}) {
         throw new ConfigError('postgresJsAdapter: the queue\'s postgres.js must not transform results: give it its own');
     }
 
+    const { dialect, allowUnsupportedVersion } = checkAdapterDialect(options, 'postgresJsAdapter', ['postgres']);
     const begin = /** @type {NonNullable<PostgresJsSql['begin']>} */ (sql.begin);
 
     return {
-        dialect: 'postgres',
+        dialect,
+        allowUnsupportedVersion,
         wrap: executorOf,
         queue: executorOf(sql),
         withConnection: async (func) => {
