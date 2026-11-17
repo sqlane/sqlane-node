@@ -109,6 +109,8 @@
         "changeset": "changeset",
         "changeset:version": "changeset version && oxfmt --no-error-on-unmatched-pattern CHANGELOG.md",
         "prisma:generate": "prisma generate --schema test/prisma/mysql/schema.prisma && prisma generate --schema test/prisma/postgres/schema.prisma",
+        "prepack": "node scripts/pin_readme_links.js prepack",
+        "postpack": "node scripts/pin_readme_links.js postpack",
         "prepublishOnly": "publint --strict && attw --pack . --profile esm-only"
     },
     "devDependencies": {
