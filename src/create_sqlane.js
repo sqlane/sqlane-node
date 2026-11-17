@@ -265,6 +265,9 @@ export function createSqlane(options) {
     async function startOnce() {
         scheduler.prepare();
 
+        /** @type {(() => Promise<void>) | null} */
+        let serverCheck = null;
+
         try {
             await checkServerOnce('start()');
         } catch (error) {
@@ -272,8 +275,10 @@ export function createSqlane(options) {
                 throw error;
             }
 
-            // The database is down: start anyway, as for the schedules. The next migrate() checks again.
+            // The database is down: start anyway, as for the schedules. The dispatcher checks again before its first
+            // turn, and claims nothing before the check passes
             reportError('server_check', error);
+            serverCheck = () => checkServerOnce('start()');
         }
 
         /** @type {import('./store/store.js').ScheduleRead | null} */
@@ -299,7 +304,7 @@ export function createSqlane(options) {
             return;
         }
 
-        await runner.start();
+        await runner.start({ serverCheck });
 
         // close() ran during runner.start()
         if (!runner.isClosed()) {

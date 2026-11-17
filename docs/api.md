@@ -753,9 +753,9 @@ With schedules, `start` registers them first. It rejects with a `ConfigError` fo
 `start` can be called again.
 
 The first `start()` or `migrate()` of an instance checks the server: it rejects with a `ConfigError` if the server is
-not the database of the adapter's `dialect`, or is below the supported version
-([server check](adapters.md#the-dialect-and-the-server-check)). If the database is down, `start` resolves anyway and
-emits an `error` event.
+not the database of the adapter's `dialect`, is below the supported version, or has a `sql_mode` that sqlane does not
+support ([server check](adapters.md#the-dialect-and-the-server-check)). If the database is down, `start` resolves
+anyway and emits an `error` event.
 
 `start` rejects with a `ConfigError` if a handled definition has a `failureJob` that is neither in `jobs` nor handled.
 It also rejects with one if a failure job has a `failureJob` of its own. It checks all the handlers together, so the
@@ -841,9 +841,10 @@ lock, so several processes can call it at the same time. It uses a connection of
 | `lockTimeout` | `Duration` | `'10m'` | How long `migrate` waits for the lock. After it, `migrate` rejects with a `MigrationLockTimeoutError`. |
 
 `migrate` rejects with an `InvalidOptionsError` for a bad `lockTimeout`. It rejects with a `ConfigError` if the server
-is not the database of the adapter's `dialect`, or is below the supported version: the first `migrate()` or `start()`
-of an instance checks it ([server check](adapters.md#the-dialect-and-the-server-check)). If you prefer your own
-migration tool, use [`getMigrations`](#getmigrations) instead.
+is not the database of the adapter's `dialect`, is below the supported version, or has a `sql_mode` that sqlane does
+not support: the first `migrate()` or `start()` of an instance checks it
+([server check](adapters.md#the-dialect-and-the-server-check)). If you prefer your own migration tool, use
+[`getMigrations`](#getmigrations) instead.
 
 ```js
 const { applied } = await sqlane.migrate();
@@ -1166,8 +1167,9 @@ each adapter in detail.
 
 Every adapter requires `dialect`: `'mysql'`, `'mariadb'` or `'postgres'`. pg and postgres.js take `'postgres'`, mysql2
 `'mysql'` or `'mariadb'`. Knex, Drizzle, Sequelize, TypeORM and MikroORM check it against the database of the library.
-Every adapter also takes `allowUnsupportedVersion` (default `false`): `true` runs on a server below the supported
-version, with a warning ([server check](adapters.md#the-dialect-and-the-server-check)). The `notify` option is for
-PostgreSQL only. When it is `true`, sqlane sends hints with LISTEN/NOTIFY, and you
+Every adapter also takes `allowUnsupportedDbVersion` (default `false`): `true` runs on a server below the supported
+version, with a warning. On MySQL and MariaDB, `allowUnsupportedDbConfiguration` (default `false`) does the same for a
+`sql_mode` that lacks a required flag ([server check](adapters.md#the-dialect-and-the-server-check)). The `notify`
+option is for PostgreSQL only. When it is `true`, sqlane sends hints with LISTEN/NOTIFY, and you
 must not set the `hint` option. An adapter throws a `ConfigError` if it gets an object or a version that it does not
 support.

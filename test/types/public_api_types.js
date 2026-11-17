@@ -142,20 +142,35 @@ export async function publicApiTypes() {
     // @ts-expect-error not a dialect of sqlane
     kyselyAdapter(kysely, { dialect: 'sqlite' });
 
-    // allowUnsupportedVersion: a boolean, on every adapter
-    expectTypeOf(pgAdapter(pgPool, { dialect: 'postgres', allowUnsupportedVersion: true }).allowUnsupportedVersion)
+    // allowUnsupportedDbVersion: a boolean, on every adapter
+    expectTypeOf(pgAdapter(pgPool, { dialect: 'postgres', allowUnsupportedDbVersion: true }).allowUnsupportedDbVersion)
         .toEqualTypeOf(/** @type {boolean | undefined} */ (true));
-    mysql2Adapter(mysqlPool, { dialect: 'mysql', allowUnsupportedVersion: true });
-    postgresJsAdapter(sql, { dialect: 'postgres', allowUnsupportedVersion: true });
-    knexAdapter(pgKnex, { dialect: 'postgres', allowUnsupportedVersion: true });
-    kyselyAdapter(kysely, { dialect: 'postgres', allowUnsupportedVersion: true });
-    drizzleAdapter(drizzle, { dialect: 'postgres', allowUnsupportedVersion: true });
-    prismaAdapter(prisma, { dialect: 'postgres', allowUnsupportedVersion: true });
-    sequelizeAdapter(sequelize, { dialect: 'postgres', allowUnsupportedVersion: true });
-    typeOrmAdapter(dataSource, { dialect: 'postgres', allowUnsupportedVersion: true });
-    mikroOrmAdapter(em, { dialect: 'postgres', allowUnsupportedVersion: true });
-    // @ts-expect-error allowUnsupportedVersion is a boolean
-    mysql2Adapter(mysqlPool, { dialect: 'mysql', allowUnsupportedVersion: 'yes' });
+    mysql2Adapter(mysqlPool, { dialect: 'mysql', allowUnsupportedDbVersion: true });
+    postgresJsAdapter(sql, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    knexAdapter(pgKnex, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    kyselyAdapter(kysely, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    drizzleAdapter(drizzle, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    prismaAdapter(prisma, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    sequelizeAdapter(sequelize, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    typeOrmAdapter(dataSource, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    mikroOrmAdapter(em, { dialect: 'postgres', allowUnsupportedDbVersion: true });
+    // @ts-expect-error allowUnsupportedDbVersion is a boolean
+    mysql2Adapter(mysqlPool, { dialect: 'mysql', allowUnsupportedDbVersion: 'yes' });
+
+    // allowUnsupportedDbConfiguration: a boolean, on every adapter
+    expectTypeOf(mysql2Adapter(mysqlPool, { dialect: 'mysql', allowUnsupportedDbConfiguration: true })
+        .allowUnsupportedDbConfiguration).toEqualTypeOf(/** @type {boolean | undefined} */ (true));
+    pgAdapter(pgPool, { dialect: 'postgres', allowUnsupportedDbConfiguration: true });
+    postgresJsAdapter(sql, { dialect: 'postgres', allowUnsupportedDbConfiguration: true });
+    knexAdapter(pgKnex, { dialect: 'postgres', allowUnsupportedDbConfiguration: true });
+    kyselyAdapter(kysely, { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+    drizzleAdapter(drizzle, { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+    prismaAdapter(prisma, { dialect: 'mariadb', allowUnsupportedDbConfiguration: true });
+    sequelizeAdapter(sequelize, { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+    typeOrmAdapter(dataSource, { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+    mikroOrmAdapter(em, { dialect: 'mariadb', allowUnsupportedDbVersion: true, allowUnsupportedDbConfiguration: true });
+    // @ts-expect-error allowUnsupportedDbConfiguration is a boolean
+    mysql2Adapter(mysqlPool, { dialect: 'mysql', allowUnsupportedDbConfiguration: 'yes' });
 
     // enqueue: JSON payloads
     /**

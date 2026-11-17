@@ -27,9 +27,14 @@ test.each([
         message: '"dialect" must be "mysql", "mariadb" or "postgres", not "postgresql"',
     },
     {
-        label: 'a non-boolean allowUnsupportedVersion',
-        options: { dialect: 'mysql', allowUnsupportedVersion: 1 },
-        message: '"allowUnsupportedVersion" must be a boolean',
+        label: 'a non-boolean allowUnsupportedDbVersion',
+        options: { dialect: 'mysql', allowUnsupportedDbVersion: 1 },
+        message: '"allowUnsupportedDbVersion" must be a boolean',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedDbConfiguration',
+        options: { dialect: 'mysql', allowUnsupportedDbConfiguration: 1 },
+        message: '"allowUnsupportedDbConfiguration" must be a boolean',
     },
 ])('$label: a ConfigError', ({ options, message }) => {
     expect(() => prismaAdapter(fakePrisma(), /** @type {any} */ (options))).toThrow(`prismaAdapter: ${message}`);
@@ -37,9 +42,16 @@ test.each([
 
 test.each([
     { options: { dialect: /** @type {const} */ ('mariadb') }, expected: false },
-    { options: { dialect: /** @type {const} */ ('mariadb'), allowUnsupportedVersion: true }, expected: true },
-])('allowUnsupportedVersion: $expected', ({ options, expected }) => {
-    expect(prismaAdapter(fakePrisma(), options).allowUnsupportedVersion).toBe(expected);
+    { options: { dialect: /** @type {const} */ ('mariadb'), allowUnsupportedDbVersion: true }, expected: true },
+])('allowUnsupportedDbVersion: $expected', ({ options, expected }) => {
+    expect(prismaAdapter(fakePrisma(), options).allowUnsupportedDbVersion).toBe(expected);
+});
+
+test.each([
+    { options: { dialect: /** @type {const} */ ('mariadb') }, expected: false },
+    { options: { dialect: /** @type {const} */ ('mariadb'), allowUnsupportedDbConfiguration: true }, expected: true },
+])('allowUnsupportedDbConfiguration: $expected', ({ options, expected }) => {
+    expect(prismaAdapter(fakePrisma(), options).allowUnsupportedDbConfiguration).toBe(expected);
 });
 
 test.each([

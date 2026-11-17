@@ -65,24 +65,54 @@ When the library tells its database, the adapter checks the dialect against it, 
 mismatch. Knex, Drizzle, Sequelize and TypeORM check when you create the adapter, MikroORM 6 at its first query.
 
 **The server check.** The first `start()` or `migrate()` of an instance asks the server for its version, in one
-statement. It checks two things:
+statement. On MySQL and MariaDB, a second statement reads the `sql_mode` of the session. It checks three things:
 
 - The server is the database of `dialect`. MariaDB is the server whose version contains `MariaDB`. PostgreSQL is the
   server whose `version()` starts with `PostgreSQL`: a compatible database that says so passes (YugabyteDB), one that
   does not fails (CockroachDB).
 - The version is supported: MySQL 8.4, MariaDB 10.11 or PostgreSQL 15, or later.
+- MySQL and MariaDB: the `sql_mode` has the flags below.
 
 If a check fails, `start()` or `migrate()` rejects with a `ConfigError`. The instance keeps the result, so `migrate()`
 then `start()` asks once. A process that only enqueues never asks. If the database is down, `start()` resolves anyway
-and emits an `error` event with the operation `server_check`; the next `migrate()` checks again.
+and emits an `error` event with the operation `server_check`. The worker then checks again before it claims a job, and
+claims nothing until the check passes. If the check then fails, the worker emits the `ConfigError` as an `error` event
+and claims no job.
 
-**Older versions.** With `allowUnsupportedVersion: true`, the adapter runs on a server below the supported version.
+**Older versions.** With `allowUnsupportedDbVersion: true`, the adapter runs on a server below the supported version.
 sqlane then logs a warning once per instance, through the `logger` of `createSqlane`. It still checks the database.
 sqlane is not tested on these versions.
 
 ```js
-const adapter = mysql2Adapter(queuePool, { dialect: 'mysql', allowUnsupportedVersion: true }); // MySQL 8.0
+const adapter = mysql2Adapter(queuePool, { dialect: 'mysql', allowUnsupportedDbVersion: true }); // MySQL 8.0
 ```
+
+**The `sql_mode` of MySQL and MariaDB.** Without strict mode, the database stores a bad value with a warning instead
+of an error: it truncates a string, or stores a zero date. sqlane needs the flags of each database's default mode:
+
+| Database | Required flags                                                                                                |
+| -------- | ------------------------------------------------------------------------------------------------------------- |
+| MySQL    | `STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`, `NO_ZERO_DATE`, `NO_ZERO_IN_DATE`, `ERROR_FOR_DIVISION_BY_ZERO` |
+| MariaDB  | `STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`, `ERROR_FOR_DIVISION_BY_ZERO`                                    |
+
+`ALLOW_INVALID_DATES` and `NO_BACKSLASH_ESCAPES` are forbidden. Other flags, such as `ANSI_QUOTES`, `PIPES_AS_CONCAT`
+or `ONLY_FULL_GROUP_BY`, do not matter. The default mode of each database passes.
+
+A missing flag, or `ALLOW_INVALID_DATES`, is a `ConfigError`. Fix `sql_mode` in the server config. On Amazon RDS and
+Aurora, set the `sql_mode` parameter of the DB parameter group: the default group of RDS MySQL has
+`NO_ENGINE_SUBSTITUTION` only. With `allowUnsupportedDbConfiguration: true`, sqlane logs a warning once per instance
+instead, through the `logger` of `createSqlane`. This option is independent of `allowUnsupportedDbVersion`.
+
+`NO_BACKSLASH_ESCAPES` is always a `ConfigError`, even with `allowUnsupportedDbConfiguration`. The drivers escape
+values on the client, with backslashes. With this flag, a quote in a value breaks the SQL, and a crafted value can
+inject SQL.
+
+```js
+const adapter = mysql2Adapter(queuePool, { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+```
+
+The check reads the `sql_mode` of the one connection it runs on. If your pool sets another mode on some connections,
+for example in a `connection` event, the check does not see it.
 
 ## What `enqueue` accepts
 

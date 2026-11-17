@@ -59,7 +59,13 @@ export type RunnerParams = {
     random?: () => number;
 };
 export type Runner = {
-    start: () => Promise<void>;
+    /**
+     * `serverCheck`: the
+     * check of the server that did not run (the database was down): the dispatcher runs it before its first turn.
+     */
+    start: (options?: {
+        serverCheck?: (() => Promise<void>) | null;
+    }) => Promise<void>;
     drain: (options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>;
     close: (options?: import('./types.js').CloseOptions) => Promise<void>;
     wake: () => void;
@@ -104,7 +110,8 @@ export type Runner = {
  */
 /**
  * @typedef {object} Runner
- * @property {() => Promise<void>} start
+ * @property {(options?: { serverCheck?: (() => Promise<void>) | null }) => Promise<void>} start `serverCheck`: the
+ *     check of the server that did not run (the database was down): the dispatcher runs it before its first turn.
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
  * @property {() => void} wake

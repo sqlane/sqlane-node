@@ -32,8 +32,10 @@ import { checkAdapterDialect, matchLibraryDialect } from './dialect.js';
  * @typedef {object} TypeOrmAdapterOptions
  * @property {import('../types.js').Dialect} dialect The database: `'mysql'` or `'mariadb'` with the type `"mysql"`,
  *     `'mariadb'` with the type `"mariadb"`, `'postgres'` with the type `"postgres"`.
- * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
- *     false.
+ * @property {boolean} [allowUnsupportedDbVersion] Runs on a server below the supported minimum, with a warning.
+ *     Default: false.
+ * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: runs with a `sql_mode` that lacks a required
+ *     flag, or has `ALLOW_INVALID_DATES`, with a warning. Never with `NO_BACKSLASH_ESCAPES`. Default: false.
  */
 
 /** @type {Record<string, import('../types.js').Dialect[]>} By the type of the DataSource */
@@ -169,7 +171,8 @@ export function typeOrmAdapter(dataSource, options) {
 
     return {
         dialect,
-        allowUnsupportedVersion: checked.allowUnsupportedVersion,
+        allowUnsupportedDbVersion: checked.allowUnsupportedDbVersion,
+        allowUnsupportedDbConfiguration: checked.allowUnsupportedDbConfiguration,
         wrap: (connection) => {
             const runner = transactionRunnerOf(connection);
 

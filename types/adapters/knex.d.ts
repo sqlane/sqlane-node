@@ -9,10 +9,15 @@ export type KnexAdapterOptions = {
      */
     dialect: import('../types.js').Dialect;
     /**
-     * Runs on a server below the supported minimum, with a warning. Default:
-     * false.
+     * Runs on a server below the supported minimum, with a warning.
+     * Default: false.
      */
-    allowUnsupportedVersion?: boolean;
+    allowUnsupportedDbVersion?: boolean;
+    /**
+     * MySQL and MariaDB: runs with a `sql_mode` that lacks a required
+     * flag, or has `ALLOW_INVALID_DATES`, with a warning. Never with `NO_BACKSLASH_ESCAPES`. Default: false.
+     */
+    allowUnsupportedDbConfiguration?: boolean;
     /**
      * pg: named prepared statements, each SQL text parsed and planned once per connection.
      * Opt-in: not behind a pooler in transaction mode without prepared statement support (PgBouncer before 1.21).

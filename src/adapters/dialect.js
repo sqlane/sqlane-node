@@ -1,5 +1,6 @@
-// The options that every adapter takes: the database (`dialect`), which the app always names, and
-// `allowUnsupportedVersion`. The worker and `migrate()` check both against the server (server_check.js).
+// The options that every adapter takes: the database (`dialect`), which the app always names, and the two hatches of
+// the check of the server, `allowUnsupportedDbVersion` and `allowUnsupportedDbConfiguration`. The worker and
+// `migrate()` check them against the server (server_check.js).
 import { ConfigError } from '../errors.js';
 
 /**
@@ -7,7 +8,8 @@ import { ConfigError } from '../errors.js';
  * @template {import('../types.js').Dialect} D
  * @typedef {object} AdapterDialect
  * @property {D} dialect
- * @property {boolean} allowUnsupportedVersion
+ * @property {boolean} allowUnsupportedDbVersion
+ * @property {boolean} allowUnsupportedDbConfiguration
  */
 
 /**
@@ -21,7 +23,7 @@ function listOf(values) {
 }
 
 /**
- * Checks `dialect` and `allowUnsupportedVersion` of the options of an adapter.
+ * Checks `dialect`, `allowUnsupportedDbVersion` and `allowUnsupportedDbConfiguration` of the options of an adapter.
  * @template {import('../types.js').Dialect} D
  * @param {unknown} options
  * @param {string} where The adapter, for the error.
@@ -29,8 +31,9 @@ function listOf(values) {
  * @returns {AdapterDialect<D>}
  */
 export function checkAdapterDialect(options, where, allowed) {
-    const given = /** @type {{ dialect?: unknown, allowUnsupportedVersion?: unknown } | null | undefined} */ (options);
-    const dialect = given?.dialect;
+    /** @type {{ dialect?: unknown, allowUnsupportedDbVersion?: unknown, allowUnsupportedDbConfiguration?: unknown }} */
+    const given = /** @type {any} */ (options) ?? {};
+    const dialect = given.dialect;
 
     if (dialect === undefined) {
         throw new ConfigError(`${where}: "dialect" is required: ${listOf(allowed)}`);
@@ -40,13 +43,18 @@ export function checkAdapterDialect(options, where, allowed) {
         throw new ConfigError(`${where}: "dialect" must be ${listOf(allowed)}, not ${JSON.stringify(dialect)}`);
     }
 
-    const allowUnsupportedVersion = given?.allowUnsupportedVersion ?? false;
+    const allowUnsupportedDbVersion = given.allowUnsupportedDbVersion ?? false;
+    const allowUnsupportedDbConfiguration = given.allowUnsupportedDbConfiguration ?? false;
 
-    if (typeof allowUnsupportedVersion !== 'boolean') {
-        throw new ConfigError(`${where}: "allowUnsupportedVersion" must be a boolean`);
+    if (typeof allowUnsupportedDbVersion !== 'boolean') {
+        throw new ConfigError(`${where}: "allowUnsupportedDbVersion" must be a boolean`);
     }
 
-    return { dialect: /** @type {D} */ (dialect), allowUnsupportedVersion };
+    if (typeof allowUnsupportedDbConfiguration !== 'boolean') {
+        throw new ConfigError(`${where}: "allowUnsupportedDbConfiguration" must be a boolean`);
+    }
+
+    return { dialect: /** @type {D} */ (dialect), allowUnsupportedDbVersion, allowUnsupportedDbConfiguration };
 }
 
 /**

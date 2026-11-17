@@ -26,8 +26,10 @@ import { pgAdapter } from './pg.js';
  * @typedef {object} MikroOrmAdapterOptions
  * @property {import('../types.js').Dialect} dialect The database: `'mysql'` or `'mariadb'` with `@mikro-orm/mysql`,
  *     `'mariadb'` with `@mikro-orm/mariadb`, `'postgres'` with `@mikro-orm/postgresql`.
- * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
- *     false.
+ * @property {boolean} [allowUnsupportedDbVersion] Runs on a server below the supported minimum, with a warning.
+ *     Default: false.
+ * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: runs with a `sql_mode` that lacks a required
+ *     flag, or has `ALLOW_INVALID_DATES`, with a warning. Never with `NO_BACKSLASH_ESCAPES`. Default: false.
  * @property {boolean} [prepare] PostgreSQL: named prepared statements, each SQL text parsed and planned once per
  *     connection. MikroORM 6: all of sqlane's SQL. MikroORM 7.2+: the queue's own SQL, on the pg pool under Kysely
  *     (an enqueue runs through Kysely, unnamed). Opt-in: not behind a pooler in transaction mode without prepared
@@ -186,7 +188,7 @@ export function mikroOrmAdapter(em, options) {
     }
 
     const major = found;
-    const { dialect, allowUnsupportedVersion } = checkAdapterDialect(
+    const { dialect, allowUnsupportedDbVersion, allowUnsupportedDbConfiguration } = checkAdapterDialect(
         options,
         'mikroOrmAdapter',
         ['mysql', 'mariadb', 'postgres'],
@@ -241,7 +243,8 @@ export function mikroOrmAdapter(em, options) {
 
     return {
         dialect,
-        allowUnsupportedVersion,
+        allowUnsupportedDbVersion,
+        allowUnsupportedDbConfiguration,
         wrap: (connection) => {
             const transaction = transactionOf(connection);
 

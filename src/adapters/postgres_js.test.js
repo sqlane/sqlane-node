@@ -37,9 +37,14 @@ test.each([
     },
     { label: 'MariaDB', options: { dialect: 'mariadb' }, message: '"dialect" must be "postgres", not "mariadb"' },
     {
-        label: 'a non-boolean allowUnsupportedVersion',
-        options: { dialect: 'postgres', allowUnsupportedVersion: 'no' },
-        message: '"allowUnsupportedVersion" must be a boolean',
+        label: 'a non-boolean allowUnsupportedDbVersion',
+        options: { dialect: 'postgres', allowUnsupportedDbVersion: 'no' },
+        message: '"allowUnsupportedDbVersion" must be a boolean',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedDbConfiguration',
+        options: { dialect: 'postgres', allowUnsupportedDbConfiguration: 'no' },
+        message: '"allowUnsupportedDbConfiguration" must be a boolean',
     },
 ])('$label: a ConfigError', ({ options, message }) => {
     expect(() => postgresJsAdapter(fakeSql(), /** @type {any} */ (options))).toThrow(message);
@@ -47,9 +52,16 @@ test.each([
 
 test.each([
     { options: OPTIONS, expected: false },
-    { options: { ...OPTIONS, allowUnsupportedVersion: true }, expected: true },
-])('allowUnsupportedVersion: $expected', ({ options, expected }) => {
-    expect(postgresJsAdapter(fakeSql(), options)).toMatchObject({ dialect: 'postgres', allowUnsupportedVersion: expected });
+    { options: { ...OPTIONS, allowUnsupportedDbVersion: true }, expected: true },
+])('allowUnsupportedDbVersion: $expected', ({ options, expected }) => {
+    expect(postgresJsAdapter(fakeSql(), options)).toMatchObject({ dialect: 'postgres', allowUnsupportedDbVersion: expected });
+});
+
+test.each([
+    { options: OPTIONS, expected: false },
+    { options: { ...OPTIONS, allowUnsupportedDbConfiguration: true }, expected: true },
+])('allowUnsupportedDbConfiguration: $expected', ({ options, expected }) => {
+    expect(postgresJsAdapter(fakeSql(), options).allowUnsupportedDbConfiguration).toBe(expected);
 });
 
 test('a transform of the values sent only: accepted', () => {

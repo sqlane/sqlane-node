@@ -18,7 +18,7 @@ test.each([
     { dialect: 'postgresql', driverName: 'pg', given: 'postgres' },
 ])('a $driverName knex, dialect $given', ({ dialect, driverName, given }) => {
     expect(knexAdapter(fakeKnex(dialect, driverName), /** @type {any} */ ({ dialect: given })))
-        .toMatchObject({ dialect: given, allowUnsupportedVersion: false });
+        .toMatchObject({ dialect: given, allowUnsupportedDbVersion: false, allowUnsupportedDbConfiguration: false });
 });
 
 test.each([
@@ -59,19 +59,31 @@ test.each([
         message: 'knexAdapter: "dialect" is "mariadb", but the client of knex is "pg": "postgres"',
     },
     {
-        label: 'a non-boolean allowUnsupportedVersion',
+        label: 'a non-boolean allowUnsupportedDbVersion',
         knex: fakeKnex('mysql', 'mysql2'),
-        options: { dialect: 'mysql', allowUnsupportedVersion: 'yes' },
-        message: 'knexAdapter: "allowUnsupportedVersion" must be a boolean',
+        options: { dialect: 'mysql', allowUnsupportedDbVersion: 'yes' },
+        message: 'knexAdapter: "allowUnsupportedDbVersion" must be a boolean',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedDbConfiguration',
+        knex: fakeKnex('mysql', 'mysql2'),
+        options: { dialect: 'mysql', allowUnsupportedDbConfiguration: 'yes' },
+        message: 'knexAdapter: "allowUnsupportedDbConfiguration" must be a boolean',
     },
 ])('$label: a ConfigError', ({ knex, options, message }) => {
     expect(() => knexAdapter(knex, /** @type {any} */ (options))).toThrow(new ConfigError(message));
 });
 
-test('allowUnsupportedVersion: true', () => {
-    const adapter = knexAdapter(fakeKnex('postgresql', 'pg'), { dialect: 'postgres', allowUnsupportedVersion: true });
+test('allowUnsupportedDbVersion: true', () => {
+    const adapter = knexAdapter(fakeKnex('postgresql', 'pg'), { dialect: 'postgres', allowUnsupportedDbVersion: true });
 
-    expect(adapter.allowUnsupportedVersion).toBe(true);
+    expect(adapter.allowUnsupportedDbVersion).toBe(true);
+});
+
+test('allowUnsupportedDbConfiguration: true', () => {
+    const adapter = knexAdapter(fakeKnex('mysql', 'mysql2'), { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+
+    expect(adapter.allowUnsupportedDbConfiguration).toBe(true);
 });
 
 test.each([

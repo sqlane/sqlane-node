@@ -27,13 +27,19 @@ test.each([
     { type: 'postgres', dialect: 'postgres' },
 ])('type $type, dialect $dialect', ({ type, dialect }) => {
     expect(typeOrmAdapter(fakeDataSource(type), /** @type {any} */ ({ dialect })))
-        .toMatchObject({ dialect, allowUnsupportedVersion: false });
+        .toMatchObject({ dialect, allowUnsupportedDbVersion: false, allowUnsupportedDbConfiguration: false });
 });
 
-test('allowUnsupportedVersion: true', () => {
-    const adapter = typeOrmAdapter(fakeDataSource('postgres'), { dialect: 'postgres', allowUnsupportedVersion: true });
+test('allowUnsupportedDbVersion: true', () => {
+    const adapter = typeOrmAdapter(fakeDataSource('postgres'), { dialect: 'postgres', allowUnsupportedDbVersion: true });
 
-    expect(adapter.allowUnsupportedVersion).toBe(true);
+    expect(adapter.allowUnsupportedDbVersion).toBe(true);
+});
+
+test('allowUnsupportedDbConfiguration: true', () => {
+    const adapter = typeOrmAdapter(fakeDataSource('mysql'), { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+
+    expect(adapter.allowUnsupportedDbConfiguration).toBe(true);
 });
 
 test.each([
@@ -76,10 +82,16 @@ test.each([
         message: 'typeOrmAdapter: "dialect" is "mariadb", but the type of the DataSource is "postgres": "postgres"',
     },
     {
-        label: 'a non-boolean allowUnsupportedVersion',
+        label: 'a non-boolean allowUnsupportedDbVersion',
         type: 'mysql',
-        options: { dialect: 'mysql', allowUnsupportedVersion: 'yes' },
-        message: 'typeOrmAdapter: "allowUnsupportedVersion" must be a boolean',
+        options: { dialect: 'mysql', allowUnsupportedDbVersion: 'yes' },
+        message: 'typeOrmAdapter: "allowUnsupportedDbVersion" must be a boolean',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedDbConfiguration',
+        type: 'mysql',
+        options: { dialect: 'mysql', allowUnsupportedDbConfiguration: 'yes' },
+        message: 'typeOrmAdapter: "allowUnsupportedDbConfiguration" must be a boolean',
     },
 ])('$label: a ConfigError', ({ type, options, message }) => {
     expect(() => typeOrmAdapter(fakeDataSource(type), /** @type {any} */ (options))).toThrow(new ConfigError(message));

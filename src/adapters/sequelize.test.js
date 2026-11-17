@@ -26,13 +26,19 @@ test.each([
     { sequelizeDialect: 'postgres', dialect: 'postgres' },
 ])('the "$sequelizeDialect" dialect of Sequelize, dialect $dialect', ({ sequelizeDialect, dialect }) => {
     expect(sequelizeAdapter(fakeSequelize(sequelizeDialect, '6.37.8'), /** @type {any} */ ({ dialect })))
-        .toMatchObject({ dialect, allowUnsupportedVersion: false });
+        .toMatchObject({ dialect, allowUnsupportedDbVersion: false, allowUnsupportedDbConfiguration: false });
 });
 
-test('allowUnsupportedVersion: true', () => {
-    const options = /** @type {const} */ ({ dialect: 'mysql', allowUnsupportedVersion: true });
+test('allowUnsupportedDbVersion: true', () => {
+    const options = /** @type {const} */ ({ dialect: 'mysql', allowUnsupportedDbVersion: true });
 
-    expect(sequelizeAdapter(fakeSequelize('mysql', '6.37.8'), options).allowUnsupportedVersion).toBe(true);
+    expect(sequelizeAdapter(fakeSequelize('mysql', '6.37.8'), options).allowUnsupportedDbVersion).toBe(true);
+});
+
+test('allowUnsupportedDbConfiguration: true', () => {
+    const options = /** @type {const} */ ({ dialect: 'mariadb', allowUnsupportedDbConfiguration: true });
+
+    expect(sequelizeAdapter(fakeSequelize('mariadb', '6.37.8'), options).allowUnsupportedDbConfiguration).toBe(true);
 });
 
 test.each([
@@ -68,10 +74,16 @@ test.each([
             + '"mariadb"',
     },
     {
-        label: 'a non-boolean allowUnsupportedVersion',
+        label: 'a non-boolean allowUnsupportedDbVersion',
         sequelize: fakeSequelize('postgres', '6.37.8'),
-        options: { dialect: 'postgres', allowUnsupportedVersion: 'yes' },
-        message: 'sequelizeAdapter: "allowUnsupportedVersion" must be a boolean',
+        options: { dialect: 'postgres', allowUnsupportedDbVersion: 'yes' },
+        message: 'sequelizeAdapter: "allowUnsupportedDbVersion" must be a boolean',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedDbConfiguration',
+        sequelize: fakeSequelize('mysql', '6.37.8'),
+        options: { dialect: 'mysql', allowUnsupportedDbConfiguration: 'yes' },
+        message: 'sequelizeAdapter: "allowUnsupportedDbConfiguration" must be a boolean',
     },
 ])('$label: a ConfigError', ({ sequelize, options, message }) => {
     expect(() => sequelizeAdapter(sequelize, /** @type {any} */ (options))).toThrow(new ConfigError(message));

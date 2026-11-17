@@ -18,8 +18,10 @@ import { mariadbExecutor, pgExecutor } from './executors.js';
  * @typedef {object} KnexAdapterOptions
  * @property {import('../types.js').Dialect} dialect The database: `'mysql'` or `'mariadb'` with the mysql2 client,
  *     `'mariadb'` with the mariadb client, `'postgres'` with the pg client.
- * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
- *     false.
+ * @property {boolean} [allowUnsupportedDbVersion] Runs on a server below the supported minimum, with a warning.
+ *     Default: false.
+ * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: runs with a `sql_mode` that lacks a required
+ *     flag, or has `ALLOW_INVALID_DATES`, with a warning. Never with `NO_BACKSLASH_ESCAPES`. Default: false.
  * @property {boolean} [prepare] pg: named prepared statements, each SQL text parsed and planned once per connection.
  *     Opt-in: not behind a pooler in transaction mode without prepared statement support (PgBouncer before 1.21).
  *     Default: false.
@@ -131,7 +133,7 @@ export function knexDriverOf(knex, where) {
 /**
  * @param {Knex} knex
  * @param {KnexAdapterOptions} options
- * @returns {{ dialect: import('../types.js').Dialect, allowUnsupportedVersion: boolean, toExecutor: ToExecutor }}
+ * @returns {import('./dialect.js').AdapterDialect<import('../types.js').Dialect> & { toExecutor: ToExecutor }}
  */
 function resolveDriver(knex, options) {
     const { driverName, dialects } = knexDriverOf(knex, 'knexAdapter');
@@ -157,7 +159,8 @@ function resolveDriver(knex, options) {
 
     return {
         dialect,
-        allowUnsupportedVersion: checked.allowUnsupportedVersion,
+        allowUnsupportedDbVersion: checked.allowUnsupportedDbVersion,
+        allowUnsupportedDbConfiguration: checked.allowUnsupportedDbConfiguration,
         toExecutor: executorByDriver[driverName],
     };
 }
@@ -171,11 +174,15 @@ function resolveDriver(knex, options) {
  * @returns {import('../types.js').Adapter<KnexConnection>}
  */
 export function knexAdapter(knex, options) {
-    const { dialect, allowUnsupportedVersion, toExecutor } = resolveDriver(knex, options);
+    const { dialect, allowUnsupportedDbVersion, allowUnsupportedDbConfiguration, toExecutor } = resolveDriver(
+        knex,
+        options,
+    );
 
     return {
         dialect,
-        allowUnsupportedVersion,
+        allowUnsupportedDbVersion,
+        allowUnsupportedDbConfiguration,
         wrap: connection => executorOf(connection, toExecutor),
         queue: executorOf(knex, toExecutor),
         withConnection: async (func) => {

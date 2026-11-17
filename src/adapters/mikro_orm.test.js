@@ -52,10 +52,16 @@ test.each([
         message: 'mikroOrmAdapter: "dialect" must be "mysql", "mariadb" or "postgres", not "sqlite"',
     },
     {
-        label: 'a non-boolean allowUnsupportedVersion',
+        label: 'a non-boolean allowUnsupportedDbVersion',
         em: fakeEntityManager(),
-        options: { dialect: 'mysql', allowUnsupportedVersion: 'yes' },
-        message: 'mikroOrmAdapter: "allowUnsupportedVersion" must be a boolean',
+        options: { dialect: 'mysql', allowUnsupportedDbVersion: 'yes' },
+        message: 'mikroOrmAdapter: "allowUnsupportedDbVersion" must be a boolean',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedDbConfiguration',
+        em: fakeEntityManager(),
+        options: { dialect: 'mysql', allowUnsupportedDbConfiguration: 'yes' },
+        message: 'mikroOrmAdapter: "allowUnsupportedDbConfiguration" must be a boolean',
     },
 ])('$label: a ConfigError', ({ em, options, message }) => {
     expect(() => mikroOrmAdapter(em, /** @type {any} */ (options))).toThrow(message);
@@ -63,9 +69,16 @@ test.each([
 
 test.each([
     { options: { dialect: /** @type {const} */ ('mysql') }, expected: false },
-    { options: { dialect: /** @type {const} */ ('mysql'), allowUnsupportedVersion: true }, expected: true },
-])('allowUnsupportedVersion: $expected', ({ options, expected }) => {
-    expect(mikroOrmAdapter(fakeEntityManager(), options)).toMatchObject({ dialect: 'mysql', allowUnsupportedVersion: expected });
+    { options: { dialect: /** @type {const} */ ('mysql'), allowUnsupportedDbVersion: true }, expected: true },
+])('allowUnsupportedDbVersion: $expected', ({ options, expected }) => {
+    expect(mikroOrmAdapter(fakeEntityManager(), options)).toMatchObject({ dialect: 'mysql', allowUnsupportedDbVersion: expected });
+});
+
+test.each([
+    { options: { dialect: /** @type {const} */ ('mysql') }, expected: false },
+    { options: { dialect: /** @type {const} */ ('mysql'), allowUnsupportedDbConfiguration: true }, expected: true },
+])('allowUnsupportedDbConfiguration: $expected', ({ options, expected }) => {
+    expect(mikroOrmAdapter(fakeEntityManager(), options).allowUnsupportedDbConfiguration).toBe(expected);
 });
 
 /**

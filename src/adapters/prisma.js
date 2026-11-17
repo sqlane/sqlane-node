@@ -26,8 +26,10 @@ const MAX_WAIT_MS = 10_000;
 /**
  * @typedef {object} PrismaAdapterOptions
  * @property {import('../types.js').Dialect} dialect The database of the client: Prisma tells it in no public API.
- * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
- *     false.
+ * @property {boolean} [allowUnsupportedDbVersion] Runs on a server below the supported minimum, with a warning.
+ *     Default: false.
+ * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: runs with a `sql_mode` that lacks a required
+ *     flag, or has `ALLOW_INVALID_DATES`, with a warning. Never with `NO_BACKSLASH_ESCAPES`. Default: false.
  */
 
 /**
@@ -68,7 +70,7 @@ export function prismaAdapter(prisma, options) {
         throw new ConfigError('prismaAdapter: expects a Prisma client (Prisma 7)');
     }
 
-    const { dialect, allowUnsupportedVersion } = checkAdapterDialect(
+    const { dialect, allowUnsupportedDbVersion, allowUnsupportedDbConfiguration } = checkAdapterDialect(
         options,
         'prismaAdapter',
         ['mysql', 'mariadb', 'postgres'],
@@ -76,7 +78,8 @@ export function prismaAdapter(prisma, options) {
 
     return {
         dialect,
-        allowUnsupportedVersion,
+        allowUnsupportedDbVersion,
+        allowUnsupportedDbConfiguration,
         wrap: executorOf,
         queue: executorOf(prisma),
         withConnection: func => prisma.$transaction(tx => func(executorOf(tx)), {

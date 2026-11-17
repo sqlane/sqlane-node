@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, expect, inject, test } from 'vitest';
+import mysql from 'mysql2/promise';
+import { afterAll, beforeAll, expect, inject, test, vi } from 'vitest';
 import {
     ConfigError,
     createSqlane,
@@ -6,6 +7,7 @@ import {
     getMigrations,
     MigrationLockTimeoutError,
 } from '../../src/index.js';
+import { mysql2Adapter } from '../../src/adapters/mysql2.js';
 import { parseServerVersion, SERVER_VERSION_SQL } from '../../src/server_check.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
@@ -306,4 +308,77 @@ test('the check of the server: another dialect, a ConfigError before any table',
     await expect(sqlane.start()).rejects.toThrow(ConfigError);
     await sqlane.close({ deadline: 0 });
     await expect(listTables(p)).resolves.toStrictEqual([]);
+});
+
+/**
+ * A mysql2 pool of one connection, with the sql_mode of its session: the check of the server reads that session.
+ * @param {string} sqlMode
+ * @param {{ allowUnsupportedDbConfiguration?: boolean }} [options]
+ * @returns {Promise<{ adapter: import('../../src/types.js').Adapter<any>, pool: import('mysql2/promise').Pool }>}
+ */
+async function adapterWithSqlMode(sqlMode, options = {}) {
+    const pool = mysql.createPool({ uri: inject('databaseUrl'), connectionLimit: 1 });
+    const dialect = /** @type {'mysql' | 'mariadb'} */ (database.dialect);
+
+    await pool.query(`SET SESSION sql_mode = ${sqlMode}`);
+
+    return { adapter: mysql2Adapter(pool, { dialect, ...options }), pool };
+}
+
+const isMysqlFamily = inject('databaseDialect') !== 'postgres';
+const LACKING_STRICT = `the sql_mode of ${inject('databaseDialect') === 'mariadb' ? 'MariaDB' : 'MySQL'} lacks `
+    + 'STRICT_TRANS_TABLES or STRICT_ALL_TABLES';
+
+test.runIf(isMysqlFamily)('the check of the server: a sql_mode without strict mode, a ConfigError before any table', async () => {
+    const { adapter, pool } = await adapterWithSqlMode('\'NO_ENGINE_SUBSTITUTION\'');
+    const p = nextPrefix();
+    const sqlane = createSqlane({ adapter, tablePrefix: p });
+
+    try {
+        await expect(sqlane.migrate()).rejects.toThrow(ConfigError);
+        await expect(sqlane.migrate()).rejects.toThrow(`migrate(): ${LACKING_STRICT}`);
+        await expect(sqlane.start()).rejects.toThrow(`start(): ${LACKING_STRICT}`);
+        await expect(listTables(p)).resolves.toStrictEqual([]);
+    } finally {
+        await sqlane.close({ deadline: 0 });
+        await pool.end();
+    }
+});
+
+test.runIf(isMysqlFamily)('the check of the server: allowUnsupportedDbConfiguration, a warning', async () => {
+    const { adapter, pool } = await adapterWithSqlMode('\'NO_ENGINE_SUBSTITUTION\'', {
+        allowUnsupportedDbConfiguration: true,
+    });
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const sqlane = createSqlane({ adapter, tablePrefix: nextPrefix(), logger });
+
+    try {
+        await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
+        expect(logger.warn).toHaveBeenCalledOnce();
+        expect(logger.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ dialect: database.dialect, sqlMode: 'NO_ENGINE_SUBSTITUTION', forbidden: [] }),
+            expect.stringContaining(`sqlane: ${LACKING_STRICT}`),
+        );
+    } finally {
+        await sqlane.close({ deadline: 0 });
+        await pool.end();
+    }
+});
+
+test.runIf(isMysqlFamily)('the check of the server: NO_BACKSLASH_ESCAPES, a ConfigError also with allowUnsupportedDbConfiguration', async () => {
+    const { adapter, pool } = await adapterWithSqlMode('CONCAT(@@SESSION.sql_mode, \',NO_BACKSLASH_ESCAPES\')', {
+        allowUnsupportedDbConfiguration: true,
+    });
+    const p = nextPrefix();
+    const sqlane = createSqlane({ adapter, tablePrefix: p });
+
+    try {
+        await expect(sqlane.migrate()).rejects.toThrow(ConfigError);
+        await expect(sqlane.migrate())
+            .rejects.toThrow(/^migrate\(\): the sql_mode of (MySQL|MariaDB) has NO_BACKSLASH_ESCAPES: /u);
+        await expect(listTables(p)).resolves.toStrictEqual([]);
+    } finally {
+        await sqlane.close({ deadline: 0 });
+        await pool.end();
+    }
 });

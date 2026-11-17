@@ -1,9 +1,10 @@
 export type AdapterDialect<D extends import('../types.js').Dialect> = {
     dialect: D;
-    allowUnsupportedVersion: boolean;
+    allowUnsupportedDbVersion: boolean;
+    allowUnsupportedDbConfiguration: boolean;
 };
 /**
- * Checks `dialect` and `allowUnsupportedVersion` of the options of an adapter.
+ * Checks `dialect`, `allowUnsupportedDbVersion` and `allowUnsupportedDbConfiguration` of the options of an adapter.
  * @template {import('../types.js').Dialect} D
  * @param {unknown} options
  * @param {string} where The adapter, for the error.

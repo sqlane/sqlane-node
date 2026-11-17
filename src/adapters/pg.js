@@ -6,8 +6,10 @@ import { pgExecutor } from './executors.js';
 /**
  * @typedef {object} PgAdapterOptions
  * @property {'postgres'} dialect The database: PostgreSQL 15 or later.
- * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
- *     false.
+ * @property {boolean} [allowUnsupportedDbVersion] Runs on a server below the supported minimum, with a warning.
+ *     Default: false.
+ * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: runs with a `sql_mode` that lacks a required
+ *     flag, or has `ALLOW_INVALID_DATES`, with a warning. Never with `NO_BACKSLASH_ESCAPES`. Default: false.
  * @property {boolean} [notify] Hints by LISTEN/NOTIFY: `pg_notify` in the enqueue transaction, delivered on commit.
  *     Default: false.
  * @property {boolean} [prepare] Named prepared statements: each SQL text is parsed and planned once per connection.
@@ -132,7 +134,11 @@ async function listen(pool, channel, onMessage) {
  * @returns {import('../types.js').Adapter<PgConnection>}
  */
 export function pgAdapter(pool, options) {
-    const { dialect, allowUnsupportedVersion } = checkAdapterDialect(options, 'pgAdapter', ['postgres']);
+    const { dialect, allowUnsupportedDbVersion, allowUnsupportedDbConfiguration } = checkAdapterDialect(
+        options,
+        'pgAdapter',
+        ['postgres'],
+    );
     const prepare = options.prepare ?? true;
     /**
      * @param {PgConnection} connection
@@ -142,7 +148,8 @@ export function pgAdapter(pool, options) {
 
     return {
         dialect,
-        allowUnsupportedVersion,
+        allowUnsupportedDbVersion,
+        allowUnsupportedDbConfiguration,
         wrap: toExecutor,
         queue: toExecutor(pool),
         withConnection: async (func) => {

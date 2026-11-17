@@ -15,14 +15,19 @@ test('createSqlane needs an adapter', () => {
  * @param {boolean} [options.missingTable]
  * @param {import('./types.js').Dialect} [options.dialect] Default: `'postgres'`.
  * @param {string} [options.version] What `VERSION()` returns.
- * @param {boolean} [options.allowUnsupportedVersion]
+ * @param {boolean} [options.allowUnsupportedDbVersion]
+ * @param {boolean} [options.allowUnsupportedDbConfiguration]
+ * @param {string} [options.sqlMode] What `@@SESSION.sql_mode` returns. Default: the default of MySQL 8.4.
  * @returns {{ adapter: import('./types.js').Adapter<any>, statements: string[], versionQueries: () => number }}
  */
 function fakeAdapter({
     missingTable = false,
     dialect = 'postgres',
     version = 'PostgreSQL 18.6 (Debian 18.6-1.pgdg13+1) on aarch64-unknown-linux-gnu',
-    allowUnsupportedVersion = false,
+    allowUnsupportedDbVersion = false,
+    allowUnsupportedDbConfiguration = false,
+    sqlMode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,'
+        + 'NO_ENGINE_SUBSTITUTION',
 } = {}) {
     /** @type {string[]} */
     const statements = [];
@@ -34,6 +39,10 @@ function fakeAdapter({
                 versionQueries++;
 
                 return [{ version }];
+            }
+
+            if (sql === 'SELECT @@SESSION.sql_mode AS sql_mode') {
+                return [{ sql_mode: sqlMode }];
             }
 
             if (!sql.includes('schedules')) {
@@ -56,7 +65,8 @@ function fakeAdapter({
         versionQueries: () => versionQueries,
         adapter: /** @type {import('./types.js').Adapter<any>} */ (/** @type {unknown} */ ({
             dialect,
-            allowUnsupportedVersion,
+            allowUnsupportedDbVersion,
+            allowUnsupportedDbConfiguration,
             queue: executor,
             queueTransaction: (/** @type {(executor: unknown) => Promise<unknown>} */ func) => func(executor),
             withConnection: (/** @type {(executor: unknown) => Promise<unknown>} */ func) => func(executor),
@@ -244,6 +254,40 @@ describe('close()', () => {
     });
 });
 
+/**
+ * A worker whose database is down at start(), then up.
+ * @param {Parameters<typeof fakeAdapter>[0]} [options]
+ * @returns {{ sqlane: ReturnType<typeof createSqlane>, down: Error, state: { up: boolean }, statements: string[],
+ *     events: import('./types.js').SqlaneEvent[] }}
+ */
+function workerStartedWhileDown(options) {
+    const { adapter } = fakeAdapter(options);
+    const down = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    const query = adapter.queue.query;
+    const state = { up: false };
+    /** @type {string[]} The statements once the database is up */
+    const statements = [];
+
+    vi.spyOn(adapter.queue, 'query').mockImplementation(async (sql, params) => {
+        if (!state.up) {
+            throw down;
+        }
+
+        statements.push(sql);
+
+        return query(sql, params);
+    });
+
+    /** @type {import('./types.js').SqlaneEvent[]} */
+    const events = [];
+    const job = defineJob({ name: 'a' });
+    const sqlane = createSqlane({ adapter, jobs: [job], onEvent: event => events.push(event) });
+
+    sqlane.handle(job, async () => {});
+
+    return { sqlane, down, state, statements, events };
+}
+
 describe('the check of the server', () => {
     test('migrate() then start(): one statement; a process that only enqueues runs none', async () => {
         const { adapter, versionQueries } = fakeAdapter();
@@ -300,15 +344,15 @@ describe('the check of the server', () => {
     ])('$dialect below the minimum: start() and migrate() throw a ConfigError', async ({ dialect, version, message }) => {
         const { adapter } = fakeAdapter({ dialect: /** @type {any} */ (dialect), version });
         const sqlane = createSqlane({ adapter });
-        const hint = 'upgrade it, or pass allowUnsupportedVersion: true to the adapter';
+        const hint = 'upgrade it, or pass allowUnsupportedDbVersion: true to the adapter';
 
         await expect(sqlane.start()).rejects.toThrow(new ConfigError(`start(): ${message}: ${hint}`));
         await expect(sqlane.migrate()).rejects.toThrow(new ConfigError(`migrate(): ${message}: ${hint}`));
         await sqlane.close({ deadline: 0 });
     });
 
-    test('allowUnsupportedVersion: below the minimum, one warning for the instance', async () => {
-        const { adapter, versionQueries } = fakeAdapter({ version: 'PostgreSQL 14.12', allowUnsupportedVersion: true });
+    test('allowUnsupportedDbVersion: below the minimum, one warning for the instance', async () => {
+        const { adapter, versionQueries } = fakeAdapter({ version: 'PostgreSQL 14.12', allowUnsupportedDbVersion: true });
         const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
         const sqlane = createSqlane({ adapter, logger });
 
@@ -323,38 +367,133 @@ describe('the check of the server', () => {
         ]]);
     });
 
-    test('allowUnsupportedVersion does not skip the check of the dialect', async () => {
-        const adapter = fakeAdapter({ dialect: 'mysql', version: '10.6.18-MariaDB', allowUnsupportedVersion: true }).adapter;
+    test('allowUnsupportedDbVersion does not skip the check of the dialect', async () => {
+        const adapter = fakeAdapter({ dialect: 'mysql', version: '10.6.18-MariaDB', allowUnsupportedDbVersion: true }).adapter;
         const sqlane = createSqlane({ adapter });
 
         await expect(sqlane.migrate()).rejects.toThrow('"dialect" is "mysql", but the database is MariaDB 10.6.18');
     });
 
-    test('allowUnsupportedVersion without a logger: silent', async () => {
-        const adapter = fakeAdapter({ version: 'PostgreSQL 13.16', allowUnsupportedVersion: true }).adapter;
+    test('allowUnsupportedDbVersion without a logger: silent', async () => {
+        const adapter = fakeAdapter({ version: 'PostgreSQL 13.16', allowUnsupportedDbVersion: true }).adapter;
         const sqlane = createSqlane({ adapter });
 
         await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: expect.any(Array) });
     });
 
-    test('a database that is down: start() resolves with an error event; migrate() rejects, and checks again', async () => {
-        const { adapter, versionQueries } = fakeAdapter();
-        const down = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    test('a sql_mode without strict mode: start() and migrate() throw a ConfigError', async () => {
+        const { adapter, versionQueries } = fakeAdapter({ dialect: 'mysql', version: '8.4.13', sqlMode: 'NO_ENGINE_SUBSTITUTION' });
+        const sqlane = createSqlane({ adapter });
+        const message = 'the sql_mode of MySQL lacks STRICT_TRANS_TABLES or STRICT_ALL_TABLES, NO_ZERO_DATE, '
+            + 'NO_ZERO_IN_DATE and ERROR_FOR_DIVISION_BY_ZERO';
 
-        // Down for the check of start() and the one of the first migrate()
-        vi.spyOn(adapter.queue, 'query').mockRejectedValueOnce(down).mockRejectedValueOnce(down);
+        await expect(sqlane.start()).rejects.toThrow(`start(): ${message}: `);
+        await expect(sqlane.migrate()).rejects.toThrow(`migrate(): ${message}: `);
+        await expect(sqlane.migrate()).rejects.toThrow(ConfigError);
+        expect(versionQueries()).toBe(3);
+        await sqlane.close({ deadline: 0 });
+    });
 
-        /** @type {import('./types.js').SqlaneEvent[]} */
-        const events = [];
-        const sqlane = createSqlane({ adapter, onEvent: event => events.push(event) });
+    test('allowUnsupportedDbConfiguration: one warning for the instance', async () => {
+        const { adapter, versionQueries } = fakeAdapter({
+            dialect: 'mariadb',
+            version: '11.8.9-MariaDB-ubu2404',
+            allowUnsupportedDbConfiguration: true,
+            sqlMode: 'NO_ENGINE_SUBSTITUTION',
+        });
+        const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+        const sqlane = createSqlane({ adapter, logger });
 
         await sqlane.start();
-        expect(events).toStrictEqual([{ type: 'error', operation: 'server_check', error: down }]);
-        await expect(sqlane.migrate()).rejects.toThrow(down);
-        await sqlane.migrate();
         await sqlane.close({ deadline: 0 });
 
         expect(versionQueries()).toBe(1);
+        expect(logger.warn.mock.calls).toStrictEqual([[
+            {
+                dialect: 'mariadb',
+                sqlMode: 'NO_ENGINE_SUBSTITUTION',
+                missing: ['STRICT_TRANS_TABLES or STRICT_ALL_TABLES', 'ERROR_FOR_DIVISION_BY_ZERO'],
+                forbidden: [],
+            },
+            'sqlane: the sql_mode of MariaDB lacks STRICT_TRANS_TABLES or STRICT_ALL_TABLES and ERROR_FOR_DIVISION_BY_ZERO',
+        ]]);
+    });
+
+    test('a database that is down: migrate() rejects, and checks again', async () => {
+        const { adapter, versionQueries } = fakeAdapter();
+        const down = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+
+        vi.spyOn(adapter.queue, 'query').mockRejectedValueOnce(down);
+
+        const sqlane = createSqlane({ adapter });
+
+        await expect(sqlane.migrate()).rejects.toThrow(down);
+        await sqlane.migrate();
+        await sqlane.start();
+        await sqlane.close({ deadline: 0 });
+
+        expect(versionQueries()).toBe(1);
+    });
+
+    test('a database that is down at start(): start() resolves; the worker claims nothing before the check passes', async () => {
+        const { sqlane, down, state, statements, events } = workerStartedWhileDown();
+
+        await sqlane.start();
+        expect(events[0]).toStrictEqual({ type: 'error', operation: 'server_check', error: down });
+
+        state.up = true;
+        // The dispatcher checks again after its back-off (1 s at most)
+        await new Promise((resolve) => {
+            setTimeout(resolve, 1500);
+        });
+        await sqlane.close({ deadline: 0 });
+
+        expect(statements[0]).toBe('SELECT VERSION() AS version');
+        expect(statements.filter(sql => sql === 'SELECT VERSION() AS version')).toHaveLength(1);
+        expect(statements.length).toBeGreaterThan(1);
+    });
+
+    test('a database that is down at start(), then the wrong one: an error event, and no claim', async () => {
+        const { sqlane, state, statements, events } = workerStartedWhileDown({
+            dialect: 'mysql',
+            version: '11.8.9-MariaDB-ubu2404',
+        });
+
+        await sqlane.start();
+        state.up = true;
+        await new Promise((resolve) => {
+            setTimeout(resolve, 1500);
+        });
+        await sqlane.close({ deadline: 0 });
+
+        expect(events.at(-1)).toMatchObject({
+            type: 'error',
+            operation: 'server_check',
+            error: new ConfigError('start(): "dialect" is "mysql", but the database is MariaDB 11.8.9: pass dialect: '
+                + '\'mariadb\' to the adapter'),
+        });
+        expect(statements.filter(sql => /FOR UPDATE|SKIP LOCKED/u.test(sql))).toStrictEqual([]);
+    });
+
+    test('a database that is down at start(), then a sql_mode with NO_BACKSLASH_ESCAPES: an error event, and no claim', async () => {
+        const { sqlane, state, statements, events } = workerStartedWhileDown({
+            dialect: 'mysql',
+            version: '8.4.13',
+            allowUnsupportedDbConfiguration: true,
+            sqlMode: 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_BACKSLASH_ESCAPES',
+        });
+
+        await sqlane.start();
+        state.up = true;
+        await new Promise((resolve) => {
+            setTimeout(resolve, 1500);
+        });
+        await sqlane.close({ deadline: 0 });
+
+        expect(events.at(-1)).toMatchObject({ type: 'error', operation: 'server_check', error: expect.any(ConfigError) });
+        expect(String(/** @type {any} */ (events.at(-1)).error.message))
+            .toMatch(/^start\(\): the sql_mode of MySQL has NO_BACKSLASH_ESCAPES: /u);
+        expect(statements.filter(sql => /FOR UPDATE|SKIP LOCKED/u.test(sql))).toStrictEqual([]);
     });
 
     test('a bad lockTimeout: migrate() rejects before any statement', async () => {

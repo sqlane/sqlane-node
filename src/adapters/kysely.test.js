@@ -23,9 +23,14 @@ test.each([
     { label: 'no dialect', options: {}, message: '"dialect" is required: "mysql", "mariadb" or "postgres"' },
     { label: 'another dialect', options: { dialect: 'sqlite' }, message: '"dialect" must be "mysql", "mariadb" or "postgres"' },
     {
-        label: 'a non-boolean allowUnsupportedVersion',
-        options: { dialect: 'mysql', allowUnsupportedVersion: 'yes' },
-        message: '"allowUnsupportedVersion" must be a boolean',
+        label: 'a non-boolean allowUnsupportedDbVersion',
+        options: { dialect: 'mysql', allowUnsupportedDbVersion: 'yes' },
+        message: '"allowUnsupportedDbVersion" must be a boolean',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedDbConfiguration',
+        options: { dialect: 'mysql', allowUnsupportedDbConfiguration: 'yes' },
+        message: '"allowUnsupportedDbConfiguration" must be a boolean',
     },
 ])('$label: a ConfigError', ({ options, message }) => {
     expect(() => kyselyAdapter(fakeKysely(), /** @type {any} */ (options))).toThrow(`kyselyAdapter: ${message}`);
@@ -33,9 +38,16 @@ test.each([
 
 test.each([
     { options: { dialect: /** @type {const} */ ('postgres') }, expected: false },
-    { options: { dialect: /** @type {const} */ ('postgres'), allowUnsupportedVersion: true }, expected: true },
-])('allowUnsupportedVersion: $expected', ({ options, expected }) => {
-    expect(kyselyAdapter(fakeKysely(), options).allowUnsupportedVersion).toBe(expected);
+    { options: { dialect: /** @type {const} */ ('postgres'), allowUnsupportedDbVersion: true }, expected: true },
+])('allowUnsupportedDbVersion: $expected', ({ options, expected }) => {
+    expect(kyselyAdapter(fakeKysely(), options).allowUnsupportedDbVersion).toBe(expected);
+});
+
+test.each([
+    { options: { dialect: /** @type {const} */ ('mysql') }, expected: false },
+    { options: { dialect: /** @type {const} */ ('mysql'), allowUnsupportedDbConfiguration: true }, expected: true },
+])('allowUnsupportedDbConfiguration: $expected', ({ options, expected }) => {
+    expect(kyselyAdapter(fakeKysely(), options).allowUnsupportedDbConfiguration).toBe(expected);
 });
 
 test.each([

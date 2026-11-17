@@ -28,8 +28,10 @@ import { mariadbExecutor, mysql2Executor, pgExecutor } from './executors.js';
  * @typedef {object} SequelizeAdapterOptions
  * @property {import('../types.js').Dialect} dialect The database: `'mysql'` or `'mariadb'` with the "mysql" dialect of
  *     Sequelize (mysql2), `'mariadb'` with its "mariadb" dialect, `'postgres'` with its "postgres" dialect.
- * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
- *     false.
+ * @property {boolean} [allowUnsupportedDbVersion] Runs on a server below the supported minimum, with a warning.
+ *     Default: false.
+ * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: runs with a `sql_mode` that lacks a required
+ *     flag, or has `ALLOW_INVALID_DATES`, with a warning. Never with `NO_BACKSLASH_ESCAPES`. Default: false.
  * @property {boolean} [prepare] The "postgres" dialect: named prepared statements, each SQL text parsed and planned
  *     once per connection. Opt-in: not behind a pooler in transaction mode without prepared statement support
  *     (PgBouncer before 1.21). Default: false.
@@ -175,7 +177,8 @@ export function sequelizeAdapter(sequelize, options) {
 
     return {
         dialect,
-        allowUnsupportedVersion: checked.allowUnsupportedVersion,
+        allowUnsupportedDbVersion: checked.allowUnsupportedDbVersion,
+        allowUnsupportedDbConfiguration: checked.allowUnsupportedDbConfiguration,
         wrap: connection => executorOf(resolveConnection(connection)),
         queue: executorOf(sequelize),
         withConnection: func => onConnection(sequelize, func),

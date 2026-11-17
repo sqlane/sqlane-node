@@ -35,17 +35,18 @@ test.each([
     { sessionKind: 'PostgresJsSession', client: postgresJsPool, dialect: 'postgres' },
 ])('$sessionKind: $dialect', ({ sessionKind, client, dialect }) => {
     expect(drizzleAdapter(fakeDb(sessionKind, client), /** @type {any} */ ({ dialect })))
-        .toMatchObject({ dialect, allowUnsupportedVersion: false });
+        .toMatchObject({ dialect, allowUnsupportedDbVersion: false, allowUnsupportedDbConfiguration: false });
 });
 
 test.each([
     { sessionKind: 'MySql2Session', client: mysqlPool, dialect: 'mariadb' },
     { sessionKind: 'NodePgSession', client: pgPool, dialect: 'postgres' },
     { sessionKind: 'PostgresJsSession', client: postgresJsPool, dialect: 'postgres' },
-])('$sessionKind: allowUnsupportedVersion reaches the adapter', ({ sessionKind, client, dialect }) => {
-    const options = /** @type {any} */ ({ dialect, allowUnsupportedVersion: true });
+])('$sessionKind: the hatches reach the adapter', ({ sessionKind, client, dialect }) => {
+    const hatches = { allowUnsupportedDbVersion: true, allowUnsupportedDbConfiguration: true };
+    const options = /** @type {any} */ ({ dialect, ...hatches });
 
-    expect(drizzleAdapter(fakeDb(sessionKind, client), options).allowUnsupportedVersion).toBe(true);
+    expect(drizzleAdapter(fakeDb(sessionKind, client), options)).toMatchObject(hatches);
 });
 
 test.each([
@@ -86,10 +87,16 @@ test.each([
         message: 'drizzleAdapter: "dialect" is "postgres", but Drizzle uses mysql2: "mysql" or "mariadb"',
     },
     {
-        label: 'a non-boolean allowUnsupportedVersion',
+        label: 'a non-boolean allowUnsupportedDbVersion',
         db: fakeDb('MySql2Session', mysqlPool),
-        options: { dialect: 'mysql', allowUnsupportedVersion: 'yes' },
-        message: 'drizzleAdapter: "allowUnsupportedVersion" must be a boolean',
+        options: { dialect: 'mysql', allowUnsupportedDbVersion: 'yes' },
+        message: 'drizzleAdapter: "allowUnsupportedDbVersion" must be a boolean',
+    },
+    {
+        label: 'a non-boolean allowUnsupportedDbConfiguration',
+        db: fakeDb('MySql2Session', mysqlPool),
+        options: { dialect: 'mysql', allowUnsupportedDbConfiguration: 'yes' },
+        message: 'drizzleAdapter: "allowUnsupportedDbConfiguration" must be a boolean',
     },
 ])('$label: a ConfigError', ({ db, options, message }) => {
     expect(() => drizzleAdapter(db, /** @type {any} */ (options))).toThrow(new ConfigError(message));

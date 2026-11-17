@@ -35,8 +35,10 @@ const DRIVER_BY_SESSION = {
  * @typedef {object} DrizzleAdapterOptions
  * @property {import('../types.js').Dialect} dialect The database: `'mysql'` or `'mariadb'` with mysql2, `'postgres'`
  *     with node-postgres or postgres.js.
- * @property {boolean} [allowUnsupportedVersion] Runs on a server below the supported minimum, with a warning. Default:
- *     false.
+ * @property {boolean} [allowUnsupportedDbVersion] Runs on a server below the supported minimum, with a warning.
+ *     Default: false.
+ * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: runs with a `sql_mode` that lacks a required
+ *     flag, or has `ALLOW_INVALID_DATES`, with a warning. Never with `NO_BACKSLASH_ESCAPES`. Default: false.
  * @property {boolean} [notify] PostgreSQL: hints by LISTEN/NOTIFY, as `pgAdapter(pool, { dialect: 'postgres', notify:
  *     true })`.
  */
@@ -101,7 +103,8 @@ export function drizzleAdapter(db, options) {
     const checked = checkAdapterDialect(options, 'drizzleAdapter', ['mysql', 'mariadb', 'postgres']);
     const { driver, dialects } = DRIVER_BY_SESSION[sessionKind];
     const dialect = matchLibraryDialect(checked.dialect, dialects, 'drizzleAdapter', `Drizzle uses ${driver}`);
-    const { allowUnsupportedVersion } = checked;
+    const { allowUnsupportedDbVersion, allowUnsupportedDbConfiguration } = checked;
+    const hatches = { allowUnsupportedDbVersion, allowUnsupportedDbConfiguration };
 
     const isMysql = sessionKind === 'MySql2Session';
     /** @type {Record<string, boolean>} The queue's client is a pool */
@@ -126,10 +129,10 @@ export function drizzleAdapter(db, options) {
     const baseByKind = {
         MySql2Session: () => mysql2Adapter(pool, {
             dialect: /** @type {'mysql' | 'mariadb'} */ (dialect),
-            allowUnsupportedVersion,
+            ...hatches,
         }),
-        NodePgSession: () => pgAdapter(pool, { dialect: 'postgres', allowUnsupportedVersion, notify }),
-        PostgresJsSession: () => postgresJsAdapter(pool, { dialect: 'postgres', allowUnsupportedVersion, notify }),
+        NodePgSession: () => pgAdapter(pool, { dialect: 'postgres', ...hatches, notify }),
+        PostgresJsSession: () => postgresJsAdapter(pool, { dialect: 'postgres', ...hatches, notify }),
     };
     const base = baseByKind[sessionKind]();
 
