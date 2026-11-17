@@ -468,13 +468,15 @@ describe('the check of the server', () => {
         });
         await sqlane.close({ deadline: 0 });
 
-        expect(events.at(-1)).toMatchObject({
+        // Other operations (the recovery) may report errors too, while the database is down
+        expect(events.filter(event => /** @type {any} */ (event).error instanceof ConfigError)).toStrictEqual([{
             type: 'error',
             operation: 'server_check',
             error: new ConfigError('start(): "dialect" is "mysql", but the database is MariaDB 11.8.9: pass dialect: '
                 + '\'mariadb\' to the adapter'),
-        });
-        expect(statements.filter(sql => /FOR UPDATE|SKIP LOCKED/u.test(sql))).toStrictEqual([]);
+        }]);
+        // No probe, no claim
+        expect(statements.filter(sql => /delay_ms|FOR UPDATE|SKIP LOCKED/u.test(sql))).toStrictEqual([]);
     });
 
     test('a database that is down at start(), then a sql_mode with NO_BACKSLASH_ESCAPES: an error event, and no claim', async () => {
@@ -492,10 +494,12 @@ describe('the check of the server', () => {
         });
         await sqlane.close({ deadline: 0 });
 
-        expect(events.at(-1)).toMatchObject({ type: 'error', operation: 'server_check', error: expect.any(ConfigError) });
-        expect(String(/** @type {any} */ (events.at(-1)).error.message))
+        const configErrors = events.filter(event => /** @type {any} */ (event).error instanceof ConfigError);
+
+        expect(configErrors).toMatchObject([{ type: 'error', operation: 'server_check' }]);
+        expect(String(/** @type {any} */ (configErrors[0]).error.message))
             .toMatch(/^start\(\): the sql_mode of MySQL has NO_BACKSLASH_ESCAPES: /u);
-        expect(statements.filter(sql => /FOR UPDATE|SKIP LOCKED/u.test(sql))).toStrictEqual([]);
+        expect(statements.filter(sql => /delay_ms|FOR UPDATE|SKIP LOCKED/u.test(sql))).toStrictEqual([]);
     });
 
     test('a bad lockTimeout: migrate() rejects before any statement', async () => {
