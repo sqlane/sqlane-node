@@ -306,8 +306,8 @@ statement in a transaction then fails with "prepared statement … does not exis
 import { knexAdapter } from '@sqlane/core/adapter-knex';
 ```
 
-The adapter supports knex 3 with the `mysql2`, `mariadb` or `pg` client. `knexAdapter(knex)` takes the queue's own knex
-instance. On MariaDB, see [MariaDB](#mariadb).
+The adapter supports knex 3 with the `mysql2`, `mariadb` or `pg` client. `knexAdapter(knex, { dialect, prepare })` takes
+the queue's own knex instance. On MariaDB, see [MariaDB](#mariadb).
 
 `enqueue` accepts a knex instance or a knex transaction. The transaction can be nested.
 
@@ -331,6 +331,16 @@ transaction is a savepoint, and the outer transaction can still roll back, so sq
 
 **Caveats.** On PostgreSQL, knex also resolves a transaction when the server turned the `COMMIT` into a `ROLLBACK`.
 In that case, the workers check the database once and find nothing. This costs one query and is harmless.
+
+**Prepared statements.** With the `pg` client, `{ prepare: true }` runs sqlane's SQL as named prepared statements
+(`sqlane_<hash>`), on the queue's connections and on the connection of a transaction that you pass to `enqueue`. Each
+connection then parses and plans a statement once, as with the [pg adapter](#pg), where they are on by default. sqlane
+has about 55 statements at run time, and 40 more on the connection that runs `migrate()`; 2–3.5 MB of plans per
+connection. The option is off by default, because sqlane cannot see a pooler in transaction mode in front of the
+database. Behind PgBouncer, turn it on only with 1.21 or later and `max_prepared_statements` at least 100, plus your
+app's own: its default is 200 since 1.24; set it on 1.21–1.23. Do not run `DISCARD ALL` or `DEALLOCATE ALL` on a
+connection that sqlane uses: pg remembers what it prepared, and each later run of the statement on that connection fails
+with "prepared statement … does not exist". With the `mysql2` or `mariadb` client, `prepare` throws a `ConfigError`.
 
 ## Kysely
 
@@ -367,6 +377,9 @@ database a few times. Other processes need a [hint](api.md#hint).
 
 **Caveats.** The `dialect` option is required and must be `'mysql'` or `'postgres'`. sqlane runs its SQL without your
 Kysely plugins, so a `CamelCasePlugin` does not rename the columns that sqlane reads.
+
+**Prepared statements.** Kysely sends unnamed statements, and sqlane cannot name its own through it: on PostgreSQL, each
+run of a statement is parsed and planned again.
 
 ## Drizzle
 
@@ -457,6 +470,10 @@ export default defineConfig({
 Prisma has no connection outside a transaction, so `migrate()` runs in one transaction. The `dialect` option is
 required and must be `'mysql'` or `'postgres'`.
 
+**Prepared statements.** sqlane runs its SQL through Prisma's raw queries and has no option for them. On PostgreSQL,
+`@prisma/adapter-pg` sends unnamed statements unless you give it a `statementNameGenerator`, which then names sqlane's
+SQL too.
+
 ## Sequelize
 
 ```js
@@ -464,7 +481,8 @@ import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
 ```
 
 The adapter supports Sequelize 6 with MySQL (mysql2), MariaDB (mysql2 or mariadb) or PostgreSQL (pg).
-`sequelizeAdapter(sequelize)` takes the queue's own Sequelize instance. On MariaDB, see [MariaDB](#mariadb).
+`sequelizeAdapter(sequelize, { dialect, prepare })` takes the queue's own Sequelize instance. On MariaDB, see
+[MariaDB](#mariadb).
 
 `enqueue` accepts a Sequelize instance or a Sequelize transaction. The transaction can be nested.
 
@@ -506,6 +524,11 @@ await sqlane.enqueue(sequelize, buildReport, { reportId });
 A CLS transaction belongs to one Sequelize instance. The queue has its own instance, so always pass your app's
 instance, or its transaction, to `enqueue`.
 
+**Prepared statements.** With the `postgres` dialect, `{ prepare: true }` runs sqlane's SQL as named prepared statements
+(`sqlane_<hash>`), on the queue's connections and on the connection of a transaction that you pass to `enqueue`. Their
+number, their memory, PgBouncer and `DISCARD ALL` are as for [Knex](#knex): the option is off by default for the same
+reason. With the `mysql` or `mariadb` dialect, `prepare` throws a `ConfigError`.
+
 ## TypeORM
 
 ```js
@@ -537,6 +560,9 @@ not count as a commit.
 **Caveats.** To see the commit, the adapter adds a subscriber to the `DataSource` of your transaction, for its
 `afterTransactionCommit` event. It adds this subscriber once per `DataSource`.
 
+**Prepared statements.** TypeORM sends unnamed statements, and sqlane cannot name its own through it: on PostgreSQL,
+each run of a statement is parsed and planned again.
+
 ## MikroORM
 
 ```js
@@ -544,7 +570,7 @@ import { mikroOrmAdapter } from '@sqlane/core/adapter-mikro-orm';
 ```
 
 The adapter supports MikroORM 6 and 7, with `@mikro-orm/mysql`, `@mikro-orm/mariadb` or `@mikro-orm/postgresql`.
-`mikroOrmAdapter(em, { dialect })` takes the `EntityManager` of the queue's own MikroORM instance.
+`mikroOrmAdapter(em, { dialect, prepare })` takes the `EntityManager` of the queue's own MikroORM instance.
 
 `enqueue` accepts an `EntityManager`. If it is in a transaction, the job joins that transaction. Otherwise, the enqueue
 runs in a transaction of its own.
@@ -568,3 +594,11 @@ nested transaction (a savepoint) cannot see the outer commit, so the workers che
 **Caveats.** Inside `em.transactional()`, the global `EntityManager` refers to the current transaction, as it does
 for MikroORM's own queries. So `sqlane.enqueue(orm.em, …)` there commits or rolls back with that transaction. `em.begin()` and
 `em.commit()` on a fork work too. The `dialect` option is required and must match the driver of MikroORM.
+
+**Prepared statements.** With `@mikro-orm/postgresql`, `{ prepare: true }` runs sqlane's SQL as named prepared
+statements (`sqlane_<hash>`). In MikroORM 6, this covers all of sqlane's SQL, through knex. MikroORM 7 sends its SQL
+through Kysely, which runs unnamed statements, so sqlane runs the queue's own SQL (claims, leases, results, `migrate()`)
+on the pg pool under it, and an enqueue still runs unnamed. In MikroORM 7, `prepare` needs 7.2 or later, and the pool
+that MikroORM creates, not a Kysely instance or dialect of `driverOptions`. Their number, their memory, PgBouncer and
+`DISCARD ALL` are as for [Knex](#knex): the option is off by default for the same reason. On MySQL and MariaDB,
+`prepare` throws a `ConfigError`.

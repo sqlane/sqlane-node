@@ -60,3 +60,46 @@ test.each([
 ])('$label: a ConfigError', ({ knex }) => {
     expect(() => knexAdapter(/** @type {any} */ (knex))).toThrow('expects a knex instance (knex 3)');
 });
+
+test('pg: { prepare: true } is accepted', () => {
+    expect(knexAdapter(fakeKnex('postgresql', 'pg'), { prepare: true }).dialect).toBe('postgres');
+});
+
+test.each([
+    { dialect: 'mysql', driverName: 'mysql2' },
+    { dialect: 'mysql', driverName: 'mariadb' },
+])('{ prepare: true } on a $driverName knex: a ConfigError', ({ dialect, driverName }) => {
+    expect(() => knexAdapter(fakeKnex(dialect, driverName), { prepare: true }))
+        .toThrow('"prepare" is for PostgreSQL');
+});
+
+const NAMED = expect.objectContaining({ name: expect.stringMatching(/^sqlane_/), text: 'SELECT 1' });
+
+test.each([
+    { prepare: true, sent: NAMED },
+    { prepare: false, sent: 'SELECT 1' },
+    { prepare: undefined, sent: 'SELECT 1' },
+])('pg, prepare: $prepare: the query that the pg client gets', async ({ prepare, sent: expected }) => {
+    /** @type {unknown[]} */
+    const sent = [];
+    const connection = {
+        query: async (/** @type {unknown} */ query) => {
+            sent.push(query);
+
+            return { rows: [], rowCount: 0 };
+        },
+    };
+    const knex = /** @type {any} */ ({
+        transaction: () => {},
+        client: {
+            dialect: 'postgresql',
+            driverName: 'pg',
+            acquireConnection: async () => connection,
+            releaseConnection: async () => {},
+        },
+    });
+
+    await knexAdapter(knex, { prepare }).queue.query('SELECT 1', []);
+
+    expect(sent).toStrictEqual([expected]);
+});

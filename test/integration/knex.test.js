@@ -7,6 +7,7 @@ import { checkSchedules } from './helpers/schedule_checks.js';
 import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { knexAdapter } from '../../src/adapters/knex.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
+import { preparedAfterAJob, SQLANE_STATEMENTS_SQL } from './helpers/prepared_statements.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<import('../../src/adapters/knex.js').KnexConnection>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -218,5 +219,45 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         // The names with pending, running or failed jobs
         await expect(sqlane.getStats()).resolves.toMatchObject([{ name: 'failing', pending: 0, failed: 1 }]);
         expect((await statuses(p)).toSorted()).toStrictEqual(['completed', 'completed', 'completed', 'failed']);
+    });
+
+    test.runIf(client === 'pg').each([
+        { prepare: true, named: true },
+        { prepare: false, named: false },
+        { prepare: undefined, named: false },
+    ])('prepare: $prepare: named prepared statements on the connections of sqlane: $named', async ({ prepare, named }) => {
+        // One connection each: pg_prepared_statements is of the session that reads it
+        const onePool = { client, connection: inject('databaseUrl'), pool: { min: 0, max: 1 } };
+        const queueOne = knexLib(onePool);
+        const appOne = knexLib(onePool);
+
+        prefixCount++;
+
+        const sqlane = createSqlane({
+            adapter: knexAdapter(queueOne, { prepare }),
+            tablePrefix: `${database.tablePrefix}${prefixCount}_`,
+        });
+
+        try {
+            /**
+             * @param {string} sql
+             * @returns {Promise<Record<string, unknown>[]>}
+             */
+            const query = async sql => (await queueOne.raw(sql)).rows;
+            const queueStatements = await preparedAfterAJob(sqlane, queueOne, query);
+            // The caller's transaction: on the app's connection
+            const appStatements = await appOne.transaction(async (trx) => {
+                await sqlane.enqueue(trx, 'ping', {});
+
+                return (await trx.raw(SQLANE_STATEMENTS_SQL)).rows[0].statements;
+            });
+
+            expect(queueStatements > 0).toBe(named);
+            expect(appStatements > 0).toBe(named);
+        } finally {
+            await sqlane.close({ deadline: 0, mode: 'abandon' });
+            await queueOne.destroy();
+            await appOne.destroy();
+        }
     });
 });

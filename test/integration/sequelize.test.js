@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { Sequelize } from 'sequelize';
+import { QueryTypes, Sequelize } from 'sequelize';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
@@ -7,6 +7,7 @@ import { mysqlFamilyOptions } from './helpers/test_adapter.js';
 import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
+import { preparedAfterAJob, SQLANE_STATEMENTS_SQL } from './helpers/prepared_statements.js';
 
 /** @typedef {import('../../src/adapters/sequelize.js').SequelizeConnection} SequelizeConnection */
 /** @typedef {import('../../src/types.js').Sqlane<SequelizeConnection>} Sqlane */
@@ -37,6 +38,14 @@ const SEQUELIZE_DIALECTS = /** @type {const} */ ({
     mariadb: ['mysql', 'mariadb'],
     postgres: ['postgres'],
 })[inject('databaseDialect')];
+
+/**
+ * @param {number} max The connections of its pool.
+ * @returns {Sequelize} A Sequelize of the "postgres" dialect on the test database.
+ */
+function createPostgresSequelize(max) {
+    return new Sequelize(inject('databaseUrl'), { dialect: 'postgres', logging: false, pool: { max } });
+}
 
 describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) => {
     // The mariadb dialect of Sequelize tells MariaDB; its mysql dialect needs the option
@@ -229,5 +238,48 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         expect(failures).toStrictEqual(['failing']);
         await expect(sqlane.getStats()).resolves.toMatchObject([{ name: 'failing', pending: 0, failed: 1 }]);
         expect((await statuses(p)).toSorted()).toStrictEqual(['completed', 'completed', 'completed', 'failed']);
+    });
+
+    test.runIf(sequelizeDialect === 'postgres').each([
+        { prepare: true, named: true },
+        { prepare: false, named: false },
+        { prepare: undefined, named: false },
+    ])('prepare: $prepare: named prepared statements on the connections of sqlane: $named', async ({ prepare, named }) => {
+        // One connection each: pg_prepared_statements is of the session that reads it
+        const queueOne = createPostgresSequelize(1);
+        const appOne = createPostgresSequelize(1);
+
+        prefixCount++;
+
+        const sqlane = createSqlane({
+            adapter: sequelizeAdapter(/** @type {any} */ (queueOne), { prepare }),
+            tablePrefix: `${database.tablePrefix}${prefixCount}_`,
+        });
+
+        try {
+            /**
+             * @param {string} sql
+             * @returns {Promise<Record<string, unknown>[]>}
+             */
+            const query = async sql => /** @type {Record<string, unknown>[]} */ (
+                await queueOne.query(sql, { type: QueryTypes.SELECT })
+            );
+            const queueStatements = await preparedAfterAJob(sqlane, /** @type {any} */ (queueOne), query);
+            // The caller's transaction: on the app's connection
+            const appStatements = await appOne.transaction(async (t) => {
+                await sqlane.enqueue(/** @type {any} */ (t), 'ping', {});
+
+                const [row] = await appOne.query(SQLANE_STATEMENTS_SQL, { type: QueryTypes.SELECT, transaction: t });
+
+                return /** @type {{ statements: number }} */ (row).statements;
+            });
+
+            expect(queueStatements > 0).toBe(named);
+            expect(appStatements > 0).toBe(named);
+        } finally {
+            await sqlane.close({ deadline: 0, mode: 'abandon' });
+            await queueOne.close();
+            await appOne.close();
+        }
     });
 });

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { ConfigError } from './errors.js';
-import { getMigrations } from './migrations.js';
+import { getMigrations, runMigrations } from './migrations.js';
 
 /** The migrations of 6.0, and of the rate limits */
 const SIX = ['0005_concurrency_limits', '0006_concurrency_slots', '0007_rate_limits'];
@@ -58,4 +58,48 @@ test.each([
     expect(sql).toMatch(time);
     expect(sql).toMatch(column);
     expect(sql).toMatch(index);
+});
+
+/**
+ * The statements of a migration on PostgreSQL, against a database that has all the migrations.
+ * @param {string} lockTimeout
+ * @returns {Promise<{ sql: string, params: readonly unknown[] }[]>}
+ */
+async function postgresStatements(lockTimeout) {
+    /** @type {{ sql: string, params: readonly unknown[] }[]} */
+    const statements = [];
+    const applied = getMigrations({ dialect: 'postgres' }).map(({ id }) => ({ id }));
+    /** @type {import('./types.js').Executor} */
+    const executor = {
+        query: async (sql, params) => {
+            statements.push({ sql, params });
+
+            return sql.startsWith('SELECT id FROM') ? applied : [{}];
+        },
+        run: async () => 0,
+    };
+    /**
+     * @param {(executor: import('./types.js').Executor) => Promise<unknown>} func
+     * @returns {Promise<unknown>}
+     */
+    const withConnection = func => func(executor);
+    const adapter = /** @type {import('./types.js').Adapter<unknown>} */ (/** @type {unknown} */ ({
+        dialect: 'postgres',
+        withConnection,
+    }));
+
+    await runMigrations(adapter, 'sqlane_', { lockTimeout });
+
+    return statements;
+}
+
+test('postgres: the SQL of migrate does not depend on lockTimeout: one prepared statement each', async () => {
+    const short = await postgresStatements('1s');
+    const long = await postgresStatements('7m');
+
+    expect(short.map(({ sql }) => sql)).toStrictEqual(long.map(({ sql }) => sql));
+    const sql = 'SELECT set_config(\'lock_timeout\', $1, true) AS lock_timeout';
+
+    expect(short).toContainEqual({ sql, params: ['1000ms'] });
+    expect(long).toContainEqual({ sql, params: ['420000ms'] });
 });

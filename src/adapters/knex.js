@@ -3,7 +3,7 @@
 // import of knex: the adapter uses the instance it gets, and checks what it uses.
 import { ConfigError } from '../errors.js';
 import { mysqlFamilyDialect } from './dialect.js';
-import { mariadbExecutor } from './executors.js';
+import { mariadbExecutor, pgExecutor } from './executors.js';
 
 /** @typedef {import('knex').Knex} Knex */
 /** @typedef {import('knex').Knex.Transaction} KnexTransaction */
@@ -12,6 +12,15 @@ import { mariadbExecutor } from './executors.js';
 /**
  * The connections that `enqueue` takes: a knex instance (a transaction of its own) or a knex transaction.
  * @typedef {Knex | KnexTransaction} KnexConnection
+ */
+
+/**
+ * @typedef {object} KnexAdapterOptions
+ * @property {'mysql' | 'mariadb'} [dialect] mysql2: `'mariadb'` on MariaDB. Default: `'mysql'`. The mariadb client is
+ *     MariaDB without it.
+ * @property {boolean} [prepare] pg: named prepared statements, each SQL text parsed and planned once per connection.
+ *     Opt-in: not behind a pooler in transaction mode without prepared statement support (PgBouncer before 1.21).
+ *     Default: false.
  */
 
 /**
@@ -43,14 +52,6 @@ function mysql2Executor(connection) {
             return Array.isArray(rows) ? rows : [];
         },
         run: async (sql, params) => (await send(sql, params)).affectedRows,
-    };
-}
-
-/** @type {ToExecutor} A pg client. */
-function pgExecutor(connection) {
-    return {
-        query: async (sql, params) => (await connection.query(sql, [...params])).rows,
-        run: async (sql, params) => (await connection.query(sql, [...params])).rowCount ?? 0,
     };
 }
 
@@ -94,7 +95,7 @@ function executorOf(knex, toExecutor) {
 
 /**
  * @param {Knex} knex
- * @param {import('./dialect.js').MysqlFamilyOptions | undefined} options
+ * @param {KnexAdapterOptions | undefined} options
  * @returns {{ dialect: import('../types.js').Dialect, toExecutor: ToExecutor }}
  */
 function resolveDriver(knex, options) {
@@ -104,6 +105,12 @@ function resolveDriver(knex, options) {
 
     if (typeof knex?.transaction !== 'function' || typeof client?.acquireConnection !== 'function') {
         throw new ConfigError('knexAdapter: expects a knex instance (knex 3)');
+    }
+
+    const isPg = client?.dialect === 'postgresql' && client.driverName === 'pg';
+
+    if (options?.prepare && !isPg) {
+        throw new ConfigError('knexAdapter: "prepare" is for PostgreSQL (the pg client)');
     }
 
     if (client?.dialect === 'mysql' && client.driverName === 'mysql2') {
@@ -119,12 +126,15 @@ function resolveDriver(knex, options) {
         return { dialect: 'mariadb', toExecutor: connection => mariadbExecutor(connection, 'callback') };
     }
 
-    if (client?.dialect === 'postgresql' && client.driverName === 'pg') {
+    if (isPg) {
         if (options?.dialect !== undefined) {
             throw new ConfigError('knexAdapter: "dialect" is for mysql2 (MySQL or MariaDB)');
         }
 
-        return { dialect: 'postgres', toExecutor: pgExecutor };
+        const prepare = options?.prepare ?? false;
+
+        // A pg Client: named statements through query({ name, text, values })
+        return { dialect: 'postgres', toExecutor: connection => pgExecutor(connection, { prepare }) };
     }
 
     throw new ConfigError(
@@ -137,8 +147,8 @@ function resolveDriver(knex, options) {
  * knex transaction (the caller's: the job commits with it). After the commit of the outermost transaction, the
  * processes wake at once.
  * @param {Knex} knex The queue's own knex: claims, leases, results. A small pool of its own is best.
- * @param {import('./dialect.js').MysqlFamilyOptions} [options] mysql2: `{ dialect: 'mariadb' }` on MariaDB. The mariadb
- *     client is MariaDB without it.
+ * @param {KnexAdapterOptions} [options] mysql2: `{ dialect: 'mariadb' }` on MariaDB. pg: `{ prepare: true }`, named
+ *     prepared statements.
  * @returns {import('../types.js').Adapter<KnexConnection>}
  */
 export function knexAdapter(knex, options) {

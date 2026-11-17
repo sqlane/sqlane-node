@@ -25,6 +25,15 @@ import { mariadbExecutor, mysql2Executor, pgExecutor } from './executors.js';
  */
 
 /**
+ * @typedef {object} SequelizeAdapterOptions
+ * @property {'mysql' | 'mariadb'} [dialect] The "mysql" dialect of Sequelize (mysql2): `'mariadb'` on MariaDB. Default:
+ *     `'mysql'`. The "mariadb" dialect of Sequelize is MariaDB without it.
+ * @property {boolean} [prepare] The "postgres" dialect: named prepared statements, each SQL text parsed and planned
+ *     once per connection. Opt-in: not behind a pooler in transaction mode without prepared statement support
+ *     (PgBouncer before 1.21). Default: false.
+ */
+
+/**
  * The connections that `enqueue` takes: a Sequelize instance (a transaction of its own) or a Sequelize transaction.
  * @typedef {SequelizeLike | SequelizeTransactionLike} SequelizeConnection
  */
@@ -79,9 +88,8 @@ function checkSequelize(sequelize) {
  * of its own) or a Sequelize transaction, also nested (the caller's: the job commits with it).
  * @param {SequelizeLike} sequelize The queue's own Sequelize instance: claims, leases, results. A small pool of its
  *     own is best.
- * @param {import('./dialect.js').MysqlFamilyOptions} [options] The "mysql" dialect of Sequelize (mysql2):
- *     `{ dialect: 'mariadb' }` on MariaDB. The "mariadb" dialect of Sequelize (the mariadb driver) is MariaDB without
- *     it.
+ * @param {SequelizeAdapterOptions} [options] The "mysql" dialect of Sequelize (mysql2): `{ dialect: 'mariadb' }` on
+ *     MariaDB. The "postgres" dialect: `{ prepare: true }`, named prepared statements.
  * @returns {import('../types.js').Adapter<SequelizeConnection>}
  */
 export function sequelizeAdapter(sequelize, options) {
@@ -103,6 +111,11 @@ export function sequelizeAdapter(sequelize, options) {
         throw new ConfigError('sequelizeAdapter: "dialect" is for the "mysql" dialect of Sequelize (MySQL or MariaDB)');
     }
 
+    if (sequelizeDialect !== 'postgres' && options?.prepare) {
+        throw new ConfigError('sequelizeAdapter: "prepare" is for the "postgres" dialect of Sequelize (PostgreSQL)');
+    }
+
+    const prepare = options?.prepare ?? false;
     /** @type {import('../types.js').Dialect} */
     const dialect = sequelizeDialect === 'mysql' ? mysqlFamilyDialect(options, 'sequelizeAdapter') : sequelizeDialect;
 
@@ -112,7 +125,8 @@ export function sequelizeAdapter(sequelize, options) {
         mysql: connection => mysql2Executor(connection.promise()),
         // The mariadb driver, of its promise API
         mariadb: connection => mariadbExecutor(connection, 'promise'),
-        postgres: connection => pgExecutor(connection),
+        // A pg Client: named statements through query({ name, text, values })
+        postgres: connection => pgExecutor(connection, { prepare }),
     };
     const toExecutor = executorByDialect[sequelizeDialect];
 

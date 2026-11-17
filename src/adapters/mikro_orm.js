@@ -1,12 +1,14 @@
 // The adapter for MikroORM 6 and 7 (`@sqlane/core/adapter-mikro-orm`), MySQL or PostgreSQL: `enqueue` takes an
 // EntityManager. In a transaction (its own, or the one of the global EntityManager inside `em.transactional()`), the
 // job commits with it; outside one, a transaction of its own. The SQL of sqlane runs on the client under MikroORM: knex
-// (MikroORM 6, as the knex adapter) or Kysely (MikroORM 7, as the Kysely adapter). No import of MikroORM: the adapter
-// uses the EntityManager that it gets, and checks it. After the commit of the outermost transaction, the workers wake
-// at once: knex resolves its transaction (MikroORM 6), MikroORM 7 dispatches `afterTransactionCommit`.
+// (MikroORM 6, as the knex adapter) or Kysely (MikroORM 7, as the Kysely adapter; with `prepare`, the queue's own SQL
+// runs on the pg pool under Kysely, as the pg adapter). No import of MikroORM: the adapter uses the EntityManager that
+// it gets, and checks it. After the commit of the outermost transaction, the workers wake at once: knex resolves its
+// transaction (MikroORM 6), MikroORM 7 dispatches `afterTransactionCommit`.
 import { ConfigError } from '../errors.js';
 import { knexAdapter } from './knex.js';
 import { kyselyAdapter } from './kysely.js';
+import { pgAdapter } from './pg.js';
 
 /**
  * A MikroORM EntityManager, as far as the adapter reads it.
@@ -23,6 +25,10 @@ import { kyselyAdapter } from './kysely.js';
  * @typedef {object} MikroOrmAdapterOptions
  * @property {import('../types.js').Dialect} dialect The database: `'mysql'` or `'mariadb'` with `@mikro-orm/mysql`,
  *     `'postgres'` with `@mikro-orm/postgresql`.
+ * @property {boolean} [prepare] PostgreSQL: named prepared statements, each SQL text parsed and planned once per
+ *     connection. MikroORM 6: all of sqlane's SQL. MikroORM 7.2+: the queue's own SQL, on the pg pool under Kysely
+ *     (an enqueue runs through Kysely, unnamed). Opt-in: not behind a pooler in transaction mode without prepared
+ *     statement support (PgBouncer before 1.21). Default: false.
  */
 
 /** @type {WeakMap<object, (() => void)[]>} The wakes of MikroORM 7 transactions, by transaction, until their commit */
@@ -100,6 +106,51 @@ async function clientOf(em, major) {
 }
 
 /**
+ * The adapter over the client of MikroORM: knex (6) or Kysely (7). MikroORM 7 with `prepare`: the queue's own SQL on
+ * the pg pool under Kysely, as the pg adapter; an enqueue through Kysely, which runs unnamed statements.
+ * @param {EntityManagerLike} em The queue's own.
+ * @param {6 | 7} major
+ * @param {MikroOrmAdapterOptions} options Checked.
+ * @returns {Promise<import('../types.js').Adapter<any>>}
+ */
+async function innerAdapterOf(em, major, { dialect, prepare = false }) {
+    const client = await clientOf(em, major);
+
+    if (major === 6) {
+        return knexAdapter(client, dialect === 'postgres' ? { prepare } : { dialect });
+    }
+
+    const kysely = kyselyAdapter(client, { dialect });
+
+    if (!prepare) {
+        return kysely;
+    }
+
+    /** @type {any} */
+    let pool;
+
+    try {
+        pool = await em.getConnection('write').getNativeClient();
+    } catch (error) {
+        throw new ConfigError('mikroOrmAdapter: "prepare" needs the pg pool of MikroORM, not a Kysely instance or '
+            + 'dialect of `driverOptions`', { cause: error });
+    }
+
+    if (typeof pool?.connect !== 'function' || typeof pool.totalCount !== 'number') {
+        throw new ConfigError('mikroOrmAdapter: "prepare" needs the pg pool of MikroORM');
+    }
+
+    const pg = pgAdapter(pool, { prepare: true });
+
+    return {
+        ...kysely,
+        queue: pg.queue,
+        withConnection: pg.withConnection,
+        queueTransaction: pg.queueTransaction,
+    };
+}
+
+/**
  * An executor that runs on the executor that it gets, once.
  * @param {() => Promise<import('../types.js').Executor>} getExecutor
  * @returns {import('../types.js').Executor}
@@ -134,6 +185,15 @@ export function mikroOrmAdapter(em, options) {
         throw new ConfigError('mikroOrmAdapter: "dialect" must be "mysql", "mariadb" or "postgres"');
     }
 
+    if (options.prepare && dialect !== 'postgres') {
+        throw new ConfigError('mikroOrmAdapter: "prepare" is for PostgreSQL');
+    }
+
+    // getNativeClient(): MikroORM 7.2
+    if (options.prepare && major === 7 && typeof em.getConnection('write').getNativeClient !== 'function') {
+        throw new ConfigError('mikroOrmAdapter: "prepare" needs MikroORM 6, or 7.2 and later');
+    }
+
     /** @type {import('../types.js').Adapter<any> | undefined} The knex or Kysely adapter, over the queue's client */
     let inner;
     /** @type {Promise<import('../types.js').Adapter<any>> | undefined} */
@@ -142,10 +202,7 @@ export function mikroOrmAdapter(em, options) {
     /** @returns {Promise<import('../types.js').Adapter<any>>} */
     const getInner = () => {
         innerReady ??= (async () => {
-            const client = await clientOf(em, major);
-            const created = major === 6
-                ? knexAdapter(client, dialect === 'postgres' ? undefined : { dialect })
-                : kyselyAdapter(client, { dialect });
+            const created = await innerAdapterOf(em, major, options);
 
             if (created.dialect !== dialect) {
                 throw new ConfigError(

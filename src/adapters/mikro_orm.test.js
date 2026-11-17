@@ -77,3 +77,19 @@ test('afterCommit, MikroORM 7: in a savepoint, no hook (sqlane re-probes); outsi
     expect(adapter.afterCommit?.(fakeEntityManager(), () => wakes++)).toBe(true);
     expect(wakes).toBe(1);
 });
+
+test.each(['mysql', 'mariadb'])('{ prepare: true } on %s: a ConfigError', (dialect) => {
+    expect(() => mikroOrmAdapter(fakeEntityManager(), /** @type {any} */ ({ dialect, prepare: true })))
+        .toThrow('"prepare" is for PostgreSQL');
+});
+
+test('{ prepare: true } on MikroORM 7.0 or 7.1 (no getNativeClient): a ConfigError', () => {
+    expect(() => mikroOrmAdapter(fakeEntityManager(), { dialect: 'postgres', prepare: true }))
+        .toThrow('"prepare" needs MikroORM 6, or 7.2 and later');
+});
+
+test('{ prepare: true } on MikroORM 7.2: accepted', () => {
+    const em = { ...fakeEntityManager(), getConnection: () => ({ getClient: method, getNativeClient: method }) };
+
+    expect(mikroOrmAdapter(em, { dialect: 'postgres', prepare: true }).dialect).toBe('postgres');
+});
