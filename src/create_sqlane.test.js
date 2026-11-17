@@ -448,9 +448,11 @@ describe('the check of the server', () => {
         });
         await sqlane.close({ deadline: 0 });
 
-        expect(statements[0]).toBe('SELECT VERSION() AS version');
+        // The probes of the dispatcher (`delay_ms`) come after the check; the recovery may run before it
+        const firstProbe = statements.findIndex(sql => sql.includes('delay_ms'));
+
         expect(statements.filter(sql => sql === 'SELECT VERSION() AS version')).toHaveLength(1);
-        expect(statements.length).toBeGreaterThan(1);
+        expect(firstProbe).toBeGreaterThan(statements.indexOf('SELECT VERSION() AS version'));
     });
 
     test('a database that is down at start(), then the wrong one: an error event, and no claim', async () => {
