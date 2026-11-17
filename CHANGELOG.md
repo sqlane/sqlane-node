@@ -17,7 +17,8 @@
     argument is now required on every adapter. To run on an older server, pass `allowUnsupportedDbVersion: true` to the
     adapter: sqlane then logs a warning through the `logger` of `createSqlane` instead of throwing. On MySQL and MariaDB,
     make `sql_mode` strict (on RDS and Aurora, in the DB parameter group), or pass `allowUnsupportedDbConfiguration: true`
-    for a warning instead. `NO_BACKSLASH_ESCAPES` has no option: remove it.
+    for a warning instead. `NO_BACKSLASH_ESCAPES` has no option: remove it. See
+    [Migrating from 6.x to 7.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/7.md).
 
 ## 6.1.0
 
@@ -104,7 +105,7 @@
 ### Major Changes
 
 - [#101](https://github.com/sqlane/sqlane-node/pull/101) [`efcaa89`](https://github.com/sqlane/sqlane-node/commit/efcaa890ce240a0e6623e40c23788d298b00179e) - Fair sharing of slots across job names, and concurrency groups. See the
-  [migration guide](https://github.com/sqlane/sqlane-node/blob/main/docs/migrating-to-5.md).
+  [migration guide](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/5.md).
 
     Breaking:
 

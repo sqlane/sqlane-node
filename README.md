@@ -249,9 +249,11 @@ const { completed, failed } = await sqlane.drain();
   [performance comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_vs_other_libs.md) measures their cost.
 - The [design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md) explains how sqlane works inside.
 - The [examples folder](https://github.com/sqlane/sqlane-node/tree/main/examples) has more examples.
-- The [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists the changes of each version, and
-  the [migration guide to 6.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/6.md) the changes of
-  your code from 5.x ([to 5.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/5.md) from 4.x).
+- The [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists the changes of each version. The
+  migration guides show how to upgrade your code to a new major version:
+    - [6.x → 7.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/7.md)
+    - [5.x → 6.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/6.md)
+    - [4.x → 5.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/5.md)
 - The [contributing guide](https://github.com/sqlane/sqlane-node/blob/main/CONTRIBUTING.md) explains the project setup.
 
 ## Versioning

@@ -20,7 +20,7 @@ body:
     id: sqlane
     attributes:
       label: '@sqlane/core version'
-      placeholder: 0.8.0
+      placeholder: 7.0.0
     validations:
       required: true
   - type: input
@@ -37,6 +37,17 @@ body:
       placeholder: mysql2 3.24.6, Prisma 7.10.1
     validations:
       required: true
+  - type: input
+    id: adapter
+    attributes:
+      label: Adapter call
+      placeholder: "mysql2Adapter(queuePool, { dialect: 'mysql' })"
+  - type: input
+    id: sql_mode
+    attributes:
+      label: sql_mode (MySQL and MariaDB)
+      description: The result of `SELECT @@SESSION.sql_mode` on a connection of the queue's pool.
+      placeholder: ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
   - type: input
     id: node
     attributes:
