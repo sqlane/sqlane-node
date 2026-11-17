@@ -353,9 +353,10 @@ export async function rateLimited(executor, p, job, { limits, retryAfterMs, erro
  * row each, none: one row with null ids), and on each row whether there are ended lingers, orphan slots, blocked jobs
  * and rows of rate keys whose tat passed. So an idle recovery costs one statement: the parts with nothing to do do not
  * run. A part that the read misses (a row of a transaction that commits after it) runs at the next recovery. The
- * stale jobs and the rate rows compare with the start of the statement, not with clock_timestamp(): a stable value is
- * an index condition, so the read finds them in their index instead of reading all running jobs and all rate rows.
- * The recovery of a job checks its lease again, with the clock.
+ * times compare with the start of the statement, not with clock_timestamp(): a stable value is an index condition, so
+ * the read finds the stale jobs and the rate rows in their index instead of reading all running jobs and all rate
+ * rows (the lingers have no index on their time: the same, for one clock). The recovery of a job checks its lease
+ * again, with the clock.
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit Of the stale jobs.
@@ -366,7 +367,9 @@ export async function readRecoveryWork(executor, p, limit) {
     return executor.query(`
         SELECT stale.id, stale.job_name, parts.*
           FROM (
-              SELECT EXISTS (SELECT 1 FROM ${p}concurrency_slots WHERE held_until < ${NOW})::int AS lingers,
+              SELECT EXISTS (
+                         SELECT 1 FROM ${p}concurrency_slots WHERE held_until < statement_timestamp()
+                     )::int AS lingers,
                      EXISTS (
                          SELECT 1 FROM ${p}concurrency_slots s
                           WHERE s.held_until IS NULL AND NOT EXISTS (

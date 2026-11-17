@@ -79,6 +79,8 @@ const INSERT_RATE_SQL = {
 
 /** The first parameter of a statement */
 const FIRST_PARAM = { mysql: '?', postgres: '$1' };
+/** The second parameter of a statement */
+const SECOND_PARAM = { mysql: '?', postgres: '$2' };
 /** A stall recovery that finds no work */
 const NO_RECOVERY_WORK = { stale: [], lingers: false, orphans: false, blocked: false, idleRateKeys: false };
 const LEASE_MS = 240_000;
@@ -633,6 +635,36 @@ describe('stall recovery', () => {
         // A row whose tat is ahead is not idle
         await expect(tables.store.findRecoveryWork(0)).resolves.toStrictEqual(NO_RECOVERY_WORK);
     });
+});
+
+test('sweepSlots: the blocked part unblocks a concurrency key with room and a rate key whose time came; without '
+    + 'it, they stay blocked', async () => {
+    const tables = await freshTables();
+    const { p } = tables;
+    const quick = defineRateLimit({ name: 'quick', max: 10, per: '1s' });
+    const runAt = new Date(Date.now() - 1000);
+    const onKey = await tables.sqlane.enqueue(testAdapter.pool, withKeys, { orderId: 1 }, { runAt });
+    const onRate = await tables.sqlane.enqueue(testAdapter.pool, withKeys, { orderId: 2 }, {
+        globalRateLimits: [quick.key('a')],
+        runAt,
+    });
+    const block = `UPDATE ${p}jobs SET status = 'blocked', blocked_on = ${FIRST_PARAM[database.family]}
+                    WHERE id = ${SECOND_PARAM[database.family]}`;
+
+    // No slot of order:1 is held, and @quick:a has no row: both have room
+    await database.query(block, ['order:1', onKey.id]);
+    await database.query(block, ['@quick:a', onRate.id]);
+    await expect(tables.store.sweepSlots(100, { lingers: false, orphans: false, blocked: false })).resolves
+        .toStrictEqual({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] });
+    await expect(readJob(p, onKey.id)).resolves.toMatchObject({ status: 'blocked' });
+    await expect(readJob(p, onRate.id)).resolves.toMatchObject({ status: 'blocked' });
+
+    const swept = await tables.store.sweepSlots(100, { lingers: false, orphans: false, blocked: true });
+
+    expect(swept).toMatchObject({ lingers: 0, orphans: 0, rateWaits: [{ key: '@quick:a', delayMs: expect.any(Number) }] });
+    expect(swept.unblocked).toBeGreaterThan(0);
+    await expect(readJob(p, onKey.id)).resolves.toMatchObject({ status: 'pending' });
+    await expect(readJob(p, onRate.id)).resolves.toMatchObject({ status: 'pending' });
 });
 
 test('sweepSlots: deletes the ended lingers and the slots without their running job', async () => {
