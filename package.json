@@ -1,6 +1,6 @@
 {
     "name": "@sqlane/core",
-    "version": "6.1.0",
+    "version": "7.0.0",
     "description": "Transactional job queue for Node.js on MySQL, MariaDB and PostgreSQL",
     "keywords": [
         "background-jobs",
