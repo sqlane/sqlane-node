@@ -123,7 +123,10 @@ async function migratePostgres(executor, p, lockTimeoutMs, inTransaction) {
     try {
         // SET LOCAL: until the end of the transaction, then the pooled connection gets its settings back
         await executor.query('SET LOCAL statement_timeout = 0', []);
-        await executor.query(`SET LOCAL lock_timeout = ${Math.max(1, lockTimeoutMs)}`, []);
+        // set_config(…, true) is SET LOCAL with a parameter: one SQL text for every timeout (one prepared statement)
+        await executor.query('SELECT set_config(\'lock_timeout\', $1, true) AS lock_timeout', [
+            `${Math.max(1, lockTimeoutMs)}ms`,
+        ]);
 
         try {
             // In FROM: the function returns void, a type that some clients cannot read (Prisma)
