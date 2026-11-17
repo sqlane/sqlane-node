@@ -19,6 +19,8 @@ import { isQuickRetryError, isUnknownSystemVariableError } from '../transient_er
 const MAX_SWEEP_RETRIES = 3;
 const SWEEP_RETRY_MIN_MS = 5;
 const SWEEP_RETRY_JITTER_MS = 25;
+/** @type {SweepParts} */
+const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
 
 /**
  * @typedef {object} ProbeRow
@@ -207,12 +209,14 @@ const SWEEP_RETRY_JITTER_MS = 25;
  * @property {(job: OwnedJob, params: RateLimitedParams) => Promise<RateLimitedResult>} rateLimited The handler threw a
  *     RateLimitedError on global rate keys of the job: their next start is `retryAfter` from now at the earliest, the
  *     job is blocked on the first of them, without an attempt used; its slots are freed.
- * @property {(limit: number) => Promise<{ id: string, name: string }[]>} findStaleJobs
+ * @property {(limit: number) => Promise<RecoveryWork>} findRecoveryWork One read, with no lock: the stale jobs, and
+ *     the parts of the sweep that have work.
  * @property {(id: string, params: { leaseMs: number, buildFailureJob: FailureJobBuilder })
  *     => Promise<StaleJobResult>} recoverStaleJob
- * @property {(limit: number) => Promise<SweepResult>} sweepSlots Deletes the ended lingers and the orphan slots, then
- *     unblocks the jobs blocked on keys with room, and on rate keys whose next start is due. A deadlock, a
- *     serialization failure or a 1020 runs it again at once, up to 3 times.
+ * @property {(limit: number, parts?: SweepParts) => Promise<SweepResult>} sweepSlots Deletes the ended lingers and
+ *     the orphan slots, then unblocks the jobs blocked on keys with room, and on rate keys whose next start is due:
+ *     the `parts` only (default: all). No part: no transaction. A deadlock, a serialization failure or a 1020 runs it
+ *     again at once, up to 3 times.
  * @property {(limit: number) => Promise<number>} deleteIdleRateKeys Deletes a batch of rows of rate keys whose tat
  *     passed: the same as no row. SKIP LOCKED.
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
@@ -242,6 +246,20 @@ const SWEEP_RETRY_JITTER_MS = 25;
  * @typedef {object} RateLimitedResult
  * @property {boolean} changed False: the lease was lost; nothing changed.
  * @property {number} delayMs The time until the job may start on the key that it is blocked on.
+ */
+
+/**
+ * The parts of the sweep of the slots to run.
+ * @typedef {object} SweepParts
+ * @property {boolean} lingers Ended lingers.
+ * @property {boolean} orphans Slots without their running job.
+ * @property {boolean} blocked Jobs blocked on a key: concurrency or rate.
+ */
+
+/**
+ * The work of a stall recovery, as one read found it.
+ * @typedef {SweepParts & { stale: { id: string, name: string }[], idleRateKeys: boolean }} RecoveryWork stale: the
+ *     running jobs whose lease ended, the oldest first. idleRateKeys: rows of rate keys whose tat passed.
  */
 
 /**
@@ -332,13 +350,18 @@ export function createStore(adapter, tablePrefix, logger) {
      * other orders: a deadlock (or a serialization failure, a 1020) says nothing about the next try, so it runs again
      * at once, as a turn of the dispatcher. Not a lock wait timeout: the lock is likely still held.
      * @param {number} limit
+     * @param {SweepParts} parts
      * @returns {Promise<SweepResult>}
      */
-    async function sweepSlots(limit) {
+    async function sweepSlots(limit, parts) {
+        if (!parts.lingers && !parts.orphans && !parts.blocked) {
+            return { lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] };
+        }
+
         for (let retry = 1; ; retry++) {
             try {
                 // oxlint-disable-next-line no-await-in-loop -- one try after the other
-                return await inQueue(executor => final.sweepSlots(executor, p, limit));
+                return await inQueue(executor => final.sweepSlots(executor, p, limit, parts));
             } catch (error) {
                 if (!isQuickRetryError(error) || retry > MAX_SWEEP_RETRIES) {
                     throw error;
@@ -389,7 +412,20 @@ export function createStore(adapter, tablePrefix, logger) {
         failJob: (job, params) => inQueue(executor => final.failJob(executor, p, job, params)),
         releaseJob: (job, params) => inQueue(executor => final.releaseJob(executor, p, job, params)),
         rateLimited: (job, params) => inQueue(executor => final.rateLimited(executor, p, job, params)),
-        findStaleJobs: limit => final.findStaleJobs(adapter.queue, p, limit),
+        findRecoveryWork: async (limit) => {
+            const rows = await final.readRecoveryWork(adapter.queue, p, limit);
+            const [parts] = rows;
+
+            return {
+                // No stale job: one row with null ids
+                stale: rows.filter(row => row.id !== null)
+                    .map(row => ({ id: String(row.id), name: String(row.job_name) })),
+                lingers: Number(parts.lingers) > 0,
+                orphans: Number(parts.orphans) > 0,
+                blocked: Number(parts.blocked) > 0,
+                idleRateKeys: Number(parts.idle_rate_keys) > 0,
+            };
+        },
         recoverStaleJob: (id, params) => inQueue(executor => final.recoverStaleJob(executor, p, id, params)),
         unblock: (keys) => {
             // A rate key has no slots: its room is its quota (unblockRates)
@@ -416,7 +452,7 @@ export function createStore(adapter, tablePrefix, logger) {
 
             return { names, waits: waits.map(({ key, delayMs, debtUs, left }) => ({ key, delayMs, debtUs, left })) };
         },
-        sweepSlots,
+        sweepSlots: (limit, parts = ALL_SWEEP_PARTS) => sweepSlots(limit, parts),
         deleteIdleRateKeys: limit => inQueue(executor => final.deleteIdleRateKeys(executor, p, limit)),
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
         makeDue: names => inQueue(executor => final.makeDue(executor, p, names)),

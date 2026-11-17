@@ -477,7 +477,12 @@ A lease is the time for which a process owns a running job. A lease lasts 4 minu
   renew a lease until 30 s before it ends, it aborts the handler's `signal` with a `LeaseLostError` and emits
   `lease_lost`. The job no longer belongs to the process.
 - Each process runs stall recovery about every 30 s. It handles at most 100 jobs per run, and one transaction per
-  job. A `running` job whose lease has ended gets one more stall. It goes back to `pending` with a delay of
+  job. Its first statement is one read without locks: the stale jobs, and whether there is work for each part of the
+  sweep (ended lingers, orphan slots, blocked jobs, rate rows whose `tat` passed). Only the parts with work run, so an
+  idle recovery is that one statement. A row that commits after the read waits for the next recovery, about 30 s; the
+  unblocks after the claims and releases, and the timers of the rate keys, do not wait for it. On PostgreSQL the read
+  compares the leases and the `tat`s with the start of the statement, so their indexes find them; the recovery of a
+  job checks its lease again. A `running` job whose lease has ended gets one more stall. It goes back to `pending` with a delay of
   30 s × 2^stalls, which is at most 1 h. So the first stall delays the job by 30 s, and the second stall by 60 s. After
   `maxStalls` stalls (2 by default), the next stall fails the job.
 - The keys of a stalled job linger for one more lease (4 minutes, in `held_until`) instead of being deleted, because

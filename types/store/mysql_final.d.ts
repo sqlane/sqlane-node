@@ -84,15 +84,17 @@ export declare function releaseJob(executor: Executor, p: string, job: OwnedJob,
  */
 export declare function rateLimited(executor: Executor, p: string, job: OwnedJob, { limits, retryAfterMs, error }: import('./store.js').RateLimitedParams): Promise<import('./store.js').RateLimitedResult>;
 /**
+ * The work of the stall recovery, in one read with no lock: the running jobs whose lease ended, the oldest first (a
+ * row each, none: one row with null ids), and on each row whether there are ended lingers, orphan slots, blocked jobs
+ * and rows of rate keys whose tat passed. So an idle recovery costs one statement: the parts with nothing to do do not
+ * run. A part that the read misses (a row of a transaction that commits after it) runs at the next recovery.
  * @param {Executor} executor
  * @param {string} p
- * @param {number} limit
- * @returns {Promise<{ id: string, name: string }[]>} The running jobs whose lease ended, the oldest first.
+ * @param {number} limit Of the stale jobs.
+ * @returns {Promise<readonly Record<string, unknown>[]>} id, job_name, and the parts: lingers, orphans, blocked,
+ *     idle_rate_keys (0 or 1).
  */
-export declare function findStaleJobs(executor: Executor, p: string, limit: number): Promise<{
-    id: string;
-    name: string;
-}[]>;
+export declare function readRecoveryWork(executor: Executor, p: string, limit: number): Promise<readonly Record<string, unknown>[]>;
 /**
  * A running job whose lease ended: one more stall, pending again after 30 s × 2^stalls (at most 1 h); after maxStalls,
  * it fails for good. Its slots linger for one lease: its old handler may still run.
@@ -143,9 +145,11 @@ export declare function unblockRates(executor: Executor, p: string, keys: string
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit
+ * @param {import('./store.js').SweepParts} parts The parts to run: those that the read of the recovery
+ *     found work for (readRecoveryWork). A part left out counts 0.
  * @returns {Promise<import('./store.js').SweepResult>}
  */
-export declare function sweepSlots(executor: Executor, p: string, limit: number): Promise<import('./store.js').SweepResult>;
+export declare function sweepSlots(executor: Executor, p: string, limit: number, parts: import('./store.js').SweepParts): Promise<import('./store.js').SweepResult>;
 /**
  * Deletes a batch of rows of rate keys whose tat passed: such a key has its full quota, as without a row. SKIP LOCKED:
  * a claim holds the rows of its keys.

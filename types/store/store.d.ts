@@ -276,20 +276,22 @@ export type Store = {
      * job is blocked on the first of them, without an attempt used; its slots are freed.
      */
     rateLimited: (job: OwnedJob, params: RateLimitedParams) => Promise<RateLimitedResult>;
-    findStaleJobs: (limit: number) => Promise<{
-        id: string;
-        name: string;
-    }[]>;
+    /**
+     * One read, with no lock: the stale jobs, and
+     * the parts of the sweep that have work.
+     */
+    findRecoveryWork: (limit: number) => Promise<RecoveryWork>;
     recoverStaleJob: (id: string, params: {
         leaseMs: number;
         buildFailureJob: FailureJobBuilder;
     }) => Promise<StaleJobResult>;
     /**
-     * Deletes the ended lingers and the orphan slots, then
-     * unblocks the jobs blocked on keys with room, and on rate keys whose next start is due. A deadlock, a
-     * serialization failure or a 1020 runs it again at once, up to 3 times.
+     * Deletes the ended lingers and
+     * the orphan slots, then unblocks the jobs blocked on keys with room, and on rate keys whose next start is due:
+     * the `parts` only (default: all). No part: no transaction. A deadlock, a serialization failure or a 1020 runs it
+     * again at once, up to 3 times.
      */
-    sweepSlots: (limit: number) => Promise<SweepResult>;
+    sweepSlots: (limit: number, parts?: SweepParts) => Promise<SweepResult>;
     /**
      * Deletes a batch of rows of rate keys whose tat
      * passed: the same as no row. SKIP LOCKED.
@@ -340,6 +342,27 @@ export type RateLimitedResult = {
      * The time until the job may start on the key that it is blocked on.
      */
     delayMs: number;
+};
+export type SweepParts = {
+    /**
+     * Ended lingers.
+     */
+    lingers: boolean;
+    /**
+     * Slots without their running job.
+     */
+    orphans: boolean;
+    /**
+     * Jobs blocked on a key: concurrency or rate.
+     */
+    blocked: boolean;
+};
+export type RecoveryWork = SweepParts & {
+    stale: {
+        id: string;
+        name: string;
+    }[];
+    idleRateKeys: boolean;
 };
 export type SweepResult = {
     lingers: number;
@@ -522,12 +545,14 @@ export type SweepResult = {
  * @property {(job: OwnedJob, params: RateLimitedParams) => Promise<RateLimitedResult>} rateLimited The handler threw a
  *     RateLimitedError on global rate keys of the job: their next start is `retryAfter` from now at the earliest, the
  *     job is blocked on the first of them, without an attempt used; its slots are freed.
- * @property {(limit: number) => Promise<{ id: string, name: string }[]>} findStaleJobs
+ * @property {(limit: number) => Promise<RecoveryWork>} findRecoveryWork One read, with no lock: the stale jobs, and
+ *     the parts of the sweep that have work.
  * @property {(id: string, params: { leaseMs: number, buildFailureJob: FailureJobBuilder })
  *     => Promise<StaleJobResult>} recoverStaleJob
- * @property {(limit: number) => Promise<SweepResult>} sweepSlots Deletes the ended lingers and the orphan slots, then
- *     unblocks the jobs blocked on keys with room, and on rate keys whose next start is due. A deadlock, a
- *     serialization failure or a 1020 runs it again at once, up to 3 times.
+ * @property {(limit: number, parts?: SweepParts) => Promise<SweepResult>} sweepSlots Deletes the ended lingers and
+ *     the orphan slots, then unblocks the jobs blocked on keys with room, and on rate keys whose next start is due:
+ *     the `parts` only (default: all). No part: no transaction. A deadlock, a serialization failure or a 1020 runs it
+ *     again at once, up to 3 times.
  * @property {(limit: number) => Promise<number>} deleteIdleRateKeys Deletes a batch of rows of rate keys whose tat
  *     passed: the same as no row. SKIP LOCKED.
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
@@ -554,6 +579,18 @@ export type SweepResult = {
  * @typedef {object} RateLimitedResult
  * @property {boolean} changed False: the lease was lost; nothing changed.
  * @property {number} delayMs The time until the job may start on the key that it is blocked on.
+ */
+/**
+ * The parts of the sweep of the slots to run.
+ * @typedef {object} SweepParts
+ * @property {boolean} lingers Ended lingers.
+ * @property {boolean} orphans Slots without their running job.
+ * @property {boolean} blocked Jobs blocked on a key: concurrency or rate.
+ */
+/**
+ * The work of a stall recovery, as one read found it.
+ * @typedef {SweepParts & { stale: { id: string, name: string }[], idleRateKeys: boolean }} RecoveryWork stale: the
+ *     running jobs whose lease ended, the oldest first. idleRateKeys: rows of rate keys whose tat passed.
  */
 /**
  * @typedef {object} SweepResult

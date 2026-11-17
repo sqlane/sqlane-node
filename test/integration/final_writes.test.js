@@ -70,6 +70,19 @@ const READ_BLOCKED_ON_SQL = {
     postgres: p => `SELECT blocked_on FROM ${p}jobs WHERE id = $1`,
 };
 
+/** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
+const INSERT_RATE_SQL = {
+    mysql: p => `INSERT INTO ${p}rate_limits (limit_key, tat) VALUES (?, UTC_TIMESTAMP(6) + INTERVAL ? SECOND)`,
+    postgres: p => `INSERT INTO ${p}rate_limits (limit_key, tat)
+                    VALUES ($1, clock_timestamp() + $2 * interval '1 second')`,
+};
+
+/** The first parameter of a statement */
+const FIRST_PARAM = { mysql: '?', postgres: '$1' };
+/** The second parameter of a statement */
+const SECOND_PARAM = { mysql: '?', postgres: '$2' };
+/** A stall recovery that finds no work */
+const NO_RECOVERY_WORK = { stale: [], lingers: false, orphans: false, blocked: false, idleRateKeys: false };
 const LEASE_MS = 240_000;
 const defaults = resolveDefaults();
 const order = defineConcurrencyLimit({ name: 'order', max: 1 });
@@ -542,7 +555,9 @@ describe('stall recovery', () => {
         const job = await claimedJob(tables, {}, 1);
 
         await sleep(20);
-        await expect(tables.store.findStaleJobs(10)).resolves.toStrictEqual([{ id: job.id, name: 'sync_order' }]);
+        await expect(tables.store.findRecoveryWork(10)).resolves.toMatchObject({
+            stale: [{ id: job.id, name: 'sync_order' }],
+        });
         const recovered = await tables.store.recoverStaleJob(job.id, { leaseMs: 60_000, buildFailureJob });
 
         // The run that stalled: the first attempt, started more than 20 ms ago
@@ -574,8 +589,82 @@ describe('stall recovery', () => {
         const tables = await freshTables();
 
         await claimedJob(tables);
-        await expect(tables.store.findStaleJobs(10)).resolves.toStrictEqual([]);
+        await expect(tables.store.findRecoveryWork(10)).resolves.toStrictEqual(NO_RECOVERY_WORK);
     });
+
+    test('findRecoveryWork: the stale jobs, the oldest lease first, and the parts of the sweep with work', async () => {
+        const tables = await freshTables();
+        const { p } = tables;
+        const family = database.family;
+        const param = FIRST_PARAM[family];
+
+        await expect(tables.store.findRecoveryWork(10)).resolves.toStrictEqual(NO_RECOVERY_WORK);
+
+        const first = await claimedJob(tables, {}, 1);
+
+        // Its slot goes, so that the second job of the key gets it
+        await database.query(`DELETE FROM ${p}concurrency_slots WHERE job_id = ${param}`, [first.id]);
+        await sleep(5);
+
+        const second = await claimedJob(tables, {}, 1);
+
+        await sleep(20);
+        await expect(tables.store.findRecoveryWork(10)).resolves.toStrictEqual({
+            ...NO_RECOVERY_WORK,
+            stale: [{ id: first.id, name: 'sync_order' }, { id: second.id, name: 'sync_order' }],
+        });
+        await expect(tables.store.findRecoveryWork(1)).resolves.toMatchObject({ stale: [{ id: first.id }] });
+
+        // Each part with work, one at a time
+        await database.query(INSERT_HOLD_SQL[family](p), ['ended', 'gone', 'old', -1]);
+        await expect(tables.store.findRecoveryWork(0)).resolves.toStrictEqual({ ...NO_RECOVERY_WORK, lingers: true });
+        await database.query(`DELETE FROM ${p}concurrency_slots WHERE limit_key = 'ended'`);
+        await database.query(INSERT_ORPHAN_SQL[family](p), ['orphan', 'gone', 'old']);
+        await expect(tables.store.findRecoveryWork(0)).resolves.toStrictEqual({ ...NO_RECOVERY_WORK, orphans: true });
+        await database.query(`DELETE FROM ${p}concurrency_slots WHERE limit_key = 'orphan'`);
+        await database.query(`UPDATE ${p}jobs SET status = 'blocked', blocked_on = 'order:9' WHERE id = ${param}`,
+            [first.id]);
+        await expect(tables.store.findRecoveryWork(0)).resolves.toStrictEqual({ ...NO_RECOVERY_WORK, blocked: true });
+        await database.query(`UPDATE ${p}jobs SET status = 'running', blocked_on = NULL WHERE id = ${param}`,
+            [first.id]);
+        await database.query(INSERT_RATE_SQL[family](p), ['@api:1', -1]);
+        await database.query(INSERT_RATE_SQL[family](p), ['@api:2', 60]);
+        await expect(tables.store.findRecoveryWork(0)).resolves
+            .toStrictEqual({ ...NO_RECOVERY_WORK, idleRateKeys: true });
+        await expect(tables.store.deleteIdleRateKeys(100)).resolves.toBe(1);
+        // A row whose tat is ahead is not idle
+        await expect(tables.store.findRecoveryWork(0)).resolves.toStrictEqual(NO_RECOVERY_WORK);
+    });
+});
+
+test('sweepSlots: the blocked part unblocks a concurrency key with room and a rate key whose time came; without '
+    + 'it, they stay blocked', async () => {
+    const tables = await freshTables();
+    const { p } = tables;
+    const quick = defineRateLimit({ name: 'quick', max: 10, per: '1s' });
+    const runAt = new Date(Date.now() - 1000);
+    const onKey = await tables.sqlane.enqueue(testAdapter.pool, withKeys, { orderId: 1 }, { runAt });
+    const onRate = await tables.sqlane.enqueue(testAdapter.pool, withKeys, { orderId: 2 }, {
+        globalRateLimits: [quick.key('a')],
+        runAt,
+    });
+    const block = `UPDATE ${p}jobs SET status = 'blocked', blocked_on = ${FIRST_PARAM[database.family]}
+                    WHERE id = ${SECOND_PARAM[database.family]}`;
+
+    // No slot of order:1 is held, and @quick:a has no row: both have room
+    await database.query(block, ['order:1', onKey.id]);
+    await database.query(block, ['@quick:a', onRate.id]);
+    await expect(tables.store.sweepSlots(100, { lingers: false, orphans: false, blocked: false })).resolves
+        .toStrictEqual({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] });
+    await expect(readJob(p, onKey.id)).resolves.toMatchObject({ status: 'blocked' });
+    await expect(readJob(p, onRate.id)).resolves.toMatchObject({ status: 'blocked' });
+
+    const swept = await tables.store.sweepSlots(100, { lingers: false, orphans: false, blocked: true });
+
+    expect(swept).toMatchObject({ lingers: 0, orphans: 0, rateWaits: [{ key: '@quick:a', delayMs: expect.any(Number) }] });
+    expect(swept.unblocked).toBeGreaterThan(0);
+    await expect(readJob(p, onKey.id)).resolves.toMatchObject({ status: 'pending' });
+    await expect(readJob(p, onRate.id)).resolves.toMatchObject({ status: 'pending' });
 });
 
 test('sweepSlots: deletes the ended lingers and the slots without their running job', async () => {
@@ -587,9 +676,14 @@ test('sweepSlots: deletes the ended lingers and the slots without their running 
     await database.query(insertHold, ['future', 'gone', 'old', 3600]);
     await database.query(INSERT_ORPHAN_SQL[database.family](tables.p), ['orphan', 'gone', 'old']);
 
+    // Only the parts asked for
+    await expect(tables.store.sweepSlots(100, { lingers: false, orphans: false, blocked: true })).resolves
+        .toStrictEqual({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] });
+    await expect(tables.store.sweepSlots(100, { lingers: false, orphans: true, blocked: false })).resolves
+        .toStrictEqual({ lingers: 0, orphans: 1, unblocked: 0, rateWaits: [] });
     await expect(tables.store.sweepSlots(100)).resolves.toStrictEqual({
         lingers: 1,
-        orphans: 1,
+        orphans: 0,
         unblocked: 0,
         rateWaits: [],
     });
