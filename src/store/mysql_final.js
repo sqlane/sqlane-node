@@ -327,19 +327,38 @@ export async function rateLimited(executor, p, job, { limits, retryAfterMs, erro
 }
 
 /**
+ * The work of the stall recovery, in one read with no lock: the running jobs whose lease ended, the oldest first (a
+ * row each, none: one row with null ids), and on each row whether there are ended lingers, orphan slots, blocked jobs
+ * and rows of rate keys whose tat passed. So an idle recovery costs one statement: the parts with nothing to do do not
+ * run. A part that the read misses (a row of a transaction that commits after it) runs at the next recovery.
  * @param {Executor} executor
  * @param {string} p
- * @param {number} limit
- * @returns {Promise<{ id: string, name: string }[]>} The running jobs whose lease ended, the oldest first.
+ * @param {number} limit Of the stale jobs.
+ * @returns {Promise<readonly Record<string, unknown>[]>} id, job_name, and the parts: lingers, orphans, blocked,
+ *     idle_rate_keys (0 or 1).
  */
-export async function findStaleJobs(executor, p, limit) {
-    const rows = await executor.query(`
-        SELECT id, job_name FROM ${p}jobs FORCE INDEX (${p}jobs_status_name_run_at)
-         WHERE status = 'running' AND locked_until < ${NOW}
-         ORDER BY locked_until LIMIT ?
+export async function readRecoveryWork(executor, p, limit) {
+    return executor.query(`
+        SELECT stale.id, stale.job_name, parts.*
+          FROM (
+              SELECT EXISTS (SELECT 1 FROM ${p}concurrency_slots WHERE held_until < ${NOW}) AS lingers,
+                     EXISTS (
+                         SELECT 1 FROM ${p}concurrency_slots s
+                          WHERE s.held_until IS NULL AND NOT EXISTS (
+                              SELECT 1 FROM ${p}jobs j
+                               WHERE j.id = s.job_id AND j.status = 'running' AND j.lock_token = s.lock_token
+                          )
+                     ) AS orphans,
+                     EXISTS (SELECT 1 FROM ${p}jobs FORCE INDEX (${p}jobs_blocked) WHERE status = 'blocked') AS blocked,
+                     EXISTS (SELECT 1 FROM ${p}rate_limits WHERE tat < ${NOW_US}) AS idle_rate_keys
+          ) AS parts
+          LEFT JOIN (
+              SELECT id, job_name, locked_until FROM ${p}jobs FORCE INDEX (${p}jobs_status_name_run_at)
+               WHERE status = 'running' AND locked_until < ${NOW}
+               ORDER BY locked_until LIMIT ?
+          ) AS stale ON TRUE
+         ORDER BY stale.locked_until
     `, [limit]);
-
-    return rows.map(row => ({ id: String(row.id), name: String(row.job_name) }));
 }
 
 /**
@@ -621,27 +640,34 @@ async function admitLocked(executor, p, keys) {
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit
+ * @param {import('./store.js').SweepParts} parts The parts to run: those that the read of the recovery
+ *     found work for (readRecoveryWork). A part left out counts 0.
  * @returns {Promise<import('./store.js').SweepResult>}
  */
-export async function sweepSlots(executor, p, limit) {
+export async function sweepSlots(executor, p, limit, parts) {
     // SKIP LOCKED, then by primary key: a DELETE that scans waits for the slots that claims and releases hold, while it
     // holds the lingers that it deleted, which they may wait for: a deadlock. A locked linger goes at the next sweep
-    const ended = await executor.query(`
-        SELECT limit_key, slot FROM ${p}concurrency_slots WHERE held_until < ${NOW}
-         ORDER BY limit_key, slot LIMIT ? FOR UPDATE SKIP LOCKED
-    `, [limit]);
+    const ended = parts.lingers
+        ? await executor.query(`
+            SELECT limit_key, slot FROM ${p}concurrency_slots WHERE held_until < ${NOW}
+             ORDER BY limit_key, slot LIMIT ? FOR UPDATE SKIP LOCKED
+        `, [limit])
+        : [];
     const lingers = ended.length
         ? await executor.run(`
             DELETE FROM ${p}concurrency_slots WHERE (limit_key, slot) IN (${ended.map(() => '(?, ?)').join(', ')})
         `, ended.flatMap(row => [String(row.limit_key), Number(row.slot)]))
         : 0;
-    const orphanSlots = await executor.query(`
-        SELECT s.limit_key, s.slot FROM ${p}concurrency_slots s
-         WHERE s.held_until IS NULL AND NOT EXISTS (
-             SELECT 1 FROM ${p}jobs j WHERE j.id = s.job_id AND j.status = 'running' AND j.lock_token = s.lock_token
-         )
-         LIMIT ?
-    `, [limit]);
+    const orphanSlots = parts.orphans
+        ? await executor.query(`
+            SELECT s.limit_key, s.slot FROM ${p}concurrency_slots s
+             WHERE s.held_until IS NULL AND NOT EXISTS (
+                 SELECT 1 FROM ${p}jobs j
+                  WHERE j.id = s.job_id AND j.status = 'running' AND j.lock_token = s.lock_token
+             )
+             LIMIT ?
+        `, [limit])
+        : [];
     const orphans = orphanSlots.length
         ? await executor.run(`
             DELETE s FROM ${p}concurrency_slots s LEFT JOIN ${p}jobs j
@@ -653,6 +679,10 @@ export async function sweepSlots(executor, p, limit) {
     let unblocked = 0;
     /** @type {import('../gcra.js').RateWait[]} */
     const rateWaits = [];
+
+    if (!parts.blocked) {
+        return { lingers, orphans, unblocked, rateWaits };
+    }
 
     // The keys with blocked jobs, a batch at a time: a loose index scan of the blocked jobs
     for (let after = ''; ;) {

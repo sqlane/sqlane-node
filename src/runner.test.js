@@ -9,6 +9,9 @@ import { createHintChannel } from './hint_channel.js';
 import { createRegistry } from './registry.js';
 import { createRunner } from './runner.js';
 
+/** A stall recovery that finds no work: no stale job, nothing to sweep */
+const NO_RECOVERY_WORK = { stale: [], lingers: false, orphans: false, blocked: false, idleRateKeys: false };
+
 /**
  * A runner over a store of no jobs, whose makeDue() fails as given, call after call.
  * @param {unknown[]} makeDueErrors
@@ -32,7 +35,7 @@ function runnerWith(makeDueErrors) {
         findCandidates: async () => [],
         probe: async () => [{ name: 'ping', delayMs: 0 }],
         claimDue: async () => ({ jobs: [], next: [] }),
-        findStaleJobs: async () => [],
+        findRecoveryWork: async () => NO_RECOVERY_WORK,
         sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
         deleteIdleRateKeys: async () => 0,
     }));
@@ -363,7 +366,7 @@ function runnerWithHeldJobs(withKeys, {
             new Set(jobs.map(job => job.id))
         ),
         releaseJob: async () => true,
-        findStaleJobs: async () => [],
+        findRecoveryWork: async () => NO_RECOVERY_WORK,
     }));
     const lane = defineConcurrencyLimit({ name: 'lane', max: laneConcurrency });
     const definition = withKeys
@@ -664,7 +667,7 @@ async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
         },
         releaseJob: async () => true,
         completeJobs: async (/** @type {unknown[]} */ jobs) => jobs.length,
-        findStaleJobs: async () => [],
+        findRecoveryWork: async () => NO_RECOVERY_WORK,
     }));
 
     registry.handle('ping', ({ signal }) => new Promise((resolve) => {
@@ -862,12 +865,12 @@ test.each([
     let stale = [{ id: 'job-9', name: 'ping' }];
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
         probe: async () => [],
-        findStaleJobs: async () => {
+        findRecoveryWork: async () => {
             const found = stale;
 
             stale = [];
 
-            return found;
+            return { ...NO_RECOVERY_WORK, stale: found };
         },
         recoverStaleJob: async () => ({ result, failureJob: null, attempt: 2, runMs: 250_000 }),
         sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
@@ -893,6 +896,58 @@ test.each([
     await waitFor(() => events.some(e => e.type === event.type), 1000);
     await runner.close({ deadline: 0 });
     expect(events.filter(e => e.type === event.type)).toMatchObject([event]);
+});
+
+test.each([
+    { label: 'no work', work: NO_RECOVERY_WORK, deletes: 0 },
+    { label: 'idle rate keys', work: { ...NO_RECOVERY_WORK, idleRateKeys: true }, deletes: 1 },
+])('stall recovery with $label: the sweep gets the parts of the read, the idle rate keys go if any', async ({
+    work,
+    deletes,
+}) => {
+    const registry = createRegistry({
+        jobsByName: new Map(),
+        defaultTimeoutMs: null,
+    });
+    /** @type {unknown[]} */
+    const sweeps = [];
+    let deleted = 0;
+    const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
+        probe: async () => [],
+        findRecoveryWork: async () => work,
+        sweepSlots: async (/** @type {number} */ _limit, /** @type {unknown} */ parts) => {
+            sweeps.push(parts);
+
+            return { lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] };
+        },
+        deleteIdleRateKeys: async () => {
+            deleted++;
+
+            return 0;
+        },
+    }));
+
+    registry.handle('ping', () => {});
+
+    const runner = createRunner({
+        store,
+        registry,
+        localMaxConcurrency: 10,
+        defaults: resolveDefaults(),
+        cleanup: false,
+        logger: undefined,
+        onEvent: () => {},
+        hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+        hintsAfterCommit: false,
+        timings: { recoveryIntervalMs: 20 },
+    });
+
+    await runner.start();
+    // A second run: the first one ended
+    await waitFor(() => sweeps.length > 1, 1000);
+    await runner.close({ deadline: 0 });
+    expect(sweeps[0]).toBe(work);
+    expect(Math.min(deleted, 1)).toBe(deletes);
 });
 
 /** A log function that drops its message. */
@@ -996,7 +1051,7 @@ function storeOfDueNames(names) {
         renewLeases: async (/** @type {import('./store/store.js').OwnedJob[]} */ jobs) => (
             new Set(jobs.map(job => job.id))
         ),
-        findStaleJobs: async () => [],
+        findRecoveryWork: async () => NO_RECOVERY_WORK,
     }));
 
     return { store, requestSizes };
@@ -1125,7 +1180,7 @@ function recordingRunner({ maxConcurrency = 4, names = 2, pointer = 0 } = {}) {
 
             return { jobs: [], blockedKeys: [], blockedNames: [], rateWaits: [] };
         },
-        findStaleJobs: async () => [],
+        findRecoveryWork: async () => NO_RECOVERY_WORK,
         renewLeases: async () => new Set(),
     }));
 
@@ -1249,7 +1304,7 @@ function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}
         unblock: async () => [],
         readPayloads: async (/** @type {string[]} */ ids) => new Map(ids.map(jobId => [jobId, {}])),
         completeJobs: async (/** @type {unknown[]} */ jobs) => jobs.length,
-        findStaleJobs: async () => [],
+        findRecoveryWork: async () => NO_RECOVERY_WORK,
         renewLeases: async () => new Set(),
         namesWaitingFor: async () => [],
     }));
@@ -1392,7 +1447,7 @@ async function runnerWithClaims(errors) {
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
         probe: async () => [{ name: 'ping', delayMs: 0 }],
         // The recovery timer: its first run comes at recoveryIntervalMs × Math.random(), so at times during the test
-        findStaleJobs: async () => [],
+        findRecoveryWork: async () => NO_RECOVERY_WORK,
         sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
         deleteIdleRateKeys: async () => 0,
         claimDue: async () => {
@@ -1599,7 +1654,7 @@ function runnerWithRateKey({ waitMs, unblock = async () => ({ names: [], waits: 
 
             return unblock(keys, floors);
         },
-        findStaleJobs: async () => [],
+        findRecoveryWork: async () => NO_RECOVERY_WORK,
         sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
         deleteIdleRateKeys: async () => 0,
     }));
@@ -1748,7 +1803,7 @@ function runnerOf(registry, store, localMaxConcurrency, events = []) {
             renewLeases: async (/** @type {import('./store/store.js').OwnedJob[]} */ jobs) => (
                 new Set(jobs.map(job => job.id))
             ),
-            findStaleJobs: async () => [],
+            findRecoveryWork: async () => NO_RECOVERY_WORK,
             // The recovery timer: its first run comes at recoveryIntervalMs × Math.random(), at times during a test
             sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
             deleteIdleRateKeys: async () => 0,

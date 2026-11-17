@@ -70,9 +70,11 @@ export function createMaintenance({
 
     async function recoverStaleJobs() {
         const ownIds = new Set([...running.values()].map(job => job.claimed.id));
+        // One read: the stale jobs, and the parts of the sweeps with work. An idle recovery ends with it
+        const work = await store.findRecoveryWork(100);
         let freedKeys = false;
 
-        for (const { id, name } of await store.findStaleJobs(100)) {
+        for (const { id, name } of work.stale) {
             if (state() !== 'started' || ownIds.has(id)) {
                 continue;
             }
@@ -96,7 +98,7 @@ export function createMaintenance({
             }
         }
 
-        const { lingers, orphans, unblocked, rateWaits } = await store.sweepSlots(100);
+        const { lingers, orphans, unblocked, rateWaits } = await store.sweepSlots(100, work);
 
         // The rate keys whose timer was lost: this process takes it over
         for (const { key, delayMs } of rateWaits) {
@@ -109,7 +111,7 @@ export function createMaintenance({
         }
 
         // oxlint-disable-next-line no-unmodified-loop-condition -- close() changes state
-        for (let deleted = BATCH; deleted >= BATCH && state() === 'started';) {
+        for (let deleted = work.idleRateKeys ? BATCH : 0; deleted >= BATCH && state() === 'started';) {
             // oxlint-disable-next-line no-await-in-loop -- batches one after the other
             deleted = await store.deleteIdleRateKeys(BATCH);
         }

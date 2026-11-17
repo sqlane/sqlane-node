@@ -163,6 +163,15 @@ describe.each(/** @type {const} */ (['mysql', 'mariadb', 'postgres']))('sweepSlo
         expect(transactions()).toBe(4);
     });
 
+    test('no part with work: no transaction', async () => {
+        const { store, transactions } = storeFailingWith(dialect, []);
+
+        await expect(store.sweepSlots(100, { lingers: false, orphans: false, blocked: false }))
+            .resolves.toStrictEqual(NOTHING_SWEPT);
+
+        expect(transactions()).toBe(0);
+    });
+
     test('a lock wait timeout: it rejects at once', async () => {
         const timeout = dbError('ER_LOCK_WAIT_TIMEOUT', 1205);
         const { store, transactions } = storeFailingWith(dialect, [timeout]);
