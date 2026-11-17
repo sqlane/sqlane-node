@@ -103,3 +103,72 @@ describe('claimDue on MariaDB without innodb_snapshot_isolation', () => {
         expect(claims.map(sql => sql.includes('innodb_snapshot_isolation'))).toStrictEqual([false]);
     });
 });
+
+/**
+ * A store on a fake adapter whose transactions fail with the given errors, one after the other, then run.
+ * @param {import('../types.js').Dialect} dialect
+ * @param {unknown[]} errors
+ * @returns {{ store: import('./store.js').Store, logger: Record<string, import('vitest').Mock>,
+ *     transactions: () => number }}
+ */
+function storeFailingWith(dialect, errors) {
+    let transactions = 0;
+    const executor = { query: async () => [], run: async () => 0 };
+    const adapter = /** @type {import('../types.js').Adapter<any>} */ (/** @type {unknown} */ ({
+        dialect,
+        queue: executor,
+        queueTransaction: async (/** @type {(e: typeof executor) => Promise<unknown>} */ func) => {
+            const error = errors[transactions];
+
+            transactions++;
+
+            if (error) {
+                throw error;
+            }
+
+            return func(executor);
+        },
+    }));
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    return { store: createStore(adapter, 'sqlane_', logger), logger, transactions: () => transactions };
+}
+
+const NOTHING_SWEPT = { lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] };
+
+describe.each(/** @type {const} */ (['mysql', 'mariadb', 'postgres']))('sweepSlots on %s', (dialect) => {
+    test('a deadlock, a serialization failure, a 1020: the sweep runs again at once, logged at debug', async () => {
+        const { store, logger, transactions } = storeFailingWith(dialect, [
+            dbError('ER_LOCK_DEADLOCK', 1213),
+            dbError('40001', 0),
+            dbError('ER_CHECKREAD', 1020),
+        ]);
+
+        await expect(store.sweepSlots(100)).resolves.toStrictEqual(NOTHING_SWEPT);
+
+        expect(transactions()).toBe(4);
+        expect(logger.debug).toHaveBeenCalledTimes(3);
+        expect(logger.debug).toHaveBeenLastCalledWith(
+            expect.objectContaining({ operation: 'sweep_slots', retry: 3 }),
+            expect.any(String),
+        );
+    });
+
+    test('a 4th one in a row: it rejects', async () => {
+        const error = dbError('ER_LOCK_DEADLOCK', 1213);
+        const { store, transactions } = storeFailingWith(dialect, [error, error, error, error]);
+
+        await expect(store.sweepSlots(100)).rejects.toBe(error);
+
+        expect(transactions()).toBe(4);
+    });
+
+    test('a lock wait timeout: it rejects at once', async () => {
+        const timeout = dbError('ER_LOCK_WAIT_TIMEOUT', 1205);
+        const { store, transactions } = storeFailingWith(dialect, [timeout]);
+
+        await expect(store.sweepSlots(100)).rejects.toBe(timeout);
+
+        expect(transactions()).toBe(1);
+    });
+});

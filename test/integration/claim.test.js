@@ -562,6 +562,28 @@ describe('claimDue', () => {
         expect(results.map(result => result.id)).toStrictEqual(expect.arrayContaining(claimedIds));
     });
 
+    test('a name requested twice: its jobs are claimed once', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const results = await sqlane.enqueueMany(
+            testAdapter.pool,
+            'a',
+            Array.from({ length: 3 }, () => ({ payload: {}, options: { runAt: ago(5) } })),
+        );
+        const b = await sqlane.enqueue(testAdapter.pool, 'b', {}, { runAt: ago(5) });
+        const claimed = await claimDue(store, {
+            requests: [request('a', 5, 0), request('b', 5, 1), request('a', 5, 2)],
+            // MySQL and MariaDB: every locked row
+            choose: locked => locked,
+        });
+        const claimedIds = claimed.map(job => job.id);
+
+        expect(claimedIds.toSorted()).toStrictEqual([...results.map(result => result.id), b.id].toSorted());
+
+        const rows = await database.query(`SELECT id FROM ${p}jobs WHERE status = 'running'`);
+
+        expect(rows).toHaveLength(4);
+    });
+
     test('a job without its payload row: claimed, the payload not found', async () => {
         const { p, sqlane, store } = await freshTables();
         const { id } = await sqlane.enqueue(testAdapter.pool, 'a', { n: 1 }, { runAt: ago(5) });
@@ -845,6 +867,62 @@ describe('global concurrency limits', () => {
         });
         await expect(statuses(p)).resolves.toStrictEqual([{ id: waiting.id, status: 'pending', blocked_on: null }]);
     });
+
+    test('two sweeps that run with claims, releases with a short linger and completions of the same keys: no error',
+        async () => {
+            const { sqlane, store } = await freshTables();
+            const both = defineJob({
+                name: 'both',
+                globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId), client.key(payload.clientId)],
+                timeout: '1m',
+            });
+
+            await sqlane.enqueueMany(testAdapter.pool, both, Array.from({ length: 200 }, (_, at) => ({
+                payload: { orderId: at % 12, clientId: at % 5 },
+                options: { runAt: ago(10) },
+            })));
+
+            const until = Date.now() + 3000;
+            /** @type {unknown[]} */
+            const sweepErrors = [];
+            let sweeps = 0;
+            let claimed = 0;
+            /**
+             * Claims, then releases each other job (its slots linger for 5 ms, it is pending again) and completes the
+             * others, until the end. A claim that collides with another one may fail: the dispatcher retries it.
+             * @param {number} worker
+             */
+            const claimLoop = async (worker) => {
+                for (let turn = 0; Date.now() < until; turn++) {
+                    // oxlint-disable-next-line no-await-in-loop -- one claim after the other
+                    const { jobs } = await claimCandidates(store, new Map([['both', 4]]), `W${worker}T${turn}`)
+                        .catch(() => ({ jobs: [] }));
+
+                    claimed += jobs.length;
+                    // oxlint-disable-next-line no-await-in-loop -- one claim after the other
+                    await Promise.allSettled([
+                        ...jobs.filter((_, at) => at % 2 === 0)
+                            .map(job => store.releaseJob(job, { delayMs: 0, lingerMs: 5 })),
+                        ...jobs.filter((_, at) => at % 2 === 1).map(job => store.completeJobs([job])),
+                    ]);
+                    // oxlint-disable-next-line no-await-in-loop -- one claim after the other
+                    await store.unblock(jobs.flatMap(job => job.limits.map(limit => limit.key))).catch(() => {});
+                }
+            };
+            const sweepLoop = async () => {
+                while (Date.now() < until) {
+                    // oxlint-disable-next-line no-await-in-loop -- one sweep after the other
+                    await store.sweepSlots(100).catch(error => sweepErrors.push(error));
+                    sweeps++;
+                }
+            };
+
+            await Promise.all([...[0, 1, 2, 3, 4, 5].map(claimLoop), sweepLoop(), sweepLoop()]);
+
+            expect(claimed).toBeGreaterThan(100);
+            expect(sweeps).toBeGreaterThan(10);
+            expect(sweepErrors).toStrictEqual([]);
+        }, 15_000);
 
     test('the claim of names without limits leaves the jobs with limits from their enqueue options', async () => {
         const { sqlane, store } = await freshTables();

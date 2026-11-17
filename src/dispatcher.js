@@ -789,8 +789,9 @@ export function createDispatcher({
             fullProbeAt = now + t.pollIntervalMs;
         }
 
-        /** @type {string[]} */
-        const due = [...direct];
+        // A set: a probe of many names reads all names (MySQL, MariaDB), those of `direct` too. A name requested twice
+        // would lock and claim its jobs twice
+        const due = new Set(direct);
 
         for (const row of probe) {
             if (row.delayMs > 0) {
@@ -800,18 +801,18 @@ export function createDispatcher({
                 backlog.add(row.name);
 
                 if (names.has(row.name)) {
-                    due.push(row.name);
+                    due.add(row.name);
                 }
             }
         }
 
-        if (!due.length) {
+        if (!due.size) {
             return nextDelayMs();
         }
 
         namesLeftOut = false;
 
-        const { candidates, claimed } = await claimAndStart(due);
+        const { candidates, claimed } = await claimAndStart([...due]);
 
         if (claimed) {
             contentionDelayMs = 0;

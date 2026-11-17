@@ -1708,3 +1708,152 @@ test('rate keys: an unblock that leaves no blocked job arms a check of its key; 
         expect(unblocks).toHaveLength(2);
         await runner.close();
     });
+
+/**
+ * A claimed job of the name, due, with no limits.
+ * @param {string} id
+ * @param {string} name
+ * @returns {import('./store/store.js').StartableJob}
+ */
+function dueJob(id, name) {
+    return {
+        id,
+        name,
+        limits: [],
+        rateLimits: [],
+        attempts: 0,
+        maxAttempts: 3,
+        stalls: 0,
+        maxStalls: 2,
+        failureJob: null,
+        enqueuedAt: new Date(),
+        waitedMs: 0,
+        lockToken: 'token',
+        payload: { found: true, payload: null },
+    };
+}
+
+/**
+ * A runner of the store, with the cap and the poll interval of 60 s.
+ * @param {import('./registry.js').Registry} registry
+ * @param {Partial<import('./store/store.js').Store>} store
+ * @param {number} localMaxConcurrency
+ * @param {import('./types.js').SqlaneEvent[]} [events]
+ * @returns {import('./runner.js').Runner}
+ */
+function runnerOf(registry, store, localMaxConcurrency, events = []) {
+    return createRunner({
+        store: /** @type {import('./store/store.js').Store} */ ({
+            completeJobs: async (/** @type {unknown[]} */ jobs) => jobs.length,
+            renewLeases: async (/** @type {import('./store/store.js').OwnedJob[]} */ jobs) => (
+                new Set(jobs.map(job => job.id))
+            ),
+            findStaleJobs: async () => [],
+            // The recovery timer: its first run comes at recoveryIntervalMs × Math.random(), at times during a test
+            sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
+            deleteIdleRateKeys: async () => 0,
+            ...store,
+        }),
+        registry,
+        localMaxConcurrency,
+        defaults: resolveDefaults(),
+        cleanup: false,
+        logger: undefined,
+        onEvent: event => events.push(event),
+        hintChannel: createHintChannel({ hint: null, channel: 'c', reportError: () => {} }),
+        hintsAfterCommit: false,
+        timings: { pollIntervalMs: 60_000 },
+    });
+}
+
+test('dispatch: a probe of more than 100 names that gives the names of the claim too: each name requested once',
+    async () => {
+        const registry = createRegistry({ jobsByName: new Map(), defaultTimeoutMs: null });
+        const others = Array.from({ length: 150 }, (_, at) => `n${at}`);
+        /** @type {string[][]} The names of each claim */
+        const claims = [];
+        /** @type {(() => void)[]} */
+        const holds = [];
+        let nextId = 0;
+        const runner = runnerOf(registry, {
+            // As on MySQL: above 100 names, the probe reads all names. Only `busy` has (endless) due jobs
+            probe: async () => [{ name: 'busy', delayMs: 0 }],
+            claimDue: async ({ requests, free }) => {
+                claims.push(requests.map(request => request.name));
+
+                const jobs = requests.filter(request => request.name === 'busy')
+                    .flatMap(request => Array.from({ length: Math.min(request.maxJobs, free) }, () => {
+                        nextId++;
+
+                        return dueJob(`job-${nextId}`, 'busy');
+                    }));
+
+                // A full claim (each request of `busy` takes the free slots): it stays in the backlog
+                return { jobs, next: null, limited: [] };
+            },
+        }, 4);
+
+        registry.handle('busy', () => new Promise((resolve) => {
+            holds.push(() => resolve(undefined));
+        }));
+
+        for (const name of others) {
+            registry.handle(name, () => {});
+        }
+
+        try {
+            await runner.start();
+            await waitFor(() => holds.length === 4, 1000);
+            // The re-probes of the 150 names: a speculative wake of them all, while the instance is full
+            runner.onEnqueued(others);
+            await sleep(50);
+
+            // Free slots: the backlog (`busy`) is claimed at once, the 150 names are probed: all names
+            for (const release of holds.splice(0, 2)) {
+                release();
+            }
+
+            await waitFor(() => holds.length === 4, 1000);
+
+            expect(claims.length).toBeGreaterThan(1);
+            expect(claims.filter(names => new Set(names).size !== names.length)).toStrictEqual([]);
+        } finally {
+            for (const release of holds) {
+                release();
+            }
+
+            await runner.close({ deadline: 0 });
+        }
+    });
+
+test('a claim that gives one job twice: it runs once, with an error event', async () => {
+    const registry = createRegistry({ jobsByName: new Map(), defaultTimeoutMs: null });
+    /** @type {import('./types.js').SqlaneEvent[]} */
+    const events = [];
+    /** @type {string[]} */
+    const started = [];
+    // The first probe and the first claim; then none
+    const probes = [[{ name: 'ping', delayMs: 0 }]];
+    const claims = [[dueJob('job-1', 'ping'), dueJob('job-1', 'ping')]];
+    const runner = runnerOf(registry, {
+        probe: async () => probes.splice(0, 1).flat(),
+        claimDue: async () => ({ jobs: claims.splice(0, 1).flat(), next: [], limited: [] }),
+    }, 10, events);
+
+    registry.handle('ping', async ({ job }) => {
+        started.push(job.id);
+        await sleep(20);
+    });
+
+    try {
+        await runner.start();
+        await waitFor(() => events.some(event => event.type === 'completed'), 1000);
+        await sleep(50);
+
+        expect(started).toStrictEqual(['job-1']);
+        expect(events.map(event => event.type)).toStrictEqual(['claimed', 'error', 'completed']);
+        expect(events[1]).toMatchObject({ operation: 'start_job', error: { message: expect.stringContaining('job-1') } });
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
+});

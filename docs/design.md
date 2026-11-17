@@ -308,6 +308,14 @@ full limit takes no more names, so the names after it get their turn. The names 
 order, and the other names are a margin for names whose jobs other processes hold. A claim that fills the free slots does not read the
 next due times of its names: they stay in the backlog, and the next turn claims them again.
 
+**Each name once.** On MySQL and MariaDB, each requested name is one branch of the `UNION ALL` that locks the due
+jobs, and `SKIP LOCKED` does not skip the transaction's own locks: a name requested twice would lock its jobs twice,
+and the process would run each of them twice. A probe of more than 100 names reads all names (a long list makes a slow
+range plan), so it also gives the names that the turn claims at once: the turn keeps each name once. The store drops a
+repeated name as well (its first request counts), and the process does not start a job that the same claim gave
+twice: an `error` event instead. On PostgreSQL the `UPDATE … FROM` of the claim updates a row once, however many
+times it is locked, so there a repeated name could only skew the share.
+
 **The names with global limits** find their candidates once per turn, before the plain claim. A plan over all the
 names of the turn gives them their share of the free slots, on their candidate counts, and the plain claim leaves
 those slots free: in the instance, and in their local limits (the plain claim gets the rooms of the limits minus the
@@ -517,6 +525,14 @@ limit without keys. A key of a limit of 1 is a mutex.
   release on close while the handler still runs. The slots then stay until `exitsBy` plus 2 s (see [Close](#close)).
   The second case is a stall. The slots then stay for one lease, because the old handler may still run. So the old run
   and the new run do not overlap, unless a handler ignores its `signal` past the lease or past `exitsBy`.
+- **Sweep.** A claim takes over an ended linger; the stall recovery deletes the others, 100 at a time, then the orphan
+  slots, then unblocks. On MySQL it locks the ended lingers first, in the order of `(key, slot)`, with SKIP LOCKED, and
+  deletes them by primary key: a `DELETE … LIMIT` scans the table, waits for the slots that claims and releases hold,
+  and holds the lingers that it already deleted, which they may wait for. A locked linger goes at the next sweep.
+  PostgreSQL deletes them with SKIP LOCKED too. MariaDB keeps the one `DELETE`: the two statements deadlocked between
+  concurrent sweeps on 10.11, the `DELETE` did not under the same load. A deadlock, a serialization failure or a 1020
+  that is left runs the sweep again at once, after 5–30 ms, up to 3 times, as a turn of the dispatcher; then it is an
+  `error` event.
 - **A job with global limits needs a timeout.** The lease is renewed while a handler runs. Without a timeout, a hung
   handler would hold its slots in the whole cluster forever. So `handle()` throws a `ConfigError` if the definition has
   `globalConcurrencyLimits` and no timeout. A job can also get limits only from its enqueue options. If its handler has

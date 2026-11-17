@@ -228,7 +228,7 @@ export type Store = {
     /**
      * Finds, chooses by share, claims and reads
      * the due jobs of names without global limits, at once: one statement on PostgreSQL. It leaves the rows with
-     * limits.
+     * limits. A name requested more than once counts once, by its first request.
      */
     claimDue: (params: ClaimDueParams) => Promise<ClaimDueResult>;
     /**
@@ -286,7 +286,8 @@ export type Store = {
     }) => Promise<StaleJobResult>;
     /**
      * Deletes the ended lingers and the orphan slots, then
-     * unblocks the jobs blocked on keys with room, and on rate keys whose next start is due.
+     * unblocks the jobs blocked on keys with room, and on rate keys whose next start is due. A deadlock, a
+     * serialization failure or a 1020 runs it again at once, up to 3 times.
      */
     sweepSlots: (limit: number) => Promise<SweepResult>;
     /**
@@ -497,7 +498,7 @@ export type SweepResult = {
  * @property {(params: ClaimParams) => Promise<ClaimResult>} claim In a queue transaction of its own.
  * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, chooses by share, claims and reads
  *     the due jobs of names without global limits, at once: one statement on PostgreSQL. It leaves the rows with
- *     limits.
+ *     limits. A name requested more than once counts once, by its first request.
  * @property {(keys: string[]) => Promise<string[]>} unblock Makes the jobs blocked on the concurrency keys pending
  *     again, the oldest first, as many as each key has room for: their names. It leaves the rate keys.
  * @property {(keys: string[], floors?: Map<string, number>)
@@ -525,7 +526,8 @@ export type SweepResult = {
  * @property {(id: string, params: { leaseMs: number, buildFailureJob: FailureJobBuilder })
  *     => Promise<StaleJobResult>} recoverStaleJob
  * @property {(limit: number) => Promise<SweepResult>} sweepSlots Deletes the ended lingers and the orphan slots, then
- *     unblocks the jobs blocked on keys with room, and on rate keys whose next start is due.
+ *     unblocks the jobs blocked on keys with room, and on rate keys whose next start is due. A deadlock, a
+ *     serialization failure or a 1020 runs it again at once, up to 3 times.
  * @property {(limit: number) => Promise<number>} deleteIdleRateKeys Deletes a batch of rows of rate keys whose tat
  *     passed: the same as no row. SKIP LOCKED.
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
