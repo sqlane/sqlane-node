@@ -243,7 +243,10 @@ function machineName(machine) {
  * @property {boolean} after It enqueues after the COMMIT, not in the caller's transaction.
  */
 
-/** @type {{ id: string, name: string, versionName?: string }[]} One row per library, on PostgreSQL, in this order */
+/**
+ * @type {{ id: string, name: string, versionName?: string, laneName?: string, label?: string }[]} One row per
+ *     library, on PostgreSQL, in this order. laneName and label: its lane's, when the name alone would read as Redis.
+ */
 const LIBS = [
     { id: 'sqlane', name: 'sqlane' },
     { id: 'graphile-worker', name: 'Graphile Worker' },
@@ -251,18 +254,52 @@ const LIBS = [
     { id: 'pg-boss', name: 'pg-boss' },
     { id: 'izi-queue', name: 'Izi Queue' },
     { id: 'boring-node-queue', name: 'Boring Node Queue' },
-    { id: 'bullmq', name: 'BullMQ' },
+    { id: 'bullmq', name: 'BullMQ', laneName: 'BullMQ on PostgreSQL', label: 'BullMQ (PostgreSQL)' },
     { id: 'sidequest', name: 'Sidequest' },
 ];
 
 /**
- * The libraries whose only wake is a poll (see their adapters in bench/compare/libs): their latency is their poll's.
- * @type {Record<string, string>}
+ * @typedef {object} Polling A library whose only wake is a poll: its latency is its poll's.
+ * @property {string} poll
+ * @property {{ version: string, text: string }} [newer] A later version that wakes otherwise: said while the run has
+ *     `version`.
  */
+
+/** @type {Record<string, Polling>} See their adapters in bench/compare/libs */
 const POLLING = {
-    'sidequest': 'a poll every 100 ms',
-    'boring-node-queue': 'a poll every 2 s when idle',
+    'boring-node-queue': {
+        poll: 'every 2 s when idle',
+        newer: { version: '0.9.1', text: '0.10.0 adds LISTEN/NOTIFY, not measured yet' },
+    },
+    'sidequest': { poll: 'every 100 ms' },
 };
+
+/**
+ * Why a library's database works hard while idle, where the run's setup explains it (see its adapter).
+ * @type {Record<string, (names: number) => string>}
+ */
+const IDLE_CAUSES = {
+    'pg-boss': names => `gives each of the ${names} job names a queue of its own, with its own \`work()\` poll, where `
+        + 'the others poll their job names together',
+    'izi-queue': () => 'polls every 100 ms, set for throughput (default 1 s)',
+};
+
+/** The note of the charts with a `*` lane */
+const AFTER_NOTE = '*: enqueue after the COMMIT, not in the caller\'s transaction.';
+
+/**
+ * @param {string} id
+ * @returns {string} its version in the run
+ */
+function versionOf(id) {
+    const check = compare.checks.find((/** @type {any} */ entry) => entry.library === id);
+
+    if (!check) {
+        throw new Error(`bench/compare/results.json: no version of ${id} in checks`);
+    }
+
+    return check.version;
+}
 
 /**
  * @param {Row} row
@@ -280,16 +317,22 @@ const enqueuesAfter = id => compare.perf.some((/** @type {Row} */ row) => (
 
 /** @type {Lane[]} The libraries on PostgreSQL, then BullMQ on Redis where the run has it */
 const LANES = [
-    ...LIBS.map(({ id, name }) => {
+    ...LIBS.map(({ id, name, laneName, label }) => {
         const after = enqueuesAfter(id);
 
-        return { id, dialect: /** @type {const} */ ('postgres'), label: `${name}${after ? '*' : ''}`, name, after };
+        return {
+            id,
+            dialect: /** @type {const} */ ('postgres'),
+            label: `${label ?? name}${after ? '*' : ''}`,
+            name: laneName ?? name,
+            after,
+        };
     }),
     ...compare.perf.some((/** @type {Row} */ row) => row.library === 'bullmq' && row.dialect === 'redis')
         ? [{
                 id: 'bullmq',
                 dialect: /** @type {const} */ ('redis'),
-                label: 'BullMQ* (Redis)',
+                label: `BullMQ (Redis)${enqueuesAfter('bullmq') ? '*' : ''}`,
                 name: 'BullMQ on Redis',
                 after: enqueuesAfter('bullmq'),
             }]
@@ -453,13 +496,17 @@ const THEMES = {
 /** The palette index of each series, so a series has one color in every chart */
 const SERIES = { Worker: 0, Workers: 0, Producer: 1, Database: 2 };
 
+/** The width of the plot and its texts; the page adds PAD around it */
 const W = 720;
-const LABEL_W = 150;
+/** The margin inside the page's background, which every SVG has: a viewer may ignore <picture> (npm shows the light) */
+const PAD = 16;
+/** The width of a character of 14 px text, on average: room for the labels, and the values after the bars */
+const CHAR_W = 7.8;
+/** Room for the longest label, "BullMQ (PostgreSQL)*" */
+const LABEL_W = 166;
 const X0 = LABEL_W + 8;
-const ROW = 34;
+const ROW = 36;
 const BAR = 18;
-/** The width of a character of 13 px text, on average: room for the values after the bars */
-const CHAR_W = 7.2;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FONT = `font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"`;
 
@@ -535,27 +582,31 @@ function svg({ title, subtitle, legend, bars, unit }, theme) {
     const tk = ticks(axisMax(drawn.map(bar => sum(bar.parts))));
     const end = /** @type {number} */ (tk.at(-1));
     // The plot ends where the longest value after a bar, and the unit after the last tick, still fit
-    const room = Math.max(...drawn.map(bar => bar.value.length * CHAR_W), 22 + (unit.length * 6));
+    const room = Math.max(...drawn.map(bar => bar.value.length * CHAR_W), 22 + (unit.length * 6.5));
     const x1 = W - Math.ceil(room) - 12;
     const scale = (/** @type {number} */ v) => ((x1 - X0) * Math.min(v, end)) / end;
-    const top = legend ? 84 : 64;
+    const top = legend ? 90 : 68;
     const plotH = bars.length * ROW;
-    const H = top + plotH + 34;
+    const note = bars.some(bar => bar.lane.after) ? AFTER_NOTE : '';
+    const H = top + plotH + (note ? 52 : 30);
+    const [pageW, pageH] = [W + (2 * PAD), H + (2 * PAD)];
     const out = [
-        `<svg xmlns="${SVG_NS}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" ${FONT} role="img" aria-label="${
-            escape(title)}">`,
+        `<svg xmlns="${SVG_NS}" width="${pageW}" height="${pageH}" viewBox="0 0 ${pageW} ${pageH}" ${FONT} role="img" `
+        + `aria-label="${escape(title)}">`,
         `<title>${escape(title)}</title>`,
-        `<text x="0" y="20" font-size="16" font-weight="600" fill="${c.text}">${escape(title)}</text>`,
-        `<text x="0" y="42" font-size="13" fill="${c.muted}">${escape(subtitle)}</text>`,
+        `<rect width="${pageW}" height="${pageH}" rx="6" fill="${c.page}"/>`,
+        `<g transform="translate(${PAD} ${PAD})">`,
+        `<text x="0" y="22" font-size="18" font-weight="600" fill="${c.text}">${escape(title)}</text>`,
+        `<text x="0" y="46" font-size="14" fill="${c.muted}">${escape(subtitle)}</text>`,
     ];
     let lx = 0;
 
     for (const [i, name] of (legend ?? []).entries()) {
         out.push(
-            `<rect x="${lx}" y="56" width="10" height="10" rx="2" fill="${color(i)}"/>`,
-            `<text x="${lx + 15}" y="65" font-size="12" fill="${c.muted}">${escape(name)}</text>`,
+            `<rect x="${lx}" y="61" width="11" height="11" rx="2" fill="${color(i)}"/>`,
+            `<text x="${lx + 16}" y="71" font-size="13" fill="${c.muted}">${escape(name)}</text>`,
         );
-        lx += 15 + (name.length * 7) + 18;
+        lx += 16 + (name.length * 7.5) + 18;
     }
 
     for (const t of tk) {
@@ -563,16 +614,20 @@ function svg({ title, subtitle, legend, bars, unit }, theme) {
 
         out.push(
             `<line x1="${x}" y1="${top - 4}" x2="${x}" y2="${top + plotH}" stroke="${t === 0 ? c.axis : c.grid}"/>`,
-            `<text x="${x}" y="${top + plotH + 18}" font-size="11" fill="${c.muted}" text-anchor="middle">${t}</text>`,
+            `<text x="${x}" y="${top + plotH + 19}" font-size="12" fill="${c.muted}" text-anchor="middle">${t}</text>`,
         );
     }
 
-    out.push(`<text x="${x1 + 22}" y="${top + plotH + 18}" font-size="11" fill="${c.muted}">${escape(unit)}</text>`);
+    out.push(`<text x="${x1 + 22}" y="${top + plotH + 19}" font-size="12" fill="${c.muted}">${escape(unit)}</text>`);
+
+    if (note) {
+        out.push(`<text x="0" y="${top + plotH + 44}" font-size="13" fill="${c.muted}">${escape(note)}</text>`);
+    }
 
     for (const [i, bar] of bars.entries()) {
         const y = top + (i * ROW) + ((ROW - BAR) / 2);
         const bold = bar.lane.id === 'sqlane' ? ' font-weight="600"' : '';
-        const label = `x="${LABEL_W}" y="${y + 13}" font-size="13" fill="${c.text}" text-anchor="end"${bold}`;
+        const label = `x="${LABEL_W}" y="${y + 14}" font-size="14" fill="${c.text}" text-anchor="end"${bold}`;
 
         out.push(`<text ${label}>${escape(bar.lane.label)}</text>`);
 
@@ -601,10 +656,10 @@ function svg({ title, subtitle, legend, bars, unit }, theme) {
         const ink = bar.parts.length ? c.text : c.muted;
         const vx = (bar.parts.length ? Math.max(x, X0 + 2) + 6 : X0).toFixed(1);
 
-        out.push(`<text x="${vx}" y="${y + 13}" font-size="13" fill="${ink}"${bold}>${escape(bar.value)}</text>`);
+        out.push(`<text x="${vx}" y="${y + 14}" font-size="14" fill="${ink}"${bold}>${escape(bar.value)}</text>`);
     }
 
-    out.push('</svg>');
+    out.push('</g>', '</svg>');
 
     return `${out.join('\n')}\n`;
 }
@@ -668,7 +723,7 @@ function barsOf(workload, bar, options) {
 const cpuChart = {
     name: 'perf_cpu_per_job',
     title: 'CPU instructions per job, steady load',
-    subtitle: `${pg}, ${jobsTrip}, 20 jobs/s over 1000 job names. *: enqueue after the COMMIT.`,
+    subtitle: `${pg}, ${jobsTrip}, 20 jobs/s over 1000 job names.`,
     legend: ['Worker', 'Producer', 'Database'],
     unit: 'M instr.',
     alt: `CPU instructions per job at steady load on PostgreSQL with a ${jobsTrip}`,
@@ -683,18 +738,22 @@ const cpuChart = {
 const statementsChart = {
     name: 'perf_statements',
     title: 'SQL statements per job, steady load',
-    subtitle: `${pg}, each a ${jobsTrip}; without the business INSERT. *: enqueue after the COMMIT.`,
+    subtitle: `${pg}, each statement a ${jobsTrip}; without the business INSERT.`,
     unit: 'statements',
-    alt: `SQL statements per job at steady load on PostgreSQL, each a ${jobsTrip}, without the business INSERT`,
+    alt: `SQL statements per job at steady load on PostgreSQL, each statement a ${jobsTrip}, without the business `
+        + 'INSERT',
     bars: barsOf('steady', (lane, row) => {
-        // Redis commands aren't statements: no bar on the same axis, the number as a note
+        // Redis commands aren't statements: no bar on the same axis, the number as a note. Nor round trips: most run
+        // inside its Lua scripts, whose calls are the EVALSHAs
         if (lane.dialect === 'redis') {
             const commands = Math.round(row.redisCommands / row.completed);
+            const evalsha = row.redisByCommand?.evalsha;
+            const scripts = evalsha ? `${Math.round(evalsha / row.completed)} Lua script calls` : 'Lua scripts';
 
             return {
                 parts: [],
-                value: `${commands} Redis commands per job: another unit`,
-                alt: `${commands} Redis commands`,
+                value: `${commands} Redis commands, most inside ${scripts}: another unit`,
+                alt: `${commands} Redis commands, most inside ${scripts}${evalsha ? ' (EVALSHA)' : ''}`,
             };
         }
 
@@ -708,7 +767,7 @@ const statementsChart = {
 const idleChart = {
     name: 'perf_idle',
     title: 'Database instructions per second, idle',
-    subtitle: `${pg}, 1000 job names, no jobs. *: enqueue after the COMMIT.`,
+    subtitle: `${pg}, 1000 job names, no jobs.`,
     unit: 'M/s',
     alt: 'Database instructions per second while idle with 1000 job names on PostgreSQL',
     bars: barsOf('idle', (_, row) => {
@@ -722,7 +781,7 @@ const idleChart = {
 const latencyChart = {
     name: 'perf_latency',
     title: 'From enqueue to handler start, median',
-    subtitle: `${pg}, ${jobsTrip}, steady load, one library at a time. *: enqueue after the COMMIT.`,
+    subtitle: `${pg}, ${jobsTrip}, steady load, one library at a time.`,
     unit: 'ms',
     alt: `Time from enqueue to handler start on PostgreSQL with a ${jobsTrip}, one library at a time, p50 and p99`,
     bars: barsOf('steady', (_, row) => ({
@@ -736,7 +795,7 @@ const latencyChart = {
 const cronChart = {
     name: 'perf_cron',
     title: 'CPU instructions per fired schedule slot, 3 workers',
-    subtitle: `${pg}, ${cronTrip}, 1000 schedules due every minute. *: not transactional.`,
+    subtitle: `${pg}, ${cronTrip}, 1000 schedules due every minute.`,
     legend: ['Workers', 'Database'],
     unit: 'M instr.',
     alt: 'CPU instructions per fired slot of 1000 schedules due every minute, 3 worker processes, on PostgreSQL '
@@ -759,7 +818,7 @@ const CHARTS = [cpuChart, statementsChart, idleChart, latencyChart, cronChart];
  * @param {string} text
  * @param {string} [first] The prefix of the first line, such as `- `; the others get as many spaces.
  * @returns {string} the text wrapped at WIDTH. A line never starts with a word that Markdown would read as a list
- *     item, a heading or a quote, nor with a unit, which stays with its number.
+ *     item, a heading or a quote, nor with a unit, which stays with its number, nor with the number of a p50 or p99.
  */
 function wrap(text, first = '') {
     const indent = ' '.repeat(first.length);
@@ -767,7 +826,8 @@ function wrap(text, first = '') {
     const words = [];
 
     for (const word of text.split(' ')) {
-        if (words.length && /^(?:[-+*>#]|\d+[.)]|(?:M|ms|s|GB|M\/s)[.,;:)]?)$/u.test(word)) {
+        if (words.length && (/^(?:[-+*>#]|\d+[.)]|(?:M|ms|s|GB|M\/s)[.,;:)]?)$/u.test(word)
+            || /(?:^|\()p\d\d$/u.test(/** @type {string} */ (words.at(-1))))) {
             words[words.length - 1] += ` ${word}`;
         } else {
             words.push(word);
@@ -860,7 +920,7 @@ function statementsText() {
         + `${range(ascending(others).map(value => value.toFixed(1)))}`;
 
     if (redis) {
-        text += `; BullMQ on Redis sends ${redis.alt} per job`;
+        text += `; BullMQ on Redis, per job: ${redis.alt}`;
     }
 
     return `${text}.`;
@@ -879,49 +939,87 @@ function idleText() {
         text += ` BullMQ on Redis: ${fixed(redis)} M.`;
     }
 
+    const causes = idleChart.bars.flatMap(({ lane, parts }) => {
+        const cause = lane.dialect === 'postgres' ? IDLE_CAUSES[lane.id] : undefined;
+        const row = /** @type {Row} */ (runOf(lane, 'idle'));
+
+        return cause ? [`${lane.name} (${fixed(sum(parts))} M) ${cause(row.names)}`] : [];
+    });
+
+    if (causes.length) {
+        text += ` ${causes.join('; ')}.`;
+    }
+
     return text;
 }
 
 /**
- * @param {number[]} values
- * @returns {string} their range in ms
+ * @param {string[]} names
+ * @returns {string} "a", "a and b", "a, b and c"
  */
-const ms = values => range(ascending(values).map(String), ' ms');
+function and(names) {
+    return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
 
 /**
- * @returns {string} the sentences under the latency chart
+ * @returns {string} the sentences under the latency chart: each library against sqlane, then those that only poll
  */
 function latencyText() {
     const rows = latencyChart.bars.map(bar => ({
-        bar,
+        lane: bar.lane,
         row: /** @type {Row} */ (runOf(bar.lane, 'steady', { timing: true })),
     }));
-    const sqlane = /** @type {Row} */ (rows.find(({ bar }) => bar.lane.id === 'sqlane')?.row);
-    const others = rows.filter(({ bar }) => bar.lane.dialect === 'postgres' && bar.lane.id !== 'sqlane');
-    const woken = others.filter(({ bar }) => !POLLING[bar.lane.id]).map(({ row }) => row);
-    const polling = others.filter(({ bar }) => POLLING[bar.lane.id]);
-    let text = `sqlane: p50 ${sqlane.latencyP50Ms} ms, p99 ${sqlane.latencyP99Ms} ms. The other libraries`;
+    const sqlane = /** @type {Row} */ (rows.find(({ lane }) => lane.id === 'sqlane')?.row);
+    const others = rows.filter(({ lane }) => lane.id !== 'sqlane');
+    const woken = others.filter(({ lane }) => !POLLING[lane.id]);
+    const polling = others.filter(({ lane }) => POLLING[lane.id]);
+    /** @type {Map<string, { names: string[], p50: number, p99: number }>} Those with the same times, fastest first */
+    const groups = new Map();
+
+    for (const { lane, row } of woken.toSorted((a, b) => (
+        a.row.latencyP50Ms - b.row.latencyP50Ms || a.row.latencyP99Ms - b.row.latencyP99Ms
+    ))) {
+        const [p50, p99] = [row.latencyP50Ms, row.latencyP99Ms];
+        const group = groups.get(`${p50}/${p99}`) ?? { names: /** @type {string[]} */ ([]), p50, p99 };
+
+        group.names.push(lane.name);
+        groups.set(`${p50}/${p99}`, group);
+    }
+
+    const against = [...groups.values()].map(({ names, p50, p99 }) => {
+        const many = names.length > 1;
+        const gap = p50 - sqlane.latencyP50Ms;
+
+        if (gap === 0) {
+            return `${and(names)} tie${many ? '' : 's'} (p99 ${p99} ms)`;
+        }
+
+        const verb = `${many ? 'are' : 'is'} ${Math.abs(gap)} ms ${gap < 0 ? 'faster' : 'slower'} (${p50} ms`;
+
+        // A tail far above the median: the number that matters
+        return p99 >= 10 * p50
+            ? `${and(names)} ${verb}), but ${many ? 'their' : 'its'} p99 is ${p99} ms`
+            : `${and(names)} ${verb}, p99 ${p99} ms)`;
+    });
+    let text = `sqlane: p50 ${sqlane.latencyP50Ms} ms, p99 ${sqlane.latencyP99Ms} ms. Against it at p50: `
+        + `${against.join('; ')}.`;
 
     if (polling.length) {
-        const count = ['one', 'two', 'three'][polling.length - 1] ?? String(polling.length);
+        const names = polling.map(({ lane }) => {
+            const { newer } = POLLING[lane.id];
 
-        text += `, except the ${count} that only poll${polling.length === 1 ? 's' : ''}`;
-    }
+            return newer?.version === versionOf(lane.id) ? `${lane.name} ${newer.version}` : lane.name;
+        });
+        const polls = polling.map(({ lane, row }) => {
+            const { poll, newer } = POLLING[lane.id];
+            const later = newer?.version === versionOf(lane.id) ? `; ${newer.text}` : '';
 
-    text += `: p50 ${ms(woken.map(row => row.latencyP50Ms))}, p99 ${ms(woken.map(row => row.latencyP99Ms))}.`;
+            return `${lane.name} ${poll} (p50 ${row.latencyP50Ms} ms, p99 ${row.latencyP99Ms} ms${later})`;
+        });
 
-    const polled = polling.map(({ bar, row }) => (
-        `${bar.lane.name} (${POLLING[bar.lane.id]}): p50 ${row.latencyP50Ms} ms, p99 ${row.latencyP99Ms} ms`
-    ));
-
-    if (polled.length) {
-        text += ` ${polled.join('; ')}.`;
-    }
-
-    const redis = rows.find(({ bar }) => bar.lane.dialect === 'redis')?.row;
-
-    if (redis) {
-        text += ` BullMQ on Redis: p50 ${redis.latencyP50Ms} ms, p99 ${redis.latencyP99Ms} ms, after the commit.`;
+        text += polling.length === 1
+            ? ` ${names[0]} only polls: ${polls[0]}.`
+            : ` ${and(names)} only poll: ${polls.join('; ')}.`;
     }
 
     return text;
@@ -947,19 +1045,11 @@ function schedulesText() {
  * @returns {string} the conditions of the run, as a list
  */
 function conditions() {
-    const { machines, checks, dates } = compare;
+    const { machines, dates } = compare;
     const perf = machines.perf;
     const machine = machineName(perf) ?? 'unknown machine';
     const runDays = [...new Set([dates.perf, dates.cron].filter(Boolean).map(day))];
-    const versions = LIBS.map(({ id, name, versionName }) => {
-        const check = checks.find((/** @type {any} */ entry) => entry.library === id);
-
-        if (!check) {
-            throw new Error(`bench/compare/results.json: no version of ${id} in checks`);
-        }
-
-        return `${versionName ?? name} ${check.version}`;
-    });
+    const versions = LIBS.map(({ id, name, versionName }) => `${versionName ?? name} ${versionOf(id)}`);
     const parallel = [...new Set([machines.perf.parallel, machines.cron.parallel])];
     const latency = perf.latency
         ? `${perf.latency.oneWayMs} ms each way on the container's loopback (netem), so each round trip between a `
@@ -1059,15 +1149,15 @@ function backends() {
 }
 
 /**
- * @returns {string} the README's charts: CPU and statements, the others folded
+ * @returns {string} the README's charts: CPU, statements and latency, which sqlane doesn't win; the others folded
  */
 function readme() {
     return [
         picture(cpuChart),
         picture(statementsChart),
-        '<details>\n<summary>More charts: idle, latency and schedules</summary>',
-        picture(idleChart),
         picture(latencyChart),
+        '<details>\n<summary>More charts: idle and schedules</summary>',
+        picture(idleChart),
         picture(cronChart),
         '</details>',
     ].join('\n\n');

@@ -91,7 +91,7 @@ hand. Record the output of each check with the change.
 | `check_child.mjs`    | The worker that the stall check kills.                                                                                                               |
 | `perf.mjs`           | One process of a performance workload: setup, worker or producer. With schedules, one of several workers.                                            |
 | `run.mjs`            | Starts the servers, runs the checks and the workloads, reads the counters, prints the tables.                                                        |
-| `../run_linux.sh`    | The published run (`compare`): the whole comparison in the container of `linux.dockerfile`, with 0.5 ms each way on its loopback.                    |
+| `../run_linux.sh`    | The published run (`vs-other-libs`): the whole comparison in the container of `linux.dockerfile`, with 0.5 ms each way on its loopback.              |
 
 ## Checks
 
