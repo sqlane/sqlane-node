@@ -17,7 +17,7 @@ limits per key, across the whole cluster.
 npm install @sqlane/core
 ```
 
-Node.js 22.12+ · ESM with TypeScript types · zero dependencies · 10 drivers and ORMs
+Node.js 22.12+ · ESM · TypeScript types · zero dependencies · npm provenance
 
 [Getting started](https://github.com/sqlane/sqlane-node/blob/main/README.md#getting-started) ·
 [Adapters](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md) ·
@@ -26,30 +26,135 @@ Node.js 22.12+ · ESM with TypeScript types · zero dependencies · 10 drivers a
 [Performance vs other libs](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_vs_other_libs.md) ·
 [Design](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md)
 
-```js
-import knex from 'knex';
+```ts
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
 import { createSqlane, defineJob } from '@sqlane/core';
-import { knexAdapter } from '@sqlane/core/adapter-knex';
+import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
+import { orders } from './schema.js';
 
-const db = knex({ client: 'pg', connection: process.env.DATABASE_URL }); // your app's pool
-const queueDb = knex({ client: 'pg', connection: process.env.DATABASE_URL, pool: { max: 3 } }); // sqlane's own
+const db = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL }) }); // your app's
+const queueDb = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) }); // sqlane's own
 
-const sendReceipt = defineJob({ name: 'send_receipt' });
-const sqlane = createSqlane({ adapter: knexAdapter(queueDb, { dialect: 'postgres' }), jobs: [sendReceipt] });
+const sendReceipt = defineJob<{ orderId: number }>({ name: 'send_receipt' });
+const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }), jobs: [sendReceipt] });
 await sqlane.migrate(); // creates the sqlane_* tables
 
 // Worker: runs the job after the commit, in this process or another
-sqlane.handle(sendReceipt, async ({ payload }) => sendReceiptEmail(payload.orderId));
+sqlane.handle(sendReceipt, ({ payload }) => sendReceiptEmail(payload.orderId));
 await sqlane.start();
 
 // Producer: the order and its job commit together, or not at all
-await db.transaction(async (trx) => {
-    await trx('orders').insert({ id: orderId, total: 42 });
+await db.transaction(async (tx) => {
+    const [order] = await tx.insert(orders).values({ total: 42 }).returning();
+    await sqlane.enqueue(tx, sendReceipt, { orderId: order.id });
+});
+```
+
+<details>
+<summary>The same with pg, postgres.js, mysql2, Knex, Kysely, Prisma, Sequelize, TypeORM or MikroORM</summary>
+
+Each adapter takes the queue's own pool or instance and the database as `dialect`: `'postgres'`, `'mysql'` or
+`'mariadb'`. Pass your transaction to `enqueue`.
+
+[pg](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#pg)
+
+```ts
+import { pgAdapter } from '@sqlane/core/adapter-pg';
+
+const adapter = pgAdapter(queuePool, { dialect: 'postgres' });
+// client: a PoolClient of your app's pool, after BEGIN
+await sqlane.enqueue(client, sendReceipt, { orderId });
+```
+
+[postgres.js](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#postgresjs)
+
+```ts
+import { postgresJsAdapter } from '@sqlane/core/adapter-postgres-js';
+
+const adapter = postgresJsAdapter(queueSql, { dialect: 'postgres' });
+await sql.begin(async (tx) => {
+    await sqlane.enqueue(tx, sendReceipt, { orderId });
+});
+```
+
+[mysql2](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mysql2)
+
+```ts
+import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
+
+const adapter = mysql2Adapter(queuePool, { dialect: 'mysql' }); // or 'mariadb'
+// connection: a PoolConnection of your app's pool, after beginTransaction()
+await sqlane.enqueue(connection, sendReceipt, { orderId });
+```
+
+[Knex](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#knex)
+
+```ts
+import { knexAdapter } from '@sqlane/core/adapter-knex';
+
+const adapter = knexAdapter(queueKnex, { dialect: 'postgres' });
+await knex.transaction(async (trx) => {
     await sqlane.enqueue(trx, sendReceipt, { orderId });
 });
 ```
 
-sqlane claims jobs through its own small pool, so the queue and your app never wait for each other's connections.
+[Kysely](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#kysely)
+
+```ts
+import { kyselyAdapter } from '@sqlane/core/adapter-kysely';
+
+const adapter = kyselyAdapter(queueDb, { dialect: 'postgres' });
+await db.transaction().execute(async (trx) => {
+    await sqlane.enqueue(trx, sendReceipt, { orderId });
+});
+```
+
+[Prisma](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#prisma)
+
+```ts
+import { prismaAdapter } from '@sqlane/core/adapter-prisma';
+
+const adapter = prismaAdapter(queuePrisma, { dialect: 'postgres' });
+await prisma.$transaction(async (tx) => {
+    await sqlane.enqueue(tx, sendReceipt, { orderId });
+});
+```
+
+[Sequelize](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#sequelize)
+
+```ts
+import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
+
+const adapter = sequelizeAdapter(queueSequelize, { dialect: 'postgres' });
+await sequelize.transaction(async (t) => {
+    await sqlane.enqueue(t, sendReceipt, { orderId });
+});
+```
+
+[TypeORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#typeorm)
+
+```ts
+import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm';
+
+const adapter = typeOrmAdapter(queueDataSource, { dialect: 'postgres' });
+await dataSource.transaction(async (manager) => {
+    await sqlane.enqueue(manager, sendReceipt, { orderId });
+});
+```
+
+[MikroORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mikroorm)
+
+```ts
+import { mikroOrmAdapter } from '@sqlane/core/adapter-mikro-orm';
+
+const adapter = mikroOrmAdapter(queueOrm.em, { dialect: 'postgres' });
+await orm.em.transactional(async (em) => {
+    await sqlane.enqueue(em, sendReceipt, { orderId });
+});
+```
+
+</details>
 
 ## Why sqlane
 
@@ -63,52 +168,46 @@ transaction, so:
 
 ## Features
 
-- **Concurrency limits per key, across the cluster.** "At most 2 jobs per client": a job returns its keys, such as
-  `client:42`, and each key runs at most `max` jobs at once, across job names and processes. A flood on one key never
-  holds back the others.
-- **Rate limits per key.** "5000 calls an hour per GitHub token", spread evenly across the cluster. A job over the limit
-  waits without using an attempt. A handler that gets a 429 throws a
-  [`RateLimitedError`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#errors-that-handlers-throw) to pause
-  the key for every job.
-- **Idle job names cost nothing.** One query per poll finds the names with pending jobs, so 1000 mostly idle names cost
-  about what one does.
-- **Your stack, your database.** Enqueue with the transaction object of mysql2, pg, postgres.js, Knex, Kysely, Drizzle,
-  Prisma, Sequelize, TypeORM or MikroORM. The same API on PostgreSQL, MySQL and MariaDB.
+- **[PostgreSQL, MySQL and MariaDB](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#the-dialect-and-the-server-check).**
+  PostgreSQL 15+, MySQL 8.4+, MariaDB 10.11+. The same API on all three.
+- **[Atomic enqueue](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue).** Enqueue in your own
+  transaction: commit → the job runs, rollback → it's gone.
+  [`enqueueMany`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueuemany) adds a batch at once.
+- **[Cron and interval schedules](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedule).** Time zones,
+  one job per slot across the cluster, and a missed run caught up once.
+- **[Rate limits, global or local](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineratelimit).** "100
+  calls a second to the mail API", per key, across the cluster or per process. A job over the limit waits without
+  using an attempt. A handler that gets a 429 throws
+  [`RateLimitedError`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#errors-that-handlers-throw) to
+  pause the key for every job.
+- **[Concurrency limits, global or local](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineconcurrencylimit).**
+  "One sync per order at a time": a job takes several keys, each with its own max, across processes and job names.
+  Local limits cap jobs per process. A flood on one key never blocks the others.
+- **[Your driver or ORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md).** mysql2, pg, postgres.js,
+  Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM and MikroORM.
+- **[Idle job names cost nothing](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#dispatcher-one-loop-per-process).**
+  One query per poll covers all names, so 1000 idle names cost about what one does.
+- **[Fair share across job names](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#how-free-slots-are-shared).**
+  A backlog of one name never starves the others; weights tune the shares.
+- **[Wake-up within milliseconds](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#wake-up-after-the-commit).**
+  NOTIFY on PostgreSQL, or any pub/sub such as Redis as a [hint](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#hint);
+  polling as the fallback.
+- **[Failure jobs](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#failedjobpayload).** A job of your choice
+  runs when another fails for good.
+- **[Graceful shutdown](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#close).** Running jobs get a
+  deadline; the unfinished ones go back to the queue without using an attempt.
+- **And the basics:** [retries with backoff](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#backoff),
+  delayed jobs and deduplication by `jobId` ([enqueue](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue)),
+  timeouts that abort the handler ([defineJob](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#definejob)),
+  [crash recovery](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#leases-and-stalls),
+  [typed payloads](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#typed-payloads),
+  [events](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#events) and
+  [stats](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getstats), and
+  [migrations as plain SQL](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getmigrations).
 
-| Jobs                                                                                           | Workers                                                                                                              | Operations                                                                                              |
-| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| [Retries with backoff](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#backoff)    | [Fair share across job names](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#how-free-slots-are-shared) | [Events](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#events)                            |
-| [Delayed and unique jobs](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue) | [Per-process concurrency limits](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineconcurrencylimit) | [Stats](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getstats)                           |
-| [Cron schedules](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedule)         | [Per-process rate limits](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineratelimit)               | [Wake-up hints over Redis or pub/sub](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#hint) |
-| [Failure jobs](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#failedjobpayload)   | [Crash recovery](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#leases-and-stalls)                   | [`drain()` for tests](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#drain)                |
-| [Typed payloads](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#typed-payloads)   | [Graceful shutdown](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#close)                               | [Migrations as SQL](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getmigrations)          |
-
-## How it compares
-
-✅ yes · 🟠 partly · ❌ no · 🔬 verified by running each library next to sqlane on PostgreSQL 17. The other rows come
-from each library's documentation
-([full comparison](https://github.com/sqlane/sqlane-node/blob/main/docs/features_vs_other_libs.md)).
-
-|                                        | sqlane     | pg-boss       | Graphile Worker | BullMQ       | Sidequest     | River | Boring Node Queue | Izi Queue     |
-| -------------------------------------- | ---------- | ------------- | --------------- | ------------ | ------------- | ----- | ----------------- | ------------- |
-| 🔬 Enqueue in the caller's transaction | ✅         | ✅            | ✅              | ❌           | ❌            | ✅    | ✅                | ✅            |
-| 🔬 Multiple mutex keys per job         | ✅         | ❌            | ❌              | ❌           | ❌            | ❌    | ❌                | ❌            |
-| 🔬 Timeout that aborts the handler     | ✅         | ✅            | ❌              | ❌           | ✅            | ✅    | ✅                | ✅            |
-| 🔬 Priority                            | ❌         | ✅            | ✅              | ✅           | 🟠 per queue  | ✅    | ✅                | ✅            |
-| Rate limiting                          | ✅ per key | 🟠 at enqueue | 🟠 community    | ✅ per queue | 🟠 at enqueue | ❌    | 🟠 at enqueue     | 🟠 at enqueue |
-| Configurable crash-recovery time       | ❌         | ✅            | ❌              | ✅           | ✅            | ✅    | ✅                | ✅            |
-| Parent/child workflows                 | ❌         | ✅            | ❌              | ✅           | ❌            | ❌    | ❌                | ❌            |
-| Dashboard                              | ❌         | ✅            | ❌              | ✅           | ✅            | ✅    | ❌                | ❌            |
-
-Supported databases, from each library's documentation:
-
-|            | sqlane | pg-boss | Graphile Worker | BullMQ | Sidequest | River | Boring Node Queue | Izi Queue |
-| ---------- | ------ | ------- | --------------- | ------ | --------- | ----- | ----------------- | --------- |
-| PostgreSQL | ✅     | ✅      | ✅              | ✅     | ✅        | ✅    | ✅                | ✅        |
-| MySQL      | ✅     | ❌      | ❌              | ❌     | ✅        | ❌    | ✅ Knex           | ✅        |
-| MariaDB    | ✅     | ❌      | ❌              | ❌     | ❌        | ❌    | ✅ Knex           | ❌        |
-| SQLite     | ❌     | ❌      | ❌              | ❌     | ✅        | ✅    | ✅                | ✅        |
-| Redis      | ❌     | ❌      | ❌              | ✅     | ❌        | ❌    | ✅                | ❌        |
+How sqlane compares with BullMQ, pg-boss and 5 more:
+[features](https://github.com/sqlane/sqlane-node/blob/main/docs/features_vs_other_libs.md) ·
+[performance](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_vs_other_libs.md).
 
 ## Performance
 
@@ -131,107 +230,91 @@ pg-boss and River, so their rates are lower bounds.
 
 <!-- /generated:readme -->
 
-[Performance details →](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_vs_other_libs.md)
+[Charts, method and conditions →](https://github.com/sqlane/sqlane-node/blob/main/docs/performance_vs_other_libs.md)
 
-## Install
+## Getting started
+
+The steps below build the example above into an app: Drizzle on PostgreSQL. With another library, only the adapter and
+the transaction code change ([adapters](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md)).
+
+**0. Install.** sqlane has no dependencies: it runs over the driver or ORM that your app already has.
 
 ```sh
 npm install @sqlane/core
 ```
 
-## Supported databases
-
-| Database   | Versions | Wake-up in other processes                   |
-| ---------- | -------- | -------------------------------------------- |
-| PostgreSQL | 15+      | NOTIFY (pg, postgres.js, Drizzle), or a hint |
-| MySQL      | 8.4+     | A hint                                       |
-| MariaDB    | 10.11+   | A hint                                       |
-
-A hint is a message over Redis or another publish/subscribe service
-([wake-up](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#wake-up-after-the-commit)). Without NOTIFY
-or a hint, other processes find new jobs at their next poll, every 5 seconds by default. SQLite is not supported.
-
-Each adapter takes the database as `dialect`: `'postgres'`, `'mysql'` or `'mariadb'`. The first `start()` or
-`migrate()` checks it against the server, with the version, and on MySQL and MariaDB the `sql_mode`
-([server check](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#the-dialect-and-the-server-check)).
-
-## Supported drivers and ORMs
-
-| Library                                                                                    | Import                             | Versions                      | MySQL | MariaDB | PostgreSQL |
-| ------------------------------------------------------------------------------------------ | ---------------------------------- | ----------------------------- | ----- | ------- | ---------- |
-| [mysql2](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mysql2)          | `@sqlane/core/adapter-mysql2`      | mysql2 3.11+                  | ✅    | ✅      |            |
-| [pg](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#pg)                  | `@sqlane/core/adapter-pg`          | pg 8.13+                      |       |         | ✅         |
-| [postgres.js](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#postgresjs) | `@sqlane/core/adapter-postgres-js` | postgres 3.4+ and 4           |       |         | ✅         |
-| [Knex](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#knex)              | `@sqlane/core/adapter-knex`        | knex 3                        | ✅    | ✅      | ✅         |
-| [Kysely](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#kysely)          | `@sqlane/core/adapter-kysely`      | kysely 0.28 and 0.29          | ✅    | ✅      | ✅         |
-| [Drizzle](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#drizzle)        | `@sqlane/core/adapter-drizzle`     | drizzle-orm 0.45 and 1.0 (rc) | ✅    | ✅      | ✅         |
-| [Prisma](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#prisma)          | `@sqlane/core/adapter-prisma`      | Prisma 7                      | ✅    | ✅      | ✅         |
-| [Sequelize](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#sequelize)    | `@sqlane/core/adapter-sequelize`   | Sequelize 6                   | ✅    | ✅      | ✅         |
-| [TypeORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#typeorm)        | `@sqlane/core/adapter-typeorm`     | TypeORM 0.3 and 1.x           | ✅    | ✅      | ✅         |
-| [MikroORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#mikroorm)      | `@sqlane/core/adapter-mikro-orm`   | MikroORM 6 and 7              | ✅    | ✅      | ✅         |
-
-## Getting started
-
-The steps below rebuild the example above. With another library, only the adapter and the transaction code change
-([adapters](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md)).
-
 **1. Define your jobs.** A job name, such as `send_receipt`, is also its queue. Keep the definitions in a module that
-producers and workers both import; in TypeScript, `defineJob<{ orderId: number }>(…)` types the payload.
+producers and workers both import. The type parameter types the payload in `enqueue` and in the handler.
 
-```js
-export const order = defineConcurrencyLimit({ name: 'order', max: 1 });
-export const erpApi = defineRateLimit({ name: 'erp_api', max: 100, per: '1m' });
-export const sendReceipt = defineJob({ name: 'send_receipt', maxAttempts: 5, timeout: '1m' });
-export const syncOrder = defineJob({
-    name: 'sync_order',
-    globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
-    globalRateLimits: () => [erpApi],
-    timeout: '2m',
+```ts
+// jobs.ts
+import { defineJob } from '@sqlane/core';
+
+export const sendReceipt = defineJob<{ orderId: number }>({
+    name: 'send_receipt',
+    maxAttempts: 5,
+    timeout: '1m',
 });
 ```
 
-Two `sync_order` jobs for the same order never run at the same time, and at most 100 start per minute in the whole
-cluster. A job with global concurrency limits needs a `timeout`.
+**2. Create the instance and the tables.** Give sqlane a small pool of its own, with 2–3 connections, so the queue and
+your app never wait for each other's connections. `migrate()` creates the `sqlane_*` tables and is safe to run from
+several processes at once. To use your own migration tool instead, take the SQL from
+[`getMigrations()`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getmigrations).
 
-**2. Create the instance and the tables.** Give sqlane its own pool of 2–3 connections. `migrate()` is safe to run
-from several processes at once; to use your own migration tool, take the SQL from `getMigrations()`.
+```ts
+// sqlane.ts
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import { createSqlane } from '@sqlane/core';
+import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
+import { sendReceipt } from './jobs.js';
 
-```js
-const queueDb = knex({ client: 'pg', connection: process.env.DATABASE_URL, pool: { max: 3 } });
+const queueDb = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) });
+
 export const sqlane = createSqlane({
-    adapter: knexAdapter(queueDb, { dialect: 'postgres' }),
-    jobs: [sendReceipt, syncOrder],
+    // notify: NOTIFY wakes the workers of every process at the commit
+    adapter: drizzleAdapter(queueDb, { dialect: 'postgres', notify: true }),
+    jobs: [sendReceipt],
 });
+
 await sqlane.migrate();
 ```
 
-**3. Enqueue in your transaction.** Pass your transaction to `enqueue`. A `jobId` deduplicates enqueues
+**3. Enqueue in your transaction.** Pass your transaction to `enqueue`: the job commits or rolls back with the order. A
+`jobId` deduplicates, and `delay` runs the job later
 ([enqueue options](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue)).
 
-```js
-await db.transaction(async (trx) => {
-    await trx('orders').insert({ id: orderId, total });
-    await sqlane.enqueue(trx, sendReceipt, { orderId }, { jobId: String(orderId) });
-});
+```ts
+// orders.ts
+import { db } from './db.js';
+import { sendReceipt } from './jobs.js';
+import { orders } from './schema.js';
+import { sqlane } from './sqlane.js';
+
+export async function placeOrder(total: number) {
+    await db.transaction(async (tx) => {
+        const [order] = await tx.insert(orders).values({ total }).returning();
+        await sqlane.enqueue(tx, sendReceipt, { orderId: order.id }, { jobId: `receipt-${order.id}` });
+    });
+}
 ```
 
 **4. Handle jobs, start the worker, close on shutdown.** Pass the handler's `signal` to APIs that accept one, such as
-`fetch`: it aborts on a timeout or a shutdown. A handler must stop when it aborts: one that runs on past its lease
-can exceed a concurrency limit ([guarantees](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#guarantees)).
+`fetch`: it aborts on a timeout or a shutdown. A handler must stop when it aborts: one that runs on past its lease can
+exceed a concurrency limit ([guarantees](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#guarantees)).
 
-```js
+```ts
+// worker.ts
+import { sendReceipt } from './jobs.js';
+import { sqlane } from './sqlane.js';
+
 sqlane.handle(sendReceipt, async ({ payload, signal }) => {
     await sendReceiptEmail(payload.orderId, { signal }); // your code
 });
+
 await sqlane.start();
 process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));
-```
-
-**5. Test with `drain()`.** In tests, call `drain()` instead of `start()`. It runs the due jobs and returns counts.
-
-```js
-await placeOrder(42); // your code that enqueues send_receipt
-const { completed, failed } = await sqlane.drain();
 ```
 
 ## Documentation
@@ -253,9 +336,9 @@ const { completed, failed } = await sqlane.drain();
 
 ## Versioning
 
-sqlane follows [semantic versioning](https://semver.org). New
-[event](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#events) types may come in minor versions, so handle
-unknown types in a `default` branch.
+sqlane follows [semantic versioning](https://semver.org). Until sqlane sees production use, major versions may come
+often; each one ships a migration guide. New [event](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#events)
+types may come in minor versions, so handle unknown types in a `default` branch.
 
 ## Support and contributing
 
