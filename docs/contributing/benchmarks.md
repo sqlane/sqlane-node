@@ -7,7 +7,7 @@ database, and to compare sqlane with other job queues for the [performance page]
 | -------------------------- | ----------------------------------------------------------------------------------------------- | ---------- |
 | `pnpm bench:statements`    | Statements, rows and blocks of sqlane's hot paths on each supported version, against a snapshot | 2 min (CI) |
 | `pnpm bench:regression`    | CPU instructions and statements per operation: the working tree against `main`                  | 6–7 min    |
-| `pnpm bench:vs-other-libs` | sqlane and seven other queues on PostgreSQL ([bench/compare](../../bench/compare/README.md))    | 10 min     |
+| `pnpm bench:vs-other-libs` | sqlane and seven other queues on PostgreSQL ([bench/compare](../../bench/compare/README.md))    | 19 min     |
 | `pnpm bench:generate-docs` | The charts and the generated blocks of the performance page and the README, from the results    | a second   |
 
 ## Regressions

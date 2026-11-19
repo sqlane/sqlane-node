@@ -150,6 +150,10 @@ export const adapter = {
                     ...client && { db: { executeSql: (text, values) => client.query(text, values) } },
                 });
             },
+            // One INSERT of all the jobs, with the queue's options
+            enqueueMany: async (name, payloads) => {
+                await boss.insert(queueOf(name), payloads.map(payload => ({ data: { ...payload, name } })));
+            },
             start: async () => {
                 for (const queue of queueNames) {
                     workers.push(await boss.work(queue, {

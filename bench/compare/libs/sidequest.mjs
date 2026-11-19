@@ -3,6 +3,7 @@
 // (sidequest_jobs.mjs).
 //
 // Settings: its defaults: a poll every 100 ms (`jobPollingInterval`), its only wake; `maxConcurrentJobs` of the run.
+// No bulk enqueue: the throughput runs fill their backlog with concurrent single enqueues.
 //
 // Schedules: `schedule()`, node-cron in the process that registers them, not stored: each such process enqueues each
 // slot. Worker 0 registers them, the documentation's "restrict scheduling to a single node" (no failover); all the

@@ -267,11 +267,7 @@ const LIBS = [
 
 /** @type {Record<string, Polling>} See their adapters in bench/compare/libs */
 const POLLING = {
-    'boring-node-queue': {
-        poll: 'every 2 s when idle',
-        newer: { version: '0.9.1', text: '0.10.0 adds LISTEN/NOTIFY, not measured yet' },
-    },
-    'sidequest': { poll: 'every 100 ms' },
+    sidequest: { poll: 'every 100 ms' },
 };
 
 /**
@@ -282,6 +278,14 @@ const IDLE_CAUSES = {
     'pg-boss': names => `gives each of the ${names} job names a queue of its own, with its own \`work()\` poll, where `
         + 'the others poll their job names together',
     'izi-queue': () => 'polls every 100 ms, set for throughput (default 1 s)',
+};
+
+/**
+ * Why a library runs few jobs per second with a backlog, where its setting explains it (see its adapter).
+ * @type {Record<string, string>}
+ */
+const THROUGHPUT_CAUSES = {
+    'izi-queue': 'fetches at most its free slots per poll, every 100 ms',
 };
 
 /** The note of the charts with a `*` lane */
@@ -340,15 +344,21 @@ const LANES = [
 ];
 
 /**
+ * @typedef {{ timing?: boolean, processes?: number, names?: number }} RunOptions timing: the run of phase B, one
+ *     library at a time; processes: the workers of a schedule run; names: the job names, 1000 by default
+ */
+
+/**
  * @param {Lane} lane
  * @param {string} workload
- * @param {{ timing?: boolean, processes?: number }} [options] timing: the run of phase B, one library at a time
- * @returns {Row | undefined} the lane's run of the workload: with 1000 job names, or `processes` workers for schedules
+ * @param {RunOptions} [options]
+ * @returns {Row | undefined} the lane's run of the workload: with `names` job names, or `processes` workers for
+ *     schedules
  */
-function runOf(lane, workload, { timing = false, processes } = {}) {
+function runOf(lane, workload, { timing = false, processes, names = 1000 } = {}) {
     return compare.perf.find((/** @type {Row} */ row) => row.library === lane.id && row.workload === workload
         && rowDialect(row) === lane.dialect && Boolean(row.timing) === timing
-        && (processes === undefined ? row.names === 1000 : row.processes === processes));
+        && (processes === undefined ? row.names === names : row.processes === processes));
 }
 
 /**
@@ -419,6 +429,14 @@ function times(ratio) {
 }
 
 /**
+ * @param {number} n jobs per second
+ * @returns {string} 3 significant digits from 100, with a comma: 66, 613, 12,400
+ */
+function rate(n) {
+    return n < 100 ? n.toFixed(0) : Number(n.toPrecision(3)).toLocaleString('en-US');
+}
+
+/**
  * @param {string[]} values sorted
  * @param {string} [unit]
  * @returns {string} "a–b unit", or "a unit" when they are the same
@@ -471,6 +489,7 @@ function day(iso) {
  * @property {string} unit Of the axis.
  * @property {string} alt The start of the alt text, before the values.
  * @property {Bar[]} bars
+ * @property {string} [note] The note of a `*` lane, AFTER_NOTE by default.
  */
 
 // Colors for GitHub's light (#ffffff) and dark (#0d1117) pages; the series pass the palette checks on both.
@@ -571,7 +590,7 @@ function barShape({ x, y, w, color, round }) {
  * @param {keyof typeof THEMES} theme
  * @returns {string} the SVG document
  */
-function svg({ title, subtitle, legend, bars, unit }, theme) {
+function svg({ title, subtitle, legend, bars, unit, note: afterNote = AFTER_NOTE }, theme) {
     const c = THEMES[theme];
     /**
      * @param {number} part
@@ -587,7 +606,7 @@ function svg({ title, subtitle, legend, bars, unit }, theme) {
     const scale = (/** @type {number} */ v) => ((x1 - X0) * Math.min(v, end)) / end;
     const top = legend ? 90 : 68;
     const plotH = bars.length * ROW;
-    const note = bars.some(bar => bar.lane.after) ? AFTER_NOTE : '';
+    const note = bars.some(bar => bar.lane.after) ? afterNote : '';
     const H = top + plotH + (note ? 52 : 30);
     const [pageW, pageH] = [W + (2 * PAD), H + (2 * PAD)];
     const out = [
@@ -614,7 +633,8 @@ function svg({ title, subtitle, legend, bars, unit }, theme) {
 
         out.push(
             `<line x1="${x}" y1="${top - 4}" x2="${x}" y2="${top + plotH}" stroke="${t === 0 ? c.axis : c.grid}"/>`,
-            `<text x="${x}" y="${top + plotH + 19}" font-size="12" fill="${c.muted}" text-anchor="middle">${t}</text>`,
+            `<text x="${x}" y="${top + plotH + 19}" font-size="12" fill="${c.muted}" text-anchor="middle">`
+            + `${t.toLocaleString('en-US')}</text>`,
         );
     }
 
@@ -699,12 +719,13 @@ function roundTrip(machine) {
 
 const jobsTrip = roundTrip(compare.machines.perf);
 const cronTrip = roundTrip(compare.machines.cron);
+const throughputTrip = roundTrip(compare.machines.throughput);
 const mega = (/** @type {number} */ n) => n / 1e6;
 
 /**
  * @param {string} workload
  * @param {(lane: Lane, row: Row) => Omit<Bar, 'lane'>} bar
- * @param {{ timing?: boolean, processes?: number }} [options]
+ * @param {RunOptions} [options]
  * @returns {Bar[]} a bar per lane: every library on PostgreSQL, BullMQ on Redis when the run has it
  */
 function barsOf(workload, bar, options) {
@@ -809,7 +830,71 @@ const cronChart = {
     }, { processes: 3 }),
 };
 
-const CHARTS = [cpuChart, statementsChart, idleChart, latencyChart, cronChart];
+/** The throughput's rows, when the results have them (`--only throughput`, or a default run) */
+const throughputRows = compare.perf.filter((/** @type {Row} */ row) => row.workload === 'throughput');
+/** The backlog of the throughput runs: the same in each */
+const backlogs = [...new Set(throughputRows.map((/** @type {Row} */ row) => row.backlog))];
+
+if (backlogs.length > 1) {
+    throw new Error(`bench/compare/results.json: throughput runs with backlogs of ${backlogs.join(', ')} jobs: run `
+        + 'them again with one');
+}
+
+const [backlog] = backlogs;
+
+/** @type {Chart | null} Higher is better */
+const throughputChart = throughputRows.length
+    ? {
+            name: 'perf_throughput',
+            title: 'Jobs per second, one worker',
+            subtitle: `${pg}, ${throughputTrip}, a backlog of ${backlog.toLocaleString('en-US')} jobs of one name, `
+                + '8 slots.',
+            unit: 'jobs/s',
+            alt: 'Jobs per second of one worker with 8 slots, empty handlers, a backlog of '
+                + `${backlog.toLocaleString('en-US')} jobs of one name, on PostgreSQL, ${throughputTrip}`,
+            bars: barsOf('throughput', (_, row) => ({
+                parts: [row.jobsPerSecond],
+                // The backlog ran out before the end of the window: at least this many
+                value: `${row.drained ? '≥ ' : ''}${rate(row.jobsPerSecond)} jobs/s`,
+                alt: `${row.drained ? 'at least ' : ''}${rate(row.jobsPerSecond)}`,
+            }), { names: 1 }),
+        }
+    : null;
+
+/**
+ * @param {number} n milliseconds
+ * @returns {string} 1 decimal below 10, none from 10
+ */
+const ms = n => n.toFixed(n < 10 ? 1 : 0);
+
+/** The rows of phase B have the time of each enqueue call (perf.mjs notes it): sqlane's at least */
+const enqueueMeasured = typeof runOf(LANES[0], 'steady', { timing: true })?.enqueueP50Ms === 'number';
+
+/** @type {Chart | null} The time that an enqueue call takes: in the caller's transaction, or after it (`*`) */
+const enqueueChart = enqueueMeasured
+    ? {
+            name: 'perf_enqueue',
+            title: 'Time an enqueue adds to your transaction, median',
+            subtitle: `${pg}, ${jobsTrip}, steady load, one library at a time.`,
+            unit: 'ms',
+            alt: `Time of one enqueue call in the caller's transaction on PostgreSQL with a ${jobsTrip}, one library at `
+                + 'a time, p50 and p99',
+            note: '*: enqueue after the COMMIT, on its own connection: this time is not inside the caller\'s '
+                + 'transaction.',
+            bars: barsOf('steady', (_, row) => (typeof row.enqueueP50Ms === 'number'
+                ? {
+                        parts: [row.enqueueP50Ms],
+                        value: `${ms(row.enqueueP50Ms)} ms · p99 ${ms(row.enqueueP99Ms)} ms`,
+                        alt: `${ms(row.enqueueP50Ms)} ms, p99 ${ms(row.enqueueP99Ms)} ms`,
+                    }
+                : { parts: [], value: 'not measured', alt: 'not measured' }), { timing: true }),
+        }
+    : null;
+
+const CHARTS = [
+    cpuChart, statementsChart, idleChart, latencyChart, cronChart, ...throughputChart ? [throughputChart] : [],
+    ...enqueueChart ? [enqueueChart] : [],
+];
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Markdown
@@ -931,9 +1016,15 @@ function statementsText() {
  */
 function idleText() {
     const { sqlane, others, redis } = totals(idleChart);
-    const sorted = ascending(others);
+    const above = ascending(others.filter(value => value >= sqlane));
+    // Those whose database works less than sqlane's: named, not given as a ratio below 1×
+    const below = idleChart.bars
+        .filter(({ lane, parts }) => lane.dialect === 'postgres' && lane.id !== 'sqlane' && sum(parts) < sqlane)
+        .map(({ lane, parts }) => `${lane.name} (${fixed(sum(parts))} M)`);
     let text = `sqlane's database uses ${fixed(sqlane)} M instructions per second; the other libraries' `
-        + `${range(sorted.map(fixed), ' M')} (${range(sorted.map(value => times(value / sqlane)))}×).`;
+        + `${range(above.map(fixed), ' M')} (${range(above.map(value => times(value / sqlane)))}×)`;
+
+    text += below.length ? `, except ${and(below)}, which ${below.length > 1 ? 'use' : 'uses'} less.` : '.';
 
     if (redis !== undefined) {
         text += ` BullMQ on Redis: ${fixed(redis)} M.`;
@@ -1014,12 +1105,12 @@ function latencyText() {
             const { poll, newer } = POLLING[lane.id];
             const later = newer?.version === versionOf(lane.id) ? `; ${newer.text}` : '';
 
-            return `${lane.name} ${poll} (p50 ${row.latencyP50Ms} ms, p99 ${row.latencyP99Ms} ms${later})`;
+            return `${poll} (p50 ${row.latencyP50Ms} ms, p99 ${row.latencyP99Ms} ms${later})`;
         });
 
         text += polling.length === 1
-            ? ` ${names[0]} only polls: ${polls[0]}.`
-            : ` ${and(names)} only poll: ${polls.join('; ')}.`;
+            ? ` ${names[0]} only polls, ${polls[0]}.`
+            : ` ${and(names)} only poll: ${polling.map(({ lane }, index) => `${lane.name} ${polls[index]}`).join('; ')}.`;
     }
 
     return text;
@@ -1042,13 +1133,348 @@ function schedulesText() {
 }
 
 /**
+ * The sentences under the throughput chart, where more is better: sqlane's rate, the libraries that run more (sqlane
+ * not the fastest, said plainly), about as many (within 5%) and fewer, then the lanes whose backlog ran out.
+ * @param {Chart} chart
+ * @returns {string}
+ */
+function throughputText(chart) {
+    const rows = chart.bars.map(({ lane }) => ({
+        lane,
+        row: /** @type {Row} */ (runOf(lane, 'throughput', { names: 1 })),
+    }));
+    const sqlaneRow = /** @type {Row} */ (rows.find(({ lane }) => lane.id === 'sqlane')?.row);
+    const sqlane = sqlaneRow.jobsPerSecond;
+    const others = rows.filter(({ lane }) => lane.id !== 'sqlane')
+        .map(({ lane, row }) => ({ lane, row, ratio: row.jobsPerSecond / sqlane }))
+        .toSorted((a, b) => b.ratio - a.ratio);
+    const faster = others.filter(({ ratio }) => ratio > 1.05);
+    const same = others.filter(({ ratio }) => ratio >= 0.95 && ratio <= 1.05);
+    const slower = others.filter(({ ratio }) => ratio < 0.95);
+    const sentences = [`sqlane runs ${rate(sqlane)} jobs per second.`];
+
+    if (faster.length) {
+        const list = faster.map(({ lane, row, ratio }, index) => (
+            index
+                ? `${lane.name} ${rate(row.jobsPerSecond)} (${times(ratio)}×)`
+                : `${lane.name} runs ${rate(row.jobsPerSecond)} (${times(ratio)}× as many)`
+        ));
+
+        sentences.push(`It is not the fastest: ${and(list)}.`);
+    } else if (!same.length) {
+        sentences.push('No other library runs more.');
+    }
+
+    if (same.length) {
+        const list = same.map(({ lane, row }) => `${lane.name} (${rate(row.jobsPerSecond)})`);
+
+        sentences.push(`${and(list)} ${same.length > 1 ? 'run' : 'runs'} about as many, within 5%`
+            + `${faster.length ? '' : '; no other library runs more'}.`);
+    }
+
+    if (slower.length) {
+        const list = slower.map(({ lane, row }) => `${lane.name} ${rate(row.jobsPerSecond)}`);
+        const ratios = ascending(slower.map(({ ratio }) => 1 / ratio)).map(times);
+
+        sentences.push(`The others run fewer: ${and(list)}, so sqlane runs ${range(ratios)}× as many.`);
+    }
+
+    const causes = slower.flatMap(({ lane }) => (
+        lane.dialect === 'postgres' && THROUGHPUT_CAUSES[lane.id] ? [`${lane.name} ${THROUGHPUT_CAUSES[lane.id]}`] : []
+    ));
+
+    if (causes.length) {
+        sentences.push(`${causes.join('; ')}.`);
+    }
+
+    // The backlog ran out before the end of the window: the rate of its jobs, up to the last, is a lower bound
+    const drained = rows.filter(({ row }) => row.drained);
+
+    if (drained.length) {
+        const list = drained.map(({ lane, row }) => `${lane.name} (${row.seconds.toFixed(1)} s)`);
+        const window = compare.machines.throughput?.windowSeconds;
+
+        sentences.push(`The backlog of ${backlog.toLocaleString('en-US')} jobs ran out before the end of the `
+            + `${window ? `${window} s ` : ''}window for ${and(list)}: ${drained.length > 1
+                ? 'their numbers are lower bounds'
+                : 'its number is a lower bound'}.`);
+    }
+
+    return sentences.join(' ');
+}
+
+/**
+ * The sentences under the enqueue chart: sqlane's time in the caller's transaction, the libraries that take less
+ * (sqlane not the lowest, said plainly), as long (the same in the chart) and more, then those that enqueue after the
+ * COMMIT.
+ * @param {Chart} chart
+ * @returns {string}
+ */
+function enqueueText(chart) {
+    const rows = chart.bars.filter(bar => bar.parts.length).map(({ lane }) => ({
+        lane,
+        row: /** @type {Row} */ (runOf(lane, 'steady', { timing: true })),
+    }));
+    const sqlane = /** @type {Row} */ (rows.find(({ lane }) => lane.id === 'sqlane')?.row);
+    const inside = rows.filter(({ lane }) => lane.id !== 'sqlane' && !lane.after)
+        .toSorted((a, b) => a.row.enqueueP50Ms - b.row.enqueueP50Ms);
+    // As the chart shows them: the same text is a tie
+    const shown = (/** @type {Row} */ row) => Number(ms(row.enqueueP50Ms));
+    const less = inside.filter(({ row }) => shown(row) < shown(sqlane));
+    const same = inside.filter(({ row }) => shown(row) === shown(sqlane));
+    const more = inside.filter(({ row }) => shown(row) > shown(sqlane));
+    const times50 = (/** @type {Row} */ row) => `${ms(row.enqueueP50Ms)} ms, p99 ${ms(row.enqueueP99Ms)} ms`;
+    const sentences = [`In the caller's transaction, sqlane's enqueue takes ${ms(sqlane.enqueueP50Ms)} ms at p50, p99 `
+        + `${ms(sqlane.enqueueP99Ms)} ms.`];
+
+    if (less.length) {
+        sentences.push(`It is not the lowest: ${and(less.map(({ lane, row }) => `${lane.name} (${times50(row)})`))} `
+            + `${less.length > 1 ? 'take' : 'takes'} less.`);
+    }
+
+    if (same.length) {
+        sentences.push(`${and(same.map(({ lane, row }) => `${lane.name} (p99 ${ms(row.enqueueP99Ms)} ms)`))} `
+            + `${same.length > 1 ? 'take' : 'takes'} as long.`);
+    }
+
+    if (more.length) {
+        const list = more.map(({ lane, row }) => (
+            `${lane.name} ${times50(row)} (${ms(shown(row) - shown(sqlane))} ms more)`
+        ));
+
+        sentences.push(`${less.length || same.length ? 'The others take' : 'The other libraries take'} longer: `
+            + `${list.join('; ')}.`);
+    }
+
+    const after = rows.filter(({ lane }) => lane.after);
+
+    if (after.length) {
+        const list = after.map(({ lane, row }) => `${lane.name} ${times50(row)}`);
+
+        sentences.push(`After the \`COMMIT\`, on ${after.length > 1 ? 'their' : 'its'} own connection, so not inside the `
+            + `caller's transaction, nor atomic with it: ${list.join('; ')}.`);
+    }
+
+    return sentences.join(' ');
+}
+
+/**
+ * @param {Row | undefined} row
+ * @param {string} field
+ * @returns {boolean} the row has the number
+ */
+const has = (row, field) => typeof row?.[field] === 'number';
+
+/**
+ * @param {number} n megabytes
+ * @returns {string}
+ */
+const mb = n => n.toFixed(0);
+
+/**
+ * The connections and the memory of each library at the steady load (phase A): a table, and the ranges under it.
+ * @returns {string} empty when the results have neither (before perf.mjs noted them)
+ */
+function footprint() {
+    const rows = LANES.flatMap((lane) => {
+        const row = runOf(lane, 'steady');
+
+        return row ? [{ lane, row }] : [];
+    });
+
+    if (!rows.some(({ row }) => has(row, 'workerConnections') || has(row, 'workerPeakRssMB'))) {
+        return '';
+    }
+
+    /**
+     * @param {Row} row
+     * @param {string} field
+     * @param {(n: number) => string} [format]
+     * @returns {string}
+     */
+    const cell = (row, field, format = String) => (has(row, field) ? format(row[field]) : '—');
+    const header = ['Library', 'Worker connections', 'Producer connections', 'Worker peak memory (MB)'];
+    const lines = rows.map(({ lane, row }) => {
+        // On Redis: its connections to Redis
+        const unit = (/** @type {number} */ n) => (lane.dialect === 'redis' ? `${n} to Redis` : String(n));
+
+        return [
+            lane.name, cell(row, 'workerConnections', unit), cell(row, 'producerConnections', unit),
+            cell(row, 'workerPeakRssMB', mb),
+        ];
+    });
+    const sqlane = rows.find(({ lane }) => lane.id === 'sqlane')?.row;
+    const others = rows.filter(({ lane }) => lane.id !== 'sqlane' && lane.dialect === 'postgres').map(({ row }) => row);
+    /**
+     * @param {string} field
+     * @param {(n: number) => string} [format]
+     * @returns {string} the range of the other libraries on PostgreSQL
+     */
+    const spanOf = (field, format = String) => range(ascending(others.filter(row => has(row, field))
+        .map(row => row[field])).map(format));
+    const parts = [];
+
+    if (has(sqlane, 'workerConnections') && others.some(row => has(row, 'workerConnections'))) {
+        parts.push(`sqlane's worker holds ${sqlane?.workerConnections} connections to PostgreSQL, the other libraries' `
+            + `${spanOf('workerConnections')}`);
+    }
+
+    if (has(sqlane, 'producerConnections') && others.some(row => has(row, 'producerConnections'))) {
+        parts.push(`sqlane's producer ${sqlane?.producerConnections} besides the business transactions', theirs `
+            + `${spanOf('producerConnections')}`);
+    }
+
+    if (has(sqlane, 'workerPeakRssMB') && others.some(row => has(row, 'workerPeakRssMB'))) {
+        parts.push(`sqlane's worker peaks at ${mb(sqlane?.workerPeakRssMB)} MB of memory, the others' at `
+            + `${spanOf('workerPeakRssMB', mb)} MB`);
+    }
+
+    return [table([header, ...lines]), ...parts.length ? [wrap(`${parts.join('; ')}.`)] : []].join('\n\n');
+}
+
+/**
+ * @param {number[]} values
+ * @returns {number} how far apart they are: (largest − smallest) / smallest; 0 for fewer than 2
+ */
+function spread(values) {
+    const sorted = ascending(values.filter(Number.isFinite));
+
+    return sorted.length < 2 || !sorted[0] ? 0 : (/** @type {number} */ (sorted.at(-1)) - sorted[0]) / sorted[0];
+}
+
+/**
+ * @param {number} ratio
+ * @returns {string} a percentage, rounded up: "4%", "0.3%" below 1%
+ */
+function percent(ratio) {
+    const value = ratio * 100;
+
+    // Up, so "at most" holds; less a hair, so 4.0000001 stays 4
+    return value < 1 ? `${(Math.ceil((value * 10) - 1e-9) / 10).toFixed(1)}%` : `${Math.ceil(value - 1e-9)}%`;
+}
+
+/**
+ * @param {any} sample a run of a row's `samples`
+ * @param {string[]} roles
+ * @returns {number} the instructions of the roles in the run
+ */
+const sampleInstructions = (sample, roles) => sum(roles.map(role => sample[role] ?? 0));
+
+/**
+ * @param {string} workload
+ * @param {(sample: any, row: Row) => number} value of a run: a sample of the row
+ * @param {(a: number[]) => number} measure of the values of a lane's runs
+ * @param {RunOptions} [options]
+ * @returns {{ lane: Lane, value: number } | undefined} the lane whose runs differ most, by measure; none without a lane
+ *     of 2 runs or more
+ */
+function widest(workload, value, measure, options) {
+    /** @type {{ lane: Lane, value: number } | undefined} */
+    let found;
+
+    for (const lane of LANES) {
+        const row = runOf(lane, workload, options);
+        const samples = /** @type {any[]} */ (row?.samples ?? []);
+
+        if (row && samples.length > 1) {
+            const candidate = { lane, value: measure(samples.map(sample => value(sample, row))) };
+
+            if (!found || candidate.value > found.value) {
+                found = candidate;
+            }
+        }
+    }
+
+    return found;
+}
+
+/**
+ * @param {number} n
+ * @returns {string} "one", or the number
+ */
+function countOf(n) {
+    return n === 1 ? 'one' : String(n);
+}
+
+/**
+ * The runs of the jobs and the schedules, and how far apart the runs of a library are: from the `samples` of the rows.
+ * A results.json of one run each (no `repeats`) says so, as before.
+ * @returns {string} an item of the conditions
+ */
+function runsText() {
+    const jobs = compare.machines.perf?.repeats ?? 1;
+    // Before phase B had a count of its own, it ran as many times as phase A
+    const timing = compare.machines.perf?.timingRepeats ?? jobs;
+    const cron = compare.machines.cron?.repeats ?? 1;
+    // Without throughput rows: as before they existed
+    const throughput = throughputRows.length ? compare.machines.throughput?.repeats ?? 1 : timing;
+
+    if (jobs < 2 && cron < 2 && timing < 2 && throughput < 2) {
+        return '**One run:** differences of about 10% are noise.';
+    }
+
+    const count = jobs === cron && jobs === timing && jobs === throughput
+        ? `${jobs} of each`
+        : `${jobs} of each workload for the instructions and statements, ${countOf(timing)} for the latencies, `
+            + `${throughputRows.length ? `${countOf(throughput)} for the throughput, ` : ''}${countOf(cron)} for the `
+            + 'schedules';
+    /** @type {[string, ReturnType<typeof widest>][]} */
+    const apart = [];
+
+    if (jobs > 1) {
+        apart.push(
+            ['in instructions per job', widest('steady', sample => (
+                sampleInstructions(sample, ['worker', 'producer', 'db']) / sample.completed
+            ), spread)],
+            ['in idle instructions per second', widest('idle', (sample, row) => (
+                sample.db / (sample.seconds ?? row.seconds)
+            ), spread)],
+        );
+    }
+
+    if (throughputRows.length && throughput > 1) {
+        apart.push(['in jobs per second', widest('throughput', sample => sample.jobsPerSecond, spread, { names: 1 })]);
+    }
+
+    if (cron > 1) {
+        apart.push(['in instructions per schedule slot', widest('cron-fire', (sample, row) => (
+            sampleInstructions(sample, ['worker', 'db']) / (sample.seconds ?? row.seconds)
+        ), spread, { processes: 3 })]);
+    }
+
+    const parts = apart.flatMap(([what, found]) => (
+        found ? [`${percent(found.value)} ${what} (${found.lane.name})`] : []
+    ));
+    let text = `**Runs:** ${count}; the numbers of several runs are medians.`;
+
+    if (parts.length) {
+        text += ` The runs of a library differ by at most ${and(parts)}`;
+    }
+
+    const latency = timing > 1
+        ? widest('steady', sample => sample.latencyP50Ms, values => Math.max(...values) - Math.min(...values), {
+                timing: true,
+            })
+        : undefined;
+
+    if (latency) {
+        const by = latency.value ? `by at most ${latency.value} ms (${latency.lane.name})` : 'by less than 1 ms';
+
+        text += parts.length ? `; their p50 latencies ${by}` : ` The p50 latencies of a library's runs differ ${by}`;
+    }
+
+    return parts.length || latency ? `${text}.` : text;
+}
+
+/**
  * @returns {string} the conditions of the run, as a list
  */
 function conditions() {
     const { machines, dates } = compare;
     const perf = machines.perf;
     const machine = machineName(perf) ?? 'unknown machine';
-    const runDays = [...new Set([dates.perf, dates.cron].filter(Boolean).map(day))];
+    const runDays = [...new Set([dates.perf, throughputRows.length && dates.throughput, dates.cron].filter(Boolean)
+        .map(day))];
     const versions = LIBS.map(({ id, name, versionName }) => `${versionName ?? name} ${versionOf(id)}`);
     const parallel = [...new Set([machines.perf.parallel, machines.cron.parallel])];
     const latency = perf.latency
@@ -1070,7 +1496,7 @@ function conditions() {
         `**Instructions** are ${counted} of every process of a library and of its database. They come from up to `
         + `${parallel[0]} runs at once${parallel.length > 1 ? ` (the schedules: ${parallel[1]})` : ''}; times come `
         + 'from one library at a time.',
-        '**One run:** differences of about 10% are noise.',
+        runsText(),
         '**BullMQ on Redis** syncs its append-only file every second (`appendfsync everysec`), so a crash can lose up '
         + 'to a second of jobs.',
     ];
@@ -1149,11 +1575,13 @@ function backends() {
 }
 
 /**
- * @returns {string} the README's charts: CPU, statements and latency, which sqlane doesn't win; the others folded
+ * @returns {string} the README's charts: CPU, throughput, statements and latency, which sqlane doesn't win; the
+ *     others folded
  */
 function readme() {
     return [
         picture(cpuChart),
+        ...throughputChart ? [picture(throughputChart)] : [],
         picture(statementsChart),
         picture(latencyChart),
         '<details>\n<summary>More charts: idle and schedules</summary>',
@@ -1209,7 +1637,8 @@ function fill(file, blocks) {
             throw new Error(`${name}: the markers ${open} … ${close} are missing or out of order`);
         }
 
-        text = `${text.slice(0, start + open.length)}\n\n${content}\n\n${text.slice(end)}`;
+        // An empty block: the two markers, one blank line apart
+        text = `${text.slice(0, start + open.length)}\n\n${content ? `${content}\n\n` : ''}${text.slice(end)}`;
     }
 
     // A marker that nothing fills would stay empty
@@ -1253,6 +1682,11 @@ changed += Number(fill(PERF_DOC, {
     statements: section(statementsChart, statementsText()),
     idle: section(idleChart, idleText()),
     latency: section(latencyChart, latencyText()),
+    // Empty without throughput rows
+    throughput: throughputChart ? section(throughputChart, throughputText(throughputChart)) : '',
+    // Empty without the enqueue's times, the connections and the memory (results.json before they were measured)
+    enqueue: enqueueChart ? section(enqueueChart, enqueueText(enqueueChart)) : '',
+    footprint: footprint(),
     schedules: section(cronChart, schedulesText()),
     backends: backends(),
 }));

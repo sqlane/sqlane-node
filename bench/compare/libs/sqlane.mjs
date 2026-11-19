@@ -5,7 +5,7 @@ import { createPool } from 'mysql2/promise';
 import { Pool } from 'pg';
 import { mysql2Adapter } from '../../../src/adapters/mysql2.js';
 import { pgAdapter } from '../../../src/adapters/pg.js';
-import { createSqlane, defineJob } from '../../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineJob } from '../../../src/index.js';
 import { queryRows, scheduleKeys, UnsupportedError } from './common.mjs';
 
 /**
@@ -90,6 +90,8 @@ export const adapter = {
 
         /** @type {Map<string, import('../../../src/types.js').JobDefinition>} */
         const definitions = new Map();
+        // The exclusion checks: one job at a time per resource, in the whole cluster, across job names
+        const resource = defineConcurrencyLimit({ name: 'resource', max: 1 });
 
         for (const [name, spec] of Object.entries(names)) {
             const definition = defineJob({
@@ -99,8 +101,8 @@ export const adapter = {
                     backoff: { type: 'fixed', delay: Math.max(spec.backoffMs, 1), jitter: 0 },
                 },
                 ...spec.exclusive && {
-                    mutexKeys: (/** @type {{ resources: string[] }} */ payload) => payload.resources.map(
-                        resource => `resource:${resource}`,
+                    globalConcurrencyLimits: (/** @type {{ payload: { resources: string[] } }} */ { payload }) => (
+                        payload.resources.map(id => resource.key(id))
                     ),
                 },
                 ...(spec.timeoutMs || spec.exclusive) && { timeout: spec.timeoutMs ?? '1m' },
@@ -135,6 +137,12 @@ export const adapter = {
                 }
 
                 await sqlane.enqueue(client ?? pool, definition, payload, delayMs ? { delay: delayMs } : {});
+            },
+            // One INSERT of all the jobs
+            enqueueMany: async (name, payloads) => {
+                await sqlane.enqueueMany(pool, /** @type {import('../../../src/types.js').JobDefinition} */ (
+                    definitions.get(name)
+                ), payloads.map(payload => ({ payload })));
             },
             start: () => sqlane.start(),
             stop: async () => {

@@ -3,9 +3,9 @@
 // job name (Locator.register), one worker. Its enqueue takes a Knex transaction (`.with(knex(trx))`), so the
 // business transaction is a Knex one: `transaction` below.
 //
-// Settings: its defaults: a poll every 2 s when idle (`idleDelay`), its only wake in 0.9.1 (0.10.0 adds LISTEN/NOTIFY
-// on PostgreSQL, but is younger than the 7 days of the guardrails); `concurrency` of the run (default 1). Completed
-// jobs are removed (`removeOnComplete`, default).
+// Settings: on PostgreSQL, LISTEN/NOTIFY (`notifications: true`, default off) on every adapter that dispatches, as its
+// README asks; on MySQL and MariaDB, its default poll every 2 s when idle (`idleDelay`); `concurrency` of the run
+// (default 1). Completed jobs are removed (`removeOnComplete`, default).
 //
 // Schedules: `Job.schedule(payload).id(key).cron(...)`, stored by the setup in `queue_schedules`. Each worker loop
 // claims a due schedule, one per transaction, with its row locked (`FOR UPDATE SKIP LOCKED`), sets the next run from
@@ -52,6 +52,12 @@ export const adapter = {
         }
 
         const mysql = url.startsWith('mysql:');
+        // Its wakes on PostgreSQL: a NOTIFY at the commit of each dispatch, to the workers that LISTEN
+        const adapterOptions = mysql ? {} : { notifications: true };
+
+        if (!mysql) {
+            notes.push('`notifications: true` (default: off, a poll every 2 s when idle)');
+        }
         // No idle timeout: a closed connection takes its CPU counters with it
         // (see docs/contributing/benchmarks.md, pitfall 5)
         const db = knex({
@@ -96,7 +102,7 @@ export const adapter = {
         /** @type {import('@boringnode/queue/types').QueueManagerConfig} */
         const config = {
             default: 'knex',
-            adapters: { knex: knexAdapter(db) },
+            adapters: { knex: knexAdapter(db, adapterOptions) },
             worker: {
                 concurrency,
                 gracefulShutdown: false,
@@ -136,10 +142,14 @@ export const adapter = {
 
                 // A Knex transaction: the job commits or rolls back with it
                 if (client) {
-                    dispatch = dispatch.with(knexAdapter(client));
+                    dispatch = dispatch.with(knexAdapter(client, adapterOptions));
                 }
 
                 await dispatch.run();
+            },
+            // Multi-row inserts in one transaction
+            enqueueMany: async (name, payloads) => {
+                await classes.get(name).dispatchMany(payloads).run();
             },
             transaction: async (work) => {
                 await db.transaction(trx => work(trx, (sql, values) => trx.raw(sql, values)));

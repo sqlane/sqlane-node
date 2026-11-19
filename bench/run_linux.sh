@@ -2,9 +2,9 @@
 # The published runs on Linux, in the container of bench/compare/linux.dockerfile (the repository mounted at /work):
 #
 #   vs-other-libs
-#       The comparison (bench/compare): the checks, the jobs and the schedules, with a delay of 0.5 ms each way on the
-#       container's loopback (netem): a round trip between a client and its database costs about 1 ms, as over a
-#       network.
+#       The comparison (bench/compare): the checks, the jobs, the throughput and the schedules, with a delay of 0.5 ms
+#       each way on the container's loopback (netem): a round trip between a client and its database costs about 1 ms,
+#       as over a network.
 #   regression [<args>…]
 #       The A/B regression run (`pnpm bench:regression <args>`, bench/regression/ab.mjs), without a delay: it measures
 #       instructions and statements, not latencies. The published numbers:
@@ -29,7 +29,7 @@ userns=()
 case "$mode" in
     vs-other-libs)
         delay="${DELAY:-0.5ms}"
-        commands='pnpm bench:vs-other-libs --parallel 8
+        commands='pnpm bench:vs-other-libs --parallel 9
             pnpm bench:vs-other-libs --only cron --parallel 9'
         ;;
     regression)

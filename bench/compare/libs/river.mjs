@@ -111,6 +111,11 @@ export const adapter = {
                     ...tx && { tx },
                 });
             },
+            enqueueMany: async (name, payloads) => {
+                const options = { maxAttempts: names[name].maxAttempts ?? 1 };
+
+                await client.insertMany(payloads.map(args => ({ job: definitions.get(name), args, options })));
+            },
             start: async () => {
                 run = await client.start();
             },

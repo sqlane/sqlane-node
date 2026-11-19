@@ -119,6 +119,12 @@ export const adapter = {
                     ...client && { tx: client },
                 });
             },
+            // Multi-row inserts in one transaction
+            enqueueMany: async (name, payloads) => {
+                const maxAttempts = names[name].maxAttempts ?? 1;
+
+                await queue.insertAll(name, payloads.map(args => ({ args, maxAttempts })));
+            },
             start: async () => {
                 await queue.start();
                 started = true;

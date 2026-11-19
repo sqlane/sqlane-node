@@ -53,6 +53,9 @@ export const scheduleKeys = count => Array.from({ length: count }, (_, index) =>
  * @property {(name: string, payload: Record<string, any>, options?: { delayMs?: number, priority?: 'high' | 'low',
  *     client?: any }) => Promise<void>} enqueue client: a pg Client or a mysql2 connection, in the caller's open
  *     transaction.
+ * @property {(name: string, payloads: Record<string, any>[]) => Promise<void>} [enqueueMany] The library's bulk
+ *     enqueue, where it has one: the jobs of one name, on its own connection. The throughput runs fill their backlog
+ *     with it; without it, with concurrent single enqueues.
  * @property {() => Promise<void>} start
  * @property {() => Promise<void>} stop
  * @property {string[]} notes How the adapter maps an option to the library: the check reports them.
