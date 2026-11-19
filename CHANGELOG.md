@@ -1,5 +1,14 @@
 # @sqlane/core
 
+## 7.0.4
+
+### Patch Changes
+
+- [#135](https://github.com/sqlane/sqlane-node/pull/135) [`b5fd0f3`](https://github.com/sqlane/sqlane-node/commit/b5fd0f309eef36af18558aef08f83cbdaa35c9fc) - TypeScript: the editor shows docs for every method of a sqlane instance, and for each of its parameters. `handle`,
+  `close` and `getStats` had none, and no parameter had any: hovering `sqlane.handle` now explains it, and the signature
+  help explains `job` and `handler`. The fields of the public types that had no description have one, such as those of
+  `JobStats`, `JobDefaults` and `SqlaneOptions`.
+
 ## 7.0.3
 
 ### Patch Changes
