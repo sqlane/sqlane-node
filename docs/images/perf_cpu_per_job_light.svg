@@ -25,45 +25,45 @@
 <rect x="184.42391357944445" y="99" width="9.8" height="18" fill="#eb6834"/>
 <path d="M196.17450208055556,99H217.0A4,4 0 0 1 221.0,103V113A4,4 0 0 1 217.0,117H196.17450208055556Z" fill="#1baf7a"/>
 <text x="227.0" y="113" font-size="14" fill="#1f2328" font-weight="600">3.1 M</text>
-<text x="166" y="149" font-size="14" fill="#1f2328" text-anchor="end">Graphile Worker</text>
-<rect x="174" y="135" width="76.0" height="18" fill="#2a78d6"/>
-<rect x="251.95560546277778" y="135" width="7.2" height="18" fill="#eb6834"/>
-<path d="M261.1288217327778,135H315.6A4,4 0 0 1 319.6,139V149A4,4 0 0 1 315.6,153H261.1288217327778Z" fill="#1baf7a"/>
-<text x="325.6" y="149" font-size="14" fill="#1f2328">9.5 M</text>
-<text x="166" y="185" font-size="14" fill="#1f2328" text-anchor="end">River</text>
-<rect x="174" y="171" width="26.5" height="18" fill="#2a78d6"/>
-<rect x="202.52718318111113" y="171" width="18.7" height="18" fill="#eb6834"/>
-<path d="M223.26516173944447,171H374.3A4,4 0 0 1 378.3,175V185A4,4 0 0 1 374.3,189H223.26516173944447Z" fill="#1baf7a"/>
-<text x="384.3" y="185" font-size="14" fill="#1f2328">13.3 M</text>
+<text x="166" y="149" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (Redis)*</text>
+<rect x="174" y="135" width="22.7" height="18" fill="#2a78d6"/>
+<rect x="198.68364046722223" y="135" width="9.1" height="18" fill="#eb6834"/>
+<path d="M209.80467569,135H229.4A4,4 0 0 1 233.4,139V149A4,4 0 0 1 229.4,153H209.80467569Z" fill="#1baf7a"/>
+<text x="239.4" y="149" font-size="14" fill="#1f2328">3.9 M</text>
+<text x="166" y="185" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (PostgreSQL)*</text>
+<rect x="174" y="171" width="24.6" height="18" fill="#2a78d6"/>
+<rect x="200.58421336944446" y="171" width="7.6" height="18" fill="#eb6834"/>
+<path d="M210.21967389000002,171H313.8A4,4 0 0 1 317.8,175V185A4,4 0 0 1 313.8,189H210.21967389000002Z" fill="#1baf7a"/>
+<text x="323.8" y="185" font-size="14" fill="#1f2328">9.4 M</text>
 <text x="166" y="221" font-size="14" fill="#1f2328" text-anchor="end">pg-boss</text>
 <rect x="174" y="207" width="76.9" height="18" fill="#2a78d6"/>
 <rect x="252.94616148944445" y="207" width="11.1" height="18" fill="#eb6834"/>
 <path d="M266.0948233394445,207H624.3A4,4 0 0 1 628.3,211V221A4,4 0 0 1 624.3,225H266.0948233394445Z" fill="#1baf7a"/>
 <text x="634.3" y="221" font-size="14" fill="#1f2328">29.6 M</text>
-<text x="166" y="257" font-size="14" fill="#1f2328" text-anchor="end">Izi Queue</text>
-<rect x="174" y="243" width="16.2" height="18" fill="#2a78d6"/>
-<rect x="192.20735543722222" y="243" width="14.9" height="18" fill="#eb6834"/>
-<path d="M209.15729287555556,243H260.2A4,4 0 0 1 264.2,247V257A4,4 0 0 1 260.2,261H209.15729287555556Z" fill="#1baf7a"/>
-<text x="270.2" y="257" font-size="14" fill="#1f2328">5.9 M</text>
+<text x="166" y="257" font-size="14" fill="#1f2328" text-anchor="end">Graphile Worker</text>
+<rect x="174" y="243" width="76.0" height="18" fill="#2a78d6"/>
+<rect x="251.95560546277778" y="243" width="7.2" height="18" fill="#eb6834"/>
+<path d="M261.1288217327778,243H315.6A4,4 0 0 1 319.6,247V257A4,4 0 0 1 315.6,261H261.1288217327778Z" fill="#1baf7a"/>
+<text x="325.6" y="257" font-size="14" fill="#1f2328">9.5 M</text>
 <text x="166" y="293" font-size="14" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
 <rect x="174" y="279" width="126.1" height="18" fill="#2a78d6"/>
 <rect x="302.1231364116667" y="279" width="20.6" height="18" fill="#eb6834"/>
 <path d="M324.68756483944446,279H396.4A4,4 0 0 1 400.4,283V293A4,4 0 0 1 396.4,297H324.68756483944446Z" fill="#1baf7a"/>
 <text x="406.4" y="293" font-size="14" fill="#1f2328">14.8 M</text>
-<text x="166" y="329" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (PostgreSQL)*</text>
-<rect x="174" y="315" width="24.6" height="18" fill="#2a78d6"/>
-<rect x="200.58421336944446" y="315" width="7.6" height="18" fill="#eb6834"/>
-<path d="M210.21967389000002,315H313.8A4,4 0 0 1 317.8,319V329A4,4 0 0 1 313.8,333H210.21967389000002Z" fill="#1baf7a"/>
-<text x="323.8" y="329" font-size="14" fill="#1f2328">9.4 M</text>
+<text x="166" y="329" font-size="14" fill="#1f2328" text-anchor="end">River</text>
+<rect x="174" y="315" width="26.5" height="18" fill="#2a78d6"/>
+<rect x="202.52718318111113" y="315" width="18.7" height="18" fill="#eb6834"/>
+<path d="M223.26516173944447,315H374.3A4,4 0 0 1 378.3,319V329A4,4 0 0 1 374.3,333H223.26516173944447Z" fill="#1baf7a"/>
+<text x="384.3" y="329" font-size="14" fill="#1f2328">13.3 M</text>
 <text x="166" y="365" font-size="14" fill="#1f2328" text-anchor="end">Sidequest*</text>
 <rect x="174" y="351" width="109.6" height="18" fill="#2a78d6"/>
 <rect x="285.56904020499996" y="351" width="35.0" height="18" fill="#eb6834"/>
 <path d="M322.5365464194444,351H413.8A4,4 0 0 1 417.8,355V365A4,4 0 0 1 413.8,369H322.5365464194444Z" fill="#1baf7a"/>
 <text x="423.8" y="365" font-size="14" fill="#1f2328">15.9 M</text>
-<text x="166" y="401" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (Redis)*</text>
-<rect x="174" y="387" width="22.7" height="18" fill="#2a78d6"/>
-<rect x="198.68364046722223" y="387" width="9.1" height="18" fill="#eb6834"/>
-<path d="M209.80467569,387H229.4A4,4 0 0 1 233.4,391V401A4,4 0 0 1 229.4,405H209.80467569Z" fill="#1baf7a"/>
-<text x="239.4" y="401" font-size="14" fill="#1f2328">3.9 M</text>
+<text x="166" y="401" font-size="14" fill="#1f2328" text-anchor="end">Izi Queue</text>
+<rect x="174" y="387" width="16.2" height="18" fill="#2a78d6"/>
+<rect x="192.20735543722222" y="387" width="14.9" height="18" fill="#eb6834"/>
+<path d="M209.15729287555556,387H260.2A4,4 0 0 1 264.2,391V401A4,4 0 0 1 260.2,405H209.15729287555556Z" fill="#1baf7a"/>
+<text x="270.2" y="401" font-size="14" fill="#1f2328">5.9 M</text>
 </g>
 </svg>

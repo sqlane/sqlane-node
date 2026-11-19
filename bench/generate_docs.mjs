@@ -245,17 +245,19 @@ function machineName(machine) {
 
 /**
  * @type {{ id: string, name: string, versionName?: string, laneName?: string, label?: string }[]} One row per
- *     library, on PostgreSQL, in this order. laneName and label: its lane's, when the name alone would read as Redis.
+ *     library, on PostgreSQL, in this order: sqlane, then the others by npm downloads (a fixed order, so the charts
+ *     and tables of every run match the hand-written tables of docs/features_vs_other_libs.md). laneName and label:
+ *     its lane's, when the name alone would read as Redis.
  */
 const LIBS = [
     { id: 'sqlane', name: 'sqlane' },
-    { id: 'graphile-worker', name: 'Graphile Worker' },
-    { id: 'river', name: 'River', versionName: 'River for JavaScript' },
-    { id: 'pg-boss', name: 'pg-boss' },
-    { id: 'izi-queue', name: 'Izi Queue' },
-    { id: 'boring-node-queue', name: 'Boring Node Queue' },
     { id: 'bullmq', name: 'BullMQ', laneName: 'BullMQ on PostgreSQL', label: 'BullMQ (PostgreSQL)' },
+    { id: 'pg-boss', name: 'pg-boss' },
+    { id: 'graphile-worker', name: 'Graphile Worker' },
+    { id: 'boring-node-queue', name: 'Boring Node Queue' },
+    { id: 'river', name: 'River', versionName: 'River for JavaScript' },
     { id: 'sidequest', name: 'Sidequest' },
+    { id: 'izi-queue', name: 'Izi Queue' },
 ];
 
 /**
@@ -319,29 +321,27 @@ const enqueuesAfter = id => compare.perf.some((/** @type {Row} */ row) => (
     row.library === id && row.transactional === false
 ));
 
-/** @type {Lane[]} The libraries on PostgreSQL, then BullMQ on Redis where the run has it */
-const LANES = [
-    ...LIBS.map(({ id, name, laneName, label }) => {
-        const after = enqueuesAfter(id);
+/** BullMQ on Redis is in the run: its lane comes right before BullMQ on PostgreSQL */
+const hasRedis = compare.perf.some((/** @type {Row} */ row) => row.library === 'bullmq' && row.dialect === 'redis');
 
-        return {
-            id,
-            dialect: /** @type {const} */ ('postgres'),
-            label: `${label ?? name}${after ? '*' : ''}`,
-            name: laneName ?? name,
-            after,
-        };
-    }),
-    ...compare.perf.some((/** @type {Row} */ row) => row.library === 'bullmq' && row.dialect === 'redis')
-        ? [{
-                id: 'bullmq',
-                dialect: /** @type {const} */ ('redis'),
-                label: `BullMQ (Redis)${enqueuesAfter('bullmq') ? '*' : ''}`,
-                name: 'BullMQ on Redis',
-                after: enqueuesAfter('bullmq'),
-            }]
-        : [],
-];
+/** @type {Lane[]} The libraries on PostgreSQL in the order of LIBS, with BullMQ on Redis before BullMQ on PostgreSQL */
+const LANES = LIBS.flatMap(({ id, name, laneName, label }) => {
+    const after = enqueuesAfter(id);
+    /** @type {Lane} */
+    const lane = {
+        id,
+        dialect: 'postgres',
+        label: `${label ?? name}${after ? '*' : ''}`,
+        name: laneName ?? name,
+        after,
+    };
+
+    if (id !== 'bullmq' || !hasRedis) {
+        return [lane];
+    }
+
+    return [{ id, dialect: 'redis', label: `BullMQ (Redis)${after ? '*' : ''}`, name: 'BullMQ on Redis', after }, lane];
+});
 
 /**
  * @typedef {{ timing?: boolean, processes?: number, names?: number }} RunOptions timing: the run of phase B, one
@@ -1575,19 +1575,75 @@ function backends() {
 }
 
 /**
- * @returns {string} the README's charts: CPU, throughput, statements and latency, which sqlane doesn't win; the
- *     others folded
+ * @param {number[]} values
+ * @param {(n: number) => string} format
+ * @returns {string} "a–b", lowest first
+ */
+const spanOf = (values, format) => range(ascending(values).map(format));
+
+/**
+ * @param {{ others: number[], redis: number | undefined }} totals of a chart
+ * @returns {number[]} the other libraries' on PostgreSQL, and BullMQ's on Redis when the run has it
+ */
+const withRedis = ({ others, redis }) => (redis === undefined ? others : [...others, redis]);
+
+/**
+ * The README's performance summary: sqlane next to the range of the other queues, one row per measure, throughput
+ * included, which sqlane doesn't win. The charts stay on the performance page.
+ * @returns {string}
  */
 function readme() {
+    const others = LIBS.length - 1;
+    const steady = latencyChart.bars.map(({ lane }) => ({
+        lane,
+        row: /** @type {Row} */ (runOf(lane, 'steady', { timing: true })),
+    }));
+    const sqlaneSteady = /** @type {Row} */ (steady.find(({ lane }) => lane.id === 'sqlane')?.row);
+    const otherSteady = steady.filter(({ lane }) => lane.id !== 'sqlane').map(({ row }) => row);
+    const cpu = totals(cpuChart);
+    const statements = totals(statementsChart);
+    const idle = totals(idleChart);
+    const p50s = otherSteady.map(row => row.latencyP50Ms);
+    const p99s = otherSteady.map(row => row.latencyP99Ms);
+    const rows = [
+        ['CPU instructions per job', `**${fixed(cpu.sqlane)} M**`, `${spanOf(withRedis(cpu), fixed)} M`],
+        ['SQL statements per job ¹', `**${statements.sqlane.toFixed(1)}**`, spanOf(statements.others, n => n.toFixed(1))],
+        ['Idle database CPU, 1000 job names', `**${fixed(idle.sqlane)} M/s**`, `${spanOf(withRedis(idle), fixed)} M/s`],
+        [
+            'Enqueue to handler start, p50 / p99',
+            `**${sqlaneSteady.latencyP50Ms} / ${sqlaneSteady.latencyP99Ms} ms**`,
+            `${spanOf(p50s, String)} / ${spanOf(p99s, String)} ms`,
+        ],
+    ];
+    const notes = [
+        `${pg}, ${jobsTrip}, empty handlers. Lower is better${throughputChart ? ', except jobs per second' : ''}.`,
+        '¹ The queues on PostgreSQL. BullMQ on Redis runs Redis commands, not SQL.',
+    ];
+
+    if (throughputChart) {
+        const throughput = throughputChart.bars.map(({ lane }) => ({
+            lane,
+            row: /** @type {Row} */ (runOf(lane, 'throughput', { names: 1 })),
+        }));
+        const sqlane = /** @type {Row} */ (throughput.find(({ lane }) => lane.id === 'sqlane')?.row);
+        const otherRates = throughput.filter(({ lane }) => lane.id !== 'sqlane').map(({ row }) => row.jobsPerSecond);
+        const drained = throughput.filter(({ row }) => row.drained).map(({ lane }) => lane.name);
+
+        rows.push([
+            `Jobs per second, one worker with 8 slots${drained.length ? ' ²' : ''}`,
+            `**${rate(sqlane.jobsPerSecond)}**`,
+            spanOf(otherRates, rate),
+        ]);
+
+        if (drained.length) {
+            notes.push(`² The backlog of ${backlog.toLocaleString('en-US')} jobs ran out before the end of the run `
+                + `for ${and(drained)}, so ${drained.length > 1 ? 'their rates are lower bounds' : 'its rate is a lower bound'}.`);
+        }
+    }
+
     return [
-        picture(cpuChart),
-        ...throughputChart ? [picture(throughputChart)] : [],
-        picture(statementsChart),
-        picture(latencyChart),
-        '<details>\n<summary>More charts: idle and schedules</summary>',
-        picture(idleChart),
-        picture(cronChart),
-        '</details>',
+        table([['', 'sqlane', `${others} other queues`], ...rows]),
+        ...notes.map(note => wrap(note)),
     ].join('\n\n');
 }
 

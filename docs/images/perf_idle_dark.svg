@@ -17,31 +17,31 @@
 <text x="166" y="91" font-size="14" fill="#f0f6fc" text-anchor="end" font-weight="600">sqlane</text>
 <path d="M174,77H175.6A1.643695328472014,1.643695328472014 0 0 1 177.3,78.64369532847202V93.35630467152798A1.643695328472014,1.643695328472014 0 0 1 175.6,95H174Z" fill="#3987e5"/>
 <text x="183.3" y="91" font-size="14" fill="#f0f6fc" font-weight="600">0.1 M/s</text>
-<text x="166" y="127" font-size="14" fill="#f0f6fc" text-anchor="end">Graphile Worker</text>
-<path d="M174,113H207.5A4,4 0 0 1 211.5,117V127A4,4 0 0 1 207.5,131H174Z" fill="#3987e5"/>
-<text x="217.5" y="127" font-size="14" fill="#f0f6fc">1.2 M/s</text>
-<text x="166" y="163" font-size="14" fill="#f0f6fc" text-anchor="end">River</text>
-<path d="M174,149H214.1A4,4 0 0 1 218.1,153V163A4,4 0 0 1 214.1,167H174Z" fill="#3987e5"/>
-<text x="224.1" y="163" font-size="14" fill="#f0f6fc">1.4 M/s</text>
+<text x="166" y="127" font-size="14" fill="#f0f6fc" text-anchor="end">BullMQ (Redis)*</text>
+<path d="M174,113H259.0A4,4 0 0 1 263.0,117V127A4,4 0 0 1 259.0,131H174Z" fill="#3987e5"/>
+<text x="269.0" y="127" font-size="14" fill="#f0f6fc">2.8 M/s</text>
+<text x="166" y="163" font-size="14" fill="#f0f6fc" text-anchor="end">BullMQ (PostgreSQL)*</text>
+<path d="M174,149H193.8A4,4 0 0 1 197.8,153V163A4,4 0 0 1 193.8,167H174Z" fill="#3987e5"/>
+<text x="203.8" y="163" font-size="14" fill="#f0f6fc">0.8 M/s</text>
 <text x="166" y="199" font-size="14" fill="#f0f6fc" text-anchor="end">pg-boss</text>
 <rect x="174" y="185" width="471.0" height="18" fill="#3987e5"/>
 <path d="M629.0,205l6,-22" stroke="#0d1117" stroke-width="2.5"/>
 <path d="M636.0,205l6,-22" stroke="#0d1117" stroke-width="2.5"/>
 <text x="651.0" y="199" font-size="14" fill="#f0f6fc">350 M/s</text>
-<text x="166" y="235" font-size="14" fill="#f0f6fc" text-anchor="end">Izi Queue</text>
-<path d="M174,221H560.0A4,4 0 0 1 564.0,225V235A4,4 0 0 1 560.0,239H174Z" fill="#3987e5"/>
-<text x="570.0" y="235" font-size="14" fill="#f0f6fc">12.4 M/s</text>
+<text x="166" y="235" font-size="14" fill="#f0f6fc" text-anchor="end">Graphile Worker</text>
+<path d="M174,221H207.5A4,4 0 0 1 211.5,225V235A4,4 0 0 1 207.5,239H174Z" fill="#3987e5"/>
+<text x="217.5" y="235" font-size="14" fill="#f0f6fc">1.2 M/s</text>
 <text x="166" y="271" font-size="14" fill="#f0f6fc" text-anchor="end">Boring Node Queue</text>
 <path d="M174,257H175.1A1.085513948376353,1.085513948376353 0 0 1 176.2,258.08551394837633V273.91448605162367A1.085513948376353,1.085513948376353 0 0 1 175.1,275H174Z" fill="#3987e5"/>
 <text x="182.2" y="271" font-size="14" fill="#f0f6fc">0.07 M/s</text>
-<text x="166" y="307" font-size="14" fill="#f0f6fc" text-anchor="end">BullMQ (PostgreSQL)*</text>
-<path d="M174,293H193.8A4,4 0 0 1 197.8,297V307A4,4 0 0 1 193.8,311H174Z" fill="#3987e5"/>
-<text x="203.8" y="307" font-size="14" fill="#f0f6fc">0.8 M/s</text>
+<text x="166" y="307" font-size="14" fill="#f0f6fc" text-anchor="end">River</text>
+<path d="M174,293H214.1A4,4 0 0 1 218.1,297V307A4,4 0 0 1 214.1,311H174Z" fill="#3987e5"/>
+<text x="224.1" y="307" font-size="14" fill="#f0f6fc">1.4 M/s</text>
 <text x="166" y="343" font-size="14" fill="#f0f6fc" text-anchor="end">Sidequest*</text>
 <path d="M174,329H217.3A4,4 0 0 1 221.3,333V343A4,4 0 0 1 217.3,347H174Z" fill="#3987e5"/>
 <text x="227.3" y="343" font-size="14" fill="#f0f6fc">1.5 M/s</text>
-<text x="166" y="379" font-size="14" fill="#f0f6fc" text-anchor="end">BullMQ (Redis)*</text>
-<path d="M174,365H259.0A4,4 0 0 1 263.0,369V379A4,4 0 0 1 259.0,383H174Z" fill="#3987e5"/>
-<text x="269.0" y="379" font-size="14" fill="#f0f6fc">2.8 M/s</text>
+<text x="166" y="379" font-size="14" fill="#f0f6fc" text-anchor="end">Izi Queue</text>
+<path d="M174,365H560.0A4,4 0 0 1 564.0,369V379A4,4 0 0 1 560.0,383H174Z" fill="#3987e5"/>
+<text x="570.0" y="379" font-size="14" fill="#f0f6fc">12.4 M/s</text>
 </g>
 </svg>
