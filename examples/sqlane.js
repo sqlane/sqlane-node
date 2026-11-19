@@ -1,17 +1,19 @@
-// One sqlane instance per process.
-import mysql from 'mysql2/promise';
+// One sqlane instance per process, over Drizzle on PostgreSQL.
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
 import { createSqlane } from '@sqlane/core';
-import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
+import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
 import { allJobs } from './jobs.js';
 
-/** The app's pool: business transactions, handlers. */
-export const appPool = mysql.createPool({ uri: 'mysql://app@localhost/app', connectionLimit: 20 });
+/** The app's database: business transactions, handlers. */
+export const db = drizzle({ client: new Pool({ connectionString: 'postgres://app@localhost/app', max: 20 }) });
 
-/** The queue's own small pool: claims, leases, results. */
-const queuePool = mysql.createPool({ uri: 'mysql://app@localhost/app', connectionLimit: 3 });
+/** The queue's own small pool: claims, leases, results, and the LISTEN connection of notify. */
+const queueDb = drizzle({ client: new Pool({ connectionString: 'postgres://app@localhost/app', max: 3 }) });
 
 export const sqlane = createSqlane({
-    adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }),
+    // NOTIFY wakes the workers of every process at the commit
+    adapter: drizzleAdapter(queueDb, { dialect: 'postgres', notify: true }),
     jobs: allJobs,
     localMaxConcurrency: 10,
     defaults: { timeout: '10m' },

@@ -1,6 +1,6 @@
 // Scenarios: cron and repeatable jobs. Call schedule() in the worker code, before start().
 import { defineJob } from '@sqlane/core';
-import { sqlane } from './sqlane.js';
+import { db, sqlane } from './sqlane.js';
 
 export const nightlyReport = defineJob({ name: 'nightly_report', timeout: '10m' });
 export const syncTenant = defineJob({ name: 'sync_tenant', timeout: '1m' });
@@ -45,10 +45,9 @@ export async function runSchedules() {
 
 /**
  * Runs the report of a day by hand: the same job as the slot, so the scheduler adds no second one.
- * @param {import('mysql2/promise').Pool} pool
  * @param {Date} slot
  * @returns {Promise<void>}
  */
-export async function runReportByHand(pool, slot) {
-    await sqlane.enqueue(pool, nightlyReport, {}, { slot: { at: slot } });
+export async function runReportByHand(slot) {
+    await sqlane.enqueue(db, nightlyReport, {}, { slot: { at: slot } });
 }
