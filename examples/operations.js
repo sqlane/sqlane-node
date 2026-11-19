@@ -1,13 +1,6 @@
-// Scenarios: PostgreSQL with NOTIFY hints; migrations; a hint over any pub/sub; stats.
-import { Pool } from 'pg';
-import { createSqlane, getMigrations } from '@sqlane/core';
-import { pgAdapter } from '@sqlane/core/adapter-pg';
-
-const queuePool = new Pool({ connectionString: 'postgres://app@localhost/app', max: 3 });
-
-export const sqlane = createSqlane({
-    adapter: pgAdapter(queuePool, { dialect: 'postgres', notify: true }),
-});
+// Scenarios: migrations; a hint over any pub/sub; stats.
+import { getMigrations } from '@sqlane/core';
+import { sqlane } from './sqlane.js';
 
 /** @returns {Promise<void>} */
 export async function migrate() {
@@ -20,7 +13,8 @@ export function migrationSql() {
 }
 
 /**
- * Any pub/sub as a hint, e.g. Redis: two clients, one of them subscribed.
+ * Any pub/sub as a hint, e.g. Redis, where NOTIFY is not available, as on MySQL and MariaDB. Pass it to
+ * createSqlane({ hint }) in place of the adapter's notify. Two clients, one of them subscribed.
  * @param {{ publish(channel: string, message: string): Promise<unknown> }} publisher
  * @param {{
  *     subscribe(channel: string, listener: (message: string) => void): Promise<unknown>,
