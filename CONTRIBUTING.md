@@ -4,7 +4,7 @@
 
 ```text
 src/        the package @sqlane/core: the queue, the SQL of each dialect, migrations, adapters; unit tests next to the code
-types/      its declarations: generated from the JSDoc of src/ (`pnpm build:types`), committed
+types/      its declarations: generated from the JSDoc of src/ and from src/sqlane.ts (`pnpm build:types`), committed
 test/       integration tests (MySQL, MariaDB and PostgreSQL in Docker, testcontainers), type tests, test databases;
             test/package_smoke: the packed package, installed and run as an app would (CI job package_smoke)
 examples/   usage examples
@@ -17,6 +17,11 @@ scripts/    CI scripts
 `test/mikro_orm_6` has its own `package.json` and lockfile, which install MikroORM 6 for the tests. A separate install
 is needed because its drivers take `@mikro-orm/core` as a peer, and an npm alias in the root would give them core 7.
 `pnpm install` at the root also installs this folder, through `pnpm:devPreinstall`.
+
+The public types are what editors show on hover, so each of them says what it is. `src/types.js` holds the typedefs:
+lint requires a description for each of their fields. `src/sqlane.ts` holds the interface of an instance, the one
+TypeScript file: `scripts/check_api_docs.js` requires a description, `@param` texts and a `@returns` text for each
+method. It is type-only, and npm gets its declarations, not the file.
 
 File and folder names are snake_case. ls-lint checks them, with the exceptions in `.ls-lint.yml`: names that tools
 or conventions set, such as `README.md` and lockfiles.
@@ -41,7 +46,7 @@ hk install --global --mise   # Git hooks, also for GUI Git clients: lint, format
 | `pnpm format`              | Format the other files: JSON, YAML, Markdown, TOML (oxfmt)                                                              |
 | `pnpm lint:package`        | Check the package that npm would publish (publint)                                                                      |
 | `pnpm typecheck`           | Type-check the JSDoc (`tsc`, no emit)                                                                                   |
-| `pnpm build:types`         | Generate `types/` from the JSDoc of `src/`                                                                              |
+| `pnpm build:types`         | Generate `types/` from the JSDoc of `src/`, and from `src/sqlane.ts`                                                    |
 | `pnpm check`               | Run all hook checks on all files (`hk check --all`)                                                                     |
 | `pnpm bench:statements`    | Check the statements of the hot paths on each database ([benchmarks](docs/contributing/benchmarks.md))                  |
 | `pnpm bench:regression`    | Compare the CPU cost and statements of the working tree with `main`                                                     |

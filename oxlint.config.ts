@@ -236,6 +236,16 @@ export default defineConfig({
             rules: { 'import/no-default-export': 'off' },
         },
         {
+            // The public typedefs, which editors show on hover: every field, parameter and return value says what it
+            // is. These rules don't see the members of the Sqlane interface: scripts/check_api_docs.js checks them
+            files: ['src/types.js'],
+            rules: {
+                'jsdoc/require-property-description': 'error',
+                'jsdoc/require-param-description': 'error',
+                'jsdoc/require-returns-description': 'error',
+            },
+        },
+        {
             // A script: it prints its results
             files: ['bench/**'],
             rules: { 'no-console': 'off', 'node/no-top-level-await': 'off' },
