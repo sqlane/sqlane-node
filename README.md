@@ -38,11 +38,16 @@ import { createSqlane, defineJob } from '@sqlane/core';
 import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
 import { orders } from './schema.js';
 
-const db = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL }) }); // your app's
-const queueDb = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) }); // sqlane's own
+const url = process.env.DATABASE_URL;
+const db = drizzle({ client: new Pool({ connectionString: url }) }); // yours
+const queuePool = new Pool({ connectionString: url, max: 3 }); // sqlane's own
+const queueDb = drizzle({ client: queuePool });
 
 const sendReceipt = defineJob<{ orderId: number }>({ name: 'send_receipt' });
-const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }), jobs: [sendReceipt] });
+const sqlane = createSqlane({
+    adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }),
+    jobs: [sendReceipt],
+});
 await sqlane.migrate(); // creates the sqlane_* tables
 
 // Worker: runs the job after the commit, in this process or another
@@ -275,7 +280,9 @@ import { createSqlane } from '@sqlane/core';
 import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
 import { sendReceipt } from './jobs.js';
 
-const queueDb = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) });
+const url = process.env.DATABASE_URL;
+const queuePool = new Pool({ connectionString: url, max: 3 }); // sqlane's own
+const queueDb = drizzle({ client: queuePool });
 
 export const sqlane = createSqlane({
     // notify: NOTIFY wakes the workers of every process at the commit
@@ -300,7 +307,9 @@ import { sqlane } from './sqlane.js';
 export async function placeOrder(total: number) {
     await db.transaction(async (tx) => {
         const [order] = await tx.insert(orders).values({ total }).returning();
-        await sqlane.enqueue(tx, sendReceipt, { orderId: order.id }, { jobId: `receipt-${order.id}` });
+        await sqlane.enqueue(tx, sendReceipt, { orderId: order.id }, {
+            jobId: `receipt-${order.id}`, // deduplicates
+        });
     });
 }
 ```
