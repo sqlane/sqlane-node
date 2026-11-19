@@ -123,6 +123,11 @@ export const adapter = {
                     ...priority && { priority: priority === 'high' ? 1 : 10 },
                 });
             },
+            enqueueMany: async (name, payloads) => {
+                const attempts = names[name].maxAttempts ?? 1;
+
+                await queue.addBulk(payloads.map(data => ({ name, data, opts: { attempts } })));
+            },
             start: async () => {
                 // Resolves when the worker stops
                 void worker?.run();

@@ -1,6 +1,6 @@
 // Graphile Worker: one runner, a task per job name; jobs added with graphile_worker.add_job(), in SQL.
 import { readFileSync } from 'node:fs';
-import { Logger, parseCronItems, run, runMigrations } from 'graphile-worker';
+import { Logger, makeWorkerUtils, parseCronItems, run, runMigrations } from 'graphile-worker';
 import { Pool } from 'pg';
 import { queryRows, scheduleKeys, UnsupportedError } from './common.mjs';
 
@@ -54,6 +54,8 @@ export const adapter = {
 
         /** @type {import('graphile-worker').Runner | null} */
         let runner = null;
+        /** @type {import('graphile-worker').WorkerUtils | null} */
+        let utils = null;
 
         return {
             notes,
@@ -82,6 +84,14 @@ export const adapter = {
                     PRIORITIES[priority ?? ''] ?? 0,
                 ]);
             },
+            // addJobs() of its worker utils: graphile_worker.add_jobs(), one statement
+            enqueueMany: async (name, payloads) => {
+                utils ??= await makeWorkerUtils({ pgPool: pool, logger: silentLogger() });
+
+                const maxAttempts = names[name].maxAttempts ?? 1;
+
+                await utils.addJobs(payloads.map(payload => ({ identifier: name, payload, maxAttempts })));
+            },
             start: async () => {
                 // Schedules in code: a crontab item per schedule, its key as the identifier, no backfill (the default)
                 const [cronTask] = Object.keys(names);
@@ -108,6 +118,7 @@ export const adapter = {
             },
             stop: async () => {
                 await runner?.stop();
+                await utils?.release();
                 await pool.end();
             },
         };

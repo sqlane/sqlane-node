@@ -18,7 +18,8 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
    and about 25 ms after the commit with a hint. Without either, it starts within the poll interval, which is 5 s by
    default. See [Wake-up after the commit](#wake-up-after-the-commit).
 4. **At-least-once execution.** A committed job runs at least once, also after a crash, a stall or a deploy.
-5. **MySQL, MariaDB and PostgreSQL.** All three databases get the same features and the same API.
+5. **MySQL, MariaDB and PostgreSQL.** All three databases get the same features and the same API. Only the NOTIFY
+   wake-up is PostgreSQL's: on MySQL and MariaDB, other processes wake by a hint or at their poll.
 6. **Concurrency limits.** At most `max` jobs of a key of a global limit run at the same time in the cluster, and a
    flood on one key does not hold back the others. [Guarantees](#guarantees) gives the exact condition.
 7. **Rate limits.** A key of a global rate limit starts at most `max` jobs per `per` in the cluster, spread evenly, and
@@ -123,8 +124,8 @@ not depend on the `timezone` or `dateStrings` settings of the pool.
 | `limit_keys`, `limit_maxes`                                           | json / array null | The keys of the global limits and their maxes, frozen at enqueue, sorted by key. Written with the job row.          |
 | `rate_limits`                                                         | json null         | The rate keys with their settings, `[{ key, max, per_us, burst, cost }]`, frozen at enqueue, sorted by key.         |
 | `blocked_on`                                                          | varchar(255) null | The full key, or the rate key, of a `blocked` job.                                                                  |
-| `enqueue_token`                                                       | char(26)          | Per enqueue call: tells created rows from duplicates.                                                               |
-| `lock_token`                                                          | char(26) null     | Set by the claim. Every final write checks it.                                                                      |
+| `enqueue_token`                                                       | varchar(26)       | Per enqueue call: tells created rows from duplicates.                                                               |
+| `lock_token`                                                          | varchar(26) null  | Set by the claim. Every final write checks it.                                                                      |
 | `locked_by`                                                           | varchar(255) null | `<host>:<pid>:<ULID>`.                                                                                              |
 | `locked_until`                                                        | ts(3) null        | The lease.                                                                                                          |
 | `timed_out_at`                                                        | ts(3) null        | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`.                       |
@@ -299,7 +300,8 @@ with exact integer comparisons (`a.running × b.weight` against `b.running × a.
 one: a free slot raises the lowest share by `1 / weight`, and a finished job lowers its own name's count. So after each
 dispatch, for two names with due jobs and room, `running_a / w_a − running_b / w_b ≤ 1 / w_a`: the running counts stay
 within one slot of the water-filling target at every moment, with no state but the counts and the pointer. The odd
-remainder slot goes by ties, not by time, so it favors long jobs (see the API reference).
+remainder slot goes by ties, not by time, so it favors long jobs (see
+[How free slots are shared](api.md#how-free-slots-are-shared)).
 
 **Which names a claim requests.** A claim locks up to the free slots of each name that it requests, so a claim of all
 1000 due names would lock thousands of rows to start a few jobs. A claim requests at most 4 names per free slot: the
@@ -391,7 +393,8 @@ implementation for ioredis.
 
 - With `hint: null`, other processes find new jobs at their next poll. Re-probes in the same process and NOTIFY still
   work.
-- With `hint: { publish, subscribe }`, the channel is `<tablePrefix>ready`, and the message is a job name. sqlane
+- With `hint: { publish, subscribe }`, the channel is `<tablePrefix>ready`, and the message is a job name, or `*`
+  to wake all names (after a sweep). sqlane
   publishes the hint after an enqueue, and `enqueue` does not wait for `publish`. A failed publish never rejects
   `enqueue`. Instead, sqlane emits an `error` event. A process sends a hint only for the jobs that it cannot start
   itself. When a job frees slots of global limits, the message is the name of each job that it unblocked. A
@@ -540,7 +543,7 @@ limit without keys. A key of a limit of 1 is a mutex.
   `error` event.
 - **A job with global limits needs a timeout.** The lease is renewed while a handler runs. Without a timeout, a hung
   handler would hold its slots in the whole cluster forever. So `handle()` throws a `ConfigError` if the definition has
-  `globalConcurrencyLimits` and no timeout. A job can also get limits only from its enqueue options. If its handler has
+  `globalConcurrencyLimits` and no timeout, from the definition or from `defaults`. A job can also get limits only from its enqueue options. If its handler has
   no timeout, the job fails for good at the claim with a `FatalJobError` ("a job with global concurrency limits needs a
   timeout"), and its failure job runs.
 
@@ -807,13 +810,17 @@ The table lists each guarantee and the mechanism that keeps it.
 
 ## Supported versions
 
-| Component        | Minimum                     | Why                                                                                                                   |
-| ---------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Node.js          | 22.12                       | Node 22, 24 and 26 in CI.                                                                                             |
-| MySQL            | 8.4 LTS                     | 8.0 reached end of life (April 2026). SKIP LOCKED, window functions, CTEs.                                            |
-| MariaDB          | 10.11 LTS                   | 10.6 reached end of life (July 2026). SKIP LOCKED, `JSON_TABLE`. 10.11 and 11.8 in CI.                                |
-| PostgreSQL       | 15                          | 14 reaches end of life in November 2026.                                                                              |
-| Drivers and ORMs | See [Adapters](adapters.md) | `mysql2` and `pg` are optional peer dependencies. They are drivers, not ORMs, and their major versions change rarely. |
+| Component        | Minimum                     | Why                                                                                                                              |
+| ---------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Node.js          | 22.12                       | Node 22, 24 and 26 in CI.                                                                                                        |
+| MySQL            | 8.4 LTS                     | 8.0 reached end of life (April 2026). SKIP LOCKED, window functions, CTEs.                                                       |
+| MariaDB          | 10.11 LTS                   | 10.6 reached end of life (July 2026). SKIP LOCKED, `JSON_TABLE`. 10.11 and 11.8 in CI.                                           |
+| PostgreSQL       | 15                          | 14 reached end of life (November 2026).                                                                                          |
+| Drivers and ORMs | See [Adapters](adapters.md) | `mysql2`, `mariadb` and `pg` are optional peer dependencies. They are drivers, not ORMs, and their major versions change rarely. |
+
+The first `start()` or `migrate()` checks the server's version, and on MySQL and MariaDB its `sql_mode`. An older
+server is a `ConfigError`, unless the adapter gets `allowUnsupportedDbVersion: true`
+([the server check](adapters.md#the-dialect-and-the-server-check)).
 
 ## Package layout
 
@@ -855,6 +862,8 @@ The source files in `src/` have snake_case names. These are the main ones:
 - `enqueue.js` implements `enqueue` and `enqueueMany`.
 - `hint_channel.js` sends and receives the hints.
 - `migrations.js` implements `migrate()` and `getMigrations()`.
+- `server_check.js` checks the server at the first `start()` or `migrate()`: the database of `dialect`, its version,
+  and the `sql_mode` of MySQL and MariaDB.
 - `cron.js` parses cron expressions and finds their slots, `time_zone.js` reads wall-clock times from `Intl`,
   `schedule.js` checks the options of a schedule and computes its slots, and `scheduler.js` runs the timer and the
   fires of the schedules.

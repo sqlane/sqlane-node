@@ -101,6 +101,15 @@ jobs:
       - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
           install_args: node pnpm
+      # The step below swaps in the packed package, so a stale lockfile would pass here and fail for users
+      - name: The lockfile has the latest major of @sqlane/core
+        run: |
+          latest=$(npm view @sqlane/core version)
+          locked=$(node -p "require('./package-lock.json').packages['node_modules/@sqlane/core'].version")
+          if [ "${locked%%.*}" != "${latest%%.*}" ]; then
+            echo "::error file=examples/quickstart/package.json::@sqlane/core $locked in the lockfile, $latest on npm: update the range and run npm install"
+            exit 1
+          fi
       - name: Pack @sqlane/core, as npm would publish it
         run: pnpm --dir ../.. pack --pack-destination "$RUNNER_TEMP"
       - name: Start the databases

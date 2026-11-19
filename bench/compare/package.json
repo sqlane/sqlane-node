@@ -5,7 +5,7 @@
     "description": "The queues that docs/features_vs_other_libs.md and docs/performance_vs_other_libs.md compare with sqlane: installed apart, by bench/compare/run.mjs",
     "type": "module",
     "dependencies": {
-        "@boringnode/queue": "0.9.1",
+        "@boringnode/queue": "0.10.0",
         "@riverqueue/driver-pg": "0.3.2",
         "@riverqueue/migrate": "0.3.2",
         "@sidequest/mysql-backend": "1.17.0",

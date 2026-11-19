@@ -10,6 +10,7 @@ allowBuilds:
 # Pinned and measured less than 7 days after their release, before the 7-day rule: each exclusion can go on the date
 # in its comment, when the release is 7 days old
 minimumReleaseAgeExclude:
+  - '@boringnode/queue@0.10.0' # 19 Nov 2026
   - '@riverqueue/driver-pg@0.3.2' # 16 Nov 2026
   - '@riverqueue/migrate@0.3.2' # 16 Nov 2026
   - bullmq@6.7.4 # 18 Nov 2026

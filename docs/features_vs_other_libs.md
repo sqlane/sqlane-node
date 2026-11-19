@@ -19,7 +19,7 @@ each library's documentation and types. Versions are [at the bottom](#versions).
 | MongoDB    | ❌     | ❌      | ❌              | ❌     | ✅        | ❌    | ❌                | ❌        |
 
 1. Through its Knex adapter.
-2. Its README says MariaDB is not supported.
+2. Its README says MariaDB is not supported ([izi-queue#44](https://github.com/IagoCavalcante/izi-queue/issues/44)).
 3. Redis and Redis-compatible servers.
 
 ## Capabilities
@@ -37,25 +37,28 @@ each library's documentation and types. Versions are [at the bottom](#versions).
 | Configurable crash-recovery time       | ❌     | ✅      | ❌ ⁹            | ✅      | ✅        | ✅      | ✅                | ✅ ¹¹     |
 | Unique / deduplicated jobs             | ✅     | ✅      | ✅              | ✅      | 🟠 ¹²     | ✅      | ✅                | ✅        |
 | Parent/child workflows                 | ❌     | ✅      | ❌              | ✅      | ❌        | ❌ ⁹    | ❌                | ❌        |
-| Rate limiting                          | ✅     | 🟠 ¹³   | 🟠 ¹⁴           | ✅      | ❌        | ❌      | ❌                | ❌        |
+| Rate limiting                          | ✅     | 🟠 ¹³   | 🟠 ¹⁴           | ✅      | 🟠 ¹³     | ❌      | 🟠 ¹³             | 🟠 ¹³     |
 | Cron                                   | ✅     | ✅      | ✅              | ✅      | ✅        | ✅      | ✅                | ✅        |
 | Dashboard                              | ❌     | ✅ ¹⁵   | ❌              | ✅ ¹⁵   | ✅        | ✅ ¹⁵   | ❌                | ❌        |
-| License                                | MIT    | MIT     | MIT             | MIT     | LGPL-3.0  | MPL-2.0 | MIT               | MIT       |
+| License                                | MIT    | MIT     | MIT             | MIT     | LGPL-3.0+ | MPL-2.0 | MIT               | MIT       |
 | First release                          | 2026   | 2016    | 2019            | 2019 ¹⁶ | 2025 ¹⁶   | 2026 ¹⁶ | 2025              | 2025      |
 
-4. The backoff is fixed at about e^attempt seconds: a configured 2 s backoff gave 3 s.
+4. The backoff is fixed at e^min(attempt, 10) seconds, capped near 6 h: a configured 2 s backoff gave 3 s.
 5. Its README documents a custom backoff in seconds, but 0.10.0 treats it as milliseconds: a 2 s backoff became 2 ms,
    and the retry ran after about 1 s.
 6. Only after 4 hours: the job didn't run again within the check's 70 s.
-7. Within one queue only (`group: { id }` with `groupConcurrency: 1`), so the job names must share a queue.
+7. Within one queue only (`group: { id }` with `groupConcurrency: 1`, or the `singleton` policy with a
+   `singletonKey`), so the job names must share a queue.
 8. `queue_name` runs its jobs one at a time across task identifiers, but a job has only one queue name.
-9. In the paid edition only: BullMQ Pro (groups), River Pro (concurrency limits by argument, workflows; Go only),
+9. In the paid edition only: BullMQ Pro (groups), River Pro (concurrency limits by argument, workflows; Go, Ruby and Rust, not yet TypeScript),
    Graphile Worker Pro (recovery settings).
 10. Priorities are per queue, not per job.
 11. With its `LifelinePlugin`.
 12. The key is the job class, optionally with all its arguments; there is no custom key.
-13. At enqueue only: `sendThrottled` / `singletonSeconds` accept one job per key per time window and reject the rest.
-14. Not built in; the docs point to the community package `graphile-worker-rate-limiter`.
+13. At enqueue only: a key accepts one job per time window, and the rest are rejected. pg-boss `sendThrottled` /
+    `singletonSeconds`, Sidequest `unique({ period })`, Boring Node Queue `.dedup({ id, ttl })`, Izi Queue
+    `unique.period`.
+14. Not built in; the docs point to the community package `graphile-worker-rate-limiter`, last updated in 2023.
 15. A separate package: pg-boss [`@pg-boss/dashboard`](https://www.npmjs.com/package/@pg-boss/dashboard) (MIT);
     BullMQ [bull-board](https://github.com/felixmosh/bull-board) (community, MIT) or [Taskforce.sh](https://taskforce.sh)
     (commercial); River [River UI](https://github.com/riverqueue/riverui), a separate binary.
@@ -65,16 +68,16 @@ each library's documentation and types. Versions are [at the bottom](#versions).
 
 ## Enqueue in your transaction
 
-| Library           | In your transaction                                  | Drivers and ORMs                                                                                               |
-| ----------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| sqlane            | `sqlane.enqueue(tx, job, payload)`                   | mysql2, pg, postgres.js, Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM, MikroORM ([adapters](adapters.md)) |
-| pg-boss           | `boss.send(name, data, { db: fromKnex(tx) })`        | Knex, Kysely, Drizzle, Prisma, PGlite, Bun SQL; any other through `executeSql`                                 |
-| Graphile Worker   | `SELECT graphile_worker.add_job(...)` on your client | any that runs SQL                                                                                              |
-| River             | `client.insert(job, args, { tx })`                   | node-postgres, Knex, Prisma (driver packages)                                                                  |
-| Boring Node Queue | `Job.dispatch(payload).with(knex(trx))`              | Knex, Kysely                                                                                                   |
-| Izi Queue         | `queue.insert(name, { args, tx: client })`           | node-postgres, mysql2, better-sqlite3                                                                          |
-| BullMQ            | — no API takes your connection                       | —                                                                                                              |
-| Sidequest         | — no API takes your connection                       | —                                                                                                              |
+| Library           | In your transaction                                                                                   | Drivers and ORMs                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| sqlane            | `sqlane.enqueue(tx, job, payload)`                                                                    | mysql2, pg, postgres.js, Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM, MikroORM ([adapters](adapters.md)) |
+| pg-boss           | `boss.send(name, data, { db: fromKnex(tx) })`                                                         | Knex, Kysely, Drizzle, Prisma, PGlite, Bun SQL; any other through `executeSql`                                 |
+| Graphile Worker   | `SELECT graphile_worker.add_job(...)` on your client                                                  | any that runs SQL                                                                                              |
+| River             | `client.insert(job, args, { tx })`                                                                    | node-postgres, Knex, Prisma (driver packages)                                                                  |
+| Boring Node Queue | `Job.dispatch(payload).with(knex(trx))`                                                               | Knex, Kysely                                                                                                   |
+| Izi Queue         | `queue.insert(name, { args, tx: client })`                                                            | node-postgres, mysql2, better-sqlite3                                                                          |
+| BullMQ            | — no API takes your connection                                                                        | —                                                                                                              |
+| Sidequest         | — no API takes your connection ([sidequest#149](https://github.com/sidequestjs/sidequest/issues/149)) | —                                                                                                              |
 
 🔬 An order is inserted and a job enqueued in each of two transactions, and the first one is rolled back. With
 sqlane, pg-boss, Graphile Worker, River, Boring Node Queue and Izi Queue, only the committed order's job ran. With
@@ -86,8 +89,8 @@ How long until another worker runs the job of a crashed worker.
 
 | Library           | Option                                                                                      | Default                                                  | 🔬 Shortest the check could set         |
 | ----------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------- |
-| sqlane            | — not configurable                                                                          | 4 min lease, found within 30 s, run again 30 s later     | 34 s ¹⁷                                 |
-| pg-boss           | `expireInSeconds`, per queue or job                                                         | 15 min                                                   | 2.5 s, `expireInSeconds: 2`             |
+| sqlane            | — not configurable                                                                          | 4 min lease, found within 30 s, run again 30 s later     | 4.5–5 min, the default ¹⁷               |
+| pg-boss           | `expireInSeconds`, or `heartbeatSeconds` (10 s or more), per queue or job                   | 15 min                                                   | 2.5 s, `expireInSeconds: 2`             |
 | Graphile Worker   | — not configurable (Graphile Worker Pro only)                                               | 4 h                                                      | not within 70 s                         |
 | BullMQ            | `lockDuration`, `stalledInterval`                                                           | 30 s, checked every 30 s                                 | 2 s                                     |
 | Sidequest         | `releaseStaleJobsMaxStaleMs`, `releaseStaleJobsIntervalMin`                                 | stale after 10 min, checked every 60 min                 | within a minute (1 min minimum)         |
@@ -95,7 +98,7 @@ How long until another worker runs the job of a crashed worker.
 | Boring Node Queue | `stalledThreshold`, `stalledInterval`                                                       | 30 s, checked every 30 s                                 | 2 s                                     |
 | Izi Queue         | `LifelinePlugin` `rescueAfter`; a node is presumed dead after 4 missed `heartbeatInterval`s | 300 s; a node is dead after 60 s at least                | 60 s, `rescueAfter: 10 s` (its minimum) |
 
-17. With an undocumented, test-only lease of 3 s.
+17. Not configurable. The check ran with an undocumented, test-only lease of 3 s, and took 34 s.
 
 ## Cron
 
@@ -129,7 +132,7 @@ was up, and whether several instances add one job per slot.
 ## Rate limits
 
 How each library limits the starts of jobs per period, from its documentation and source; not checked by running it.
-Sidequest, River, Boring Node Queue and Izi Queue have no rate limit.
+River has no rate limit; Sidequest, Boring Node Queue and Izi Queue only throttle at enqueue ¹³.
 
 | Library         | Scope                                                                   | Per key                                     | Algorithm                                              | Over the limit                                                         | On a 429 from the handler                                                                    |
 | --------------- | ----------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -142,11 +145,14 @@ Sidequest, River, Boring Node Queue and Izi Queue have no rate limit.
 
 ## Versions
 
-Checked on 14 November 2026 on PostgreSQL 17, on the Linux machine of the [performance
-comparison](performance_vs_other_libs.md#conditions): sqlane 5.0.0, [pg-boss](https://github.com/timgit/pg-boss)
+Checked on 18 November 2026 on PostgreSQL 17, on the Linux machine of the [performance
+comparison](performance_vs_other_libs.md#conditions): sqlane 7.0.0, [pg-boss](https://github.com/timgit/pg-boss)
 12.38.2, [Graphile Worker](https://github.com/graphile/worker) 0.18.0, [BullMQ](https://github.com/taskforcesh/bullmq)
 6.7.4, [Sidequest](https://github.com/sidequestjs/sidequest) 1.17.0, [River for
-JavaScript](https://github.com/riverqueue/river) 0.3.2, [Boring Node Queue](https://github.com/boringnode/queue) 0.9.1
+JavaScript](https://github.com/riverqueue/river) 0.3.2, [Boring Node Queue](https://github.com/boringnode/queue) 0.10.0
 and [Izi Queue](https://github.com/IagoCavalcante/izi-queue) 0.10.0. River's Go library and the paid editions (BullMQ
 Pro, River Pro, Graphile Worker Pro) are not compared. To rerun the 🔬 checks: `pnpm bench:vs-other-libs --only checks`
 ([bench/compare](../bench/compare/README.md)).
+
+If you maintain one of these libraries and a row is wrong or out of date, please
+[open an issue](https://github.com/sqlane/sqlane-node/issues): we fix it.

@@ -477,8 +477,20 @@ await db.transaction(async (tx) => {
 database a few times. On PostgreSQL, `{ notify: true }` wakes the workers of every process at the commit.
 
 **Caveats.** The queue's Drizzle database must be over a pool, not over a single connection. `notify` is for
-PostgreSQL only, and the adapter throws a `ConfigError` if you set it on MySQL. NOTIFY takes a global lock at the commit, so under a heavy write load it can limit the commit rate of the whole
-database.
+PostgreSQL only, and the adapter throws a `ConfigError` if you set it on MySQL. NOTIFY takes a global lock at the
+commit, so under a heavy write load it can limit the commit rate of the whole database.
+
+**Prepared statements.** Over node-postgres, sqlane always runs its SQL as named prepared statements, as the
+[pg adapter](#pg) does by default, also in the transactions that you pass to `enqueue`. `drizzleAdapter` has no option
+to turn them off.
+
+> [!WARNING]
+> Behind a pooler in transaction mode without prepared statement support, such as PgBouncer before 1.21, connect
+> Drizzle through postgres.js with `postgres({ prepare: false })`.
+
+Over postgres.js, sqlane follows `postgres({ prepare })`, as the [postgres.js adapter](#postgresjs) does. The limits of
+the pg adapter apply: PgBouncer 1.21 or later needs `max_prepared_statements` of at least 100, plus your app's own, and
+`DISCARD ALL` or `DEALLOCATE ALL` must not run on a connection that sqlane uses.
 
 ## Prisma
 
@@ -514,10 +526,14 @@ await prisma.$transaction(async (tx) => {
 **Wake-up.** Prisma has no after-commit hook. After an enqueue in a transaction, the workers of this process check the
 database a few times. Other processes need a [hint](api.md#hint).
 
-**Caveats.** List the tables of sqlane as
-[external tables](https://www.prisma.io/docs/orm/prisma-schema/data-model/externally-managed-tables). Then Prisma
-Migrate leaves them alone, and `sqlane.migrate()` creates them. External tables are a Preview feature of Prisma, so
-they need the `externalTables` flag. This example is for PostgreSQL with the default `tablePrefix`:
+> [!IMPORTANT]
+> List the tables of sqlane as
+> [external tables](https://www.prisma.io/docs/orm/prisma-schema/data-model/externally-managed-tables), or Prisma
+> Migrate sees them as drift and proposes to drop them.
+
+With the tables listed, Prisma Migrate leaves them alone, and `sqlane.migrate()` creates them. External tables are a
+Preview feature of Prisma, so they need the `externalTables` flag. This example is for PostgreSQL with the default
+`tablePrefix`, `sqlane_`:
 
 ```ts
 // prisma.config.ts
@@ -527,9 +543,21 @@ export default defineConfig({
     schema: 'prisma/schema.prisma',
     datasource: { url: env('DATABASE_URL') },
     experimental: { externalTables: true },
-    tables: { external: ['public.sqlane_jobs', 'public.sqlane_payloads', 'public.sqlane_concurrency_slots', 'public.sqlane_migrations'] },
+    tables: {
+        external: [
+            'public.sqlane_jobs',
+            'public.sqlane_payloads',
+            'public.sqlane_schedules',
+            'public.sqlane_concurrency_slots',
+            'public.sqlane_rate_limits',
+            'public.sqlane_migrations',
+        ],
+    },
 });
 ```
+
+On MySQL and MariaDB, list the names without the schema: `'sqlane_jobs'`, and so on. With another `tablePrefix`, the
+names start with it. A new version of sqlane can add a table: its migration guide and the changelog then say so.
 
 Prisma has no connection outside a transaction, so `migrate()` runs in one transaction.
 

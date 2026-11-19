@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@boringnode/queue':
-        specifier: 0.9.1
-        version: 0.9.1(@opentelemetry/api@1.10.0)(ioredis@6.0.0(supports-color@7.2.0))(knex@3.3.0(mysql2@3.24.6(@types/node@26.6.6))(pg@8.23.1)(supports-color@7.2.0))
+        specifier: 0.10.0
+        version: 0.10.0(@opentelemetry/api@1.10.0)(ioredis@6.0.0(supports-color@7.2.0))(knex@3.3.0(mysql2@3.24.6(@types/node@26.6.6))(pg@8.23.1)(supports-color@7.2.0))
       '@riverqueue/driver-pg':
         specifier: 0.3.2
         version: 0.3.2(@types/pg@8.23.1)(pg@8.23.1)(riverqueue@0.3.2(@types/node@26.6.6))
@@ -67,13 +67,13 @@ packages:
     resolution: {integrity: sha512-qehxGkRj55h/ff8EMaJ+cYhyaKlHIxqYDn682wQD7RNp9UujOQsHog2uS0r2vzr4pW+sXf90NeeayjcNaX3fFg==}
     engines: {node: '>=6.9.0'}
 
-  '@boringnode/queue@0.9.1':
-    resolution: {integrity: sha512-+uA9+fSRn7WcHZzQryNSFYXVYn4QzLoia0d0lPisbUbtp0evRN1M6G84hOOkc8Thj83AzC8JSOmEYg3Q5HJwPQ==}
+  '@boringnode/queue@0.10.0':
+    resolution: {integrity: sha512-ysbnlzcMY9LTA6vwLLxencFcd6GIoXHUfuPqIpIgiexfiirr4DBmxmk14RIIxHhtXvoduZPjzEQJbpTmmtPPWA==}
     engines: {node: '>=24.0.0'}
     peerDependencies:
-      '@opentelemetry/api': ^1.9.0
-      '@opentelemetry/core': ^1.30.0 || ^2.0.0
-      '@opentelemetry/instrumentation': '>=0.200.0 <0.300.0'
+      '@opentelemetry/api': ^1.10.0
+      '@opentelemetry/core': ^3.0.0
+      '@opentelemetry/instrumentation': '>=0.300.0 <0.400.0'
       ioredis: ^5.0.0 || ^6.0.0
       knex: ^3.0.0
       kysely: ^0.29.0
@@ -1258,7 +1258,7 @@ snapshots:
 
   '@babel/helper-validator-identifier@7.29.7': {}
 
-  '@boringnode/queue@0.9.1(@opentelemetry/api@1.10.0)(ioredis@6.0.0(supports-color@7.2.0))(knex@3.3.0(mysql2@3.24.6(@types/node@26.6.6))(pg@8.23.1)(supports-color@7.2.0))':
+  '@boringnode/queue@0.10.0(@opentelemetry/api@1.10.0)(ioredis@6.0.0(supports-color@7.2.0))(knex@3.3.0(mysql2@3.24.6(@types/node@26.6.6))(pg@8.23.1)(supports-color@7.2.0))':
     dependencies:
       '@lukeed/ms': 2.0.2
       '@poppinss/utils': 7.1.2

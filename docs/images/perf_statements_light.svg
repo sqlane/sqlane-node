@@ -1,40 +1,44 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="720" height="404" viewBox="0 0 720 404" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="SQL statements per job, steady load">
+<svg xmlns="http://www.w3.org/2000/svg" width="752" height="476" viewBox="0 0 752 476" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="SQL statements per job, steady load">
 <title>SQL statements per job, steady load</title>
-<text x="0" y="20" font-size="16" font-weight="600" fill="#1f2328">SQL statements per job, steady load</text>
-<text x="0" y="42" font-size="13" fill="#59636e">PostgreSQL 17, each a 1 ms round trip; without the business INSERT. *: enqueue after the COMMIT.</text>
-<line x1="158.0" y1="60" x2="158.0" y2="370" stroke="#c3c2b7"/>
-<text x="158.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">0</text>
-<line x1="314.0" y1="60" x2="314.0" y2="370" stroke="#e1e0d9"/>
-<text x="314.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">5</text>
-<line x1="470.0" y1="60" x2="470.0" y2="370" stroke="#e1e0d9"/>
-<text x="470.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">10</text>
-<line x1="626.0" y1="60" x2="626.0" y2="370" stroke="#e1e0d9"/>
-<text x="626.0" y="388" font-size="11" fill="#59636e" text-anchor="middle">15</text>
-<text x="648" y="388" font-size="11" fill="#59636e">statements</text>
-<text x="150" y="85" font-size="13" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
-<path d="M158,72H247.9A4,4 0 0 1 251.9,76V86A4,4 0 0 1 247.9,90H158Z" fill="#2a78d6"/>
-<text x="257.9" y="85" font-size="13" fill="#1f2328" font-weight="600">3.0</text>
-<text x="150" y="119" font-size="13" fill="#1f2328" text-anchor="end">Graphile Worker</text>
-<path d="M158,106H281.1A4,4 0 0 1 285.1,110V120A4,4 0 0 1 281.1,124H158Z" fill="#2a78d6"/>
-<text x="291.1" y="119" font-size="13" fill="#1f2328">4.1</text>
-<text x="150" y="153" font-size="13" fill="#1f2328" text-anchor="end">River</text>
-<path d="M158,140H268.7A4,4 0 0 1 272.7,144V154A4,4 0 0 1 268.7,158H158Z" fill="#2a78d6"/>
-<text x="278.7" y="153" font-size="13" fill="#1f2328">3.7</text>
-<text x="150" y="187" font-size="13" fill="#1f2328" text-anchor="end">pg-boss</text>
-<path d="M158,174H598.6A4,4 0 0 1 602.6,178V188A4,4 0 0 1 598.6,192H158Z" fill="#2a78d6"/>
-<text x="608.6" y="187" font-size="13" fill="#1f2328">14.3</text>
-<text x="150" y="221" font-size="13" fill="#1f2328" text-anchor="end">Izi Queue</text>
-<path d="M158,208H312.5A4,4 0 0 1 316.5,212V222A4,4 0 0 1 312.5,226H158Z" fill="#2a78d6"/>
-<text x="322.5" y="221" font-size="13" fill="#1f2328">5.1</text>
-<text x="150" y="255" font-size="13" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
-<path d="M158,242H579.7A4,4 0 0 1 583.7,246V256A4,4 0 0 1 579.7,260H158Z" fill="#2a78d6"/>
-<text x="589.7" y="255" font-size="13" fill="#1f2328">13.6</text>
-<text x="150" y="289" font-size="13" fill="#1f2328" text-anchor="end">BullMQ*</text>
-<path d="M158,276H403.4A4,4 0 0 1 407.4,280V290A4,4 0 0 1 403.4,294H158Z" fill="#2a78d6"/>
-<text x="413.4" y="289" font-size="13" fill="#1f2328">8.0</text>
-<text x="150" y="323" font-size="13" fill="#1f2328" text-anchor="end">Sidequest*</text>
-<path d="M158,310H448.8A4,4 0 0 1 452.8,314V324A4,4 0 0 1 448.8,328H158Z" fill="#2a78d6"/>
-<text x="458.8" y="323" font-size="13" fill="#1f2328">9.4</text>
-<text x="150" y="357" font-size="13" fill="#1f2328" text-anchor="end">BullMQ* (Redis)</text>
-<text x="158.0" y="357" font-size="13" fill="#59636e">60 Redis commands per job: another unit</text>
+<rect width="752" height="476" rx="6" fill="#ffffff"/>
+<g transform="translate(16 16)">
+<text x="0" y="22" font-size="18" font-weight="600" fill="#1f2328">SQL statements per job, steady load</text>
+<text x="0" y="46" font-size="14" fill="#59636e">PostgreSQL 17, each statement a 1 ms round trip; without the business INSERT.</text>
+<line x1="174.0" y1="64" x2="174.0" y2="392" stroke="#c3c2b7"/>
+<text x="174.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">0</text>
+<line x1="323.0" y1="64" x2="323.0" y2="392" stroke="#e1e0d9"/>
+<text x="323.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">10</text>
+<line x1="472.0" y1="64" x2="472.0" y2="392" stroke="#e1e0d9"/>
+<text x="472.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">20</text>
+<line x1="621.0" y1="64" x2="621.0" y2="392" stroke="#e1e0d9"/>
+<text x="621.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">30</text>
+<text x="643" y="411" font-size="12" fill="#59636e">statements</text>
+<text x="0" y="436" font-size="13" fill="#59636e">*: enqueue after the COMMIT, not in the caller's transaction.</text>
+<text x="166" y="91" font-size="14" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
+<path d="M174,77H214.9A4,4 0 0 1 218.9,81V91A4,4 0 0 1 214.9,95H174Z" fill="#2a78d6"/>
+<text x="224.9" y="91" font-size="14" fill="#1f2328" font-weight="600">3.0</text>
+<text x="166" y="127" font-size="14" fill="#1f2328" text-anchor="end">Graphile Worker</text>
+<path d="M174,113H230.7A4,4 0 0 1 234.7,117V127A4,4 0 0 1 230.7,131H174Z" fill="#2a78d6"/>
+<text x="240.7" y="127" font-size="14" fill="#1f2328">4.1</text>
+<text x="166" y="163" font-size="14" fill="#1f2328" text-anchor="end">River</text>
+<path d="M174,149H224.5A4,4 0 0 1 228.5,153V163A4,4 0 0 1 224.5,167H174Z" fill="#2a78d6"/>
+<text x="234.5" y="163" font-size="14" fill="#1f2328">3.7</text>
+<text x="166" y="199" font-size="14" fill="#1f2328" text-anchor="end">pg-boss</text>
+<path d="M174,185H548.9A4,4 0 0 1 552.9,189V199A4,4 0 0 1 548.9,203H174Z" fill="#2a78d6"/>
+<text x="558.9" y="199" font-size="14" fill="#1f2328">25.4</text>
+<text x="166" y="235" font-size="14" fill="#1f2328" text-anchor="end">Izi Queue</text>
+<path d="M174,221H245.8A4,4 0 0 1 249.8,225V235A4,4 0 0 1 245.8,239H174Z" fill="#2a78d6"/>
+<text x="255.8" y="235" font-size="14" fill="#1f2328">5.1</text>
+<text x="166" y="271" font-size="14" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
+<path d="M174,257H554.9A4,4 0 0 1 558.9,261V271A4,4 0 0 1 554.9,275H174Z" fill="#2a78d6"/>
+<text x="564.9" y="271" font-size="14" fill="#1f2328">25.8</text>
+<text x="166" y="307" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (PostgreSQL)*</text>
+<path d="M174,293H289.2A4,4 0 0 1 293.2,297V307A4,4 0 0 1 289.2,311H174Z" fill="#2a78d6"/>
+<text x="299.2" y="307" font-size="14" fill="#1f2328">8.0</text>
+<text x="166" y="343" font-size="14" fill="#1f2328" text-anchor="end">Sidequest*</text>
+<path d="M174,329H308.7A4,4 0 0 1 312.7,333V343A4,4 0 0 1 308.7,347H174Z" fill="#2a78d6"/>
+<text x="318.7" y="343" font-size="14" fill="#1f2328">9.3</text>
+<text x="166" y="379" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (Redis)*</text>
+<text x="174.0" y="379" font-size="14" fill="#59636e">60 Redis commands, most inside 5 Lua script calls: another unit</text>
+</g>
 </svg>
