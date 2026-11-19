@@ -42,6 +42,11 @@ steps {
         check_diff = null
         fix = null
     }
+    // The methods of the Sqlane interface: each with a description, its @param texts and its @returns text
+    ["api_docs"] {
+        glob = List("src/sqlane.ts", "scripts/check_api_docs.js")
+        check = "node scripts/check_api_docs.js"
+    }
     // File and folder names: snake_case, with the exceptions in .ls-lint.yml
     ["ls_lint"] = Builtins.ls_lint
     ["check_merge_conflict"] = Builtins.check_merge_conflict

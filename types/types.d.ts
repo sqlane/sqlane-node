@@ -7,7 +7,13 @@ export type ExponentialBackoff = {
      * `delay × 2^(attempt − 1)`, at most `maxDelay`.
      */
     type: 'exponential';
+    /**
+     * The base wait.
+     */
     delay: Duration;
+    /**
+     * The longest wait: at least `delay`.
+     */
     maxDelay?: Duration;
     /**
      * 0–1: the delay is `delay × (1 − jitter × random())`. Default: 0.2.
@@ -15,7 +21,13 @@ export type ExponentialBackoff = {
     jitter?: number;
 };
 export type FixedBackoff = {
+    /**
+     * The wait is always `delay`.
+     */
     type: 'fixed';
+    /**
+     * The wait.
+     */
     delay: Duration;
     /**
      * 0–1. Default: 0.2.
@@ -39,17 +51,25 @@ export type JobOptions<P = any> = {
      */
     name: string;
     /**
-     * Default: 3.
+     * The runs of a job before it fails for good. Default: 3.
      */
     maxAttempts?: number;
     /**
-     * Default: 2.
+     * The stalls (a lost lease, a crashed process) that a job survives. Default: 2.
      */
     maxStalls?: number;
+    /**
+     * The wait before the next attempt. Default:
+     * `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }`.
+     */
     backoff?: Backoff;
+    /**
+     * How long a finished job is kept. Default: `{ completed: '1h', failed: '30d' }`.
+     */
     retention?: Retention;
     /**
-     * No default. A job with global concurrency limits needs one.
+     * Aborts the handler's `signal` after it. No default. A job with global concurrency
+     * limits needs one.
      */
     timeout?: Duration;
     /**
@@ -101,9 +121,21 @@ export type SlotOptions = {
     key?: string;
 };
 export type EnqueueBaseOptions = {
+    /**
+     * Overrides the definition's `maxAttempts` for this job.
+     */
     maxAttempts?: number;
+    /**
+     * Overrides the definition's `maxStalls` for this job.
+     */
     maxStalls?: number;
+    /**
+     * Overrides the definition's retention for this job, field by field.
+     */
     retention?: Retention;
+    /**
+     * Overrides the definition's failure job for this job.
+     */
     failureJob?: string | JobDefinition;
     /**
      * Replace the global limits
@@ -122,6 +154,9 @@ export type EnqueueJobIdOption = {
      * id is added once while its row exists.
      */
     jobId?: string;
+    /**
+     * Not with `jobId`.
+     */
     slot?: never;
 };
 export type EnqueueSlotOption = {
@@ -129,6 +164,9 @@ export type EnqueueSlotOption = {
      * Runs a slot of a schedule by hand: the job gets the `jobId` of the slot.
      */
     slot: SlotOptions;
+    /**
+     * Not with `slot`.
+     */
     jobId?: never;
 };
 export type EnqueueOptions = EnqueueBaseOptions & ({
@@ -149,17 +187,35 @@ export type EnqueueResult = {
     created: boolean;
 };
 export type EnqueueItem<P> = {
+    /**
+     * The payload of this job, as in `enqueue`.
+     */
     payload: P;
+    /**
+     * The options of this job, as in `enqueue`.
+     */
     options?: EnqueueOptions;
 };
 export type JobInfo = {
+    /**
+     * The job id.
+     */
     id: string;
+    /**
+     * The job name.
+     */
     name: string;
     /**
      * 1 for the first run.
      */
     attempt: number;
+    /**
+     * The most attempts of this job.
+     */
     maxAttempts: number;
+    /**
+     * The time of the enqueue.
+     */
     enqueuedAt: Date;
     /**
      * Its keys, sorted, with their maxes.
@@ -178,6 +234,9 @@ export type HandlerContext<P = any> = {
      * As JSON gives it back.
      */
     payload: P;
+    /**
+     * The job: its id, name, attempt, slot and keys.
+     */
     job: JobInfo;
     /**
      * Aborted with a `JobTimeoutError`, a `LeaseLostError` or a `ShutdownError`.
@@ -237,13 +296,32 @@ export type RateLimitKey = Readonly<{
     cost: number;
 }>;
 export type JobDefaults = {
+    /**
+     * The runs of a job before it fails for good. Default: 3.
+     */
     maxAttempts?: number;
+    /**
+     * The stalls that a job survives. Default: 2.
+     */
     maxStalls?: number;
+    /**
+     * The wait before the next attempt. Default:
+     * `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }`.
+     */
     backoff?: Backoff;
+    /**
+     * How long a finished job is kept. Default: `{ completed: '1h', failed: '30d' }`.
+     */
     retention?: Retention;
+    /**
+     * Aborts the handler's `signal` after it. No default.
+     */
     timeout?: Duration;
 };
 export type Hint = {
+    /**
+     * Sends a message on a channel.
+     */
     publish: (channel: string, message: string) => Promise<void>;
     /**
      *     Resolves to the unsubscribe function.
@@ -252,14 +330,35 @@ export type Hint = {
 };
 export type LogFn = (object: object, message?: string) => void;
 export type Logger = {
+    /**
+     * Transient errors that sqlane retried at once.
+     */
     debug: LogFn;
+    /**
+     * Recoveries, such as schedules that enqueue their slots again.
+     */
     info: LogFn;
+    /**
+     * What sqlane works around: a clock skew, a server below the supported version.
+     */
     warn: LogFn;
+    /**
+     * Failed operations, such as a failed job; also an `error` event.
+     */
     error: LogFn;
 };
 export type JobEventBase = {
+    /**
+     * The job id.
+     */
     jobId: string;
+    /**
+     * The job name.
+     */
     jobName: string;
+    /**
+     * The attempt, from 1. After a stall, the attempt of the run that stalled.
+     */
     attempt: number;
 };
 export type SqlaneEvent = (JobEventBase & ({
@@ -303,8 +402,17 @@ export type SqlaneEvent = (JobEventBase & ({
     error: unknown;
 };
 export type ScheduleFiredEvent = {
+    /**
+     * The event type.
+     */
     type: 'schedule_fired';
+    /**
+     * `<job name>` or `<job name>:<key>`.
+     */
     scheduleId: string;
+    /**
+     * The job name.
+     */
     jobName: string;
     /**
      * The slot.
@@ -463,6 +571,10 @@ export type Adapter<C> = {
     listen?: (channel: string, onMessage: (message: string) => void) => Promise<() => Promise<void>>;
 };
 export type Executor = {
+    /**
+     * Runs a
+     * SELECT: its rows.
+     */
     query: (sql: string, params: readonly unknown[]) => Promise<readonly Record<string, unknown>[]>;
     /**
      * Runs an INSERT, UPDATE or DELETE:
@@ -471,6 +583,10 @@ export type Executor = {
     run: (sql: string, params: readonly unknown[]) => Promise<number>;
 };
 export type SqlaneOptions<C> = {
+    /**
+     * The adapter of your driver or ORM, over the queue's own small pool, e.g.
+     * `pgAdapter(queuePool, { dialect: 'postgres' })`.
+     */
     adapter: Adapter<C>;
     /**
      * The definitions known by name.
@@ -480,6 +596,10 @@ export type SqlaneOptions<C> = {
      * The handlers that run at the same time in this instance. Default: 10.
      */
     localMaxConcurrency?: number;
+    /**
+     * Defaults of `maxAttempts`, `maxStalls`, `backoff`, `retention` and `timeout`. A
+     * definition overrides them.
+     */
     defaults?: JobDefaults;
     /**
      * Default: `'allow'`. `'reject'`: `enqueue` of a name that is not in
@@ -494,6 +614,9 @@ export type SqlaneOptions<C> = {
      * Default: no logs.
      */
     logger?: Logger;
+    /**
+     * Gets the events of the job lifecycle. A throw is logged.
+     */
     onEvent?: (event: SqlaneEvent) => void;
     /**
      * Default: `'sqlane_'`.
@@ -523,6 +646,9 @@ export type DrainOptions = {
     includeDelayed?: boolean;
 };
 export type DrainResult = {
+    /**
+     * Jobs that completed.
+     */
     completed: number;
     /**
      * Failed attempts that were retried.
@@ -555,18 +681,40 @@ export type MigrateOptions = {
     lockTimeout?: Duration;
 };
 export type JobStats = {
+    /**
+     * The job name.
+     */
     name: string;
+    /**
+     * The jobs that wait to run, also those not due yet and those blocked on a key.
+     */
     pending: number;
+    /**
+     * The pending jobs that are due now.
+     */
     due: number;
+    /**
+     * The jobs that run now.
+     */
     running: number;
     /**
      * Timed out, the handler has not settled.
      */
     stuck: number;
+    /**
+     * The failed jobs that sqlane still keeps.
+     */
     failed: number;
+    /**
+     * How long the oldest due job has waited, in ms. Null: no job is due.
+     */
     oldestDueAgeMs: number | null;
 };
 export type FailedJobPayload = {
+    /**
+     * The job that
+     * failed for good.
+     */
     job: {
         id: string;
         name: string;
@@ -585,52 +733,15 @@ export type FailedJobPayload = {
         code?: string;
     };
 };
-export type Sqlane<C> = {
-    /**
-     * Adds a job with the caller's connection: it must be in a transaction (or a
-     * pool: then sqlane opens its own transaction).
-     */
-    enqueue: <J extends JobDefinition | string, P>(connection: C, job: J, payload: EnqueuePayload<J, P>, options?: EnqueueOptions) => Promise<EnqueueResult>;
-    /**
-     * The results are in the order of the items.
-     */
-    enqueueMany: <J extends JobDefinition | string, P>(connection: C, job: J, items: readonly EnqueueManyItem<J, P>[]) => Promise<EnqueueResult[]>;
-    handle: <J extends JobDefinition | string>(job: J, handler: Handler<HandlerPayload<J>>) => void;
-    /**
-     * Adds a job at each slot of a cron or an interval, in every started process that calls it.
-     * Before `start()`.
-     */
-    schedule: <J extends JobDefinition | string, P>(job: J, options: ScheduleBaseOptions & ScheduleTiming & SchedulePayload<J, P>) => void;
-    /**
-     * The schedules of the table and of this process.
-     */
-    getSchedules: () => Promise<ScheduleInfo[]>;
-    /**
-     * Starts the runner and the schedules. Idempotent.
-     */
-    start: () => Promise<void>;
-    /**
-     * For tests: runs the due jobs of the handled
-     * names until none is left, without `start()`. It does not fire schedules.
-     */
-    drain: (options?: DrainOptions) => Promise<DrainResult>;
-    close: (options?: CloseOptions) => Promise<void>;
-    /**
-     * Applies the missing migrations:
-     * their ids.
-     */
-    migrate: (options?: MigrateOptions) => Promise<{
-        applied: string[];
-    }>;
-    getStats: () => Promise<JobStats[]>;
-    /**
-     * Low level: probes the handled names now, instead of at the next poll. Does nothing
-     * before `start()`.
-     */
-    wake: () => void;
-};
+export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
 export type Migration = {
+    /**
+     * Such as `0001_initial`.
+     */
     id: string;
+    /**
+     * Its SQL, in order.
+     */
     statements: readonly string[];
 };
 /**
@@ -652,14 +763,14 @@ export type Migration = {
 /**
  * @typedef {object} ExponentialBackoff
  * @property {'exponential'} type `delay × 2^(attempt − 1)`, at most `maxDelay`.
- * @property {Duration} delay
- * @property {Duration} [maxDelay]
+ * @property {Duration} delay The base wait.
+ * @property {Duration} [maxDelay] The longest wait: at least `delay`.
  * @property {number} [jitter] 0–1: the delay is `delay × (1 − jitter × random())`. Default: 0.2.
  */
 /**
  * @typedef {object} FixedBackoff
- * @property {'fixed'} type
- * @property {Duration} delay
+ * @property {'fixed'} type The wait is always `delay`.
+ * @property {Duration} delay The wait.
  * @property {number} [jitter] 0–1. Default: 0.2.
  */
 /** @typedef {ExponentialBackoff | FixedBackoff} Backoff */
@@ -675,11 +786,13 @@ export type Migration = {
  *     `globalConcurrencyLimits` and `globalRateLimits`.
  * @typedef {object} JobOptions
  * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
- * @property {number} [maxAttempts] Default: 3.
- * @property {number} [maxStalls] Default: 2.
- * @property {Backoff} [backoff]
- * @property {Retention} [retention]
- * @property {Duration} [timeout] No default. A job with global concurrency limits needs one.
+ * @property {number} [maxAttempts] The runs of a job before it fails for good. Default: 3.
+ * @property {number} [maxStalls] The stalls (a lost lease, a crashed process) that a job survives. Default: 2.
+ * @property {Backoff} [backoff] The wait before the next attempt. Default:
+ *     `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }`.
+ * @property {Retention} [retention] How long a finished job is kept. Default: `{ completed: '1h', failed: '30d' }`.
+ * @property {Duration} [timeout] Aborts the handler's `signal` after it. No default. A job with global concurrency
+ *     limits needs one.
  * @property {(context: { payload: P }) => readonly (ConcurrencyLimit | ConcurrencyLimitKey)[]}
  *     [globalConcurrencyLimits] Limits that the whole cluster counts, per key. Sync, from the context only; at enqueue.
  * @property {number} [fairShareWeight] 1–1000. The name's share of the free slots of an instance. Default: 1.
@@ -732,10 +845,10 @@ export type Migration = {
  */
 /**
  * @typedef {object} EnqueueBaseOptions
- * @property {number} [maxAttempts]
- * @property {number} [maxStalls]
- * @property {Retention} [retention]
- * @property {string | JobDefinition} [failureJob]
+ * @property {number} [maxAttempts] Overrides the definition's `maxAttempts` for this job.
+ * @property {number} [maxStalls] Overrides the definition's `maxStalls` for this job.
+ * @property {Retention} [retention] Overrides the definition's retention for this job, field by field.
+ * @property {string | JobDefinition} [failureJob] Overrides the definition's failure job for this job.
  * @property {readonly (ConcurrencyLimit | ConcurrencyLimitKey)[]} [globalConcurrencyLimits] Replace the global limits
  *     of the definition; `[]` clears them.
  * @property {readonly (RateLimit | RateLimitKey)[]} [globalRateLimits] Replace the global rate limits of the
@@ -745,12 +858,12 @@ export type Migration = {
  * @typedef {object} EnqueueJobIdOption
  * @property {string} [jobId] 1–120 printable ASCII characters, not starting with `schedule:`. Dedupe: a job with this
  *     id is added once while its row exists.
- * @property {never} [slot]
+ * @property {never} [slot] Not with `jobId`.
  */
 /**
  * @typedef {object} EnqueueSlotOption
  * @property {SlotOptions} slot Runs a slot of a schedule by hand: the job gets the `jobId` of the slot.
- * @property {never} [jobId]
+ * @property {never} [jobId] Not with `slot`.
  */
 /**
  * The options of an enqueue: `delay` or `runAt`, not both; `jobId` or `slot`, not both.
@@ -766,16 +879,16 @@ export type Migration = {
 /**
  * @template P
  * @typedef {object} EnqueueItem
- * @property {P} payload
- * @property {EnqueueOptions} [options]
+ * @property {P} payload The payload of this job, as in `enqueue`.
+ * @property {EnqueueOptions} [options] The options of this job, as in `enqueue`.
  */
 /**
  * @typedef {object} JobInfo
- * @property {string} id
- * @property {string} name
+ * @property {string} id The job id.
+ * @property {string} name The job name.
  * @property {number} attempt 1 for the first run.
- * @property {number} maxAttempts
- * @property {Date} enqueuedAt
+ * @property {number} maxAttempts The most attempts of this job.
+ * @property {Date} enqueuedAt The time of the enqueue.
  * @property {readonly { key: string, max: number }[]} globalConcurrencyLimits Its keys, sorted, with their maxes.
  * @property {Date | null} scheduledAt The slot of a job of a schedule (also when it runs late); else null.
  */
@@ -783,7 +896,7 @@ export type Migration = {
  * @template [P=any]
  * @typedef {object} HandlerContext
  * @property {P} payload As JSON gives it back.
- * @property {JobInfo} job
+ * @property {JobInfo} job The job: its id, name, attempt, slot and keys.
  * @property {AbortSignal} signal Aborted with a `JobTimeoutError`, a `LeaseLostError` or a `ShutdownError`.
  */
 /**
@@ -829,16 +942,17 @@ export type Migration = {
 /**
  * The instance defaults; a definition overrides them.
  * @typedef {object} JobDefaults
- * @property {number} [maxAttempts]
- * @property {number} [maxStalls]
- * @property {Backoff} [backoff]
- * @property {Retention} [retention]
- * @property {Duration} [timeout]
+ * @property {number} [maxAttempts] The runs of a job before it fails for good. Default: 3.
+ * @property {number} [maxStalls] The stalls that a job survives. Default: 2.
+ * @property {Backoff} [backoff] The wait before the next attempt. Default:
+ *     `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }`.
+ * @property {Retention} [retention] How long a finished job is kept. Default: `{ completed: '1h', failed: '30d' }`.
+ * @property {Duration} [timeout] Aborts the handler's `signal` after it. No default.
  */
 /**
  * A pub/sub that wakes the other processes. Only an optimization: a lost message delays a job until the next poll.
  * @typedef {object} Hint
- * @property {(channel: string, message: string) => Promise<void>} publish
+ * @property {(channel: string, message: string) => Promise<void>} publish Sends a message on a channel.
  * @property {(channel: string, onMessage: (message: string) => void) => Promise<() => Promise<void>>} subscribe
  *     Resolves to the unsubscribe function.
  */
@@ -848,16 +962,16 @@ export type Migration = {
 /**
  * A pino-compatible logger.
  * @typedef {object} Logger
- * @property {LogFn} debug
- * @property {LogFn} info
- * @property {LogFn} warn
- * @property {LogFn} error
+ * @property {LogFn} debug Transient errors that sqlane retried at once.
+ * @property {LogFn} info Recoveries, such as schedules that enqueue their slots again.
+ * @property {LogFn} warn What sqlane works around: a clock skew, a server below the supported version.
+ * @property {LogFn} error Failed operations, such as a failed job; also an `error` event.
  */
 /**
  * @typedef {object} JobEventBase
- * @property {string} jobId
- * @property {string} jobName
- * @property {number} attempt
+ * @property {string} jobId The job id.
+ * @property {string} jobName The job name.
+ * @property {number} attempt The attempt, from 1. After a stall, the attempt of the run that stalled.
  */
 /**
  * An event of the job lifecycle, by `type`.
@@ -878,9 +992,9 @@ export type Migration = {
 /**
  * A slot of a schedule was decided: once in the cluster, by the process that moved the cursor.
  * @typedef {object} ScheduleFiredEvent
- * @property {'schedule_fired'} type
- * @property {string} scheduleId
- * @property {string} jobName
+ * @property {'schedule_fired'} type The event type.
+ * @property {string} scheduleId `<job name>` or `<job name>:<key>`.
+ * @property {string} jobName The job name.
  * @property {Date} scheduledAt The slot.
  * @property {boolean} late A catch-up of a missed slot.
  * @property {string | null} jobId The job of the slot. Null: `overlap: 'skip'` skipped the slot.
@@ -965,22 +1079,25 @@ export type Migration = {
 /**
  * Runs SQL. Used by sqlane, through an adapter.
  * @typedef {object} Executor
- * @property {(sql: string, params: readonly unknown[]) => Promise<readonly Record<string, unknown>[]>} query
+ * @property {(sql: string, params: readonly unknown[]) => Promise<readonly Record<string, unknown>[]>} query Runs a
+ *     SELECT: its rows.
  * @property {(sql: string, params: readonly unknown[]) => Promise<number>} run Runs an INSERT, UPDATE or DELETE:
  *     the number of rows it changed.
  */
 /**
  * @template C
  * @typedef {object} SqlaneOptions
- * @property {Adapter<C>} adapter
+ * @property {Adapter<C>} adapter The adapter of your driver or ORM, over the queue's own small pool, e.g.
+ *     `pgAdapter(queuePool, { dialect: 'postgres' })`.
  * @property {readonly JobDefinition[]} [jobs] The definitions known by name.
  * @property {number} [localMaxConcurrency] The handlers that run at the same time in this instance. Default: 10.
- * @property {JobDefaults} [defaults]
+ * @property {JobDefaults} [defaults] Defaults of `maxAttempts`, `maxStalls`, `backoff`, `retention` and `timeout`. A
+ *     definition overrides them.
  * @property {'allow' | 'reject'} [unknownJobs] Default: `'allow'`. `'reject'`: `enqueue` of a name that is not in
  *     `jobs` and not handled throws an `UnknownJobError`.
  * @property {Hint | null} [hint] Default: null: polling only.
  * @property {Logger} [logger] Default: no logs.
- * @property {(event: SqlaneEvent) => void} [onEvent]
+ * @property {(event: SqlaneEvent) => void} [onEvent] Gets the events of the job lifecycle. A throw is logged.
  * @property {string} [tablePrefix] Default: `'sqlane_'`.
  * @property {Duration} [pollInterval] Default: `'5s'`.
  * @property {number} [maxPayloadBytes] Default: 256 KiB.
@@ -993,7 +1110,7 @@ export type Migration = {
  */
 /**
  * @typedef {object} DrainResult
- * @property {number} completed
+ * @property {number} completed Jobs that completed.
  * @property {number} retried Failed attempts that were retried.
  * @property {number} failed Jobs that failed for good.
  */
@@ -1010,52 +1127,30 @@ export type Migration = {
  */
 /**
  * @typedef {object} JobStats
- * @property {string} name
- * @property {number} pending
- * @property {number} due
- * @property {number} running
+ * @property {string} name The job name.
+ * @property {number} pending The jobs that wait to run, also those not due yet and those blocked on a key.
+ * @property {number} due The pending jobs that are due now.
+ * @property {number} running The jobs that run now.
  * @property {number} stuck Timed out, the handler has not settled.
- * @property {number} failed
- * @property {number | null} oldestDueAgeMs
+ * @property {number} failed The failed jobs that sqlane still keeps.
+ * @property {number | null} oldestDueAgeMs How long the oldest due job has waited, in ms. Null: no job is due.
  */
 /**
  * The payload of a failure job.
  * @typedef {object} FailedJobPayload
- * @property {{ id: string, name: string, payload: any, attempt: number, maxAttempts: number }} job
+ * @property {{ id: string, name: string, payload: any, attempt: number, maxAttempts: number }} job The job that
+ *     failed for good.
  * @property {{ name: string, message: string, stack?: string, code?: string }} error `code`: the string `code` of the
  *     thrown error, if it had one.
  */
 /**
+ * A sqlane instance, made by `createSqlane()`. Its methods and their docs are in sqlane.ts.
  * @template C The connections that `enqueue` accepts.
- * @typedef {object} Sqlane
- * @property {<J extends JobDefinition | string, P>(
- *     connection: C, job: J, payload: EnqueuePayload<J, P>, options?: EnqueueOptions,
- * ) => Promise<EnqueueResult>} enqueue Adds a job with the caller's connection: it must be in a transaction (or a
- *     pool: then sqlane opens its own transaction).
- * @property {<J extends JobDefinition | string, P>(
- *     connection: C, job: J, items: readonly EnqueueManyItem<J, P>[],
- * ) => Promise<EnqueueResult[]>} enqueueMany The results are in the order of the items.
- * @property {<J extends JobDefinition | string>(
- *     job: J, handler: Handler<HandlerPayload<J>>,
- * ) => void} handle
- * @property {<J extends JobDefinition | string, P>(
- *     job: J, options: ScheduleBaseOptions & ScheduleTiming & SchedulePayload<J, P>,
- * ) => void} schedule Adds a job at each slot of a cron or an interval, in every started process that calls it.
- *     Before `start()`.
- * @property {() => Promise<ScheduleInfo[]>} getSchedules The schedules of the table and of this process.
- * @property {() => Promise<void>} start Starts the runner and the schedules. Idempotent.
- * @property {(options?: DrainOptions) => Promise<DrainResult>} drain For tests: runs the due jobs of the handled
- *     names until none is left, without `start()`. It does not fire schedules.
- * @property {(options?: CloseOptions) => Promise<void>} close
- * @property {(options?: MigrateOptions) => Promise<{ applied: string[] }>} migrate Applies the missing migrations:
- *     their ids.
- * @property {() => Promise<JobStats[]>} getStats
- * @property {() => void} wake Low level: probes the handled names now, instead of at the next poll. Does nothing
- *     before `start()`.
+ * @typedef {import('./sqlane.js').Sqlane<C>} Sqlane
  */
 /**
  * @typedef {object} Migration
- * @property {string} id
- * @property {readonly string[]} statements
+ * @property {string} id Such as `0001_initial`.
+ * @property {readonly string[]} statements Its SQL, in order.
  */
 export {};
