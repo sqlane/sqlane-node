@@ -1,5 +1,30 @@
 # @sqlane/core
 
+## 7.0.2
+
+### Patch Changes
+
+- [#130](https://github.com/sqlane/sqlane-node/pull/130) [`745bc07`](https://github.com/sqlane/sqlane-node/commit/745bc071f685ee6737db1c845faade73c47193b1) - TypeScript: the Drizzle, postgres.js and Sequelize adapters accept the objects of their libraries without a cast. A
+  Drizzle database or transaction no longer fails on a `session` property that Drizzle's types don't declare; a
+  postgres.js `sql` or transaction no longer fails on the parameters of `unsafe`; a Sequelize instance or transaction no
+  longer fails on `connectionManager.getConnection`, `connection` or `afterCommit`. A new type test checks every adapter,
+  except Prisma, against its library's own types.
+
+- [#130](https://github.com/sqlane/sqlane-node/pull/130) [`f81935e`](https://github.com/sqlane/sqlane-node/commit/f81935eb129975af4834a0d63573f279ae104cf8) - npm keywords: fewer and more specific (`job-queue`, `background-jobs`, `transactional`, `outbox` and the databases),
+  without the names of the drivers and ORMs.
+
+- [#130](https://github.com/sqlane/sqlane-node/pull/130) [`4295203`](https://github.com/sqlane/sqlane-node/commit/4295203f9a38c3604ebc86ced531e85f79657640) - Docs: the README shows sqlane in TypeScript with Drizzle on PostgreSQL, and the same enqueue with each of the other 9
+  drivers and ORMs in a folded block. One list ranks the features, from the databases, the atomic enqueue, schedules and
+  rate and concurrency limits to the basics. Getting started builds the example into an app in five steps. The tables of
+  other libraries, the driver table and the database table move out of the README: the comparison pages and the
+  adapters page keep them.
+
+    The README opens with the sqlane wordmark, in light and dark.
+
+- [#130](https://github.com/sqlane/sqlane-node/pull/130) [`778a5e9`](https://github.com/sqlane/sqlane-node/commit/778a5e99f0244878af6b7086258ed6fdf09c408a) - Docs: the README sums up the performance comparison in one table, sqlane next to the range of the 7 other queues, in
+  place of six charts. The charts stay on the performance page, which now lists the libraries in one fixed order: sqlane,
+  then the others by npm downloads.
+
 ## 7.0.1
 
 ### Patch Changes
