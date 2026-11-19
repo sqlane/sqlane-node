@@ -184,15 +184,18 @@ transaction, so:
   transaction: commit → the job runs, rollback → it's gone.
   [`enqueueMany`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueuemany) adds a batch at once.
 - **[Cron and interval schedules](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedule).** Time zones,
-  one job per slot across the cluster, and a missed run caught up once.
+  one job per slot across the cluster, a missed run caught up once, and jitter to spread the runs of many schedules.
 - **[Rate limits, global or local](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineratelimit).** "100
   calls a second to the mail API", per key, across the cluster or per process. A job over the limit waits without
   using an attempt. A handler that gets a 429 throws
   [`RateLimitedError`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#errors-that-handlers-throw) to
-  pause the key for every job.
+  pause the key for every job. For APIs that charge points, a job can cost several units of a limit.
 - **[Concurrency limits, global or local](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineconcurrencylimit).**
   "One sync per order at a time": a job takes several keys, each with its own max, across processes and job names.
   Local limits cap jobs per process. A flood on one key never blocks the others.
+- **[Several limits on one job](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineratelimit).**
+  Concurrency and rate limits together, each with its own `max`, `per` and `burst`: "5000 calls an hour per token, 10
+  a second overall, and 2 at once per repo". Up to 10 global keys per job, plus local limits.
 - **[Your driver or ORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md).** mysql2, pg, postgres.js,
   Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM and MikroORM.
 - **[Idle job names cost nothing](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#dispatcher-one-loop-per-process).**
