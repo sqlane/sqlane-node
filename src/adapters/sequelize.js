@@ -13,15 +13,17 @@ import { mariadbExecutor, mysql2Executor, pgExecutor } from './executors.js';
  * @typedef {object} SequelizeLike
  * @property {() => string} getDialect
  * @property {(options: object, func: (t: SequelizeTransactionLike) => Promise<any>) => Promise<any>} transaction
- * @property {{ getConnection: () => Promise<any>, releaseConnection: (connection: any) => unknown }} connectionManager
+ * @property {{ getConnection: (options?: any) => Promise<any>, releaseConnection: (connection: any) => unknown }}
+ *     connectionManager
  */
 
 /**
  * A Sequelize transaction, as far as the adapter reads it.
  * @typedef {object} SequelizeTransactionLike
- * @property {any} connection The driver connection: mysql2 (callback API) or a pg client.
+ * @property {any} [connection] The driver connection: mysql2 (callback API) or a pg client. Optional here because
+ *     Sequelize's types don't declare it; a running transaction always has it.
  * @property {SequelizeTransactionLike | undefined} [parent] Of a nested transaction (a savepoint).
- * @property {(func: () => unknown) => void} afterCommit
+ * @property {(func: () => void) => void} afterCommit
  */
 
 /**
