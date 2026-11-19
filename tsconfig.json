@@ -15,6 +15,6 @@
     },
     "include": ["src", "test", "examples/*.js", "bench", "scripts", "*.js", "*.ts"],
     // The Prisma clients of the tests: generated, not committed. bench/compare: a package of its own, with its own
-    // dependencies (its tsconfig.json, once installed)
-    "exclude": ["test/prisma/*/generated", "bench/compare"]
+    // dependencies (its tsconfig.json, once installed). test/package_smoke: an app of its own, over the packed package
+    "exclude": ["test/prisma/*/generated", "bench/compare", "test/package_smoke"]
 }

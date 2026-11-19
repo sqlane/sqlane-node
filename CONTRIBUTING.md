@@ -5,8 +5,9 @@
 ```text
 src/        the package @sqlane/core: the queue, the SQL of each dialect, migrations, adapters; unit tests next to the code
 types/      its declarations: generated from the JSDoc of src/ (`pnpm build:types`), committed
-test/       integration tests (MySQL, MariaDB and PostgreSQL in Docker, testcontainers), type tests, test databases
-examples/   usage examples; examples/quickstart: runs with the published package (CI: with the packed one)
+test/       integration tests (MySQL, MariaDB and PostgreSQL in Docker, testcontainers), type tests, test databases;
+            test/package_smoke: the packed package, installed and run as an app would (CI job package_smoke)
+examples/   usage examples
 bench/      the benchmarks: regression/ (sqlane alone), compare/ (with other queues)
 docs/       user docs: api, adapters, design, features and performance vs other libs, performance results, migrations
 docs/contributing/  maintainer docs: benchmarks, releasing

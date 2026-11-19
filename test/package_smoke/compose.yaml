@@ -1,4 +1,4 @@
-# The databases of the quickstart: `docker compose up -d --wait mysql` (or `postgres`). Without passwords: reachable
+# The databases of the package smoke test: `docker compose up -d --wait mysql` (or `postgres`). Without passwords: reachable
 # from this machine only. Ports 13306 and 15432, not to clash with a local MySQL or PostgreSQL.
 services:
   mysql:

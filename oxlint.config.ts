@@ -242,7 +242,7 @@ export default defineConfig({
         },
         {
             // An app: it prints, reads its env and awaits at the top level
-            files: ['examples/**'],
+            files: ['examples/**', 'test/package_smoke/**'],
             rules: { 'no-console': 'off', 'node/no-top-level-await': 'off', 'node/no-process-env': 'off' },
         },
     ],

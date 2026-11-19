@@ -1,7 +1,7 @@
 {
-    "name": "sqlane-quickstart",
+    "name": "sqlane-package-smoke",
     "private": true,
-    "description": "Run a job, roll back an enqueue, and serialize jobs by a global concurrency limit: MySQL or PostgreSQL",
+    "description": "Smoke test of the packed @sqlane/core, installed as an app installs it: commit, rollback and a global limit on MySQL and PostgreSQL",
     "type": "module",
     "scripts": {
         "mysql": "node mysql.js",

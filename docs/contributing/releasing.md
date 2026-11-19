@@ -8,7 +8,7 @@
 4. Run the `Release` workflow: `gh workflow run release.yml --ref main` (or Actions → Release → Run workflow).
 5. Approve the `npm` deployment in the run. npm shows the version a few minutes later.
 
-A merge to `main` requires the CI checks: Checks, Changeset, Quickstart, Conventional Commits and the tests on each
+A merge to `main` requires the CI checks: Checks, Changeset, Package smoke test, Conventional Commits and the tests on each
 Node.js version. GitHub runs no workflow on a pull request that the default `GITHUB_TOKEN` opens, so the release
 workflow opens it with the token of a GitHub App:
 
