@@ -42,15 +42,15 @@ poll cuts the latency, but raises the idle cost:
 | Library           | Setting                                                                                    | Default                         |
 | ----------------- | ------------------------------------------------------------------------------------------ | ------------------------------- |
 | sqlane            | `notify: true` on the pg adapter: NOTIFY wakes the other processes                         | off: a hint, or the poll        |
-| River             | `fetchCooldown: 1 ms`                                                                      | 100 ms                          |
 | pg-boss           | `batchSize: 8`, `burstWhenBatchFull: true`                                                 | 1, off                          |
 | pg-boss           | `useListenNotify`, `notify` on each queue                                                  | off                             |
 | pg-boss           | A queue per job name, its usual setup: each of the 1000 `work()` calls polls its own queue | —                               |
 | pg-boss           | `cronWorkerIntervalSeconds: 1`                                                             | 5 s                             |
 | Boring Node Queue | `notifications: true` on its Knex adapter: LISTEN/NOTIFY wakes the workers                 | off: a poll every 2 s when idle |
+| River             | `fetchCooldown: 1 ms`                                                                      | 100 ms                          |
+| Sidequest         | Schedules registered in one worker only ([cron](features_vs_other_libs.md#cron))           | every worker registers them     |
 | Izi Queue         | `pollInterval: 100 ms`                                                                     | 1 s                             |
 | Izi Queue         | CronPlugin `interval: 1 s`                                                                 | 60 s                            |
-| Sidequest         | Schedules registered in one worker only ([cron](features_vs_other_libs.md#cron))           | every worker registers them     |
 
 ## CPU per job
 

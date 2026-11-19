@@ -1,195 +1,31 @@
 # Adapters
 
 An adapter connects sqlane to the database driver or ORM that your app already uses. Each adapter is a subpath of
-`@sqlane/core`, so you install no extra package. This page explains how sqlane uses your connections, when workers
-wake up after a commit, and the details of each library.
+`@sqlane/core`, so you install no extra package. Find your library in the table, then read its section.
 
-- [Two pools](#two-pools)
-- [The dialect and the server check](#the-dialect-and-the-server-check)
-- [What `enqueue` accepts](#what-enqueue-accepts)
-- [Wake-up after the commit](#wake-up-after-the-commit)
-- [Logs and plugins of your ORM](#logs-and-plugins-of-your-orm)
-- [MariaDB](#mariadb)
-- Drivers: [mysql2](#mysql2), [pg](#pg), [postgres.js](#postgresjs)
-- Query builders and ORMs: [Knex](#knex), [Kysely](#kysely), [Drizzle](#drizzle), [Prisma](#prisma),
-  [Sequelize](#sequelize), [TypeORM](#typeorm), [MikroORM](#mikroorm)
+What all adapters share comes after the libraries: [two pools](#two-pools),
+[the dialect and the server check](#the-dialect-and-the-server-check), [what `enqueue` accepts](#what-enqueue-accepts),
+[wake-up after the commit](#wake-up-after-the-commit), [logs and plugins of your ORM](#logs-and-plugins-of-your-orm)
+and [MariaDB](#mariadb).
 
-## Two pools
+## Pick your library
 
-sqlane works with two kinds of connections.
+| Library                    | Import                             | Versions                      | MySQL | MariaDB | PostgreSQL |
+| -------------------------- | ---------------------------------- | ----------------------------- | ----- | ------- | ---------- |
+| [mysql2](#mysql2)          | `@sqlane/core/adapter-mysql2`      | mysql2 3.11+                  | ✅    | ✅      |            |
+| [pg](#pg)                  | `@sqlane/core/adapter-pg`          | pg 8.13+                      |       |         | ✅         |
+| [postgres.js](#postgresjs) | `@sqlane/core/adapter-postgres-js` | postgres 3.4+ and 4           |       |         | ✅         |
+| [Knex](#knex)              | `@sqlane/core/adapter-knex`        | knex 3                        | ✅    | ✅      | ✅         |
+| [Kysely](#kysely)          | `@sqlane/core/adapter-kysely`      | kysely 0.28 and 0.29          | ✅    | ✅      | ✅         |
+| [Drizzle](#drizzle)        | `@sqlane/core/adapter-drizzle`     | drizzle-orm 0.45 and 1.0 (rc) | ✅    | ✅      | ✅         |
+| [Prisma](#prisma)          | `@sqlane/core/adapter-prisma`      | Prisma 7                      | ✅    | ✅      | ✅         |
+| [Sequelize](#sequelize)    | `@sqlane/core/adapter-sequelize`   | Sequelize 6                   | ✅    | ✅      | ✅         |
+| [TypeORM](#typeorm)        | `@sqlane/core/adapter-typeorm`     | TypeORM 0.3 and 1.x           | ✅    | ✅      | ✅         |
+| [MikroORM](#mikroorm)      | `@sqlane/core/adapter-mikro-orm`   | MikroORM 6 and 7              | ✅    | ✅      | ✅         |
 
-- **Your app's connection.** You pass it to `enqueue`. It is usually the transaction in which you write your business
-  data, so the job joins that transaction.
-- **The queue's own pool.** You pass it once to the adapter, when you create the sqlane instance. sqlane uses it to
-  find and claim jobs, to renew leases, to save results and to run `migrate()`. A lease is the time for which a
-  process owns a running job.
-
-Give the queue a small pool of its own, with 2 or 3 connections. Then the queue and your app do not wait for each
-other's connections. With the `notify` option, the pg adapter, and the Drizzle adapter over node-postgres, also take
-their LISTEN connection from this pool. postgres.js opens a separate connection for LISTEN. Your handlers do not use
-the queue's pool. They open their own connections, usually from your app's pool.
-
-```js
-import mysql from 'mysql2/promise';
-import { createSqlane } from '@sqlane/core';
-import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
-
-const appPool = mysql.createPool({ uri: process.env.DATABASE_URL }); // your app's connection pool
-const queuePool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 3 }); // the queue's own pool
-
-const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }), jobs: [buildReport] });
-```
-
-`close()` never ends your pools. Close them yourself after `sqlane.close()`.
-
-## The dialect and the server check
-
-Each adapter takes the database as `dialect`: `'postgres'`, `'mysql'` or `'mariadb'`. It has no default. sqlane runs
-SQL of its own for each database, so the dialect must match the server. Without it, or with another value, the adapter
-throws a `ConfigError`.
-
-| Library     | `dialect`                                                                                                                          |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| mysql2      | `'mysql'` or `'mariadb'`                                                                                                           |
-| pg          | `'postgres'`                                                                                                                       |
-| postgres.js | `'postgres'`                                                                                                                       |
-| Knex        | `'mysql'` or `'mariadb'` with the `mysql2` client, `'mariadb'` with the `mariadb` client, `'postgres'` with `pg`                   |
-| Kysely      | Any of the three: Kysely does not tell its database                                                                                |
-| Drizzle     | `'mysql'` or `'mariadb'` with mysql2, `'postgres'` with node-postgres or postgres.js                                               |
-| Prisma      | Any of the three: Prisma does not tell its database                                                                                |
-| Sequelize   | `'mysql'` or `'mariadb'` with the `mysql` dialect, `'mariadb'` with `mariadb`, `'postgres'` with `postgres`                        |
-| TypeORM     | `'mysql'` or `'mariadb'` with the type `mysql`, `'mariadb'` with `mariadb`, `'postgres'` with `postgres`                           |
-| MikroORM    | `'mysql'` or `'mariadb'` with `@mikro-orm/mysql`, `'mariadb'` with `@mikro-orm/mariadb`, `'postgres'` with `@mikro-orm/postgresql` |
-
-When the library tells its database, the adapter checks the dialect against it, and throws a `ConfigError` on a
-mismatch. Knex, Drizzle, Sequelize and TypeORM check when you create the adapter, MikroORM 6 at its first query.
-
-**The server check.** The first `start()` or `migrate()` of an instance asks the server for its version, in one
-statement. On MySQL and MariaDB, a second statement reads the `sql_mode` of the session. It checks three things:
-
-- The server is the database of `dialect`. MariaDB is the server whose version contains `MariaDB`. PostgreSQL is the
-  server whose `version()` starts with `PostgreSQL`: a compatible database that says so passes (YugabyteDB), one that
-  does not fails (CockroachDB).
-- The version is supported: MySQL 8.4, MariaDB 10.11 or PostgreSQL 15, or later.
-- MySQL and MariaDB: the `sql_mode` has the flags below.
-
-If a check fails, `start()` or `migrate()` rejects with a `ConfigError`. The instance keeps the result, so `migrate()`
-then `start()` asks once. A process that only enqueues never asks. If the database is down, `start()` resolves anyway
-and emits an `error` event with the operation `server_check`. The worker then checks again before it claims a job, and
-claims nothing until the check passes. If the check then fails, the worker emits the `ConfigError` as an `error` event
-and claims no job.
-
-**Older versions.** With `allowUnsupportedDbVersion: true`, the adapter runs on a server below the supported version.
-sqlane then logs a warning once per instance, through the `logger` of `createSqlane`. It still checks the database.
-sqlane is not tested on these versions.
-
-```js
-const adapter = mysql2Adapter(queuePool, { dialect: 'mysql', allowUnsupportedDbVersion: true }); // MySQL 8.0
-```
-
-**The `sql_mode` of MySQL and MariaDB.** Without strict mode, the database stores a bad value with a warning instead
-of an error: it truncates a string, or stores a zero date. sqlane needs the flags of each database's default mode:
-
-| Database | Required flags                                                                                                |
-| -------- | ------------------------------------------------------------------------------------------------------------- |
-| MySQL    | `STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`, `NO_ZERO_DATE`, `NO_ZERO_IN_DATE`, `ERROR_FOR_DIVISION_BY_ZERO` |
-| MariaDB  | `STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`, `ERROR_FOR_DIVISION_BY_ZERO`                                    |
-
-`ALLOW_INVALID_DATES` and `NO_BACKSLASH_ESCAPES` are forbidden. Other flags, such as `ANSI_QUOTES`, `PIPES_AS_CONCAT`
-or `ONLY_FULL_GROUP_BY`, do not matter. The default mode of each database passes.
-
-A missing flag, or `ALLOW_INVALID_DATES`, is a `ConfigError`. Fix `sql_mode` in the server config. On Amazon RDS and
-Aurora, set the `sql_mode` parameter of the DB parameter group: the default group of RDS MySQL has
-`NO_ENGINE_SUBSTITUTION` only. With `allowUnsupportedDbConfiguration: true`, sqlane logs a warning once per instance
-instead, through the `logger` of `createSqlane`. This option is independent of `allowUnsupportedDbVersion`.
-
-`NO_BACKSLASH_ESCAPES` is always a `ConfigError`, even with `allowUnsupportedDbConfiguration`. The drivers escape
-values on the client, with backslashes. With this flag, a quote in a value breaks the SQL, and a crafted value can
-inject SQL.
-
-```js
-const adapter = mysql2Adapter(queuePool, { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
-```
-
-The check reads the `sql_mode` of the one connection it runs on. If your pool sets another mode on some connections,
-for example in a `connection` event, the check does not see it.
-
-## What `enqueue` accepts
-
-`enqueue` takes a connection of the same library as the adapter. There are two cases.
-
-- **A transaction, or a connection in a transaction.** The job joins your transaction. It commits or rolls back with
-  your data.
-- **A pool, or an ORM instance outside a transaction.** sqlane runs the insert in a short transaction of its own and
-  commits it before `enqueue` returns. Use this case when the job does not belong to a business transaction.
-
-A raw driver connection, such as a mysql2 `PoolConnection` or a pg `PoolClient`, must be in a transaction when you pass
-it. sqlane cannot always detect a transaction on such a connection, so it trusts you. The sections below list what
-each adapter accepts.
-
-In the examples below, `buildReport` is the job definition from the [mysql2](#mysql2) example, and `reportId` is a
-string id of your app (a `jobId` must be a string). `db`, `sql`, `prisma`, `sequelize`, `dataSource` and `orm` are your app's own instances, and
-`reports` and `Report` are your app's table and model.
-
-## Wake-up after the commit
-
-A worker is a process that has called `start()`. Each worker checks the database for due jobs at least once per poll
-interval, which is 5 seconds by default. This poll is the safety net, so a job always runs even if nothing wakes the
-worker. sqlane adds faster signals on top of it.
-
-**Workers in the same process.** sqlane wakes them in one of two ways.
-
-- If sqlane can see the commit of your transaction, the workers check the database right after the commit.
-- If sqlane cannot see the commit, the workers check the database a few times after the enqueue. These checks are
-  called re-probes. They come 20 ms, 50 ms, 100 ms, 200 ms, 500 ms, 1 s and 2 s after the enqueue, but only the steps
-  that are shorter than the poll interval. So the job usually starts about 25 ms after the commit.
-
-**Workers in other processes.** They need a message to know about a new job. You have two options.
-
-- A **hint** is a message over a publish/subscribe service that you provide, such as Redis. You pass it as the `hint` option of
-  `createSqlane`. The receivers then check the database a few times, as above. See [`Hint`](api.md#hint).
-- On PostgreSQL, **NOTIFY** does the same without any extra service. Set `{ notify: true }` on the pg, postgres.js or
-  Drizzle adapter. PostgreSQL delivers the message at the commit, so other processes start the job within a few
-  milliseconds. You cannot combine `notify` with the `hint` option.
-
-Without a hint or NOTIFY, other processes find the job at their next poll. A lost message never loses a job, because
-the job is in the database.
-
-This table shows when sqlane can see the commit of your transaction.
-
-| Library     | sqlane sees the commit of your transaction | `notify` option |
-| ----------- | ------------------------------------------ | --------------- |
-| mysql2      | No                                         | No              |
-| pg          | No                                         | Yes             |
-| postgres.js | No                                         | Yes             |
-| Knex        | Yes, the commit of the outermost one       | No              |
-| Kysely      | No                                         | No              |
-| Drizzle     | No                                         | Yes, PostgreSQL |
-| Prisma      | No                                         | No              |
-| Sequelize   | Yes, the commit of the outermost one       | No              |
-| TypeORM     | Yes, the commit of the outermost one       | No              |
-| MikroORM    | Yes, except for a nested one in MikroORM 7 | No              |
-
-An enqueue with a pool, or with an ORM instance outside a transaction, always wakes the workers at once, because its
-own transaction has committed when `enqueue` returns. The [design](design.md#wake-up-after-the-commit) explains the
-wake-up in detail.
-
-## Logs and plugins of your ORM
-
-sqlane runs its SQL on the driver connection under Knex, Drizzle and Sequelize. So these libraries do not log the SQL
-of sqlane, and they do not change it. MikroORM uses Knex (MikroORM 6) or Kysely (MikroORM 7) underneath, and it does
-not log or change the SQL of sqlane either.
-
-With Kysely, sqlane runs its SQL through your Kysely instance, but without its plugins (`withoutPlugins()`). So a
-plugin such as `CamelCasePlugin` does not change the SQL or the results. The `log` option of Kysely can still log the
-SQL of sqlane.
-
-With Prisma and TypeORM, sqlane uses their raw query APIs. They log the SQL of sqlane like any other raw query, and
-Prisma client extensions can see it.
-
-## MariaDB
-
-On MariaDB 10.11 and later, pass `dialect: 'mariadb'` to the adapter, with the mariadb driver too.
+In the examples below, `buildReport` is the job definition of the [mysql2](#mysql2) example, and `reportId` is a
+string id of your app (a `jobId` must be a string). `db`, `sql`, `prisma`, `sequelize`, `dataSource` and `orm` are your
+app's own instances, and `reports` and `Report` are your app's table and model.
 
 ## mysql2
 
@@ -694,3 +530,190 @@ on the pg pool under it, and an enqueue still runs unnamed. In MikroORM 7, `prep
 that MikroORM creates, not a Kysely instance or dialect of `driverOptions`. Their number, their memory, PgBouncer and
 `DISCARD ALL` are as for [Knex](#knex): the option is off by default for the same reason. On MySQL and MariaDB,
 `prepare` throws a `ConfigError`.
+
+## Two pools
+
+sqlane works with two kinds of connections.
+
+- **Your app's connection.** You pass it to `enqueue`. It is usually the transaction in which you write your business
+  data, so the job joins that transaction.
+- **The queue's own pool.** You pass it once to the adapter, when you create the sqlane instance. sqlane uses it to
+  find and claim jobs, to renew leases, to save results and to run `migrate()`. A lease is the time for which a
+  process owns a running job.
+
+Give the queue a small pool of its own, with 2 or 3 connections. Then the queue and your app do not wait for each
+other's connections. With the `notify` option, the pg adapter, and the Drizzle adapter over node-postgres, also take
+their LISTEN connection from this pool. postgres.js opens a separate connection for LISTEN. Your handlers do not use
+the queue's pool. They open their own connections, usually from your app's pool.
+
+```js
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
+import { createSqlane } from '@sqlane/core';
+import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
+
+// Your app's connection pool
+const db = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL }) });
+// The queue's own pool
+const queueDb = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) });
+
+const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }), jobs: [buildReport] });
+```
+
+`close()` never ends your pools. Close them yourself after `sqlane.close()`.
+
+## The dialect and the server check
+
+Each adapter takes the database as `dialect`: `'postgres'`, `'mysql'` or `'mariadb'`. It has no default. sqlane runs
+SQL of its own for each database, so the dialect must match the server. Without it, or with another value, the adapter
+throws a `ConfigError`.
+
+| Library     | `dialect`                                                                                                                          |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| mysql2      | `'mysql'` or `'mariadb'`                                                                                                           |
+| pg          | `'postgres'`                                                                                                                       |
+| postgres.js | `'postgres'`                                                                                                                       |
+| Knex        | `'mysql'` or `'mariadb'` with the `mysql2` client, `'mariadb'` with the `mariadb` client, `'postgres'` with `pg`                   |
+| Kysely      | Any of the three: Kysely does not tell its database                                                                                |
+| Drizzle     | `'mysql'` or `'mariadb'` with mysql2, `'postgres'` with node-postgres or postgres.js                                               |
+| Prisma      | Any of the three: Prisma does not tell its database                                                                                |
+| Sequelize   | `'mysql'` or `'mariadb'` with the `mysql` dialect, `'mariadb'` with `mariadb`, `'postgres'` with `postgres`                        |
+| TypeORM     | `'mysql'` or `'mariadb'` with the type `mysql`, `'mariadb'` with `mariadb`, `'postgres'` with `postgres`                           |
+| MikroORM    | `'mysql'` or `'mariadb'` with `@mikro-orm/mysql`, `'mariadb'` with `@mikro-orm/mariadb`, `'postgres'` with `@mikro-orm/postgresql` |
+
+When the library tells its database, the adapter checks the dialect against it, and throws a `ConfigError` on a
+mismatch. Knex, Drizzle, Sequelize and TypeORM check when you create the adapter, MikroORM 6 at its first query.
+
+**The server check.** The first `start()` or `migrate()` of an instance asks the server for its version, in one
+statement. On MySQL and MariaDB, a second statement reads the `sql_mode` of the session. It checks three things:
+
+- The server is the database of `dialect`. MariaDB is the server whose version contains `MariaDB`. PostgreSQL is the
+  server whose `version()` starts with `PostgreSQL`: a compatible database that says so passes (YugabyteDB), one that
+  does not fails (CockroachDB).
+- The version is supported: MySQL 8.4, MariaDB 10.11 or PostgreSQL 15, or later.
+- MySQL and MariaDB: the `sql_mode` has the flags below.
+
+If a check fails, `start()` or `migrate()` rejects with a `ConfigError`. The instance keeps the result, so `migrate()`
+then `start()` asks once. A process that only enqueues never asks. If the database is down, `start()` resolves anyway
+and emits an `error` event with the operation `server_check`. The worker then checks again before it claims a job, and
+claims nothing until the check passes. If the check then fails, the worker emits the `ConfigError` as an `error` event
+and claims no job.
+
+**Older versions.** With `allowUnsupportedDbVersion: true`, the adapter runs on a server below the supported version.
+sqlane then logs a warning once per instance, through the `logger` of `createSqlane`. It still checks the database.
+sqlane is not tested on these versions.
+
+```js
+const adapter = mysql2Adapter(queuePool, { dialect: 'mysql', allowUnsupportedDbVersion: true }); // MySQL 8.0
+```
+
+**The `sql_mode` of MySQL and MariaDB.** Without strict mode, the database stores a bad value with a warning instead
+of an error: it truncates a string, or stores a zero date. sqlane needs the flags of each database's default mode:
+
+| Database | Required flags                                                                                                |
+| -------- | ------------------------------------------------------------------------------------------------------------- |
+| MySQL    | `STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`, `NO_ZERO_DATE`, `NO_ZERO_IN_DATE`, `ERROR_FOR_DIVISION_BY_ZERO` |
+| MariaDB  | `STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES`, `ERROR_FOR_DIVISION_BY_ZERO`                                    |
+
+`ALLOW_INVALID_DATES` and `NO_BACKSLASH_ESCAPES` are forbidden. Other flags, such as `ANSI_QUOTES`, `PIPES_AS_CONCAT`
+or `ONLY_FULL_GROUP_BY`, do not matter. The default mode of each database passes.
+
+A missing flag, or `ALLOW_INVALID_DATES`, is a `ConfigError`. Fix `sql_mode` in the server config, or on Amazon RDS
+and Aurora in the DB parameter group (below). With `allowUnsupportedDbConfiguration: true`, sqlane logs a warning once
+per instance instead, through the `logger` of `createSqlane`. This option is independent of
+`allowUnsupportedDbVersion`.
+
+**Amazon RDS and Aurora MySQL.** The default DB parameter group of RDS MySQL sets `sql_mode` to
+`NO_ENGINE_SUBSTITUTION` only, which fails the check. Set the `sql_mode` parameter of a custom parameter group to the
+default mode of MySQL 8.4:
+
+```text
+ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+```
+
+`sql_mode` applies to your app's queries too: in strict mode, MySQL rejects a value that it used to truncate with a
+warning. If your app is not ready, pass `allowUnsupportedDbConfiguration: true` while you fix it.
+
+`NO_BACKSLASH_ESCAPES` is always a `ConfigError`, even with `allowUnsupportedDbConfiguration`. The drivers escape
+values on the client, with backslashes. With this flag, a quote in a value breaks the SQL, and a crafted value can
+inject SQL.
+
+```js
+const adapter = mysql2Adapter(queuePool, { dialect: 'mysql', allowUnsupportedDbConfiguration: true });
+```
+
+The check reads the `sql_mode` of the one connection it runs on. If your pool sets another mode on some connections,
+for example in a `connection` event, the check does not see it.
+
+## What `enqueue` accepts
+
+`enqueue` takes a connection of the same library as the adapter. There are two cases.
+
+- **A transaction, or a connection in a transaction.** The job joins your transaction. It commits or rolls back with
+  your data.
+- **A pool, or an ORM instance outside a transaction.** sqlane runs the insert in a short transaction of its own and
+  commits it before `enqueue` returns. Use this case when the job does not belong to a business transaction.
+
+A raw driver connection, such as a mysql2 `PoolConnection` or a pg `PoolClient`, must be in a transaction when you pass
+it. sqlane cannot always detect a transaction on such a connection, so it trusts you. The sections below list what
+each adapter accepts.
+
+## Wake-up after the commit
+
+A worker is a process that has called `start()`. Each worker checks the database for due jobs at least once per poll
+interval, which is 5 seconds by default. This poll is the safety net, so a job always runs even if nothing wakes the
+worker. sqlane adds faster signals on top of it.
+
+**Workers in the same process.** sqlane wakes them in one of two ways.
+
+- If sqlane can see the commit of your transaction, the workers check the database right after the commit.
+- If sqlane cannot see the commit, the workers check the database a few times after the enqueue. These checks are
+  called re-probes. They come 20 ms, 50 ms, 100 ms, 200 ms, 500 ms, 1 s and 2 s after the enqueue, but only the steps
+  that are shorter than the poll interval. So the job usually starts about 25 ms after the commit.
+
+**Workers in other processes.** They need a message to know about a new job. You have two options.
+
+- A **hint** is a message over a publish/subscribe service that you provide, such as Redis. You pass it as the `hint` option of
+  `createSqlane`. The receivers then check the database a few times, as above. See [`Hint`](api.md#hint).
+- On PostgreSQL, **NOTIFY** does the same without any extra service. Set `{ notify: true }` on the pg, postgres.js or
+  Drizzle adapter. PostgreSQL delivers the message at the commit, so other processes start the job within a few
+  milliseconds. You cannot combine `notify` with the `hint` option.
+
+Without a hint or NOTIFY, other processes find the job at their next poll. A lost message never loses a job, because
+the job is in the database.
+
+This table shows when sqlane can see the commit of your transaction.
+
+| Library     | sqlane sees the commit of your transaction | `notify` option |
+| ----------- | ------------------------------------------ | --------------- |
+| mysql2      | No                                         | No              |
+| pg          | No                                         | Yes             |
+| postgres.js | No                                         | Yes             |
+| Knex        | Yes, the commit of the outermost one       | No              |
+| Kysely      | No                                         | No              |
+| Drizzle     | No                                         | Yes, PostgreSQL |
+| Prisma      | No                                         | No              |
+| Sequelize   | Yes, the commit of the outermost one       | No              |
+| TypeORM     | Yes, the commit of the outermost one       | No              |
+| MikroORM    | Yes, except for a nested one in MikroORM 7 | No              |
+
+An enqueue with a pool, or with an ORM instance outside a transaction, always wakes the workers at once, because its
+own transaction has committed when `enqueue` returns. The [design](design.md#wake-up-after-the-commit) explains the
+wake-up in detail.
+
+## Logs and plugins of your ORM
+
+sqlane runs its SQL on the driver connection under Knex, Drizzle and Sequelize. So these libraries do not log the SQL
+of sqlane, and they do not change it. MikroORM uses Knex (MikroORM 6) or Kysely (MikroORM 7) underneath, and it does
+not log or change the SQL of sqlane either.
+
+With Kysely, sqlane runs its SQL through your Kysely instance, but without its plugins (`withoutPlugins()`). So a
+plugin such as `CamelCasePlugin` does not change the SQL or the results. The `log` option of Kysely can still log the
+SQL of sqlane.
+
+With Prisma and TypeORM, sqlane uses their raw query APIs. They log the SQL of sqlane like any other raw query, and
+Prisma client extensions can see it.
+
+## MariaDB
+
+On MariaDB 10.11 and later, pass `dialect: 'mariadb'` to the adapter, with the mariadb driver too.
