@@ -17,28 +17,28 @@
 <text x="166" y="91" font-size="14" fill="#f0f6fc" text-anchor="end" font-weight="600">sqlane</text>
 <path d="M174,77H214.9A4,4 0 0 1 218.9,81V91A4,4 0 0 1 214.9,95H174Z" fill="#3987e5"/>
 <text x="224.9" y="91" font-size="14" fill="#f0f6fc" font-weight="600">3.0</text>
-<text x="166" y="127" font-size="14" fill="#f0f6fc" text-anchor="end">Graphile Worker</text>
-<path d="M174,113H230.7A4,4 0 0 1 234.7,117V127A4,4 0 0 1 230.7,131H174Z" fill="#3987e5"/>
-<text x="240.7" y="127" font-size="14" fill="#f0f6fc">4.1</text>
-<text x="166" y="163" font-size="14" fill="#f0f6fc" text-anchor="end">River</text>
-<path d="M174,149H224.5A4,4 0 0 1 228.5,153V163A4,4 0 0 1 224.5,167H174Z" fill="#3987e5"/>
-<text x="234.5" y="163" font-size="14" fill="#f0f6fc">3.7</text>
+<text x="166" y="127" font-size="14" fill="#f0f6fc" text-anchor="end">BullMQ (Redis)*</text>
+<text x="174.0" y="127" font-size="14" fill="#9198a1">60 Redis commands, most inside 5 Lua script calls: another unit</text>
+<text x="166" y="163" font-size="14" fill="#f0f6fc" text-anchor="end">BullMQ (PostgreSQL)*</text>
+<path d="M174,149H289.2A4,4 0 0 1 293.2,153V163A4,4 0 0 1 289.2,167H174Z" fill="#3987e5"/>
+<text x="299.2" y="163" font-size="14" fill="#f0f6fc">8.0</text>
 <text x="166" y="199" font-size="14" fill="#f0f6fc" text-anchor="end">pg-boss</text>
 <path d="M174,185H548.9A4,4 0 0 1 552.9,189V199A4,4 0 0 1 548.9,203H174Z" fill="#3987e5"/>
 <text x="558.9" y="199" font-size="14" fill="#f0f6fc">25.4</text>
-<text x="166" y="235" font-size="14" fill="#f0f6fc" text-anchor="end">Izi Queue</text>
-<path d="M174,221H245.8A4,4 0 0 1 249.8,225V235A4,4 0 0 1 245.8,239H174Z" fill="#3987e5"/>
-<text x="255.8" y="235" font-size="14" fill="#f0f6fc">5.1</text>
+<text x="166" y="235" font-size="14" fill="#f0f6fc" text-anchor="end">Graphile Worker</text>
+<path d="M174,221H230.7A4,4 0 0 1 234.7,225V235A4,4 0 0 1 230.7,239H174Z" fill="#3987e5"/>
+<text x="240.7" y="235" font-size="14" fill="#f0f6fc">4.1</text>
 <text x="166" y="271" font-size="14" fill="#f0f6fc" text-anchor="end">Boring Node Queue</text>
 <path d="M174,257H554.9A4,4 0 0 1 558.9,261V271A4,4 0 0 1 554.9,275H174Z" fill="#3987e5"/>
 <text x="564.9" y="271" font-size="14" fill="#f0f6fc">25.8</text>
-<text x="166" y="307" font-size="14" fill="#f0f6fc" text-anchor="end">BullMQ (PostgreSQL)*</text>
-<path d="M174,293H289.2A4,4 0 0 1 293.2,297V307A4,4 0 0 1 289.2,311H174Z" fill="#3987e5"/>
-<text x="299.2" y="307" font-size="14" fill="#f0f6fc">8.0</text>
+<text x="166" y="307" font-size="14" fill="#f0f6fc" text-anchor="end">River</text>
+<path d="M174,293H224.5A4,4 0 0 1 228.5,297V307A4,4 0 0 1 224.5,311H174Z" fill="#3987e5"/>
+<text x="234.5" y="307" font-size="14" fill="#f0f6fc">3.7</text>
 <text x="166" y="343" font-size="14" fill="#f0f6fc" text-anchor="end">Sidequest*</text>
 <path d="M174,329H308.7A4,4 0 0 1 312.7,333V343A4,4 0 0 1 308.7,347H174Z" fill="#3987e5"/>
 <text x="318.7" y="343" font-size="14" fill="#f0f6fc">9.3</text>
-<text x="166" y="379" font-size="14" fill="#f0f6fc" text-anchor="end">BullMQ (Redis)*</text>
-<text x="174.0" y="379" font-size="14" fill="#9198a1">60 Redis commands, most inside 5 Lua script calls: another unit</text>
+<text x="166" y="379" font-size="14" fill="#f0f6fc" text-anchor="end">Izi Queue</text>
+<path d="M174,365H245.8A4,4 0 0 1 249.8,369V379A4,4 0 0 1 245.8,383H174Z" fill="#3987e5"/>
+<text x="255.8" y="379" font-size="14" fill="#f0f6fc">5.1</text>
 </g>
 </svg>

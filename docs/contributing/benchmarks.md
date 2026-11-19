@@ -97,7 +97,7 @@ in the container of `bench/compare/linux.dockerfile`, with the counters of `benc
 
 ## Publishing
 
-The performance page and the README's charts come from one Linux machine:
+The performance page's charts and the README's summary table come from one Linux machine:
 
 ```sh
 bench/run_linux.sh vs-other-libs                                           # bench/compare/results.json
