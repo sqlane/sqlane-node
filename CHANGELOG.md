@@ -1,5 +1,13 @@
 # @sqlane/core
 
+## 7.0.1
+
+### Patch Changes
+
+- [#128](https://github.com/sqlane/sqlane-node/pull/128) [`611884e`](https://github.com/sqlane/sqlane-node/commit/611884eeba1579ccc3bc3fc7ddc7f8d3ee2e7c52) - Docs: the README opens with what sqlane is, how to install it and what it needs, compares it more fairly, and links the
+  [migration guide from 6.x to 7.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/7.md): the
+  `dialect` of each adapter, the server check, and `sql_mode` on Amazon RDS and Aurora.
+
 ## 7.0.0
 
 ### Major Changes
