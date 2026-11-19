@@ -7,37 +7,37 @@
 <line x1="174.0" y1="64" x2="174.0" y2="392" stroke="#c3c2b7"/>
 <text x="174.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">0</text>
 <line x1="323.0" y1="64" x2="323.0" y2="392" stroke="#e1e0d9"/>
-<text x="323.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">5</text>
+<text x="323.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">10</text>
 <line x1="472.0" y1="64" x2="472.0" y2="392" stroke="#e1e0d9"/>
-<text x="472.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">10</text>
+<text x="472.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">20</text>
 <line x1="621.0" y1="64" x2="621.0" y2="392" stroke="#e1e0d9"/>
-<text x="621.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">15</text>
+<text x="621.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">30</text>
 <text x="643" y="411" font-size="12" fill="#59636e">statements</text>
 <text x="0" y="436" font-size="13" fill="#59636e">*: enqueue after the COMMIT, not in the caller's transaction.</text>
 <text x="166" y="91" font-size="14" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
-<path d="M174,77H259.7A4,4 0 0 1 263.7,81V91A4,4 0 0 1 259.7,95H174Z" fill="#2a78d6"/>
-<text x="269.7" y="91" font-size="14" fill="#1f2328" font-weight="600">3.0</text>
+<path d="M174,77H214.9A4,4 0 0 1 218.9,81V91A4,4 0 0 1 214.9,95H174Z" fill="#2a78d6"/>
+<text x="224.9" y="91" font-size="14" fill="#1f2328" font-weight="600">3.0</text>
 <text x="166" y="127" font-size="14" fill="#1f2328" text-anchor="end">Graphile Worker</text>
-<path d="M174,113H291.4A4,4 0 0 1 295.4,117V127A4,4 0 0 1 291.4,131H174Z" fill="#2a78d6"/>
-<text x="301.4" y="127" font-size="14" fill="#1f2328">4.1</text>
+<path d="M174,113H230.7A4,4 0 0 1 234.7,117V127A4,4 0 0 1 230.7,131H174Z" fill="#2a78d6"/>
+<text x="240.7" y="127" font-size="14" fill="#1f2328">4.1</text>
 <text x="166" y="163" font-size="14" fill="#1f2328" text-anchor="end">River</text>
-<path d="M174,149H279.6A4,4 0 0 1 283.6,153V163A4,4 0 0 1 279.6,167H174Z" fill="#2a78d6"/>
-<text x="289.6" y="163" font-size="14" fill="#1f2328">3.7</text>
+<path d="M174,149H224.5A4,4 0 0 1 228.5,153V163A4,4 0 0 1 224.5,167H174Z" fill="#2a78d6"/>
+<text x="234.5" y="163" font-size="14" fill="#1f2328">3.7</text>
 <text x="166" y="199" font-size="14" fill="#1f2328" text-anchor="end">pg-boss</text>
-<path d="M174,185H594.6A4,4 0 0 1 598.6,189V199A4,4 0 0 1 594.6,203H174Z" fill="#2a78d6"/>
-<text x="604.6" y="199" font-size="14" fill="#1f2328">14.3</text>
+<path d="M174,185H548.9A4,4 0 0 1 552.9,189V199A4,4 0 0 1 548.9,203H174Z" fill="#2a78d6"/>
+<text x="558.9" y="199" font-size="14" fill="#1f2328">25.4</text>
 <text x="166" y="235" font-size="14" fill="#1f2328" text-anchor="end">Izi Queue</text>
-<path d="M174,221H321.4A4,4 0 0 1 325.4,225V235A4,4 0 0 1 321.4,239H174Z" fill="#2a78d6"/>
-<text x="331.4" y="235" font-size="14" fill="#1f2328">5.1</text>
+<path d="M174,221H245.8A4,4 0 0 1 249.8,225V235A4,4 0 0 1 245.8,239H174Z" fill="#2a78d6"/>
+<text x="255.8" y="235" font-size="14" fill="#1f2328">5.1</text>
 <text x="166" y="271" font-size="14" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
-<path d="M174,257H576.6A4,4 0 0 1 580.6,261V271A4,4 0 0 1 576.6,275H174Z" fill="#2a78d6"/>
-<text x="586.6" y="271" font-size="14" fill="#1f2328">13.6</text>
+<path d="M174,257H554.9A4,4 0 0 1 558.9,261V271A4,4 0 0 1 554.9,275H174Z" fill="#2a78d6"/>
+<text x="564.9" y="271" font-size="14" fill="#1f2328">25.8</text>
 <text x="166" y="307" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (PostgreSQL)*</text>
-<path d="M174,293H408.2A4,4 0 0 1 412.2,297V307A4,4 0 0 1 408.2,311H174Z" fill="#2a78d6"/>
-<text x="418.2" y="307" font-size="14" fill="#1f2328">8.0</text>
+<path d="M174,293H289.2A4,4 0 0 1 293.2,297V307A4,4 0 0 1 289.2,311H174Z" fill="#2a78d6"/>
+<text x="299.2" y="307" font-size="14" fill="#1f2328">8.0</text>
 <text x="166" y="343" font-size="14" fill="#1f2328" text-anchor="end">Sidequest*</text>
-<path d="M174,329H451.6A4,4 0 0 1 455.6,333V343A4,4 0 0 1 451.6,347H174Z" fill="#2a78d6"/>
-<text x="461.6" y="343" font-size="14" fill="#1f2328">9.4</text>
+<path d="M174,329H308.7A4,4 0 0 1 312.7,333V343A4,4 0 0 1 308.7,347H174Z" fill="#2a78d6"/>
+<text x="318.7" y="343" font-size="14" fill="#1f2328">9.3</text>
 <text x="166" y="379" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (Redis)*</text>
 <text x="174.0" y="379" font-size="14" fill="#59636e">60 Redis commands, most inside 5 Lua script calls: another unit</text>
 </g>

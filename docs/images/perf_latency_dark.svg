@@ -6,44 +6,44 @@
 <text x="0" y="46" font-size="14" fill="#9198a1">PostgreSQL 17, 1 ms round trip, steady load, one library at a time.</text>
 <line x1="174.0" y1="64" x2="174.0" y2="392" stroke="#3d444d"/>
 <text x="174.0" y="411" font-size="12" fill="#9198a1" text-anchor="middle">0</text>
-<line x1="268.5" y1="64" x2="268.5" y2="392" stroke="#262c36"/>
-<text x="268.5" y="411" font-size="12" fill="#9198a1" text-anchor="middle">20</text>
-<line x1="363.0" y1="64" x2="363.0" y2="392" stroke="#262c36"/>
-<text x="363.0" y="411" font-size="12" fill="#9198a1" text-anchor="middle">40</text>
-<line x1="457.5" y1="64" x2="457.5" y2="392" stroke="#262c36"/>
-<text x="457.5" y="411" font-size="12" fill="#9198a1" text-anchor="middle">60</text>
-<line x1="552.0" y1="64" x2="552.0" y2="392" stroke="#262c36"/>
-<text x="552.0" y="411" font-size="12" fill="#9198a1" text-anchor="middle">80</text>
-<text x="574" y="411" font-size="12" fill="#9198a1">ms</text>
+<line x1="272.3" y1="64" x2="272.3" y2="392" stroke="#262c36"/>
+<text x="272.3" y="411" font-size="12" fill="#9198a1" text-anchor="middle">5</text>
+<line x1="370.5" y1="64" x2="370.5" y2="392" stroke="#262c36"/>
+<text x="370.5" y="411" font-size="12" fill="#9198a1" text-anchor="middle">10</text>
+<line x1="468.8" y1="64" x2="468.8" y2="392" stroke="#262c36"/>
+<text x="468.8" y="411" font-size="12" fill="#9198a1" text-anchor="middle">15</text>
+<line x1="567.0" y1="64" x2="567.0" y2="392" stroke="#262c36"/>
+<text x="567.0" y="411" font-size="12" fill="#9198a1" text-anchor="middle">20</text>
+<text x="589" y="411" font-size="12" fill="#9198a1">ms</text>
 <text x="0" y="436" font-size="13" fill="#9198a1">*: enqueue after the COMMIT, not in the caller's transaction.</text>
 <text x="166" y="91" font-size="14" fill="#f0f6fc" text-anchor="end" font-weight="600">sqlane</text>
-<path d="M174,77H188.9A4,4 0 0 1 192.9,81V91A4,4 0 0 1 188.9,95H174Z" fill="#3987e5"/>
-<text x="198.9" y="91" font-size="14" fill="#f0f6fc" font-weight="600">4 ms · p99 5 ms</text>
+<path d="M174,77H248.6A4,4 0 0 1 252.6,81V91A4,4 0 0 1 248.6,95H174Z" fill="#3987e5"/>
+<text x="258.6" y="91" font-size="14" fill="#f0f6fc" font-weight="600">4 ms · p99 5 ms</text>
 <text x="166" y="127" font-size="14" fill="#f0f6fc" text-anchor="end">Graphile Worker</text>
-<path d="M174,113H188.9A4,4 0 0 1 192.9,117V127A4,4 0 0 1 188.9,131H174Z" fill="#3987e5"/>
-<text x="198.9" y="127" font-size="14" fill="#f0f6fc">4 ms · p99 5 ms</text>
+<path d="M174,113H248.6A4,4 0 0 1 252.6,117V127A4,4 0 0 1 248.6,131H174Z" fill="#3987e5"/>
+<text x="258.6" y="127" font-size="14" fill="#f0f6fc">4 ms · p99 5 ms</text>
 <text x="166" y="163" font-size="14" fill="#f0f6fc" text-anchor="end">River</text>
-<path d="M174,149H198.3A4,4 0 0 1 202.3,153V163A4,4 0 0 1 198.3,167H174Z" fill="#3987e5"/>
-<text x="208.3" y="163" font-size="14" fill="#f0f6fc">6 ms · p99 7 ms</text>
+<path d="M174,149H287.9A4,4 0 0 1 291.9,153V163A4,4 0 0 1 287.9,167H174Z" fill="#3987e5"/>
+<text x="297.9" y="163" font-size="14" fill="#f0f6fc">6 ms · p99 7 ms</text>
 <text x="166" y="199" font-size="14" fill="#f0f6fc" text-anchor="end">pg-boss</text>
-<path d="M174,185H193.6A4,4 0 0 1 197.6,189V199A4,4 0 0 1 193.6,203H174Z" fill="#3987e5"/>
-<text x="203.6" y="199" font-size="14" fill="#f0f6fc">5 ms · p99 202 ms</text>
+<path d="M174,185H248.6A4,4 0 0 1 252.6,189V199A4,4 0 0 1 248.6,203H174Z" fill="#3987e5"/>
+<text x="258.6" y="199" font-size="14" fill="#f0f6fc">4 ms · p99 200 ms</text>
 <text x="166" y="235" font-size="14" fill="#f0f6fc" text-anchor="end">Izi Queue</text>
-<path d="M174,221H198.3A4,4 0 0 1 202.3,225V235A4,4 0 0 1 198.3,239H174Z" fill="#3987e5"/>
-<text x="208.3" y="235" font-size="14" fill="#f0f6fc">6 ms · p99 7 ms</text>
+<path d="M174,221H287.9A4,4 0 0 1 291.9,225V235A4,4 0 0 1 287.9,239H174Z" fill="#3987e5"/>
+<text x="297.9" y="235" font-size="14" fill="#f0f6fc">6 ms · p99 7 ms</text>
 <text x="166" y="271" font-size="14" fill="#f0f6fc" text-anchor="end">Boring Node Queue</text>
-<rect x="174" y="257" width="378.0" height="18" fill="#3987e5"/>
-<path d="M536.0,277l6,-22" stroke="#0d1117" stroke-width="2.5"/>
-<path d="M543.0,277l6,-22" stroke="#0d1117" stroke-width="2.5"/>
-<text x="558.0" y="271" font-size="14" fill="#f0f6fc">862 ms · p99 2010 ms</text>
+<path d="M174,257H445.1A4,4 0 0 1 449.1,261V271A4,4 0 0 1 445.1,275H174Z" fill="#3987e5"/>
+<text x="455.1" y="271" font-size="14" fill="#f0f6fc">14 ms · p99 16 ms</text>
 <text x="166" y="307" font-size="14" fill="#f0f6fc" text-anchor="end">BullMQ (PostgreSQL)*</text>
-<path d="M174,293H184.2A4,4 0 0 1 188.2,297V307A4,4 0 0 1 184.2,311H174Z" fill="#3987e5"/>
-<text x="194.2" y="307" font-size="14" fill="#f0f6fc">3 ms · p99 4 ms</text>
+<path d="M174,293H228.9A4,4 0 0 1 232.9,297V307A4,4 0 0 1 228.9,311H174Z" fill="#3987e5"/>
+<text x="238.9" y="307" font-size="14" fill="#f0f6fc">3 ms · p99 3 ms</text>
 <text x="166" y="343" font-size="14" fill="#f0f6fc" text-anchor="end">Sidequest*</text>
-<path d="M174,329H448.8A4,4 0 0 1 452.8,333V343A4,4 0 0 1 448.8,347H174Z" fill="#3987e5"/>
-<text x="458.8" y="343" font-size="14" fill="#f0f6fc">59 ms · p99 112 ms</text>
+<rect x="174" y="329" width="393.0" height="18" fill="#3987e5"/>
+<path d="M551.0,349l6,-22" stroke="#0d1117" stroke-width="2.5"/>
+<path d="M558.0,349l6,-22" stroke="#0d1117" stroke-width="2.5"/>
+<text x="573.0" y="343" font-size="14" fill="#f0f6fc">58 ms · p99 111 ms</text>
 <text x="166" y="379" font-size="14" fill="#f0f6fc" text-anchor="end">BullMQ (Redis)*</text>
-<path d="M174,365H188.9A4,4 0 0 1 192.9,369V379A4,4 0 0 1 188.9,383H174Z" fill="#3987e5"/>
-<text x="198.9" y="379" font-size="14" fill="#f0f6fc">4 ms · p99 4 ms</text>
+<path d="M174,365H248.6A4,4 0 0 1 252.6,369V379A4,4 0 0 1 248.6,383H174Z" fill="#3987e5"/>
+<text x="258.6" y="379" font-size="14" fill="#f0f6fc">4 ms · p99 5 ms</text>
 </g>
 </svg>

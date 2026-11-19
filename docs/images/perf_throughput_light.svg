@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="752" height="476" viewBox="0 0 752 476" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="Jobs per second, one worker">
+<title>Jobs per second, one worker</title>
+<rect width="752" height="476" rx="6" fill="#ffffff"/>
+<g transform="translate(16 16)">
+<text x="0" y="22" font-size="18" font-weight="600" fill="#1f2328">Jobs per second, one worker</text>
+<text x="0" y="46" font-size="14" fill="#59636e">PostgreSQL 17, 1 ms round trip, a backlog of 50,000 jobs of one name, 8 slots.</text>
+<line x1="174.0" y1="64" x2="174.0" y2="392" stroke="#c3c2b7"/>
+<text x="174.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">0</text>
+<line x1="280.0" y1="64" x2="280.0" y2="392" stroke="#e1e0d9"/>
+<text x="280.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">2,000</text>
+<line x1="386.0" y1="64" x2="386.0" y2="392" stroke="#e1e0d9"/>
+<text x="386.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">4,000</text>
+<line x1="492.0" y1="64" x2="492.0" y2="392" stroke="#e1e0d9"/>
+<text x="492.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">6,000</text>
+<line x1="598.0" y1="64" x2="598.0" y2="392" stroke="#e1e0d9"/>
+<text x="598.0" y="411" font-size="12" fill="#59636e" text-anchor="middle">8,000</text>
+<text x="620" y="411" font-size="12" fill="#59636e">jobs/s</text>
+<text x="0" y="436" font-size="13" fill="#59636e">*: enqueue after the COMMIT, not in the caller's transaction.</text>
+<text x="166" y="91" font-size="14" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
+<path d="M174,77H318.7A4,4 0 0 1 322.7,81V91A4,4 0 0 1 318.7,95H174Z" fill="#2a78d6"/>
+<text x="328.7" y="91" font-size="14" fill="#1f2328" font-weight="600">≥ 2,810 jobs/s</text>
+<text x="166" y="127" font-size="14" fill="#1f2328" text-anchor="end">Graphile Worker</text>
+<path d="M174,113H261.0A4,4 0 0 1 265.0,117V127A4,4 0 0 1 261.0,131H174Z" fill="#2a78d6"/>
+<text x="271.0" y="127" font-size="14" fill="#1f2328">1,720 jobs/s</text>
+<text x="166" y="163" font-size="14" fill="#1f2328" text-anchor="end">River</text>
+<path d="M174,149H362.1A4,4 0 0 1 366.1,153V163A4,4 0 0 1 362.1,167H174Z" fill="#2a78d6"/>
+<text x="372.1" y="163" font-size="14" fill="#1f2328">≥ 3,620 jobs/s</text>
+<text x="166" y="199" font-size="14" fill="#1f2328" text-anchor="end">pg-boss</text>
+<path d="M174,185H387.7A4,4 0 0 1 391.7,189V199A4,4 0 0 1 387.7,203H174Z" fill="#2a78d6"/>
+<text x="397.7" y="199" font-size="14" fill="#1f2328">≥ 4,110 jobs/s</text>
+<text x="166" y="235" font-size="14" fill="#1f2328" text-anchor="end">Izi Queue</text>
+<path d="M174,221H175.8A1.8218656670376547,1.8218656670376547 0 0 1 177.6,222.82186566703766V237.17813433296234A1.8218656670376547,1.8218656670376547 0 0 1 175.8,239H174Z" fill="#2a78d6"/>
+<text x="183.6" y="235" font-size="14" fill="#1f2328">69 jobs/s</text>
+<text x="166" y="271" font-size="14" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
+<path d="M174,257H176.3A2.3147586943768053,2.3147586943768053 0 0 1 178.6,259.3147586943768V272.6852413056232A2.3147586943768053,2.3147586943768053 0 0 1 176.3,275H174Z" fill="#2a78d6"/>
+<text x="184.6" y="271" font-size="14" fill="#1f2328">87 jobs/s</text>
+<text x="166" y="307" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (PostgreSQL)*</text>
+<path d="M174,293H331.8A4,4 0 0 1 335.8,297V307A4,4 0 0 1 331.8,311H174Z" fill="#2a78d6"/>
+<text x="341.8" y="307" font-size="14" fill="#1f2328">≥ 3,050 jobs/s</text>
+<text x="166" y="343" font-size="14" fill="#1f2328" text-anchor="end">Sidequest*</text>
+<path d="M174,329H177.6A3.5600934386167196,3.5600934386167196 0 0 1 181.1,332.5600934386167V343.4399065613833A3.5600934386167196,3.5600934386167196 0 0 1 177.6,347H174Z" fill="#2a78d6"/>
+<text x="187.1" y="343" font-size="14" fill="#1f2328">134 jobs/s</text>
+<text x="166" y="379" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (Redis)*</text>
+<path d="M174,365H531.7A4,4 0 0 1 535.7,369V379A4,4 0 0 1 531.7,383H174Z" fill="#2a78d6"/>
+<text x="541.7" y="379" font-size="14" fill="#1f2328">≥ 6,820 jobs/s</text>
+</g>
+</svg>

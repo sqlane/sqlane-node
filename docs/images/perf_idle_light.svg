@@ -15,33 +15,33 @@
 <text x="667" y="411" font-size="12" fill="#59636e">M/s</text>
 <text x="0" y="436" font-size="13" fill="#59636e">*: enqueue after the COMMIT, not in the caller's transaction.</text>
 <text x="166" y="91" font-size="14" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
-<path d="M174,77H177.4A3.381193590512359,3.381193590512359 0 0 1 180.8,80.38119359051235V91.61880640948765A3.381193590512359,3.381193590512359 0 0 1 177.4,95H174Z" fill="#2a78d6"/>
-<text x="186.8" y="91" font-size="14" fill="#1f2328" font-weight="600">0.2 M/s</text>
+<path d="M174,77H175.6A1.643695328472014,1.643695328472014 0 0 1 177.3,78.64369532847202V93.35630467152798A1.643695328472014,1.643695328472014 0 0 1 175.6,95H174Z" fill="#2a78d6"/>
+<text x="183.3" y="91" font-size="14" fill="#1f2328" font-weight="600">0.1 M/s</text>
 <text x="166" y="127" font-size="14" fill="#1f2328" text-anchor="end">Graphile Worker</text>
-<path d="M174,113H228.7A4,4 0 0 1 232.7,117V127A4,4 0 0 1 228.7,131H174Z" fill="#2a78d6"/>
-<text x="238.7" y="127" font-size="14" fill="#1f2328">1.9 M/s</text>
+<path d="M174,113H207.5A4,4 0 0 1 211.5,117V127A4,4 0 0 1 207.5,131H174Z" fill="#2a78d6"/>
+<text x="217.5" y="127" font-size="14" fill="#1f2328">1.2 M/s</text>
 <text x="166" y="163" font-size="14" fill="#1f2328" text-anchor="end">River</text>
-<path d="M174,149H209.5A4,4 0 0 1 213.5,153V163A4,4 0 0 1 209.5,167H174Z" fill="#2a78d6"/>
-<text x="219.5" y="163" font-size="14" fill="#1f2328">1.3 M/s</text>
+<path d="M174,149H214.1A4,4 0 0 1 218.1,153V163A4,4 0 0 1 214.1,167H174Z" fill="#2a78d6"/>
+<text x="224.1" y="163" font-size="14" fill="#1f2328">1.4 M/s</text>
 <text x="166" y="199" font-size="14" fill="#1f2328" text-anchor="end">pg-boss</text>
 <rect x="174" y="185" width="471.0" height="18" fill="#2a78d6"/>
 <path d="M629.0,205l6,-22" stroke="#ffffff" stroke-width="2.5"/>
 <path d="M636.0,205l6,-22" stroke="#ffffff" stroke-width="2.5"/>
-<text x="651.0" y="199" font-size="14" fill="#1f2328">261 M/s</text>
+<text x="651.0" y="199" font-size="14" fill="#1f2328">350 M/s</text>
 <text x="166" y="235" font-size="14" fill="#1f2328" text-anchor="end">Izi Queue</text>
-<path d="M174,221H568.7A4,4 0 0 1 572.7,225V235A4,4 0 0 1 568.7,239H174Z" fill="#2a78d6"/>
-<text x="578.7" y="235" font-size="14" fill="#1f2328">12.7 M/s</text>
+<path d="M174,221H560.0A4,4 0 0 1 564.0,225V235A4,4 0 0 1 560.0,239H174Z" fill="#2a78d6"/>
+<text x="570.0" y="235" font-size="14" fill="#1f2328">12.4 M/s</text>
 <text x="166" y="271" font-size="14" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
-<path d="M174,257H193.7A4,4 0 0 1 197.7,261V271A4,4 0 0 1 193.7,275H174Z" fill="#2a78d6"/>
-<text x="203.7" y="271" font-size="14" fill="#1f2328">0.8 M/s</text>
+<path d="M174,257H175.1A1.085513948376353,1.085513948376353 0 0 1 176.2,258.08551394837633V273.91448605162367A1.085513948376353,1.085513948376353 0 0 1 175.1,275H174Z" fill="#2a78d6"/>
+<text x="182.2" y="271" font-size="14" fill="#1f2328">0.07 M/s</text>
 <text x="166" y="307" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (PostgreSQL)*</text>
-<path d="M174,293H193.5A4,4 0 0 1 197.5,297V307A4,4 0 0 1 193.5,311H174Z" fill="#2a78d6"/>
-<text x="203.5" y="307" font-size="14" fill="#1f2328">0.7 M/s</text>
+<path d="M174,293H193.8A4,4 0 0 1 197.8,297V307A4,4 0 0 1 193.8,311H174Z" fill="#2a78d6"/>
+<text x="203.8" y="307" font-size="14" fill="#1f2328">0.8 M/s</text>
 <text x="166" y="343" font-size="14" fill="#1f2328" text-anchor="end">Sidequest*</text>
-<path d="M174,329H227.0A4,4 0 0 1 231.0,333V343A4,4 0 0 1 227.0,347H174Z" fill="#2a78d6"/>
-<text x="237.0" y="343" font-size="14" fill="#1f2328">1.8 M/s</text>
+<path d="M174,329H217.3A4,4 0 0 1 221.3,333V343A4,4 0 0 1 217.3,347H174Z" fill="#2a78d6"/>
+<text x="227.3" y="343" font-size="14" fill="#1f2328">1.5 M/s</text>
 <text x="166" y="379" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (Redis)*</text>
-<path d="M174,365H262.2A4,4 0 0 1 266.2,369V379A4,4 0 0 1 262.2,383H174Z" fill="#2a78d6"/>
-<text x="272.2" y="379" font-size="14" fill="#1f2328">2.9 M/s</text>
+<path d="M174,365H259.0A4,4 0 0 1 263.0,369V379A4,4 0 0 1 259.0,383H174Z" fill="#2a78d6"/>
+<text x="269.0" y="379" font-size="14" fill="#1f2328">2.8 M/s</text>
 </g>
 </svg>
