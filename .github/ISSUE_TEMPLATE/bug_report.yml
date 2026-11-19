@@ -12,7 +12,7 @@ body:
     id: reproduce
     attributes:
       label: How to reproduce
-      description: The smallest code that shows it. The quickstart (examples/quickstart) is a good start.
+      description: The smallest code that shows it.
       render: js
     validations:
       required: true

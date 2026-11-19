@@ -1,17 +1,18 @@
-// The quickstart on MySQL: `docker compose up -d --wait mysql`, then `npm run mysql`.
+// Smoke test of the packed package on PostgreSQL, installed as an app installs it (CI job package_smoke):
+// `docker compose up -d --wait postgres`, then `npm run postgres`. CI checks the output of steps 2 and 3.
 // 1. A job commits with the business data, and runs right after the commit.
 // 2. A rollback removes the business data and the job.
 // 3. Jobs of one key of a global limit of 1 run one at a time; other keys run alongside.
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
-import mysql from 'mysql2/promise';
+import { Pool } from 'pg';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '@sqlane/core';
-import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
+import { pgAdapter } from '@sqlane/core/adapter-pg';
 
-const url = process.env.DATABASE_URL ?? 'mysql://root@127.0.0.1:13306/app';
-const appPool = mysql.createPool({ uri: url }); // the app's: business transactions
-const queuePool = mysql.createPool({ uri: url, connectionLimit: 3 }); // the queue's own: claims, leases, results
+const url = process.env.DATABASE_URL ?? 'postgres://postgres@127.0.0.1:15432/app';
+const appPool = new Pool({ connectionString: url }); // the app's: business transactions
+const queuePool = new Pool({ connectionString: url, max: 3 }); // the queue's own: claims, leases, results
 
 // The job definitions: producers and workers import them
 const sendReceipt = defineJob({ name: 'send_receipt' });
@@ -24,7 +25,8 @@ const syncOrder = defineJob({
 
 const events = new EventEmitter();
 const sqlane = createSqlane({
-    adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }), // or 'mariadb' on MariaDB
+    // NOTIFY wakes the workers of other processes at the commit
+    adapter: pgAdapter(queuePool, { dialect: 'postgres', notify: true }),
     jobs: [sendReceipt, syncOrder],
     onEvent: event => events.emit(event.type, event),
 });
@@ -51,22 +53,22 @@ await sqlane.start();
 console.log('1. Commit: order 1 and its job');
 let done = completions(1);
 
-await transaction(async (connection) => {
-    await connection.query('INSERT INTO orders (id) VALUES (?)', [1]);
-    await sqlane.enqueue(connection, sendReceipt, { orderId: 1 });
+await transaction(async (client) => {
+    await client.query('INSERT INTO orders (id) VALUES ($1)', [1]);
+    await sqlane.enqueue(client, sendReceipt, { orderId: 1 });
 });
 committedAt = performance.now();
 await done;
 
 console.log('2. Rollback: order 2 and its job');
-await transaction(async (connection) => {
-    await connection.query('INSERT INTO orders (id) VALUES (?)', [2]);
-    await sqlane.enqueue(connection, sendReceipt, { orderId: 2 }, { jobId: 'order-2' });
+await transaction(async (client) => {
+    await client.query('INSERT INTO orders (id) VALUES ($1)', [2]);
+    await sqlane.enqueue(client, sendReceipt, { orderId: 2 }, { jobId: 'order-2' });
     throw new Error('payment declined');
 }).catch(error => console.log(`   rolled back: ${error.message}`));
 
-const [[orders]] = await appPool.query('SELECT COUNT(*) AS n FROM orders WHERE id = 2');
-const [[jobs]] = await appPool.query('SELECT COUNT(*) AS n FROM sqlane_jobs WHERE id = ?', ['send_receipt:order-2']);
+const { rows: [orders] } = await appPool.query('SELECT COUNT(*)::int AS n FROM orders WHERE id = 2');
+const { rows: [jobs] } = await appPool.query('SELECT COUNT(*)::int AS n FROM sqlane_jobs WHERE id = $1', ['send_receipt:order-2']);
 
 console.log(`   order 2: ${orders.n} rows in orders, ${jobs.n} jobs`);
 
@@ -82,20 +84,20 @@ await queuePool.end();
 
 /**
  * Runs func in a transaction of the app: commits when it returns, rolls back when it throws.
- * @param {(connection: import('mysql2/promise').PoolConnection) => Promise<void>} func
+ * @param {(client: import('pg').PoolClient) => Promise<void>} func
  */
 async function transaction(func) {
-    const connection = await appPool.getConnection();
+    const client = await appPool.connect();
 
     try {
-        await connection.beginTransaction();
-        await func(connection);
-        await connection.commit();
+        await client.query('BEGIN');
+        await func(client);
+        await client.query('COMMIT');
     } catch (error) {
-        await connection.rollback();
+        await client.query('ROLLBACK');
         throw error;
     } finally {
-        connection.release();
+        client.release();
     }
 }
 

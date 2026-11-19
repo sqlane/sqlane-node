@@ -880,7 +880,7 @@ Small helper modules, such as `backoff.js`, `duration.js` and `payload.js`, comp
   backoff, durations, payloads, global limits, GCRA, defaults, option checks and the error classes. They also check the
   adapters and the runner with small stub objects instead of a database.
 - **Type tests** in `test/types/` and the examples in `examples/` are type-checked in CI, so the public API cannot
-  change by accident. The quickstart in `examples/quickstart` runs in CI against the packed package.
+  change by accident. The smoke test in `test/package_smoke` runs in CI against the packed package.
 - **Integration tests** in `test/integration/` give most of the value. The same suite runs against MySQL 8.4,
   MariaDB 10.11 and 11.8, and PostgreSQL 15 and 18 in Docker. It covers enqueue, claims, final writes, the runner, migrations, hints, stats,
   schedules and each adapter.
