@@ -1,5 +1,15 @@
 # @sqlane/core
 
+## 7.0.3
+
+### Patch Changes
+
+- [#132](https://github.com/sqlane/sqlane-node/pull/132) [`47b74d8`](https://github.com/sqlane/sqlane-node/commit/47b74d8b861dbb6f9d88441e6e92afc883062f9c) - Docs: the README's code lines fit the width of GitHub and npm, at most 79 characters, so no line is cut off.
+
+- [#134](https://github.com/sqlane/sqlane-node/pull/134) [`cb1cb50`](https://github.com/sqlane/sqlane-node/commit/cb1cb50f0dc220b57c5bbad02eb9a67fbd7f9f80) - Docs: the README's feature list names three features that the other queues lack: schedule jitter, which spreads the
+  runs of many schedules; several concurrency and rate limits on one job, each with its own settings; and a rate-limit
+  cost, for APIs that charge points.
+
 ## 7.0.2
 
 ### Patch Changes
