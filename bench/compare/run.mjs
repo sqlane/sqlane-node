@@ -295,10 +295,10 @@ async function postgresServer(port) {
  * @returns {Promise<Server>}
  */
 async function redisServer(port, businessPort) {
-    const [server, business] = await Promise.all([
-        startRedis({ bin: REDIS_BIN, port, dir: tmp }),
-        postgresServer(businessPort),
-    ]);
+    const redis = startRedis({ bin: REDIS_BIN, port, dir: tmp });
+    /** @type {Promise<{ stop: () => Promise<void> }>[]} */
+    const starts = [redis, postgresServer(businessPort)];
+    const [server, business] = /** @type {[Awaited<typeof redis>, Server]} */ (await allStarted(starts));
 
     cleanups.push(() => server.kill());
 
@@ -588,9 +588,29 @@ async function lanesOf(libraries) {
  * @returns {Promise<Server[]>} A server per lane; Redis with a PostgreSQL for the business table.
  */
 function laneServers(lanes, pgPort, redisPort) {
-    return Promise.all(lanes.map(({ database }, index) => (
+    return allStarted(lanes.map(({ database }, index) => (
         database === 'redis' ? redisServer(redisPort + index, pgPort + index) : postgresServer(pgPort + index)
     )));
+}
+
+/**
+ * Waits for every start. On a failure, stops the servers that started, then throws its error: Promise.all would throw
+ * at once, and the servers still starting would start after the run's cleanup, and run on.
+ * @template {{ stop: () => Promise<void> }} T
+ * @param {Promise<T>[]} starts
+ * @returns {Promise<T[]>}
+ */
+async function allStarted(starts) {
+    const settled = await Promise.allSettled(starts);
+    const failed = settled.find(result => result.status === 'rejected');
+
+    if (failed) {
+        await Promise.allSettled(settled.flatMap(result => (result.status === 'fulfilled' ? [result.value.stop()] : [])));
+
+        throw failed.reason;
+    }
+
+    return settled.map(result => /** @type {PromiseFulfilledResult<T>} */ (result).value);
 }
 
 /**

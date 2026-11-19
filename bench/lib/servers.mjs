@@ -88,15 +88,27 @@ export async function startPostgres({
             ...connections ? [`-c max_connections=${connections}`] : [],
         ].join(' ')]);
     const readPid = () => Number(readFileSync(join(data, 'postmaster.pid'), 'utf8').split('\n')[0]);
-
-    await start();
-
     const url = `postgresql://postgres@127.0.0.1:${port}/postgres`;
     const admin = new Client({ connectionString: url });
 
-    await admin.connect();
-    await admin.query('CREATE EXTENSION IF NOT EXISTS pg_stat_statements');
-    await admin.end();
+    try {
+        await start();
+        await admin.connect();
+        await admin.query('CREATE EXTENSION IF NOT EXISTS pg_stat_statements');
+        await admin.end();
+    } catch (error) {
+        // The caller gets no handle to stop it with: a server that started, or half started (pg_ctl's wait timed out),
+        // stops here
+        await admin.end().catch(() => {});
+
+        try {
+            execFileSync(join(bin, 'pg_ctl'), ['-D', data, '-m', 'immediate', 'stop'], { stdio: 'ignore' });
+        } catch {
+            // Not running
+        }
+
+        throw error;
+    }
 
     let stopped = false;
     /** @type {Server} */
