@@ -2,20 +2,21 @@ export type SequelizeLike = {
     getDialect: () => string;
     transaction: (options: object, func: (t: SequelizeTransactionLike) => Promise<any>) => Promise<any>;
     connectionManager: {
-        getConnection: () => Promise<any>;
+        getConnection: (options?: any) => Promise<any>;
         releaseConnection: (connection: any) => unknown;
     };
 };
 export type SequelizeTransactionLike = {
     /**
-     * The driver connection: mysql2 (callback API) or a pg client.
+     * The driver connection: mysql2 (callback API) or a pg client. Optional here because
+     * Sequelize's types don't declare it; a running transaction always has it.
      */
-    connection: any;
+    connection?: any;
     /**
      * Of a nested transaction (a savepoint).
      */
     parent?: SequelizeTransactionLike | undefined;
-    afterCommit: (func: () => unknown) => void;
+    afterCommit: (func: () => void) => void;
 };
 export type SequelizeAdapterOptions = {
     /**

@@ -1,7 +1,4 @@
 export type DrizzleDatabase = {
-    session: {
-        client: any;
-    };
     transaction: (func: (tx: any) => Promise<any>) => Promise<any>;
 };
 export type DrizzleConnection = DrizzleDatabase;

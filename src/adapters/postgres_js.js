@@ -9,7 +9,7 @@ import { checkAdapterDialect } from './dialect.js';
 /**
  * The `sql` of postgres.js: a pool, a transaction or a reserved connection, as far as the adapter reads it.
  * @typedef {object} PostgresJsSql
- * @property {(query: string, parameters?: unknown[], options?: { prepare?: boolean }) => Promise<any>} unsafe Resolves
+ * @property {(query: string, parameters?: any[], options?: { prepare?: boolean }) => Promise<any>} unsafe Resolves
  *     to the rows, with `count`.
  * @property {(options: string, func: (sql: any) => Promise<any>) => Promise<any>} [begin]
  * @property {() => Promise<PostgresJsSql & { release: () => void }>} [reserve] The pool.

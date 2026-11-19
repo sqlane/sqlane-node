@@ -19,9 +19,9 @@ const DRIVER_BY_SESSION = {
 };
 
 /**
- * A Drizzle database or transaction, as far as the adapter reads it.
+ * A Drizzle database or transaction, as far as its public types show it. The adapter also reads its `session`, which
+ * Drizzle's types don't declare: `sessionOf` checks it at runtime.
  * @typedef {object} DrizzleDatabase
- * @property {{ client: any }} session
  * @property {(func: (tx: any) => Promise<any>) => Promise<any>} transaction
  */
 
@@ -66,10 +66,18 @@ function isTransaction(connection) {
 
 /**
  * @param {DrizzleConnection} connection
+ * @returns {{ client?: any } | undefined} Its session: internal to Drizzle, so not in its types.
+ */
+function sessionOf(connection) {
+    return /** @type {{ session?: { client?: any } } | undefined} */ (connection)?.session;
+}
+
+/**
+ * @param {DrizzleConnection} connection
  * @returns {any} The driver client under Drizzle: a pool, a connection, a client.
  */
 function clientOf(connection) {
-    const client = connection?.session?.client;
+    const client = sessionOf(connection)?.client;
 
     if (!client) {
         throw new ConfigError('drizzleAdapter: expects a Drizzle database or transaction (drizzle-orm 0.45 or 1.0)');
@@ -87,7 +95,7 @@ function clientOf(connection) {
  * @returns {import('../types.js').Adapter<DrizzleConnection>}
  */
 export function drizzleAdapter(db, options) {
-    const sessionKind = kindOf(db?.session);
+    const sessionKind = kindOf(sessionOf(db));
     const pool = clientOf(db);
 
     if (typeof db.transaction !== 'function' || isTransaction(db)) {
