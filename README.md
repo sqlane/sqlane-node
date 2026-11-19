@@ -1,4 +1,9 @@
-# sqlane
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/logo_dark.svg">
+    <img alt="sqlane" height="48" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/logo_light.svg">
+  </picture>
+</h1>
 
 **Status: not production-ready yet.**
 
