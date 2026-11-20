@@ -134,6 +134,9 @@ not depend on the `timezone` or `dateStrings` settings of the pool.
 | `failure_job`                                                         | varchar(128) null | Frozen at enqueue.                                                                                                  |
 | `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)             |                                                                                                                     |
 
+`attempts` counts the finished attempts: a completion, a retry and a failure each add one. A stall, a release and a
+wait on a rate limit add none; the stalls have their own count.
+
 `id`, `job_name` and the keys are case-sensitive: `ascii_bin` on MySQL, `COLLATE "C"` on PostgreSQL.
 
 Indexes:

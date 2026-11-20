@@ -249,7 +249,7 @@ describe('start()', () => {
         await waitFor(async () => (await readJobs(p))[0]?.status === 'completed');
 
         expect(flaky.calls()).toBe(3);
-        await expect(readJobs(p)).resolves.toMatchObject([{ attempts: 2 }]);
+        await expect(readJobs(p)).resolves.toMatchObject([{ attempts: 3 }]);
     });
 
     test('after the last attempt: failed, and its failure job runs with the failed job', async () => {
@@ -293,7 +293,7 @@ describe('start()', () => {
 
         await expect(readJobs(p)).resolves.toMatchObject([
             { job_name: 'fatal', status: 'failed', attempts: 1 },
-            { job_name: 'limited', status: 'completed', attempts: 1 },
+            { job_name: 'limited', status: 'completed', attempts: 2 },
         ]);
         expect(events.find(event => event.type === 'retried')).toMatchObject({ jobName: 'limited', delayMs: 300 });
     });
@@ -728,9 +728,9 @@ describe('RateLimitedError', () => {
         expect(/** @type {{ at: number }} */ (starts.find(start => start.payload.account === 'a2')).at - limitedAt)
             .toBeLessThan(250);
         await expect(readJobs(p)).resolves.toMatchObject([
-            { status: 'completed', attempts: 0 },
-            { status: 'completed', attempts: 0 },
-            { status: 'completed', attempts: 0 },
+            { status: 'completed', attempts: 1 },
+            { status: 'completed', attempts: 1 },
+            { status: 'completed', attempts: 1 },
         ]);
         expect(events.map(each => each.type)).not.toContain('retried');
     });
@@ -779,8 +779,8 @@ describe('RateLimitedError', () => {
         }
 
         await expect(readJobs(p)).resolves.toMatchObject([
-            { status: 'completed', attempts: 0 },
-            { status: 'completed', attempts: 0 },
+            { status: 'completed', attempts: 1 },
+            { status: 'completed', attempts: 1 },
         ]);
     });
 
@@ -797,8 +797,8 @@ describe('RateLimitedError', () => {
             await waitFor(async () => (await statusCounts(p)).completed === 2, 3000);
 
             await expect(readJobs(p)).resolves.toMatchObject([
-                { job_name: 'call', status: 'completed', attempts: 1 },
-                { job_name: 'plain', status: 'completed', attempts: 1 },
+                { job_name: 'call', status: 'completed', attempts: 2 },
+                { job_name: 'plain', status: 'completed', attempts: 2 },
             ]);
             // The two jobs run at once: their events come in either order
             const retried = events.filter(event => event.type === 'retried')
@@ -898,7 +898,7 @@ test('a timeout: the signal aborts; the job keeps running until the handler sett
     await expect(readJobs(p)).resolves.toMatchObject([{ status: 'running' }]);
     await waitFor(async () => (await readJobs(p))[0]?.status === 'completed');
     expect(slow.reasons[0]).toBeInstanceOf(JobTimeoutError);
-    await expect(readJobs(p)).resolves.toMatchObject([{ attempts: 1 }]);
+    await expect(readJobs(p)).resolves.toMatchObject([{ attempts: 2 }]);
 });
 
 describe('close()', () => {

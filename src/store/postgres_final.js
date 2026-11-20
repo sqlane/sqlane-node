@@ -116,8 +116,8 @@ async function completeJob(executor, p, job) {
     const [row] = await executor.query(`
         WITH done AS (
             UPDATE ${p}jobs
-               SET status = 'completed', finished_at = ${NOW}, expires_at = ${NOW} + completed_retention_ms * ${MS},
-                   ${CLEAR_LOCK}, updated_at = ${NOW}
+               SET status = 'completed', attempts = attempts + 1, finished_at = ${NOW},
+                   expires_at = ${NOW} + completed_retention_ms * ${MS}, ${CLEAR_LOCK}, updated_at = ${NOW}
              WHERE id = $1 AND lock_token = $2
             RETURNING id
         ),
@@ -153,8 +153,8 @@ export async function completeJobs(executor, p, jobs) {
         ),
         done AS (
             UPDATE ${p}jobs j
-               SET status = 'completed', finished_at = ${NOW}, expires_at = ${NOW} + completed_retention_ms * ${MS},
-                   ${CLEAR_LOCK}, updated_at = ${NOW}
+               SET status = 'completed', attempts = attempts + 1, finished_at = ${NOW},
+                   expires_at = ${NOW} + completed_retention_ms * ${MS}, ${CLEAR_LOCK}, updated_at = ${NOW}
               FROM owned
              WHERE j.id = owned.id AND j.lock_token = owned.lock_token
             RETURNING j.id
