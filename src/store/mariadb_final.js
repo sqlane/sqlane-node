@@ -121,7 +121,7 @@ export async function completeJobs(executor, p, jobs) {
     // `id IN`: the range on the primary key; the pairs check the lock tokens
     const changed = await executor.run(`
         UPDATE ${p}jobs FORCE INDEX (PRIMARY)
-           SET status = 'completed', finished_at = ${NOW},
+           SET status = 'completed', attempts = attempts + 1, finished_at = ${NOW},
                expires_at = ${NOW} + INTERVAL completed_retention_ms * 1000 MICROSECOND, ${CLEAR_LOCK},
                updated_at = ${NOW}
          WHERE id IN (${placeholders(ids.length)}) AND (id, lock_token) IN (${jobs.map(() => '(?, ?)').join(', ')})

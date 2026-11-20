@@ -247,6 +247,32 @@ test('completeJobs: completed until its retention, without payload and keys; a r
     await expect(readHolds(tables.p)).resolves.toStrictEqual([]);
 });
 
+test('completeJobs: the completion counts its attempt: 1 at the first attempt, 2 after a retry; a replay adds none',
+    async () => {
+        const tables = await freshTables();
+        const first = await claimedJob(tables);
+
+        await tables.store.completeJobs([first]);
+        await tables.store.completeJobs([first]);
+        await expect(readJob(tables.p, first.id)).resolves.toMatchObject({ status: 'completed', attempts: 1 });
+
+        const retried = await claimedJob(tables);
+
+        await tables.store.retryJob(retried, { delayMs: 0, error: toErrorJson(new Error('boom')) });
+
+        const { jobs: [again] } = await tables.store.claim({
+            candidateIds: [retried.id],
+            fullIds: [],
+            lockToken: `T${Date.now()}${Math.random()}`.slice(0, 26),
+            lockedBy: 'test',
+            leaseMs: LEASE_MS,
+            pick: locked => locked,
+        });
+
+        await tables.store.completeJobs([again]);
+        await expect(readJob(tables.p, retried.id)).resolves.toMatchObject({ status: 'completed', attempts: 2 });
+    });
+
 test.runIf(inject('databaseDialect') === 'postgres')('completeJobs: PostgreSQL completes in one driver query', async () => {
     const tables = await freshTables();
     const job = await claimedJob(tables, { retention: { completed: '10m' } });

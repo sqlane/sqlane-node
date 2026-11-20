@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
@@ -179,6 +180,31 @@ describe('hints', () => {
         await expect(timeUntil(async () => (await statuses(p))[0] === 'completed', 5000))
             .resolves.toBeLessThan(2000);
         expect(hint.published).toContain('ping');
+    });
+
+    test('a handler woken by a hint runs in the context of start(), not in the context of the publisher', async () => {
+        const p = nextPrefix();
+        const hint = memoryHint();
+        const producer = sqlaneOn(p, { hint });
+        const worker = sqlaneOn(p, { hint, pollInterval: '10s' });
+        /** @type {AsyncLocalStorage<{ owner: string }>} */
+        const storage = new AsyncLocalStorage();
+        /** @type {unknown[]} */
+        const stores = [];
+
+        await producer.migrate();
+        worker.handle('ping', () => {
+            stores.push(storage.getStore());
+        });
+        await storage.run({ owner: 'worker' }, () => worker.start());
+        await sleep(100);
+        // The memory hint delivers the message in the context of the enqueue
+        await storage.run({ owner: 'request' }, () => producer.enqueue(testAdapter.pool, 'ping', {}));
+
+        await expect(timeUntil(async () => (await statuses(p))[0] === 'completed', 5000))
+            .resolves.toBeLessThan(2000);
+        expect(hint.published).toContain('ping');
+        expect(stores).toStrictEqual([{ owner: 'worker' }]);
     });
 
     test('a hint that fails does not fail the enqueue', async () => {
