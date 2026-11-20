@@ -13,7 +13,9 @@ import { createSqlane } from '../../src/index.js';
 /** @typedef {import('../../src/types.js').Sqlane<SequelizeConnection>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
 
-Sequelize.useCLS(createNamespace('sqlane-test'));
+const namespace = createNamespace('sqlane-test');
+
+Sequelize.useCLS(namespace);
 
 /**
  * Waits until the condition holds.
@@ -142,6 +144,26 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
 
         await waitFor(() => events.some(event => event.type === 'claimed'));
         expect(Date.now() - committedAt).toBeLessThan(150);
+    });
+
+    test('a handler woken by the commit of a CLS transaction does not run in it', async () => {
+        const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
+        /** @type {unknown[]} */
+        const transactions = [];
+
+        sqlane.handle('ping', () => {
+            transactions.push(namespace.get('transaction'));
+        });
+        await sqlane.start();
+        await sleep(100);
+        await sequelize.transaction(async () => {
+            await sqlane.enqueue(sequelize, 'ping', {});
+            // After the re-probes of the enqueue: the commit wakes the worker
+            await sleep(300);
+        });
+        await waitFor(() => events.some(event => event.type === 'completed'));
+
+        expect(transactions).toStrictEqual([undefined]);
     });
 
     test('outside a CLS transaction: a transaction of its own', async () => {

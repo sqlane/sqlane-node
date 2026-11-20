@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import {
@@ -296,6 +297,44 @@ describe('start()', () => {
             { job_name: 'limited', status: 'completed', attempts: 2 },
         ]);
         expect(events.find(event => event.type === 'retried')).toMatchObject({ jobName: 'limited', delayMs: 300 });
+    });
+});
+
+describe('the async context of a handler', () => {
+    test('a job enqueued in this process runs in the context of start(), not in the context of the enqueue',
+        async () => {
+            const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
+            /** @type {AsyncLocalStorage<{ owner: string }>} */
+            const storage = new AsyncLocalStorage();
+            /** @type {unknown[]} */
+            const stores = [];
+
+            sqlane.handle('ping', () => {
+                stores.push(storage.getStore());
+            });
+            await storage.run({ owner: 'worker' }, () => sqlane.start());
+            // The first turn has probed nothing; the next poll is 10 s away: the enqueue wakes the handler
+            await sleep(100);
+            await storage.run({ owner: 'request' }, () => sqlane.enqueue(testAdapter.pool, 'ping', {}));
+            await waitFor(() => events.some(event => event.type === 'completed'), 3000);
+
+            expect(stores).toStrictEqual([{ owner: 'worker' }]);
+        });
+
+    test('drain() runs the jobs in its own context', async () => {
+        const { sqlane } = await freshSqlane();
+        /** @type {AsyncLocalStorage<{ owner: string }>} */
+        const storage = new AsyncLocalStorage();
+        /** @type {unknown[]} */
+        const stores = [];
+
+        sqlane.handle('ping', () => {
+            stores.push(storage.getStore());
+        });
+        await storage.run({ owner: 'request' }, () => sqlane.enqueue(testAdapter.pool, 'ping', {}));
+        await storage.run({ owner: 'test' }, () => sqlane.drain());
+
+        expect(stores).toStrictEqual([{ owner: 'test' }]);
     });
 });
 

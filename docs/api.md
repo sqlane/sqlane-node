@@ -435,6 +435,10 @@ Register all the handlers before you call `start()`. The return value of the han
 the handler in a transaction, so a handler that needs one opens it with its own connection. All the options of a job
 name are in its definition: `handle()` takes none.
 
+A handler runs in the async context of the `start()` or `drain()` call, never in the context of the code that woke the
+worker: an enqueue, the commit of a transaction or a hint. So the `AsyncLocalStorage` stores of a request, and its CLS
+transaction, do not reach the handlers. To give the handlers a context, such as a logger, call `start()` inside it.
+
 `handle` throws a `ConfigError` in these cases:
 
 - It gets options: those of 5.x moved to the definition, and the error says where.
