@@ -1,7 +1,8 @@
 // Every method of the Sqlane interface (src/sqlane.ts) is documented for the editor: a description, a `@param` with
 // text for each parameter, and a `@returns` with text unless it returns void. oxlint's JSDoc rules check the typedefs
 // of src/types.js, but not the members of a TypeScript interface. No TypeScript API: TypeScript 7 has none in JS, so
-// this reads the one interface of the file, whose shape it knows: it ends the file, and each member is a method.
+// this reads the interfaces of the file, whose shape it knows: each ends with a `}` at the start of a line, and each
+// member is a method, or a `readonly` property for a group of methods (`sqlane.jobs`) with an interface of its own.
 // Usage: node scripts/check_api_docs.js [file]
 import { readFileSync } from 'node:fs';
 
@@ -67,29 +68,57 @@ function paramNames(list) {
 const NO_RESULT = new Set(['void', 'Promise<void>']);
 
 /**
- * @param {string} source A file that ends with `export interface Sqlane<…> { … }`.
+ * @param {string} source A file with `export interface Sqlane<…> { … }`, and the interfaces of its groups of methods.
+ *     Each interface ends with a `}` at the start of a line.
  * @returns {string[]} The problems: a member without docs, a parameter or a return value without text.
  */
 export function checkApiDocs(source) {
-    const head = /export interface Sqlane<[^>]*> \{/u.exec(source);
-
-    if (!head) {
+    if (!/^export interface Sqlane<[^>]*> \{$/mu.test(source)) {
         return ['no `export interface Sqlane<…> {`'];
     }
 
-    // Its end: the last `}` of the file. The JSDoc between has brackets of its own, so they can't be counted
-    const body = source.slice(head.index + head[0].length, source.lastIndexOf('}'));
     const problems = [];
-    // A member: its JSDoc, if any, then its name, its type parameters and its parameters, up to the `;` at depth 0
-    const member = /(?:\/\*\*(?<doc>(?:[^*]|\*(?!\/))*)\*\/\s*)?(?<name>\w+)(?<generics><)?/gu;
+
+    for (const head of source.matchAll(/^export interface (?<name>\w+)(?:<[^>]*>)? \{$/gmu)) {
+        const start = head.index + head[0].length;
+        // Its end: the next `}` at the start of a line. The JSDoc has brackets of its own, so they can't be counted
+        const body = source.slice(start, source.indexOf('\n}', start));
+        const owner = /** @type {{ name: string }} */ (head.groups).name;
+
+        problems.push(...checkMembers(body, owner === 'Sqlane' ? '' : `${owner}.`));
+    }
+
+    return problems;
+}
+
+/**
+ * @param {string} body The members of one interface.
+ * @param {string} prefix Of the names in the problems: none for Sqlane, `<interface>.` for the others.
+ * @returns {string[]} The problems of its members.
+ */
+function checkMembers(body, prefix) {
+    const problems = [];
+    // A member: its JSDoc, if any, then its name, its type parameters and its parameters, up to the `;` at depth 0.
+    // A `readonly` property is a group of methods
+    const member = /(?:\/\*\*(?<doc>(?:[^*]|\*(?!\/))*)\*\/\s*)?(?<readonly>readonly\s+)?(?<bare>\w+)(?<generics><)?/gu;
     let match;
 
     while ((match = member.exec(body))) {
-        const { doc, name, generics } = /** @type {Record<string, string | undefined>} */ (match.groups);
+        const { doc, readonly, bare, generics } = /** @type {Record<string, string | undefined>} */ (match.groups);
+        const name = `${prefix}${bare}`;
         let at = match.index + match[0].length;
 
         if (generics) {
             at = closingOf(body, at - 1) + 1;
+        }
+
+        if (readonly && body[at] === ':') {
+            if (!doc || !descriptionOf(doc)) {
+                problems.push(`${name}: no JSDoc`);
+            }
+
+            member.lastIndex = body.indexOf(';', at) + 1;
+            continue;
         }
 
         if (body[at] !== '(') {
@@ -109,11 +138,7 @@ export function checkApiDocs(source) {
             continue;
         }
 
-        const lines = doc.split('\n').map(line => line.replace(/^\s*\*?\s?/u, ''));
-        const firstTag = lines.findIndex(line => line.startsWith('@'));
-        const description = (firstTag === -1 ? lines : lines.slice(0, firstTag)).join(' ').trim();
-
-        if (!description) {
+        if (!descriptionOf(doc)) {
             problems.push(`${name}: no description`);
         }
 
@@ -129,6 +154,17 @@ export function checkApiDocs(source) {
     }
 
     return problems;
+}
+
+/**
+ * @param {string} doc The text of a JSDoc, between its delimiters.
+ * @returns {string} Its description: the text before its first tag.
+ */
+function descriptionOf(doc) {
+    const lines = doc.split('\n').map(line => line.replace(/^\s*\*?\s?/u, ''));
+    const firstTag = lines.findIndex(line => line.startsWith('@'));
+
+    return (firstTag === -1 ? lines : lines.slice(0, firstTag)).join(' ').trim();
 }
 
 if (process.argv[1] === import.meta.filename) {
