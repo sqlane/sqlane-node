@@ -231,6 +231,17 @@ export type JobInfo = {
      * The slot of a job of a schedule (also when it runs late); else null.
      */
     scheduledAt: Date | null;
+    /**
+     * The job's due time, as stored: its place in line. A retry, a release, a stall,
+     * `drain({ includeDelayed })` and `jobs.retry()` set it; a block on a key, its unblock and a `RateLimitedError`
+     * on a global rate key keep it. So the start delay, `startedAt − runAt`, includes the time on a key and a
+     * rate-limited run. From the app's clock with the `runAt` option, until the first rerun.
+     */
+    runAt: Date;
+    /**
+     * The start of this run, by the database clock, as `JobRecord.startedAt` shows it.
+     */
+    startedAt: Date;
 };
 export type HandlerContext<P = any> = {
     /**
@@ -366,6 +377,9 @@ export type JobEventBase = {
 };
 export type SqlaneEvent = (JobEventBase & ({
     type: 'claimed';
+    runAt: Date;
+    enqueuedAt: Date;
+    startedAt: Date;
 } | {
     type: 'completed';
     durationMs: number;
@@ -780,9 +794,10 @@ export type JobRecord<P = any> = {
      */
     maxStalls: number;
     /**
-     * When the job is due, or was: a running or finished job, the due time of its last run.
-     * `jobs.retry` sets it as a rerun does (truncated to the millisecond on PostgreSQL); a cancelled job that never ran
-     * keeps its due time.
+     * When the job is due, or was: its place in line; a running or finished job, the due time of
+     * its last run. A blocked job keeps it; after a `RateLimitedError` on a global rate key, the due time of the run
+     * that was rate limited. `jobs.retry` sets it as a rerun does (truncated to the millisecond on PostgreSQL); a
+     * cancelled job that never ran keeps its due time.
      */
     runAt: Date;
     /**
@@ -1124,6 +1139,11 @@ export type Migration = {
  * @property {Date} enqueuedAt The time of the enqueue.
  * @property {readonly { key: string, max: number }[]} globalConcurrencyLimits Its keys, sorted, with their maxes.
  * @property {Date | null} scheduledAt The slot of a job of a schedule (also when it runs late); else null.
+ * @property {Date} runAt The job's due time, as stored: its place in line. A retry, a release, a stall,
+ *     `drain({ includeDelayed })` and `jobs.retry()` set it; a block on a key, its unblock and a `RateLimitedError`
+ *     on a global rate key keep it. So the start delay, `startedAt − runAt`, includes the time on a key and a
+ *     rate-limited run. From the app's clock with the `runAt` option, until the first rerun.
+ * @property {Date} startedAt The start of this run, by the database clock, as `JobRecord.startedAt` shows it.
  */
 /**
  * @template [P=any]
@@ -1209,7 +1229,7 @@ export type Migration = {
 /**
  * An event of the job lifecycle, by `type`.
  * @typedef {(JobEventBase & (
- *     | { type: 'claimed' }
+ *     | { type: 'claimed', runAt: Date, enqueuedAt: Date, startedAt: Date }
  *     | { type: 'completed', durationMs: number }
  *     | { type: 'retried', durationMs: number, delayMs: number, error: unknown }
  *     | { type: 'failed', durationMs: number, error: unknown }
@@ -1402,9 +1422,10 @@ export type Migration = {
  * @property {number} maxAttempts Set at enqueue; a `one_more` retry changes it.
  * @property {number} stalls The times its lease ended while it ran. A `reset` retry sets it to 0.
  * @property {number} maxStalls The stalls it survives: set at enqueue; a `one_more` retry changes it.
- * @property {Date} runAt When the job is due, or was: a running or finished job, the due time of its last run.
- *     `jobs.retry` sets it as a rerun does (truncated to the millisecond on PostgreSQL); a cancelled job that never ran
- *     keeps its due time.
+ * @property {Date} runAt When the job is due, or was: its place in line; a running or finished job, the due time of
+ *     its last run. A blocked job keeps it; after a `RateLimitedError` on a global rate key, the due time of the run
+ *     that was rate limited. `jobs.retry` sets it as a rerun does (truncated to the millisecond on PostgreSQL); a
+ *     cancelled job that never ran keeps its due time.
  * @property {Date} enqueuedAt The time of the insert, not of the commit.
  * @property {Date | null} startedAt The start of its last run. Null: it never ran.
  * @property {Date | null} finishedAt When it completed or failed for good.

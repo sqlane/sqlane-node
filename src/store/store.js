@@ -61,6 +61,8 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {number} maxStalls
  * @property {string | null} failureJob
  * @property {Date} enqueuedAt
+ * @property {Date} runAt Its due time, as stored: its place in line.
+ * @property {Date} startedAt The database time of the claim, as stored in `started_at`; also the time of its new slots.
  * @property {number} waitedMs Since it was due.
  * @property {string} lockToken
  */

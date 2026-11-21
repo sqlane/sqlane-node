@@ -80,6 +80,8 @@ function contextOf(job) {
             enqueuedAt: claimed.enqueuedAt,
             globalConcurrencyLimits: claimed.limits,
             scheduledAt: scheduledAtOf(claimed.id),
+            runAt: claimed.runAt,
+            startedAt: claimed.startedAt,
         },
         signal: job.controller.signal,
     };

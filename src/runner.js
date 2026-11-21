@@ -301,7 +301,15 @@ export function createRunner({
 
         running.set(job.key, job);
         keepRenewingLeases();
-        emit({ type: 'claimed', jobId: claimed.id, jobName: claimed.name, attempt: claimed.attempts + 1 });
+        emit({
+            type: 'claimed',
+            jobId: claimed.id,
+            jobName: claimed.name,
+            attempt: claimed.attempts + 1,
+            runAt: claimed.runAt,
+            enqueuedAt: claimed.enqueuedAt,
+            startedAt: claimed.startedAt,
+        });
         job.done = (async () => {
             try {
                 await runJob(job, payload);

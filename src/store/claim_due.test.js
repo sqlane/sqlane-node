@@ -22,6 +22,7 @@ function lockedRow(id, payload) {
         created_at_ms: 1000,
         has_keys: 0,
         waited_ms: 5,
+        nowms: 1005,
         payload,
         payload_found: payload === null ? 0 : 1,
     };

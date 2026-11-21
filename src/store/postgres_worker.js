@@ -209,7 +209,8 @@ function candidatesSql(p, withRates) {
  * @param {string} p
  * @param {ClaimedJob[]} jobs The picked jobs with global limits.
  * @param {{ heldSlots: Map<string, Set<number>>, lockToken: string }} params The held slots of their keys.
- * @returns {Promise<Set<string>>} The ids of the jobs that got a slot of each key.
+ * @returns {Promise<{ withAll: Set<string>, nowUs: number | null }>} The ids of the jobs that got a slot of each key;
+ *     the time of their slots, as stored (null: no slot was taken). The claim writes it to the jobs it starts.
  */
 async function takeSlots(executor, p, jobs, { heldSlots, lockToken }) {
     /** @type {Map<string, number>} The next slot to try of each key */
@@ -226,19 +227,24 @@ async function takeSlots(executor, p, jobs, { heldSlots, lockToken }) {
 
         return { key, slot, id: job.id };
     })).toSorted((a, b) => (a.key === b.key ? a.slot - b.slot : Number(a.key > b.key) - Number(a.key < b.key)));
-    const acquired = new Set((await executor.query(`
+    // One time for all the slots of the claim (a materialized CTE, evaluated once): the start of its runs
+    const acquiredRows = await executor.query(`
+        WITH t AS MATERIALIZED (
+            SELECT clock_timestamp() AS now
+        )
         INSERT INTO ${p}concurrency_slots AS s (limit_key, slot, job_id, lock_token, held_until, created_at)
-        SELECT hold.limit_key, hold.slot, hold.job_id, $4, NULL, clock_timestamp()
+        SELECT hold.limit_key, hold.slot, hold.job_id, $4, NULL, t.now
           FROM unnest(${arrayParam(1, 'text')}, ${arrayParam(2, 'integer')}, ${arrayParam(3, 'text')})
                WITH ORDINALITY AS hold(limit_key, slot, job_id, position)
+         CROSS JOIN t
          ORDER BY hold.position
         ON CONFLICT (limit_key, slot) DO UPDATE
            SET job_id = EXCLUDED.job_id, lock_token = EXCLUDED.lock_token, held_until = NULL,
                created_at = EXCLUDED.created_at
          WHERE s.held_until < clock_timestamp()
-        RETURNING s.job_id, s.limit_key
-    `, [holds.map(hold => hold.key), holds.map(hold => hold.slot), holds.map(hold => hold.id), lockToken]))
-        .map(row => `${row.job_id}\n${row.limit_key}`));
+        RETURNING s.job_id, s.limit_key, (extract(epoch FROM s.created_at) * 1000000)::bigint AS createdus
+    `, [holds.map(hold => hold.key), holds.map(hold => hold.slot), holds.map(hold => hold.id), lockToken]);
+    const acquired = new Set(acquiredRows.map(row => `${row.job_id}\n${row.limit_key}`));
     const withAll = new Set(jobs
         .filter(job => job.limits.every(({ key }) => acquired.has(`${job.id}\n${key}`)))
         .map(job => job.id));
@@ -252,7 +258,7 @@ async function takeSlots(executor, p, jobs, { heldSlots, lockToken }) {
         `, [partial.map(hold => hold.key), partial.map(hold => hold.slot), lockToken]);
     }
 
-    return withAll;
+    return { withAll, nowUs: acquiredRows.length ? Number(acquiredRows[0].createdus) : null };
 }
 
 /**
@@ -363,6 +369,9 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
             maxStalls: Number(row.max_stalls),
             failureJob: row.failure_job === null ? null : String(row.failure_job),
             enqueuedAt: new Date(Number(row.created_at_ms)),
+            runAt: new Date(Number(row.run_at_ms)),
+            // Set by the write of the claim
+            startedAt: new Date(Number.NaN),
             waitedMs: Number(row.waited_ms),
             lockToken,
         },
@@ -428,35 +437,53 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
 
     const picked = pick(open, held, new Map([...rateStates].map(([key, state]) => [key, state.debtUs])));
     const pickedWithLimits = picked.filter(row => row.limits.length);
-    const withSlots = pickedWithLimits.length
+    const slotsTaken = pickedWithLimits.length
         ? await takeSlots(executor, p, pickedWithLimits, { heldSlots, lockToken })
-        : new Set();
-    const claimed = picked.filter(row => !row.limits.length || withSlots.has(row.id));
+        : { withAll: new Set(), nowUs: null };
+    const claimed = picked.filter(row => !row.limits.length || slotsTaken.withAll.has(row.id));
+    // With slots taken, their time, taken when their insert starts: a wait in it on another claim's insert of the same
+    // slot comes after that time, so the start is early by that wait (the rest of the other transaction). Taking the
+    // time after the inserts would cost one more statement. Without slots, the time of the statement that starts the
+    // jobs
+    const slotsNowUs = claimed.some(row => row.limits.length) ? slotsTaken.nowUs : null;
     // Only the jobs that start take their quota
     const increments = incrementsOf(claimed);
 
     // In the same statement: their tat moves by the increments
-    const moveTat = `WITH tat AS (
+    const moveTat = `tat AS (
         UPDATE ${p}rate_limits r SET tat = GREATEST(r.tat, clock_timestamp()) + u.inc * interval '1 microsecond'
-          FROM unnest(${arrayParam(5, 'text')}, ${arrayParam(6, 'bigint')}) AS u(limit_key, inc)
+          FROM unnest(${arrayParam(6, 'text')}, ${arrayParam(7, 'bigint')}) AS u(limit_key, inc)
          WHERE r.limit_key = u.limit_key
-    )`;
+    ),`;
 
     if (claimed.length) {
-        await executor.query(`
-            ${increments.size ? moveTat : ''}
-            UPDATE ${p}jobs
+        // The start of the runs, evaluated once (a materialized CTE): the time of their slots when they took some (as
+        // stored, in epoch µs: exact), else now. RETURNING gives the stored value, rounded to the millisecond
+        const rows = await executor.query(`
+            WITH ${increments.size ? moveTat : ''}
+            t AS MATERIALIZED (
+                SELECT COALESCE(timestamptz 'epoch' + $5::bigint * interval '1 microsecond', clock_timestamp()) AS now
+            )
+            UPDATE ${p}jobs j
                SET status = 'running', lock_token = $2, locked_by = $3,
-                   locked_until = clock_timestamp() + $4 * interval '1 millisecond', started_at = clock_timestamp(),
-                   timed_out_at = NULL, updated_at = clock_timestamp()
-             WHERE id = ANY(${arrayParam(1, 'text')})
+                   locked_until = t.now + $4 * interval '1 millisecond', started_at = t.now,
+                   timed_out_at = NULL, updated_at = t.now
+              FROM t
+             WHERE j.id = ANY(${arrayParam(1, 'text')})
+            RETURNING j.id AS id, ${epochMs('j.started_at')} AS startedat
         `, [
             claimed.map(row => row.id),
             lockToken,
             lockedBy,
             leaseMs,
+            slotsNowUs,
             ...increments.size ? [[...increments.keys()], [...increments.values()]] : [],
         ]);
+        const startedAt = new Map(rows.map(row => [String(row.id), new Date(Number(row.startedat))]));
+
+        for (const job of claimed) {
+            job.startedAt = /** @type {Date} */ (startedAt.get(job.id));
+        }
     }
 
     return {
@@ -477,6 +504,7 @@ function claimedJobsJson(p) {
                    'id', c.id, 'name', c.job_name, 'attempts', c.attempts,
                    'maxAttempts', c.max_attempts, 'stalls', c.stalls, 'maxStalls', c.max_stalls,
                    'failureJob', c.failure_job, 'createdAtMs', c.created_at_ms, 'waitedMs', c.waited_ms,
+                   'runAtMs', ${epochMs('c.run_at')}, 'startedAtMs', ${epochMs('c.started_at')},
                    'found', pl.id IS NOT NULL, 'payload', pl.payload
                ) ORDER BY c.run_at, c.id)
           FROM claimed c LEFT JOIN ${p}payloads pl ON pl.id = c.id
@@ -490,7 +518,8 @@ function claimedJobsJson(p) {
  */
 function parseClaimedJobs(json, lockToken) {
     /** @type {{ id: string, name: string, attempts: number, maxAttempts: number, stalls: number, maxStalls: number,
-     *     failureJob: string | null, createdAtMs: number, waitedMs: number, found: boolean, payload: unknown }[]} */
+     *     failureJob: string | null, createdAtMs: number, waitedMs: number, runAtMs: number, startedAtMs: number,
+     *     found: boolean, payload: unknown }[]} */
     const jobs = (json ?? null) === null ? [] : JSON.parse(String(json));
 
     return jobs.map(job => ({
@@ -504,6 +533,8 @@ function parseClaimedJobs(json, lockToken) {
         maxStalls: job.maxStalls,
         failureJob: job.failureJob,
         enqueuedAt: new Date(job.createdAtMs),
+        runAt: new Date(Number(job.runAtMs)),
+        startedAt: new Date(Number(job.startedAtMs)),
         waitedMs: job.waitedMs,
         lockToken,
         payload: job.found ? { found: true, payload: job.payload } : { found: false, payload: undefined },
@@ -611,7 +642,8 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
                    timed_out_at = NULL, updated_at = clock_timestamp()
               FROM picked
              WHERE j.id = picked.id
-            RETURNING j.id, j.job_name, j.run_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.failure_job,
+            RETURNING j.id, j.job_name, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
+                      j.failure_job,
                       ${epochMs('j.created_at')} AS created_at_ms,
                       (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
         ),
@@ -689,7 +721,8 @@ async function claimDueOfName(executor, p, { name, limit, lockToken, lockedBy, l
                    timed_out_at = NULL, updated_at = clock_timestamp()
               FROM picked
              WHERE j.id = picked.id
-            RETURNING j.id, j.job_name, j.run_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.failure_job,
+            RETURNING j.id, j.job_name, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
+                      j.failure_job,
                       ${epochMs('j.created_at')} AS created_at_ms,
                       (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
         )
