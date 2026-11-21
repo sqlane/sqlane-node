@@ -7,5 +7,7 @@ declare module 'vitest' {
         databaseName: string;
         databaseDialect: 'mysql' | 'mariadb' | 'postgres';
         databaseUrl: string;
+        /** PostgreSQL only: a role whose sessions default to REPEATABLE READ (global_setup.js) */
+        repeatableReadUrl: string;
     }
 }

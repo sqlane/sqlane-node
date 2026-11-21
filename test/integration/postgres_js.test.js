@@ -4,7 +4,9 @@ import postgres3 from 'postgres-3';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
 import { postgresJsAdapter } from '../../src/adapters/postgres_js.js';
+import { poolTransactionIsolation, readCommitted } from './helpers/isolation.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
+import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/adapters/postgres_js.js').PostgresJsConnection} PostgresJsConnection */
@@ -66,10 +68,11 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
 ])('postgres.js $version', ({ postgres }) => {
     /**
      * @param {object} [options]
+     * @param {string} [url] Default: the test database.
      * @returns {any} A pool of postgres.js on the test database.
      */
-    function createSql(options = {}) {
-        const sql = /** @type {any} */ (postgres)(inject('databaseUrl'), { max: 4, onnotice: () => {}, ...options });
+    function createSql(options = {}, url = inject('databaseUrl')) {
+        const sql = /** @type {any} */ (postgres)(url, { max: 4, onnotice: () => {}, ...options });
 
         pools.push(sql);
 
@@ -115,6 +118,29 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
         const { sqlane } = await freshSqlane();
 
         await expect(checkJobsRead(sqlane, sql)).resolves.toHaveLength(3);
+    });
+
+    test('sqlane.jobs: retry, cancel and remove through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsBulk(
+            sqlane,
+            sql,
+            func => sql.begin((/** @type {any} */ tx) => func(tx)),
+        )).resolves.toBeUndefined();
+    });
+
+    test('poolTransaction: a transaction of its own at READ COMMITTED on the pool; null in a transaction', async () => {
+        const adapter = postgresJsAdapter(queueSql, { dialect: 'postgres' });
+
+        // Ended with the others, after the tests
+        await expect(poolTransactionIsolation(adapter, database, sql, async url => ({
+            pool: createSql({}, url),
+            close: async () => {},
+        }))).resolves.toStrictEqual(readCommitted(database));
+        await sql.begin(async (/** @type {any} */ tx) => {
+            expect(adapter.poolTransaction?.(tx, async () => 1)).toBeNull();
+        });
     });
 
     test('enqueue in sql.begin(): the job commits with it, and rolls back with it', async () => {
@@ -219,5 +245,16 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
         });
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
+    });
+
+    test('a transform of results: the bulk methods on the app\'s postgres.js, its pool and its transaction', async () => {
+        const camel = createSql({ transform: /** @type {any} */ (postgres).camel });
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsBulk(
+            sqlane,
+            camel,
+            func => camel.begin((/** @type {any} */ tx) => func(tx)),
+        )).resolves.toBeUndefined();
     });
 });

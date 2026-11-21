@@ -6,8 +6,9 @@ import { checkSchedules } from './helpers/schedule_checks.js';
 import { dialectOptions } from './helpers/test_adapter.js';
 import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
-import { readsAcrossCommit } from './helpers/isolation.js';
+import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { preparedAfterAJob, SQLANE_STATEMENTS_SQL } from './helpers/prepared_statements.js';
+import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/adapters/sequelize.js').SequelizeConnection} SequelizeConnection */
@@ -60,10 +61,13 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
     /** @type {Sqlane[]} */
     let instances = [];
 
-    /** @returns {Sequelize} */
-    function createSequelize() {
+    /**
+     * @param {string} [url] Default: the test database.
+     * @returns {Sequelize}
+     */
+    function createSequelize(url = inject('databaseUrl')) {
         // The protocol of the URL picks the dialect of Sequelize
-        return new Sequelize(inject('databaseUrl').replace(/^mysql:/, `${sequelizeDialect}:`), {
+        return new Sequelize(url.replace(/^mysql:/, `${sequelizeDialect}:`), {
             dialect: sequelizeDialect,
             logging: false,
             pool: { max: 4 },
@@ -131,9 +135,33 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         await expect(checkJobsRead(sqlane, sequelize)).resolves.toHaveLength(3);
     });
 
+    test('sqlane.jobs: retry, cancel and remove through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsBulk(
+            sqlane,
+            sequelize,
+            func => sequelize.transaction(t => func(t)),
+        )).resolves.toBeUndefined();
+    });
+
     test('the queue transaction is READ COMMITTED', async () => {
         await expect(readsAcrossCommit(sequelizeAdapter(/** @type {any} */ (queueSequelize), adapterOptions), database))
             .resolves.toStrictEqual([0, 1]);
+    });
+
+    test('poolTransaction: a transaction of its own at READ COMMITTED on a pool; null in a transaction', async () => {
+        const adapter = sequelizeAdapter(/** @type {any} */ (queueSequelize), adapterOptions);
+
+        await expect(poolTransactionIsolation(adapter, database, sequelize, async (url) => {
+            const other = createSequelize(url);
+
+            return { pool: other, close: () => other.close() };
+        }))
+            .resolves.toStrictEqual(readCommitted(database));
+        await sequelize.transaction(async (/** @type {any} */ t) => {
+            expect(adapter.poolTransaction?.(t, async () => 1)).toBeNull();
+        });
     });
 
     test('enqueue in a transaction: the job commits with it, and rolls back with it', async () => {

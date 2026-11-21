@@ -51,11 +51,13 @@ export type JobOptions<P = any> = {
      */
     name: string;
     /**
-     * The runs of a job before it fails for good. Default: 3.
+     * The runs of a job before it fails for good. Default: 3. Set at enqueue; a
+     * `one_more` retry changes it.
      */
     maxAttempts?: number;
     /**
-     * The stalls (a lost lease, a crashed process) that a job survives. Default: 2.
+     * The stalls (a lost lease, a crashed process) that a job survives. Default: 2. Set at
+     * enqueue; a `one_more` retry changes it.
      */
     maxStalls?: number;
     /**
@@ -122,11 +124,12 @@ export type SlotOptions = {
 };
 export type EnqueueBaseOptions = {
     /**
-     * Overrides the definition's `maxAttempts` for this job.
+     * Overrides the definition's `maxAttempts` for this job. A `one_more` retry changes
+     * it.
      */
     maxAttempts?: number;
     /**
-     * Overrides the definition's `maxStalls` for this job.
+     * Overrides the definition's `maxStalls` for this job. A `one_more` retry changes it.
      */
     maxStalls?: number;
     /**
@@ -210,7 +213,7 @@ export type JobInfo = {
      */
     attempt: number;
     /**
-     * The most attempts of this job.
+     * The most attempts of this job: set at enqueue; a `one_more` retry changes it.
      */
     maxAttempts: number;
     /**
@@ -396,6 +399,8 @@ export type SqlaneEvent = (JobEventBase & ({
     type: 'failure_job_not_added';
     failureJob: string;
     error: unknown;
+} | {
+    type: 'cancelled';
 })) | ScheduleFiredEvent | {
     type: 'error';
     operation: string;
@@ -548,6 +553,13 @@ export type Adapter<C> = {
      * atomic); a connection or a client → on it, in the caller's transaction. Without it: `inTransaction`.
      */
     inStatement?: <T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T>;
+    /**
+     * Used by sqlane, by the bulk methods of `sqlane.jobs`: a pool (or an ORM instance outside a transaction) → func
+     * in a READ COMMITTED transaction of sqlane's own on it, decided synchronously; a connection or a client in a
+     * transaction → `null`. Without it, a pool given as `connection` runs as a caller's connection, through
+     * `inTransaction`.
+     */
+    poolTransaction?: <T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T> | null;
     /**
      * Used by sqlane, after an enqueue on the
      * connection: calls onCommit once its transaction commits (at once when it has committed: a pool), never when it
@@ -751,23 +763,26 @@ export type JobRecord<P = any> = {
      */
     status: JobStatus;
     /**
-     * The finished attempts: a completion, a retry or a failure each add one.
+     * The finished attempts: a completion, a retry or a failure each add one. A `reset` retry
+     * sets it to 0.
      */
     attempts: number;
     /**
-     * Fixed at enqueue.
+     * Set at enqueue; a `one_more` retry changes it.
      */
     maxAttempts: number;
     /**
-     * The times its lease ended while it ran.
+     * The times its lease ended while it ran. A `reset` retry sets it to 0.
      */
     stalls: number;
     /**
-     * The stalls it survives, fixed at enqueue.
+     * The stalls it survives: set at enqueue; a `one_more` retry changes it.
      */
     maxStalls: number;
     /**
      * When the job is due, or was: a running or finished job, the due time of its last run.
+     * `jobs.retry` sets it as a rerun does (truncated to the millisecond on PostgreSQL); a cancelled job that never ran
+     * keeps its due time.
      */
     runAt: Date;
     /**
@@ -795,8 +810,9 @@ export type JobRecord<P = any> = {
      */
     stuck: boolean;
     /**
-     * The last error written to the job: of a failed attempt, a stall, or a
-     * `RateLimitedError` on a global rate key of the job. Kept when the job later completes.
+     * The last error written to the job: of a failed attempt, a stall, a
+     * `RateLimitedError` on a global rate key of the job, or `jobs.cancel` (`JobCancelledError`). Kept when the job
+     * later completes.
      */
     lastError: JobError | null;
     /**
@@ -866,10 +882,74 @@ export type JobPage<P = any> = {
      */
     nextCursor: string | null;
 };
+export type JobSelector = {
+    jobIds: readonly string[];
+    jobName?: undefined;
+    status?: undefined;
+} | (JobFilter & {
+    jobIds?: undefined;
+});
+export type BulkOptions<C = any> = {
+    /**
+     * Atomic only. A connection or a client in a transaction: the call runs in it,
+     * and its owner commits. A pool: a READ COMMITTED transaction of sqlane's own on it. Default: one on the queue's
+     * pool.
+     */
+    connection?: C | undefined;
+    /**
+     * `'atomic'` (default): one transaction. `'batches'`: a filter in
+     * short transactions of up to 1000 jobs on the queue's pool; not atomic.
+     */
+    mode?: 'atomic' | 'batches' | undefined;
+    /**
+     * Atomic with `jobIds` only: any id that would be ignored rejects the call
+     * with an `IgnoredJobsError`, and nothing changes. Default: `false`.
+     */
+    strict?: boolean | undefined;
+    /**
+     * The result lists the ids of the jobs it changed. Default:
+     * `false`.
+     */
+    includeAffectedJobIds?: boolean | undefined;
+};
+export type RetryOptions<C = any> = BulkOptions<C> & {
+    budget?: 'reset' | 'one_more' | undefined;
+};
+export type BulkIgnoredJob = {
+    /**
+     * The id, as given.
+     */
+    jobId: string;
+    /**
+     * `not_found`: no such job. `status`: a status that the
+     * operation does not change. `no_payload`: a job without a payload, which a retry cannot run. More reasons may come
+     * in a minor version.
+     */
+    reason: 'not_found' | 'status' | 'no_payload';
+    /**
+     * The status of the job, with `status` and `no_payload`.
+     */
+    status?: JobStatus;
+};
+export type BulkResult = {
+    /**
+     * The jobs that it changed.
+     */
+    affectedCount: number;
+    /**
+     * Their ids, in no order: with `includeAffectedJobIds`.
+     */
+    affectedJobIds?: string[];
+    /**
+     * With `jobIds`: one entry per distinct id that it did not change, in the
+     * order of their first appearance. Empty for a filter.
+     */
+    ignoredJobs: BulkIgnoredJob[];
+};
 export type FailedJobPayload = {
     /**
      * The job that
-     * failed for good.
+     * failed for good. Its `maxAttempts`: set at enqueue; a `one_more` retry changes it.
      */
     job: {
         id: string;
@@ -936,8 +1016,10 @@ export type Migration = {
  *     `globalConcurrencyLimits` and `globalRateLimits`.
  * @typedef {object} JobOptions
  * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
- * @property {number} [maxAttempts] The runs of a job before it fails for good. Default: 3.
- * @property {number} [maxStalls] The stalls (a lost lease, a crashed process) that a job survives. Default: 2.
+ * @property {number} [maxAttempts] The runs of a job before it fails for good. Default: 3. Set at enqueue; a
+ *     `one_more` retry changes it.
+ * @property {number} [maxStalls] The stalls (a lost lease, a crashed process) that a job survives. Default: 2. Set at
+ *     enqueue; a `one_more` retry changes it.
  * @property {Backoff} [backoff] The wait before the next attempt. Default:
  *     `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }`.
  * @property {Retention} [retention] How long a finished job is kept. Default: `{ completed: '1h', failed: '30d' }`.
@@ -995,8 +1077,9 @@ export type Migration = {
  */
 /**
  * @typedef {object} EnqueueBaseOptions
- * @property {number} [maxAttempts] Overrides the definition's `maxAttempts` for this job.
- * @property {number} [maxStalls] Overrides the definition's `maxStalls` for this job.
+ * @property {number} [maxAttempts] Overrides the definition's `maxAttempts` for this job. A `one_more` retry changes
+ *     it.
+ * @property {number} [maxStalls] Overrides the definition's `maxStalls` for this job. A `one_more` retry changes it.
  * @property {Retention} [retention] Overrides the definition's retention for this job, field by field.
  * @property {string | JobDefinition} [failureJob] Overrides the definition's failure job for this job.
  * @property {readonly (ConcurrencyLimit | ConcurrencyLimitKey)[]} [globalConcurrencyLimits] Replace the global limits
@@ -1037,7 +1120,7 @@ export type Migration = {
  * @property {string} id The job id.
  * @property {string} name The job name.
  * @property {number} attempt 1 for the first run.
- * @property {number} maxAttempts The most attempts of this job.
+ * @property {number} maxAttempts The most attempts of this job: set at enqueue; a `one_more` retry changes it.
  * @property {Date} enqueuedAt The time of the enqueue.
  * @property {readonly { key: string, max: number }[]} globalConcurrencyLimits Its keys, sorted, with their maxes.
  * @property {Date | null} scheduledAt The slot of a job of a schedule (also when it runs late); else null.
@@ -1137,6 +1220,7 @@ export type Migration = {
  *     | { type: 'released' }
  *     | { type: 'lease_lost' }
  *     | { type: 'failure_job_not_added', failureJob: string, error: unknown }
+ *     | { type: 'cancelled' }
  * )) | ScheduleFiredEvent | { type: 'error', operation: string, error: unknown }} SqlaneEvent
  */
 /**
@@ -1216,6 +1300,11 @@ export type Migration = {
  * @property {<T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T>} [inStatement] Used by sqlane,
  *     PostgreSQL: runs func, which sends one statement: a pool → on the pool, outside a transaction (the statement is
  *     atomic); a connection or a client → on it, in the caller's transaction. Without it: `inTransaction`.
+ * @property {<T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T> | null} [poolTransaction]
+ *     Used by sqlane, by the bulk methods of `sqlane.jobs`: a pool (or an ORM instance outside a transaction) → func
+ *     in a READ COMMITTED transaction of sqlane's own on it, decided synchronously; a connection or a client in a
+ *     transaction → `null`. Without it, a pool given as `connection` runs as a caller's connection, through
+ *     `inTransaction`.
  * @property {(connection: C, onCommit: () => void) => boolean} [afterCommit] Used by sqlane, after an enqueue on the
  *     connection: calls onCommit once its transaction commits (at once when it has committed: a pool), never when it
  *     rolls back. Returns false when the adapter cannot tell (a connection in the caller's transaction): sqlane then
@@ -1308,19 +1397,23 @@ export type Migration = {
  * @property {string} id The full job id.
  * @property {string} name The job name.
  * @property {JobStatus} status The state when read. `pending` does not include `blocked`.
- * @property {number} attempts The finished attempts: a completion, a retry or a failure each add one.
- * @property {number} maxAttempts Fixed at enqueue.
- * @property {number} stalls The times its lease ended while it ran.
- * @property {number} maxStalls The stalls it survives, fixed at enqueue.
+ * @property {number} attempts The finished attempts: a completion, a retry or a failure each add one. A `reset` retry
+ *     sets it to 0.
+ * @property {number} maxAttempts Set at enqueue; a `one_more` retry changes it.
+ * @property {number} stalls The times its lease ended while it ran. A `reset` retry sets it to 0.
+ * @property {number} maxStalls The stalls it survives: set at enqueue; a `one_more` retry changes it.
  * @property {Date} runAt When the job is due, or was: a running or finished job, the due time of its last run.
+ *     `jobs.retry` sets it as a rerun does (truncated to the millisecond on PostgreSQL); a cancelled job that never ran
+ *     keeps its due time.
  * @property {Date} enqueuedAt The time of the insert, not of the commit.
  * @property {Date | null} startedAt The start of its last run. Null: it never ran.
  * @property {Date | null} finishedAt When it completed or failed for good.
  * @property {Date | null} expiresAt From when cleanup may delete the finished job.
  * @property {Date | null} scheduledAt The slot of a job of a schedule.
  * @property {boolean} stuck Running and timed out, by the last state written.
- * @property {JobError | null} lastError The last error written to the job: of a failed attempt, a stall, or a
- *     `RateLimitedError` on a global rate key of the job. Kept when the job later completes.
+ * @property {JobError | null} lastError The last error written to the job: of a failed attempt, a stall, a
+ *     `RateLimitedError` on a global rate key of the job, or `jobs.cancel` (`JobCancelledError`). Kept when the job
+ *     later completes.
  * @property {readonly { key: string, max: number }[]} globalConcurrencyLimits Its full keys, sorted, with their maxes.
  * @property {readonly { limit: string, key: string | null, max: number, per: number, burst: number, cost: number }[]}
  *     globalRateLimits Its rate limits: the limit name and the key value (null: the limit itself), `per` in ms; sorted
@@ -1351,10 +1444,53 @@ export type Migration = {
  * @property {string | null} nextCursor The cursor of the next page. Null: the last page.
  */
 /**
+ * The jobs that a bulk method of `sqlane.jobs` changes: up to 1000 full job ids, or a filter as `jobs.list` takes it.
+ * Not both.
+ * @typedef {{ jobIds: readonly string[], jobName?: undefined, status?: undefined }
+ *     | (JobFilter & { jobIds?: undefined })} JobSelector
+ */
+/**
+ * The options of `jobs.cancel()` and `jobs.remove()`, and of `jobs.retry()` with `budget`.
+ * @template [C=any]
+ * @typedef {object} BulkOptions
+ * @property {C | undefined} [connection] Atomic only. A connection or a client in a transaction: the call runs in it,
+ *     and its owner commits. A pool: a READ COMMITTED transaction of sqlane's own on it. Default: one on the queue's
+ *     pool.
+ * @property {'atomic' | 'batches' | undefined} [mode] `'atomic'` (default): one transaction. `'batches'`: a filter in
+ *     short transactions of up to 1000 jobs on the queue's pool; not atomic.
+ * @property {boolean | undefined} [strict] Atomic with `jobIds` only: any id that would be ignored rejects the call
+ *     with an `IgnoredJobsError`, and nothing changes. Default: `false`.
+ * @property {boolean | undefined} [includeAffectedJobIds] The result lists the ids of the jobs it changed. Default:
+ *     `false`.
+ */
+/**
+ * The options of `jobs.retry()`.
+ * @template [C=any]
+ * @typedef {BulkOptions<C> & { budget?: 'reset' | 'one_more' | undefined }} RetryOptions `budget`: `'reset'`
+ *     (default): attempts and stalls back to 0. `'one_more'`: one more attempt; the maxes of the job change for good.
+ */
+/**
+ * An id of a bulk call that it did not change.
+ * @typedef {object} BulkIgnoredJob
+ * @property {string} jobId The id, as given.
+ * @property {'not_found' | 'status' | 'no_payload'} reason `not_found`: no such job. `status`: a status that the
+ *     operation does not change. `no_payload`: a job without a payload, which a retry cannot run. More reasons may come
+ *     in a minor version.
+ * @property {JobStatus} [status] The status of the job, with `status` and `no_payload`.
+ */
+/**
+ * The result of a bulk method of `sqlane.jobs`.
+ * @typedef {object} BulkResult
+ * @property {number} affectedCount The jobs that it changed.
+ * @property {string[]} [affectedJobIds] Their ids, in no order: with `includeAffectedJobIds`.
+ * @property {BulkIgnoredJob[]} ignoredJobs With `jobIds`: one entry per distinct id that it did not change, in the
+ *     order of their first appearance. Empty for a filter.
+ */
+/**
  * The payload of a failure job.
  * @typedef {object} FailedJobPayload
  * @property {{ id: string, name: string, payload: any, attempt: number, maxAttempts: number }} job The job that
- *     failed for good.
+ *     failed for good. Its `maxAttempts`: set at enqueue; a `one_more` retry changes it.
  * @property {JobError} error The last error.
  */
 /**

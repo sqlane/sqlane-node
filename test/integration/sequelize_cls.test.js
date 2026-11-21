@@ -166,6 +166,21 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         expect(transactions).toStrictEqual([undefined]);
     });
 
+    test('the bulk methods on the instance join the CLS transaction: they roll back with it', async () => {
+        const { sqlane } = await freshSqlane();
+        const { id } = await sqlane.enqueue(sequelize, 'ping', {}, { delay: '1h' });
+
+        await expect(sequelize.transaction(async () => {
+            await expect(sqlane.jobs.cancel({ jobIds: [id] }, { connection: sequelize })).resolves
+                .toMatchObject({ affectedCount: 1 });
+            throw new Error('rollback');
+        })).rejects.toThrow('rollback');
+        await expect(sqlane.jobs.get(id)).resolves.toMatchObject({ status: 'pending' });
+        await expect(sqlane.jobs.cancel({ jobIds: [id] }, { connection: sequelize })).resolves
+            .toMatchObject({ affectedCount: 1 });
+        await expect(sqlane.jobs.get(id)).resolves.toMatchObject({ status: 'failed' });
+    });
+
     test('outside a CLS transaction: a transaction of its own', async () => {
         const { sqlane, p } = await freshSqlane();
 

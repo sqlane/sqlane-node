@@ -93,6 +93,12 @@ export function kyselyAdapter(db, options) {
         inTransaction: (connection, func) => (connection.isTransaction
             ? func(executorOf(connection))
             : connection.transaction().execute(trx => func(executorOf(trx)))),
+        // A Kysely instance: a READ COMMITTED transaction of sqlane's own on it
+        poolTransaction: (connection, func) => (connection.isTransaction
+            ? null
+            : connection.transaction()
+                    .setIsolationLevel('read committed')
+                    .execute(trx => func(executorOf(trx)))),
         // A Kysely instance: the enqueue ran in a transaction of its own, committed when it returned. A transaction:
         // Kysely has no hook.
         afterCommit: (connection, onCommit) => {

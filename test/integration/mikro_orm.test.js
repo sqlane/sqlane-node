@@ -11,8 +11,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from '
 import { connectTestDatabase } from '../support/test_database.js';
 import { mikroOrmAdapter } from '../../src/adapters/mikro_orm.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
-import { readsAcrossCommit } from './helpers/isolation.js';
+import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { preparedAfterAJob } from './helpers/prepared_statements.js';
+import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
@@ -95,11 +96,12 @@ describe.each([
 
     /**
      * @param {number} [max] The connections of its pool. Default: 4.
+     * @param {string} [url] Default: the test database.
      * @returns {Promise<any>} An initialized MikroORM on the test database.
      */
-    async function createOrm(max = 4) {
+    async function createOrm(max = 4, url = inject('databaseUrl')) {
         const created = await MikroORM.init({
-            clientUrl: inject('databaseUrl'),
+            clientUrl: url,
             entities: [],
             discovery: { warnWhenNoEntities: false },
             pool: { min: 0, max },
@@ -145,9 +147,33 @@ describe.each([
         await expect(checkJobsRead(sqlane, orm.em)).resolves.toHaveLength(3);
     });
 
+    test('sqlane.jobs: retry, cancel and remove through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsBulk(
+            sqlane,
+            orm.em,
+            func => orm.em.transactional((/** @type {any} */ em) => func(em)),
+        )).resolves.toBeUndefined();
+    });
+
     test('the queue transaction is READ COMMITTED', async () => {
         await expect(readsAcrossCommit(mikroOrmAdapter(queueOrm.em, { dialect }), database))
             .resolves.toStrictEqual([0, 1]);
+    });
+
+    test('poolTransaction: a transaction of its own at READ COMMITTED on a pool; null in a transaction', async () => {
+        const adapter = mikroOrmAdapter(queueOrm.em, { dialect });
+
+        // Closed with the others, after the tests
+        await expect(poolTransactionIsolation(adapter, database, orm.em, async url => ({
+            pool: (await createOrm(4, url)).em,
+            close: async () => {},
+        })))
+            .resolves.toStrictEqual(readCommitted(database));
+        await orm.em.transactional(async (/** @type {any} */ em) => {
+            expect(adapter.poolTransaction?.(em, async () => 1)).toBeNull();
+        });
     });
 
     test.runIf(dialect === 'postgres')('prepare: the queue transaction is READ COMMITTED', async () => {

@@ -110,6 +110,32 @@ export declare class MissingPayloadError extends SqlaneError {
      */
     constructor(message: string, options?: ErrorOptions);
 }
+/**
+ * The error of a job that `sqlane.jobs.cancel()` cancelled: its `lastError`. A handler that throws it throws an
+ * ordinary error.
+ */
+export declare class JobCancelledError extends SqlaneError {
+    /**
+     * @param {string} [message] Default: `'Cancelled'`.
+     * @param {ErrorOptions} [options]
+     */
+    constructor(message?: string, options?: ErrorOptions);
+}
+/**
+ * A bulk method of `sqlane.jobs` with `strict: true` would have ignored some of its ids: it changed nothing.
+ * `ignoredJobs` lists them, as the result would have.
+ */
+export declare class IgnoredJobsError extends SqlaneError {
+    /** @readonly */
+    ignoredJobs: readonly import("./types.js").BulkIgnoredJob[];
+    /**
+     * @param {string} message
+     * @param {ErrorOptions & { ignoredJobs: readonly import('./types.js').BulkIgnoredJob[] }} options
+     */
+    constructor(message: string, options: ErrorOptions & {
+        ignoredJobs: readonly import('./types.js').BulkIgnoredJob[];
+    });
+}
 /** Thrown by a handler: the job fails at once, without retries; its failure job runs. */
 export declare class FatalJobError extends SqlaneError {
     /**

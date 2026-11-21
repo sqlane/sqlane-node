@@ -8,6 +8,8 @@ import {
     defineJob,
     defineRateLimit,
     getMigrations,
+    IgnoredJobsError,
+    JobCancelledError,
     RateLimitedError,
     RetryJobError,
 } from '@sqlane/core';
@@ -445,6 +447,46 @@ export async function publicApiTypes() {
     await sqlane.jobs.list({ jobName: 'build_report', status: 'done' });
     // @ts-expect-error a list has the jobs of one name
     await sqlane.jobs.list({ status: 'failed' });
+
+    // The bulk methods: a connection of the instance's adapter; a selector of ids or a filter, not both
+    /** @type {import('@sqlane/core').BulkResult} */
+    const retried = await sqlane.jobs.retry({ jobIds: ['build_report:r1'] }, {
+        budget: 'one_more',
+        connection,
+        includeAffectedJobIds: true,
+    });
+
+    expectTypeOf(retried.affectedJobIds).toEqualTypeOf(/** @type {string[] | undefined} */ (undefined));
+    expectTypeOf(retried.ignoredJobs[0].reason)
+        .toEqualTypeOf(/** @type {'not_found' | 'status' | 'no_payload'} */ ('status'));
+    await sqlane.jobs.cancel({ jobName: job, status: 'blocked' }, { mode: 'batches' });
+    await sqlane.jobs.remove({ jobName: 'build_report' }, { connection: mysqlPool, strict: false });
+    /** @type {import('@sqlane/core').JobSelector} */
+    const selector = { jobIds: ['a'] };
+    /** @type {import('@sqlane/core').BulkOptions} */
+    const bulkOptions = { mode: 'atomic' };
+    /** @type {import('@sqlane/core').RetryOptions} */
+    const retryOptions = { budget: 'reset' };
+
+    void selector;
+    void bulkOptions;
+    void retryOptions;
+    // @ts-expect-error a pg client is not a connection of the mysql2 adapter
+    await sqlane.jobs.cancel({ jobIds: ['a'] }, { connection: pgPool });
+    // @ts-expect-error ids or a filter, not both
+    await sqlane.jobs.cancel({ jobIds: ['a'], jobName: 'build_report' });
+    // @ts-expect-error a selector needs ids or a filter
+    await sqlane.jobs.cancel({});
+    // @ts-expect-error status is for a filter
+    await sqlane.jobs.remove({ jobIds: ['a'], status: 'failed' });
+    // @ts-expect-error budget is for retry
+    await sqlane.jobs.cancel({ jobIds: ['a'] }, { budget: 'reset' });
+    // @ts-expect-error not a mode
+    await sqlane.jobs.cancel({ jobIds: ['a'] }, { mode: 'fast' });
+    expectTypeOf(new JobCancelledError().code).toEqualTypeOf(/** @type {string} */ (''));
+    expectTypeOf(new IgnoredJobsError('m', { ignoredJobs: [] }).ignoredJobs).toEqualTypeOf(
+        /** @type {readonly import('@sqlane/core').BulkResult['ignoredJobs'][number][]} */ ([]),
+    );
 
     // The slot of a job of a schedule
     sqlane.handle(job, ({ job: info }) => {

@@ -1,11 +1,12 @@
 import { setTimeout as sleep } from 'node:timers/promises';
+import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, test } from 'vitest';
 import { chooseRows } from '../../src/fair_share.js';
 import { incrementUs, waitUs } from '../../src/gcra.js';
 import { createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit } from '../../src/index.js';
 import { probeSql } from '../../src/store/mysql_worker.js';
 import { createStore } from '../../src/store/store.js';
-import { readsAcrossCommit } from './helpers/isolation.js';
+import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
 
@@ -596,6 +597,23 @@ describe('claimDue', () => {
 
     test('the queue transaction is READ COMMITTED', async () => {
         await expect(readsAcrossCommit(testAdapter.adapter, database)).resolves.toStrictEqual([0, 1]);
+    });
+
+    test('poolTransaction: a transaction of its own at READ COMMITTED on a pool; null on a connection', async () => {
+        const { adapter, pool } = testAdapter;
+        const connection = await testAdapter.connect();
+
+        try {
+            await expect(poolTransactionIsolation(adapter, database, pool, async (url) => {
+                const other = new Pool({ connectionString: url, max: 2 });
+
+                return { pool: other, close: () => other.end() };
+            }))
+                .resolves.toStrictEqual(readCommitted(database));
+            expect(adapter.poolTransaction?.(connection.raw, async () => 1)).toBeNull();
+        } finally {
+            connection.release();
+        }
     });
 
     // The claim statement reads the payloads without a lock (MySQL: `FOR UPDATE OF j`; MariaDB: a subquery), from its

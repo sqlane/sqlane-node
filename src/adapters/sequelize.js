@@ -195,6 +195,14 @@ export function sequelizeAdapter(sequelize, options) {
                 ? func(toExecutor(connection.connection))
                 : connection.transaction({}, t => func(toExecutor(t.connection)));
         },
+        // An instance outside a transaction (also of CLS): a READ COMMITTED transaction of sqlane's own on it
+        poolTransaction: (given, func) => {
+            const connection = resolveConnection(given);
+
+            return isTransaction(connection)
+                ? null
+                : connection.transaction({ isolationLevel: 'READ COMMITTED' }, t => func(toExecutor(t.connection)));
+        },
         afterCommit: (given, onCommit) => {
             const connection = resolveConnection(given);
 

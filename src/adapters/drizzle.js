@@ -22,7 +22,7 @@ const DRIVER_BY_SESSION = {
  * A Drizzle database or transaction, as far as its public types show it. The adapter also reads its `session`, which
  * Drizzle's types don't declare: `sessionOf` checks it at runtime.
  * @typedef {object} DrizzleDatabase
- * @property {(func: (tx: any) => Promise<any>) => Promise<any>} transaction
+ * @property {(func: (tx: any) => Promise<any>, config?: any) => Promise<any>} transaction
  */
 
 /**
@@ -151,6 +151,11 @@ export function drizzleAdapter(db, options) {
         inTransaction: (connection, func) => (isTransaction(connection)
             ? func(base.wrap(clientOf(connection)))
             : connection.transaction(tx => func(base.wrap(clientOf(tx))))),
+        // A database: a READ COMMITTED transaction of sqlane's own on it (`...base` would carry the member of the
+        // driver's adapter, which takes no Drizzle database)
+        poolTransaction: (connection, func) => (isTransaction(connection)
+            ? null
+            : connection.transaction(tx => func(base.wrap(clientOf(tx))), { isolationLevel: 'read committed' })),
         // A database: on its pool, outside a transaction. A transaction: on its client.
         inStatement: (connection, func) => func(base.wrap(clientOf(connection))),
         // A database: the enqueue ran in a transaction of its own, committed when it returned. A transaction: Drizzle

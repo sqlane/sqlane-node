@@ -6,8 +6,9 @@ import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
 import { typeOrmAdapter } from '../../src/adapters/typeorm.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
-import { readsAcrossCommit } from './helpers/isolation.js';
+import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { dialectOptions } from './helpers/test_adapter.js';
+import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
@@ -38,14 +39,15 @@ afterAll(async () => {
 /**
  * An initialized DataSource on the test database.
  * @param {any} module The module of TypeORM.
+ * @param {string} [url] Default: the test database.
  * @returns {Promise<any>}
  */
-async function createDataSource(module) {
+async function createDataSource(module, url = inject('databaseUrl')) {
     const dialect = inject('databaseDialect');
     const isMysql = dialect !== 'postgres';
     const dataSource = new module.DataSource({
         type: dialect,
-        url: inject('databaseUrl'),
+        url,
         ...isMysql ? { connectorPackage: 'mysql2', extra: { connectionLimit: 4 } } : { extra: { max: 4 } },
         logging: false,
     });
@@ -133,9 +135,33 @@ describe.each([
         await expect(checkJobsRead(sqlane, dataSource)).resolves.toHaveLength(3);
     });
 
+    test('sqlane.jobs: retry, cancel and remove through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsBulk(
+            sqlane,
+            dataSource,
+            func => dataSource.transaction((/** @type {any} */ manager) => func(manager)),
+        )).resolves.toBeUndefined();
+    });
+
     test('the queue transaction is READ COMMITTED', async () => {
         await expect(readsAcrossCommit(typeOrmAdapter(queueDataSource, dialectOptions()), database))
             .resolves.toStrictEqual([0, 1]);
+    });
+
+    test('poolTransaction: a transaction of its own at READ COMMITTED on a pool; null in a transaction', async () => {
+        const adapter = typeOrmAdapter(queueDataSource, dialectOptions());
+
+        // Destroyed with the others, after the tests
+        await expect(poolTransactionIsolation(adapter, database, dataSource, async url => ({
+            pool: await createDataSource(module, url),
+            close: async () => {},
+        })))
+            .resolves.toStrictEqual(readCommitted(database));
+        await dataSource.transaction(async (/** @type {any} */ manager) => {
+            expect(adapter.poolTransaction?.(manager, async () => 1)).toBeNull();
+        });
     });
 
     test('enqueue with the EntityManager of a transaction: the job commits with it, and rolls back with it', async () => {
