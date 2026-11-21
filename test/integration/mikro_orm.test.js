@@ -13,6 +13,7 @@ import { mikroOrmAdapter } from '../../src/adapters/mikro_orm.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
 import { preparedAfterAJob } from './helpers/prepared_statements.js';
+import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -137,6 +138,12 @@ describe.each([
 
         return { sqlane, p, events };
     }
+
+    test('sqlane.jobs: get and list through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsRead(sqlane, orm.em)).resolves.toHaveLength(3);
+    });
 
     test('the queue transaction is READ COMMITTED', async () => {
         await expect(readsAcrossCommit(mikroOrmAdapter(queueOrm.em, { dialect }), database))

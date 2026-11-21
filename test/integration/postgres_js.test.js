@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from '
 import { connectTestDatabase } from '../support/test_database.js';
 import { postgresJsAdapter } from '../../src/adapters/postgres_js.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
+import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/adapters/postgres_js.js').PostgresJsConnection} PostgresJsConnection */
 /** @typedef {import('../../src/types.js').Sqlane<PostgresJsConnection>} Sqlane */
@@ -109,6 +110,12 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
 
         return { sqlane, p, events };
     }
+
+    test('sqlane.jobs: get and list through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsRead(sqlane, sql)).resolves.toHaveLength(3);
+    });
 
     test('enqueue in sql.begin(): the job commits with it, and rolls back with it', async () => {
         const { sqlane, p } = await freshSqlane();

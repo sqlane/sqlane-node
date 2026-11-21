@@ -1,4 +1,29 @@
-import type { CloseOptions, DrainOptions, DrainResult, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, Handler, HandlerPayload, JobDefinition, JobStats, MigrateOptions, ScheduleBaseOptions, ScheduleInfo, SchedulePayload, ScheduleTiming } from './types.js';
+import type { CloseOptions, DrainOptions, DrainResult, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, Handler, HandlerPayload, JobDefinition, JobFilter, JobPage, JobRecord, JobStats, ListJobsOptions, MigrateOptions, ScheduleBaseOptions, ScheduleInfo, SchedulePayload, ScheduleTiming } from './types.js';
+/**
+ * The jobs in the database: `sqlane.jobs`. Plain reads on the queue's pool, before `start()` and after `close()` too.
+ * They require the migration `0008_job_list`.
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobs | jobs}
+ */
+export interface SqlaneJobs {
+    /**
+     * Reads one job, with its payload.
+     * @param jobId The full id, as `enqueue` returns it: `<name>:<dedupe key>`, a slot id, or a ULID.
+     * @returns The job. Null: no job has this id, or the string cannot be a job id.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsget | jobs.get}
+     */
+    get<P = any>(jobId: string): Promise<JobRecord<P> | null>;
+    /**
+     * Lists the jobs of one name, newest first: by enqueue time, then by id. A page has at most `limit` jobs; pass its
+     * `nextCursor` to read the next one, with the same filter.
+     * @param filter `jobName`, a job name or a definition, and `status`, one status or a list. Without `status`: every
+     *     status.
+     * @param options `limit` (1 to 1000, default 100), `cursor` (the `nextCursor` of the previous page),
+     *     `includePayload` (default `false`).
+     * @returns A page: its jobs, and the cursor of the next page, null on the last page.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobslist | jobs.list}
+     */
+    list<J extends JobDefinition | string>(filter: JobFilter<J>, options?: ListJobsOptions): Promise<JobPage<HandlerPayload<J>>>;
+}
 /**
  * A sqlane instance, made by `createSqlane()`: one per process. It enqueues jobs, runs the handlers of this process,
  * and fires its schedules.
@@ -105,6 +130,8 @@ export interface Sqlane<C> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getstats | getStats}
      */
     getStats(): Promise<JobStats[]>;
+    /** The jobs in the database: read one by its id, or list the jobs of a name. */
+    readonly jobs: SqlaneJobs;
     /**
      * Low level: makes this process check for due jobs now, instead of at the next poll. Most apps don't need it:
      * sqlane wakes the process after an enqueue in it, and after a hint. It does nothing before `start()`.

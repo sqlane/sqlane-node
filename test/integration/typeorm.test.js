@@ -8,6 +8,7 @@ import { typeOrmAdapter } from '../../src/adapters/typeorm.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
 import { dialectOptions } from './helpers/test_adapter.js';
+import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -124,6 +125,12 @@ describe.each([
         const { sqlane, p } = await freshSqlane();
 
         await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+    });
+
+    test('sqlane.jobs: get and list through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsRead(sqlane, dataSource)).resolves.toHaveLength(3);
     });
 
     test('the queue transaction is READ COMMITTED', async () => {

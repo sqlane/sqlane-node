@@ -442,12 +442,83 @@
  */
 
 /**
+ * An error as sqlane stores it: the last error of a job, and the error of a failure job.
+ * @typedef {object} JobError
+ * @property {string} name The `name` of the error, as a string: not always an exported class (`StalledError`).
+ * @property {string} message The `message` of the error, or the thrown value as a string.
+ * @property {string} [stack] At most 8,192 UTF-16 code units (`String#length`).
+ * @property {string} [code] The string `code` of the thrown error, if it had one.
+ */
+
+/**
+ * The state of a job. New members come only in a major. A cancelled job is `failed`.
+ * @typedef {'pending' | 'blocked' | 'running' | 'completed' | 'failed'} JobStatus
+ */
+
+/**
+ * What a blocked job waits for: a concurrency key (the full key), or a rate limit and its key value.
+ * @typedef {{ type: 'concurrency', key: string } | { type: 'rate', limit: string, key: string | null }} BlockedOn
+ */
+
+/**
+ * A job as the database has it, from `sqlane.jobs`.
+ * @template [P=any]
+ * @typedef {object} JobRecord
+ * @property {string} id The full job id.
+ * @property {string} name The job name.
+ * @property {JobStatus} status The state when read. `pending` does not include `blocked`.
+ * @property {number} attempts The finished attempts: a completion, a retry or a failure each add one.
+ * @property {number} maxAttempts Fixed at enqueue.
+ * @property {number} stalls The times its lease ended while it ran.
+ * @property {number} maxStalls The stalls it survives, fixed at enqueue.
+ * @property {Date} runAt When the job is due, or was: a running or finished job, the due time of its last run.
+ * @property {Date} enqueuedAt The time of the insert, not of the commit.
+ * @property {Date | null} startedAt The start of its last run. Null: it never ran.
+ * @property {Date | null} finishedAt When it completed or failed for good.
+ * @property {Date | null} expiresAt From when cleanup may delete the finished job.
+ * @property {Date | null} scheduledAt The slot of a job of a schedule.
+ * @property {boolean} stuck Running and timed out, by the last state written.
+ * @property {JobError | null} lastError The last error written to the job: of a failed attempt, a stall, or a
+ *     `RateLimitedError` on a global rate key of the job. Kept when the job later completes.
+ * @property {readonly { key: string, max: number }[]} globalConcurrencyLimits Its full keys, sorted, with their maxes.
+ * @property {readonly { limit: string, key: string | null, max: number, per: number, burst: number, cost: number }[]}
+ *     globalRateLimits Its rate limits: the limit name and the key value (null: the limit itself), `per` in ms; sorted
+ *     by the full rate key.
+ * @property {BlockedOn | null} blockedOn What a blocked job waits for. Null when it is not blocked.
+ * @property {string | null} failureJob The name of its failure job.
+ * @property {P} [payload] Absent when not asked for, or when the database holds no payload for the job.
+ */
+
+/**
+ * Which jobs `sqlane.jobs.list()` reads.
+ * @template {JobDefinition | string} [J=JobDefinition | string]
+ * @typedef {object} JobFilter
+ * @property {J} jobName A job name, or a definition.
+ * @property {JobStatus | readonly JobStatus[] | undefined} [status] One status, or a non-empty list. Default: every
+ *     status.
+ */
+
+/**
+ * @typedef {object} ListJobsOptions
+ * @property {number | undefined} [limit] The most jobs of a page: an integer from 1 to 1000. Default: 100.
+ * @property {string | null | undefined} [cursor] The `nextCursor` of the previous page. Null or absent: the first page.
+ * @property {boolean | undefined} [includePayload] Default: `false`.
+ */
+
+/**
+ * A page of `sqlane.jobs.list()`.
+ * @template [P=any]
+ * @typedef {object} JobPage
+ * @property {JobRecord<P>[]} jobs Newest first.
+ * @property {string | null} nextCursor The cursor of the next page. Null: the last page.
+ */
+
+/**
  * The payload of a failure job.
  * @typedef {object} FailedJobPayload
  * @property {{ id: string, name: string, payload: any, attempt: number, maxAttempts: number }} job The job that
  *     failed for good.
- * @property {{ name: string, message: string, stack?: string, code?: string }} error `code`: the string `code` of the
- *     thrown error, if it had one.
+ * @property {JobError} error The last error.
  */
 
 /**

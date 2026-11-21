@@ -57,6 +57,29 @@ describe('checkApiDocs', () => {
         ]);
     });
 
+    test('a group of methods: a documented property of Sqlane, whose interface is checked too', () => {
+        const source = `export interface SqlaneJobs {
+    /**
+     * Reads one job.
+     * @param jobId The id.
+     * @returns The job.
+     */
+    get(jobId: string): Promise<X | null>;
+
+    list(filter: X): Promise<X[]>;
+}
+
+export interface Sqlane<C> {
+    /** The jobs in the database. */
+    readonly jobs: SqlaneJobs;
+
+    readonly schedules: X;
+}
+`;
+
+        expect(checkApiDocs(source)).toStrictEqual(['SqlaneJobs.list: no JSDoc', 'schedules: no JSDoc']);
+    });
+
     test('a file without the interface is a problem', () => {
         expect(checkApiDocs('export type Sqlane = {};')).toStrictEqual(['no `export interface Sqlane<…> {`']);
     });

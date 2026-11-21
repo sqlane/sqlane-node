@@ -1,5 +1,6 @@
 // The store: the SQL of one dialect, bound to an adapter and a table prefix.
 import { setTimeout as sleep } from 'node:timers/promises';
+import { getJob, listJobs } from './job_reads.js';
 import * as mariadbFinal from './mariadb_final.js';
 import * as mariadbSchedules from './mariadb_schedules.js';
 import * as mariadbWorker from './mariadb_worker.js';
@@ -222,6 +223,9 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
  * @property {(names: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
  * @property {() => Promise<import('../types.js').JobStats[]>} getStats
+ * @property {(id: string) => Promise<import('../types.js').JobRecord | null>} getJob A plain read, no lock.
+ * @property {(params: import('./job_reads.js').ListParams) => Promise<{ jobs: import('../types.js').JobRecord[],
+ *     last: { enqueuedAtMs: number, id: string } | null }>} listJobs A plain read, no lock.
  * @property {(schedules: { id: string, name: string, spec: string }[], now: () => number)
  *     => Promise<ScheduleRead>} registerSchedules Inserts the missing rows (2 statements per 500), then reads them.
  * @property {(ids: string[] | null, now: () => number) => Promise<ScheduleRead>} readSchedules A plain read, no
@@ -289,6 +293,8 @@ export function createStore(adapter, tablePrefix, logger) {
      * @returns {Promise<T>}
      */
     const inQueue = func => adapter.queueTransaction(func);
+    /** The SQL of the reads of sqlane.jobs: MariaDB shares the JSON and the times of MySQL */
+    const family = adapter.dialect === 'postgres' ? 'postgres' : 'mysql';
     const p = tablePrefix;
     // MariaDB: false once the server rejects `innodb_snapshot_isolation` (a version without it)
     let snapshotIsolationOff = true;
@@ -457,6 +463,8 @@ export function createStore(adapter, tablePrefix, logger) {
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
         makeDue: names => inQueue(executor => final.makeDue(executor, p, names)),
         getStats: () => final.getStats(adapter.queue, p),
+        getJob: id => getJob(adapter.queue, family, p, id),
+        listJobs: params => listJobs(adapter.queue, family, p, params),
         registerSchedules: (entries, now) => schedules.registerSchedules(adapter.queue, p, entries, now),
         readSchedules: (ids, now) => schedules.readSchedules(adapter.queue, p, ids, now),
         fireSlots: params => inQueue(executor => schedules.fireSlots(executor, p, params)),
