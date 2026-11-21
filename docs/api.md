@@ -29,6 +29,7 @@ explains how sqlane works and why.
 - [`getMigrations`](#getmigrations)
 - [`getStats`](#getstats)
 - [`jobs`](#jobs)
+- [Retry, cancel and remove](#retry-cancel-and-remove)
 - [`wake`](#wake)
 - [Errors](#errors)
 - [Events](#events)
@@ -85,8 +86,8 @@ does not need to import the handler and its dependencies.
 | Option                    | Type                                                                    | Default                                                             | Description                                                                                                                                                                                                                                                                                                                                                      |
 | ------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`                    | `string`                                                                | Required                                                            | The job name. It must match `^[a-z][a-z0-9_.-]{0,127}$`, so it cannot contain `:`. It is case-sensitive.                                                                                                                                                                                                                                                         |
-| `maxAttempts`             | integer, at least 1                                                     | `3`                                                                 | The number of times a job runs before it fails for good.                                                                                                                                                                                                                                                                                                         |
-| `maxStalls`               | integer, at least 0                                                     | `2`                                                                 | The number of stalls that a job survives. The next stall after this number fails the job for good.                                                                                                                                                                                                                                                               |
+| `maxAttempts`             | integer, at least 1                                                     | `3`                                                                 | The number of times a job runs before it fails for good. Set at enqueue; a `one_more` retry changes it.                                                                                                                                                                                                                                                          |
+| `maxStalls`               | integer, at least 0                                                     | `2`                                                                 | The number of stalls that a job survives. The next stall after this number fails the job for good. Set at enqueue; a `one_more` retry changes it.                                                                                                                                                                                                                |
 | `backoff`                 | [`Backoff`](#backoff)                                                   | `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }` | The wait before the next attempt after a failed attempt.                                                                                                                                                                                                                                                                                                         |
 | `retention`               | `{ completed?: Duration, failed?: Duration }`                           | `{ completed: '1h', failed: '30d' }`                                | How long sqlane keeps a completed or a failed job before it deletes the row. A `jobId` blocks duplicates while the row exists. That is while the job is pending or running, then during this retention, until the next cleanup. A started process runs the cleanup every 5 minutes. If every process sets `cleanup: false`, the rows stay until you delete them. |
 | `timeout`                 | positive duration                                                       | None                                                                | The time after which sqlane aborts the handler. A definition with `globalConcurrencyLimits` needs a timeout, here or in the instance `defaults`.                                                                                                                                                                                                                 |
@@ -359,18 +360,18 @@ well-formed UTF-16, and a NUL character (`\u0000`), because PostgreSQL refuses i
 JSON gives it back, so a `Date` would arrive as a string. The TypeScript types reject a `Date`, a `Map`, a `Set`, a
 function, a `bigint` and a class instance with methods.
 
-| Option                    | Type                                                   | Default                        | Description                                                                                                                                                                                                                                                                 |
-| ------------------------- | ------------------------------------------------------ | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `jobId`                   | `string`                                               | None                           | An id that prevents duplicates. It has 1 to 120 printable ASCII characters, without spaces at the ends. While a job with this id and name exists, a second enqueue adds nothing. It cannot start with `schedule:`, which is reserved for the slots of schedules.            |
-| `slot`                    | `{ at: Date, key?: string }`                           | None                           | Runs a slot of a [schedule](#schedule) by hand: the job gets the id that the scheduler gives the slot. `at` is in the years 1970 to 9999, and `key` is the key of the schedule. You cannot combine it with `jobId`. The job is due now, unless you give `delay` or `runAt`. |
-| `delay`                   | `Duration`                                             | `0`                            | The wait before the job becomes due. You cannot combine it with `runAt`.                                                                                                                                                                                                    |
-| `runAt`                   | `Date`                                                 | None                           | The time at which the job becomes due. You cannot combine it with `delay`.                                                                                                                                                                                                  |
-| `maxAttempts`             | integer, at least 1                                    | From the definition            | Overrides `maxAttempts` for this job.                                                                                                                                                                                                                                       |
-| `maxStalls`               | integer, at least 0                                    | From the definition            | Overrides `maxStalls` for this job.                                                                                                                                                                                                                                         |
-| `retention`               | `{ completed?: Duration, failed?: Duration }`          | From the definition            | Overrides the retention for this job, field by field.                                                                                                                                                                                                                       |
-| `failureJob`              | `string` or `JobDefinition`                            | From the definition            | Overrides the failure job for this job.                                                                                                                                                                                                                                     |
-| `globalConcurrencyLimits` | `readonly (ConcurrencyLimit \| ConcurrencyLimitKey)[]` | From the definition's function | Replaces the global limits that the definition computes. An empty array removes them all.                                                                                                                                                                                   |
-| `globalRateLimits`        | `readonly (RateLimit \| RateLimitKey)[]`               | From the definition's function | Replaces the global rate limits that the definition computes. An empty array removes them all.                                                                                                                                                                              |
+| Option                    | Type                                                   | Default                        | Description                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------- | ------------------------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jobId`                   | `string`                                               | None                           | An id that prevents duplicates. It has 1 to 120 printable ASCII characters, without spaces at the ends. While a job with this id and name exists, a second enqueue adds nothing: a job cancelled by `jobs.cancel` keeps blocking it until cleanup deletes it, and `jobs.remove` frees it. It cannot start with `schedule:`, which is reserved for the slots of schedules. |
+| `slot`                    | `{ at: Date, key?: string }`                           | None                           | Runs a slot of a [schedule](#schedule) by hand: the job gets the id that the scheduler gives the slot. `at` is in the years 1970 to 9999, and `key` is the key of the schedule. You cannot combine it with `jobId`. The job is due now, unless you give `delay` or `runAt`.                                                                                               |
+| `delay`                   | `Duration`                                             | `0`                            | The wait before the job becomes due. You cannot combine it with `runAt`.                                                                                                                                                                                                                                                                                                  |
+| `runAt`                   | `Date`                                                 | None                           | The time at which the job becomes due. You cannot combine it with `delay`.                                                                                                                                                                                                                                                                                                |
+| `maxAttempts`             | integer, at least 1                                    | From the definition            | Overrides `maxAttempts` for this job. A `one_more` retry changes it.                                                                                                                                                                                                                                                                                                      |
+| `maxStalls`               | integer, at least 0                                    | From the definition            | Overrides `maxStalls` for this job. A `one_more` retry changes it.                                                                                                                                                                                                                                                                                                        |
+| `retention`               | `{ completed?: Duration, failed?: Duration }`          | From the definition            | Overrides the retention for this job, field by field.                                                                                                                                                                                                                                                                                                                     |
+| `failureJob`              | `string` or `JobDefinition`                            | From the definition            | Overrides the failure job for this job.                                                                                                                                                                                                                                                                                                                                   |
+| `globalConcurrencyLimits` | `readonly (ConcurrencyLimit \| ConcurrencyLimitKey)[]` | From the definition's function | Replaces the global limits that the definition computes. An empty array removes them all.                                                                                                                                                                                                                                                                                 |
+| `globalRateLimits`        | `readonly (RateLimit \| RateLimitKey)[]`               | From the definition's function | Replaces the global rate limits that the definition computes. An empty array removes them all.                                                                                                                                                                                                                                                                            |
 
 The global limits follow the rules of [`defineConcurrencyLimit`](#defineconcurrencylimit) and
 [`defineRateLimit`](#defineratelimit). Keys are global, so jobs of different names can share a key.
@@ -469,7 +470,7 @@ The `job` object has these fields:
 | `id`                      | `string`                                  | The job id.                                                                                  |
 | `name`                    | `string`                                  | The job name.                                                                                |
 | `attempt`                 | `number`                                  | The current attempt. It is 1 for the first run.                                              |
-| `maxAttempts`             | `number`                                  | The highest number of attempts for this job.                                                 |
+| `maxAttempts`             | `number`                                  | The highest number of attempts for this job. Set at enqueue; a `one_more` retry changes it.  |
 | `enqueuedAt`              | `Date`                                    | The time of the enqueue.                                                                     |
 | `globalConcurrencyLimits` | `readonly { key: string, max: number }[]` | The keys of the global limits of the job, sorted, with their maxes.                          |
 | `scheduledAt`             | `Date` or `null`                          | The slot of a job of a [schedule](#schedule), also when it runs late. `null` for other jobs. |
@@ -911,13 +912,19 @@ of the enqueues.
 
 ## `jobs`
 
-`sqlane.jobs` reads the jobs in the database: one job by its id, or the jobs of a name, a page at a time. It is a frozen
-object of the instance.
+`sqlane.jobs` acts on the jobs in the database. It reads them, one job by its id or the jobs of a name a page at a time,
+and it retries, cancels and removes them in bulk. It is a frozen object of the instance.
 
 ```ts
 sqlane.jobs.get<P = any>(jobId: string): Promise<JobRecord<P> | null>
 sqlane.jobs.list<J extends JobDefinition | string>(filter: JobFilter<J>, options?: ListJobsOptions): Promise<JobPage<HandlerPayload<J>>>
+sqlane.jobs.retry(selector: JobSelector, options?: RetryOptions<C>): Promise<BulkResult>
+sqlane.jobs.cancel(selector: JobSelector, options?: BulkOptions<C>): Promise<BulkResult>
+sqlane.jobs.remove(selector: JobSelector, options?: BulkOptions<C>): Promise<BulkResult>
 ```
+
+The bulk methods are described in [Retry, cancel and remove](#retry-cancel-and-remove). The rest of this section is
+about the reads.
 
 - The reads are plain reads on the queue's pool, without locks. They never take a connection of your app.
 - They work before `start()`, after `close()`, and in a process that handles no job. `unknownJobs` does not apply to
@@ -1012,28 +1019,28 @@ do {
 
 A `JobRecord` is a job as the database has it. Every field is always present, except `payload`.
 
-| Field                     | Type                                                                      | Description                                                                                                                                                                                                                                                                                      |
-| ------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`                      | `string`                                                                  | The full job id.                                                                                                                                                                                                                                                                                 |
-| `name`                    | `string`                                                                  | The job name.                                                                                                                                                                                                                                                                                    |
-| `status`                  | `JobStatus`                                                               | `'pending'`, `'blocked'`, `'running'`, `'completed'` or `'failed'`, when read. `pending` does not include `blocked`; `getStats()` counts both in its `pending` (until the major splits them).                                                                                                    |
-| `attempts`                | `number`                                                                  | The finished attempts: each completion, retry or failure adds one, whatever the error. A stall, a release and a wait on a rate limit add none, also a stall that fails the job: such a job has `attempts` below its last `FailedJobPayload.job.attempt`.                                         |
-| `maxAttempts`             | `number`                                                                  | The most attempts of the job, fixed at enqueue.                                                                                                                                                                                                                                                  |
-| `stalls`                  | `number`                                                                  | The times its lease ended while it ran.                                                                                                                                                                                                                                                          |
-| `maxStalls`               | `number`                                                                  | The stalls that it survives, fixed at enqueue.                                                                                                                                                                                                                                                   |
-| `runAt`                   | `Date`                                                                    | When the job is due, or was. A pending job runs from then. A blocked job has been due since then and runs when its key frees. A running or finished job: the due time of its last run. `drain({ includeDelayed })` sets it to now for the pending jobs not due yet of the names that it handles. |
-| `enqueuedAt`              | `Date`                                                                    | The time of the insert, not of the commit.                                                                                                                                                                                                                                                       |
-| `startedAt`               | `Date` or `null`                                                          | The start of its last run, an attempt or not. `null`: it never ran.                                                                                                                                                                                                                              |
-| `finishedAt`              | `Date` or `null`                                                          | When it completed or failed for good. `null` otherwise.                                                                                                                                                                                                                                          |
-| `expiresAt`               | `Date` or `null`                                                          | From when cleanup may delete the finished job. A row can still be read after it. `null` for an unfinished job.                                                                                                                                                                                   |
-| `scheduledAt`             | `Date` or `null`                                                          | The slot of a job of a [schedule](#schedule), from its id. `null` for other jobs.                                                                                                                                                                                                                |
-| `stuck`                   | `boolean`                                                                 | Running and timed out, by the last state written. Its handler may still run, or its process may be gone; stall recovery settles the latter.                                                                                                                                                      |
-| `lastError`               | `JobError` or `null`                                                      | The last error written to the job, kept when it later completes: of a failed attempt, of a stall (`StalledError`), or of a `RateLimitedError` on a global rate key of the job. Not by a block when it is claimed, nor by a wait on a local rate limit.                                           |
-| `globalConcurrencyLimits` | `readonly { key, max }[]`                                                 | Its keys, sorted, with their maxes, as in `JobInfo`. `key` is the full key: `<limit>` or `<limit>:<value>`.                                                                                                                                                                                      |
-| `globalRateLimits`        | `readonly { limit, key, max, per, burst, cost }[]`                        | Its rate limits: the limit name and its key value, `null` for the limit itself, as in the `rate_limited` event. `per` is in milliseconds. Sorted by the full rate key, in byte order.                                                                                                            |
-| `blockedOn`               | `{ type: 'concurrency', key }`, `{ type: 'rate', limit, key }`, or `null` | What a blocked job waits for: a concurrency key, the full key, or a rate limit and its key value. `null` when the job is not blocked.                                                                                                                                                            |
-| `failureJob`              | `string` or `null`                                                        | The name of its failure job, fixed at enqueue.                                                                                                                                                                                                                                                   |
-| `payload`                 | `P`, optional                                                             | As JSON gives it back. A JSON `null` payload is present, as `null`. Absent when not asked for, or when the database holds no payload for the job: after its completion, briefly while its enqueue writes it, or after a failure with `MissingPayloadError`.                                      |
+| Field                     | Type                                                                      | Description                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                      | `string`                                                                  | The full job id.                                                                                                                                                                                                                                                                                                                                                                          |
+| `name`                    | `string`                                                                  | The job name.                                                                                                                                                                                                                                                                                                                                                                             |
+| `status`                  | `JobStatus`                                                               | `'pending'`, `'blocked'`, `'running'`, `'completed'` or `'failed'`, when read. `pending` does not include `blocked`; `getStats()` counts both in its `pending` (until the major splits them).                                                                                                                                                                                             |
+| `attempts`                | `number`                                                                  | The finished attempts: each completion, retry or failure adds one, whatever the error. A stall, a release and a wait on a rate limit add none, also a stall that fails the job: such a job has `attempts` below its last `FailedJobPayload.job.attempt`. A `reset` retry sets it to 0.                                                                                                    |
+| `maxAttempts`             | `number`                                                                  | The most attempts of the job, set at enqueue; a `one_more` retry changes it.                                                                                                                                                                                                                                                                                                              |
+| `stalls`                  | `number`                                                                  | The times its lease ended while it ran. A `reset` retry sets it to 0.                                                                                                                                                                                                                                                                                                                     |
+| `maxStalls`               | `number`                                                                  | The stalls that it survives, set at enqueue; a `one_more` retry changes it.                                                                                                                                                                                                                                                                                                               |
+| `runAt`                   | `Date`                                                                    | When the job is due, or was. A pending job runs from then. A blocked job has been due since then and runs when its key frees. A running or finished job: the due time of its last run. `drain({ includeDelayed })` sets it to now for the pending jobs not due yet of the names that it handles; `jobs.retry` sets it as a rerun does. A cancelled job that never ran keeps its due time. |
+| `enqueuedAt`              | `Date`                                                                    | The time of the insert, not of the commit.                                                                                                                                                                                                                                                                                                                                                |
+| `startedAt`               | `Date` or `null`                                                          | The start of its last run, an attempt or not. `null`: it never ran.                                                                                                                                                                                                                                                                                                                       |
+| `finishedAt`              | `Date` or `null`                                                          | When it completed or failed for good. `null` otherwise.                                                                                                                                                                                                                                                                                                                                   |
+| `expiresAt`               | `Date` or `null`                                                          | From when cleanup may delete the finished job. A row can still be read after it. `null` for an unfinished job.                                                                                                                                                                                                                                                                            |
+| `scheduledAt`             | `Date` or `null`                                                          | The slot of a job of a [schedule](#schedule), from its id. `null` for other jobs.                                                                                                                                                                                                                                                                                                         |
+| `stuck`                   | `boolean`                                                                 | Running and timed out, by the last state written. Its handler may still run, or its process may be gone; stall recovery settles the latter.                                                                                                                                                                                                                                               |
+| `lastError`               | `JobError` or `null`                                                      | The last error written to the job, kept when it later completes: of a failed attempt, of a stall (`StalledError`), of a `RateLimitedError` on a global rate key of the job, or of `jobs.cancel` (`JobCancelledError`). Not by a block when it is claimed, nor by a wait on a local rate limit.                                                                                            |
+| `globalConcurrencyLimits` | `readonly { key, max }[]`                                                 | Its keys, sorted, with their maxes, as in `JobInfo`. `key` is the full key: `<limit>` or `<limit>:<value>`.                                                                                                                                                                                                                                                                               |
+| `globalRateLimits`        | `readonly { limit, key, max, per, burst, cost }[]`                        | Its rate limits: the limit name and its key value, `null` for the limit itself, as in the `rate_limited` event. `per` is in milliseconds. Sorted by the full rate key, in byte order.                                                                                                                                                                                                     |
+| `blockedOn`               | `{ type: 'concurrency', key }`, `{ type: 'rate', limit, key }`, or `null` | What a blocked job waits for: a concurrency key, the full key, or a rate limit and its key value. `null` when the job is not blocked.                                                                                                                                                                                                                                                     |
+| `failureJob`              | `string` or `null`                                                        | The name of its failure job, fixed at enqueue.                                                                                                                                                                                                                                                                                                                                            |
+| `payload`                 | `P`, optional                                                             | As JSON gives it back. A JSON `null` payload is present, as `null`. Absent when not asked for, or when the database holds no payload for the job: after its completion, briefly while its enqueue writes it, or after a failure with `MissingPayloadError`.                                                                                                                               |
 
 A `JobError` is `{ name: string, message: string, stack?: string, code?: string }`: `name` as a string, not always an
 exported class; `stack` cut to 8,192 UTF-16 code units; `code` the string `code` of the thrown error.
@@ -1044,10 +1051,141 @@ retry, a release or a stall) or a `drain({ includeDelayed })`; otherwise from th
 `enqueuedAt`. `scheduledAt` comes from the id. The other times come from the database clock, to the millisecond.
 PostgreSQL rounds them to the millisecond, so a time is within 0.5 ms of the clock.
 
-`JobStatus` gains members only in a major. A cancelled job will be `failed`.
+`JobStatus` gains members only in a major. A cancelled job is `failed`.
 
 The types `SqlaneJobs`, `JobRecord`, `JobStatus`, `JobError`, `JobFilter`, `ListJobsOptions`, `JobPage` and
 `HandlerPayload` are exported from `@sqlane/core`.
+
+## Retry, cancel and remove
+
+`sqlane.jobs.retry`, `jobs.cancel` and `jobs.remove` change jobs in bulk: a list of job ids, or the jobs of a filter.
+They work before `start()`, after `close()`, and in a process that handles no job. `unknownJobs` does not apply.
+
+| Method   | Changes jobs in                             | Default of a filter | Effect                                                                                                                                                 |
+| -------- | ------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `retry`  | `failed`                                    | `failed`            | The job is pending again, with the same id, enqueue time, keys and failure job. A job without a payload is not retried.                                |
+| `cancel` | `pending`, `blocked`                        | both                | The job fails at once, with a `JobCancelledError` as `lastError`, `finishedAt` now and `expiresAt` from its failed retention. No failure job is added. |
+| `remove` | `pending`, `blocked`, `completed`, `failed` | all four            | The job and its payload are deleted. Its dedupe key is free again.                                                                                     |
+
+A running job is never changed. Its id is ignored with the reason `status`, and `running` in a filter rejects.
+
+### The selector
+
+```ts
+type JobSelector =
+    | { jobIds: readonly string[], jobName?: undefined, status?: undefined }
+    | (JobFilter & { jobIds?: undefined });
+```
+
+- `jobIds`: 1 to 1000 distinct full job ids; duplicates count once. A string that cannot be a job id is ignored as
+  `not_found`, as `jobs.get` returns `null` for it.
+- A filter, `{ jobName, status? }`, as `jobs.list` takes it. `status` names only statuses that the method changes:
+  another one rejects. Without `status`: the default of the method.
+- Both kinds, or neither, reject.
+
+### Options
+
+| Option                  | Type                      | Default    | Description                                                                                                                                                  |
+| ----------------------- | ------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `connection`            | `C`                       | None       | Atomic only. A connection or a client in a transaction: the call runs in it. A pool: a transaction of sqlane's own on it. See [Transactions](#transactions). |
+| `mode`                  | `'atomic'` or `'batches'` | `'atomic'` | `'atomic'`: one transaction. `'batches'`: short transactions of up to 1000 jobs, for a large filter.                                                         |
+| `strict`                | `boolean`                 | `false`    | Atomic, with `jobIds` only: if any id would be ignored, the call rejects with an `IgnoredJobsError` and changes nothing.                                     |
+| `includeAffectedJobIds` | `boolean`                 | `false`    | The result lists the ids of the changed jobs.                                                                                                                |
+| `budget`                | `'reset'` or `'one_more'` | `'reset'`  | `retry` only. `'reset'`: `attempts` and `stalls` back to 0. `'one_more'`: the job gets exactly one more attempt.                                             |
+
+An option set to `undefined` counts as absent. `jobIds`, a defined `connection` and `strict: true` reject with
+`'batches'`, and `strict: true` rejects with a filter: a filter reports no ignored job (a `retry` filter skips the
+jobs without a payload, and `affectedCount` leaves them out).
+
+### The result
+
+```ts
+interface BulkResult {
+    affectedCount: number;
+    affectedJobIds?: string[]; // with includeAffectedJobIds; in no order
+    ignoredJobs: { jobId: string, reason: 'not_found' | 'status' | 'no_payload', status?: JobStatus }[];
+}
+```
+
+`ignoredJobs` has one entry per distinct id that the call did not change, in the order of their first appearance, with
+the status of the job for `status` and `no_payload`. A job that left an accepted status and came back to it during the
+call is reported with `status` and that status. It is empty for a filter. New reasons may come in a minor version:
+handle unknown ones.
+
+### `jobs.retry`
+
+- The job is due now, or at the end of the lingering slots of its earlier runs, so that it does not start beside a
+  handler that may still run after a stall or a release on close. On PostgreSQL, `runAt` is truncated to the
+  millisecond. A handler that ignored its abort may still run beyond that.
+- What changes: `status`, `runAt`, `attempts` and `stalls` (`reset`), the maxes (`one_more`), `finishedAt`,
+  `expiresAt` and `blockedOn` (`null`). What stays: the id, `enqueuedAt`, `startedAt`, `lastError` until the next error,
+  the keys, the failure job and the payload. The order of `jobs.list` holds.
+- `one_more`: `maxAttempts` becomes `attempts + 1`, and `maxStalls` becomes `max(maxStalls, stalls)`. So a job that its
+  stalls failed fails at its next stall, and another keeps its stall tolerance. The new maxes are stored in the job: a
+  later `reset` restores these, not the ones of the enqueue. A job that never finished an attempt gets `maxAttempts` 1.
+- `FailedJobPayload.job.attempt` restarts from 1 after a `reset`. The failure job that the job added when it failed
+  stays; if the retried job fails again, it adds another.
+- A completed job is not retried today: its payload is deleted at the completion. Its id is ignored with `status`, and
+  `completed` in a filter rejects.
+
+### `jobs.cancel`
+
+- The job's `lastError` is `{ name: 'JobCancelledError', message: 'Cancelled by jobs.cancel()', code: 'JOB_CANCELLED' }`,
+  and `blockedOn` becomes `null`. `attempts` does not change, and the payload is kept, as for any failed job.
+- A cancelled job is `failed`: `getStats().failed` counts it, and a `retry` of the failed jobs retries it. `drain()`
+  does not count cancels.
+- `JobCancelledError` is exported. A handler that throws it throws an ordinary error. So `lastError` alone does not
+  mark a cancel.
+
+### `jobs.remove`
+
+- The row and its payload are deleted. A later `enqueue` with the same dedupe key adds a new job.
+
+### Slots, keys and schedules
+
+- None of the methods touch the slots of global limits. A slot that lingers after a stall or a release on close stays
+  until its time, because the old handler may still run.
+- When a cancel or a remove changes pending jobs, sqlane unblocks the concurrency keys of those jobs, as when a job of
+  the key ends, so the jobs blocked behind them do not wait for the next sweep: after the commit of sqlane's own
+  transaction; with your connection, at the adapter's after-commit hook, else right after the call. A failure of that
+  unblock is an `error` event (operation `unblock`), never a rejection of the call. A rate key may start its next job a
+  little later than it could, until its next start.
+- `overlap: 'skip'` skips while the last job of a schedule is pending or running. So removing or cancelling it lets the
+  next slot run, and retrying it makes the skip apply again. The scheduler never adds a slot again; after a remove, a
+  manual `enqueue({ slot })` adds a new job. Retrying an older job of a schedule may overlap a new slot. The skip ignores a
+  blocked last job, so cancelling one changes nothing for the skip.
+
+### Transactions
+
+- **Without `connection`**: a transaction of sqlane's own on the queue's pool, at READ COMMITTED. All the selected jobs
+  change, or none does when the call rejects. A deadlock is retried, up to 3 times.
+- **A pool as `connection`**: the same, on that pool. Prisma limits sqlane's own transaction to 60 s.
+- **A connection or a client in a transaction**: the call runs in it, as `enqueue` does, and its owner commits. When
+  the call rejects, roll the transaction back: on MySQL and MariaDB, a part of the call may be in it. Outside a
+  transaction, the call is neither atomic nor strict, and `affectedJobIds` may list a job that changed meanwhile; a
+  running job is still never changed. In a REPEATABLE READ or SERIALIZABLE transaction, the call reads your snapshot,
+  so a job changed after it may be reported `not_found` or `status`, and it may reject with a serialization error. On
+  MySQL and MariaDB, it may hold gap locks, and the locks of running jobs among the ids, until the commit: their
+  workers then miss lease renewals. Prisma limits your transaction to its own timeout (5 s by default).
+- Each job's status is checked under its row lock, and each write checks it again. The jobs are locked in id order. A
+  large atomic filter holds the locks of all its jobs until the commit.
+- **`batches`**: each batch is a transaction of its own, in the order of `jobs.list`, so each job is considered at most
+  once and the call always ends. A call that rejects may have committed some batches, whose count is lost: run it
+  again to finish. It needs the migration `0008_job_list`.
+- A database error rejects with the driver's error. An atomic call that sqlane owns then changed nothing, unless the
+  error came at the commit itself (a lost connection): then the outcome is unknown, and running the call again without
+  `strict` finishes it; a retried job that failed again in between is retried again.
+
+### Events and wakes
+
+- `cancelled`, for each cancelled job, after the commit of a transaction that sqlane owns (without `connection`, or
+  with a pool). Not in your transaction: sqlane cannot know for sure that you committed.
+- A retried job wakes the workers as an enqueued one does: this process at once, the others by the hint (not after
+  `close()`, which stops the hint channel; with the `notify` option, the NOTIFY is part of the transaction), and by
+  their next poll.
+- `retry` and `remove` emit no event.
+
+The types `JobSelector`, `BulkOptions`, `RetryOptions` and `BulkResult` are exported from `@sqlane/core`.
 
 ## `wake`
 
@@ -1069,7 +1207,7 @@ exported from `@sqlane/core`.
 | Class                          | `code`                      | When                                                                                                                                                                                                                                                                                              |
 | ------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ConfigError`                  | `CONFIG`                    | The options of `createSqlane`, `defineJob`, `handle()`, `schedule()`, an adapter or `getMigrations` are bad. `start()` and `drain()` also throw it for a bad failure job. `start()` throws it for a bad schedule or a missing table of the schedules; with `migrate()`, for a wrong server.       |
-| `InvalidOptionsError`          | `INVALID_OPTIONS`           | The arguments of `enqueue`, `enqueueMany`, `jobs.get` or `jobs.list` are bad, for example a bad name or `jobId`, a `jobId` with the reserved prefix `schedule:`, `slot` with `jobId`, `delay` with `runAt`, or a payload that is not JSON.                                                        |
+| `InvalidOptionsError`          | `INVALID_OPTIONS`           | The arguments of `enqueue`, `enqueueMany` or a method of `sqlane.jobs` are bad, for example a bad name or `jobId`, a `jobId` with the reserved prefix `schedule:`, `slot` with `jobId`, `delay` with `runAt`, or a payload that is not JSON.                                                      |
 | `PayloadTooLargeError`         | `PAYLOAD_TOO_LARGE`         | The payload is larger than `maxPayloadBytes`.                                                                                                                                                                                                                                                     |
 | `InvalidConcurrencyLimitError` | `INVALID_CONCURRENCY_LIMIT` | A job has more than 10 global keys, a key breaks the rules, a key has two maxes, or a global limit is not from `defineConcurrencyLimit`.                                                                                                                                                          |
 | `InvalidRateLimitError`        | `INVALID_RATE_LIMIT`        | A job has more than 10 global keys of concurrency and rate limits together, a rate key breaks the rules, a rate key has two settings, or a global rate limit is not from `defineRateLimit`. `limit.key()` or `limit.cost()` got a bad value or cost, or `new RateLimitedError()` got bad options. |
@@ -1081,6 +1219,8 @@ exported from `@sqlane/core`.
 | `LeaseLostError`               | `LEASE_LOST`                | The handler's `signal` aborted because the process could not renew the lease until 30 s before it ends, for example because the database is unreachable.                                                                                                                                          |
 | `MissingPayloadError`          | `MISSING_PAYLOAD`           | sqlane did not find the payload of a job. The job fails for good with this error.                                                                                                                                                                                                                 |
 | `MigrationLockTimeoutError`    | `MIGRATION_LOCK_TIMEOUT`    | `migrate()` did not get the migration lock within its `lockTimeout`.                                                                                                                                                                                                                              |
+| `IgnoredJobsError`             | `IGNORED_JOBS`              | A bulk method of `sqlane.jobs` with `strict: true` would have ignored some of its ids: it changed nothing. `ignoredJobs` lists them.                                                                                                                                                              |
+| `JobCancelledError`            | `JOB_CANCELLED`             | The `lastError` of a job that `jobs.cancel` cancelled. `new JobCancelledError(message?, options?)`.                                                                                                                                                                                               |
 | `FatalJobError`                | `FATAL_JOB`                 | A handler threw it to fail the job at once. See below.                                                                                                                                                                                                                                            |
 | `RetryJobError`                | `RETRY_JOB`                 | A handler threw it to retry the job after a given delay. See below.                                                                                                                                                                                                                               |
 | `RateLimitedError`             | `RATE_LIMITED`              | A handler threw it because the other side limits the rate: the job waits for its rate limit. See below.                                                                                                                                                                                           |
@@ -1197,6 +1337,7 @@ Every event except `error` and `schedule_fired` has these fields:
 | `lease_lost`            | None                                                      | This process could not renew the lease of the job until 30 s before it ends, and aborted its `signal`.                                                                                                                                                                                                                                                |
 | `rate_limited`          | `durationMs`, `limit`, `key`, `scope`, `retryAt`, `error` | The handler threw a [`RateLimitedError`](#errors-that-handlers-throw) on a rate limit of the job. The job waits, without using an attempt, until about `retryAt`. `limit` is the name of the limit it waits on, `key` its key (`null` for a limit without keys, and for a local limit), `scope` `'global'` or `'local'`. `drain()` does not count it. |
 | `failure_job_not_added` | `failureJob`, `error`                                     | The job failed for good, but the database refused to add its failure job.                                                                                                                                                                                                                                                                             |
+| `cancelled`             | None                                                      | `jobs.cancel` cancelled the job, after the commit of a transaction of sqlane's own. `attempt` is the attempt that would have run next.                                                                                                                                                                                                                |
 | `error`                 | `operation`, `error`                                      | An internal operation failed, for example a poll or a hint. `operation` names it. sqlane also logs it. A deadlock, serialization failure or `ER_CHECKREAD` (1020) of the dispatcher is retried at once, up to 3 times, before it is reported; a lock wait timeout is reported at once.                                                                |
 | `schedule_fired`        | `scheduleId`, `jobName`, `scheduledAt`, `late`, `jobId`   | A slot of a [schedule](#schedule) was decided. Only the process that decided it emits it, so the cluster gets one event per slot. `late` is true for a catch-up. `jobId` is `null` when `overlap: 'skip'` skipped the slot. It has no `attempt`.                                                                                                      |
 
@@ -1226,7 +1367,8 @@ interface FailedJobPayload {
 }
 ```
 
-The `job` field describes the job that failed, with its original payload. The `error` field describes the last error,
+The `job` field describes the job that failed, with its original payload. Its `maxAttempts` is set at enqueue; a
+`one_more` retry changes it. The `error` field describes the last error,
 as a [`JobError`](#jobrecord). sqlane cuts `error.stack` to 8,192 UTF-16 code units. When the error has a string
 `code` property, `error` also has a `code` field. The payload of a failure job is exempt from `maxPayloadBytes`.
 

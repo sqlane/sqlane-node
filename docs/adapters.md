@@ -658,6 +658,12 @@ A raw driver connection, such as a mysql2 `PoolConnection` or a pg `PoolClient`,
 it. sqlane cannot always detect a transaction on such a connection, so it trusts you. The sections below list what
 each adapter accepts.
 
+The bulk methods of `sqlane.jobs` (`retry`, `cancel`, `remove`) take the same connections as `connection`. A pool, or
+an ORM instance outside a transaction, runs them in a READ COMMITTED transaction of sqlane's own on it (each adapter's
+`poolTransaction`; on Prisma, with a 60 s timeout). A connection or a client in a transaction runs them in that
+transaction. With Sequelize and CLS, an instance inside a CLS transaction counts as that transaction. An adapter of your
+own without `poolTransaction` runs a pool as a caller's connection.
+
 ## Wake-up after the commit
 
 A worker is a process that has called `start()`. Each worker checks the database for due jobs at least once per poll

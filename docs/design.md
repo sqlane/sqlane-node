@@ -239,10 +239,16 @@ MariaDB, `jobs.list()` names it in an index hint and rejects without it.
 ┌─ RateLimitedError on a rate key ────────────────────────────┐
 ▼                                                             │
 blocked ◀─claim: a full key, no quota── pending ──claim──▶ running ──OK──▶ completed ──retention──▶ (deleted)
-   └─ a slot frees, or its next start ────▶▲                  │
-                                           └── retry, stall, ─┤
-                                               release        └──no attempts / stalls left──▶ failed (+ failure job) ──▶ …
+ │ └─ a slot frees, or its next start ────▶▲ │ ▲              │
+ │                                         │ │ └── retry, stall,
+ │                                         │ │     release ───┤
+ │                                         │ │                └──no attempts / stalls left──▶ failed (+ failure job) ──▶ …
+ │                                         │ └── jobs.cancel ────────────────────────────────▶ failed (no failure job)
+ └── jobs.cancel ──────────────────────────┼─────────────────────────────────────────────────▶ failed (no failure job)
+                                           └── jobs.retry ◀──────────────────────────────── failed
 ```
+
+`jobs.remove` deletes a job in any status but `running`.
 
 A `RateLimitedError` on local rate limits only sends the job back to `pending`, like a release.
 
@@ -755,6 +761,31 @@ from 5 s to 60 s.
 **Why no leader, and no chained pending job.** A leader adds a moving part, and the row lock already picks one
 process per slot. A future pending job per schedule (as BullMQ does) would make every probe read one index entry per
 scheduled name, and it breaks when that job is deleted or a deploy changes the spec.
+
+### Bulk operations
+
+`jobs.retry`, `jobs.cancel` and `jobs.remove` (`src/jobs_bulk.js`, SQL in `src/store/job_writes.js`) run in one
+transaction: sqlane's own on the queue's pool (READ COMMITTED), sqlane's own on a pool given as `connection` (the
+adapter's `poolTransaction`), or the caller's.
+
+1. **Read** the candidates, without a lock: the ids with their status and whether their payload exists, or the jobs of
+   the filter. The ignored ids are decided here, and `strict` rejects before any lock.
+2. **Lock** the rest by primary key, in id order (byte order: `ascii_bin`, `COLLATE "C"`), with the status checked
+   again in the condition: in READ COMMITTED, a row changed meanwhile is evaluated again, and a row in another status is
+   not locked. MySQL and MariaDB force the primary key, so the locks follow the id order. An id read but not locked
+   changed meanwhile: it is ignored with its new status.
+3. **Write**, guarded by the status in the condition: outside a transaction, where the locks of step 2 ended with their
+   statement, a job claimed in between is not changed. A remove on MySQL and MariaDB deletes only the payloads whose job
+   is gone. PostgreSQL returns the changed ids; MySQL and MariaDB count the changed rows.
+4. **After the commit** of a transaction that sqlane owns: the `cancelled` events, the wakes and hints of the retried
+   names, and the unblock of the concurrency keys of the cancelled or removed pending jobs. In the caller's transaction:
+   no event, and the rest at the adapter's after-commit hook, else at once.
+
+A retry is due at `GREATEST(now, MAX(held_until))` of the job's slots, so it does not start beside a handler that may
+still run. No operation touches the slots. Every statement that can run on a caller's connection returns one-word
+column names, which a transform of postgres.js does not rename; id lists are an array parameter on PostgreSQL and
+chunks of 500 on MySQL and MariaDB. `batches` walks the jobs of the filter in the order of `jobs.list` over the index of
+`0008_job_list`, a transaction per batch of 1000, so each job is read at most once.
 
 ### Cleanup
 
