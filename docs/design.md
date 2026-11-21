@@ -141,9 +141,14 @@ wait on a rate limit add none; the stalls have their own count.
 
 Indexes:
 
-- MySQL: `(status, job_name, run_at)`, `(status, blocked_on, run_at, id)`, `(expires_at)`.
+- MySQL: `(status, job_name, run_at)`, `(status, blocked_on, run_at, id)`, `(expires_at)`, `(job_name, created_at,
+  id)`.
 - PostgreSQL: partial `(job_name, run_at, id) WHERE status = 'pending'`, partial `(locked_until) WHERE status =
-  'running'`, partial `(blocked_on, run_at, id) WHERE status = 'blocked'`, `(expires_at)`.
+  'running'`, partial `(blocked_on, run_at, id) WHERE status = 'blocked'`, `(expires_at)`, `(job_name, created_at,
+  id)`.
+
+`(job_name, created_at, id)` serves `sqlane.jobs.list()`: the jobs of a name, newest first, of any status. Its columns
+never change after the insert, so the index costs one entry per insert, and an update never moves it.
 
 ### `sqlane_payloads`
 
@@ -202,12 +207,31 @@ sqlane ships its schema as versioned SQL for each dialect. You can apply it in t
 - `getMigrations({ dialect, tablePrefix })` returns the SQL, for the app's own migration tool.
 
 The migration ids are matched, never counted. MySQL and MariaDB have `0001_initial`, `0002_job_keys`,
-`0004_schedules`, `0005_concurrency_limits`, `0006_concurrency_slots` and `0007_rate_limits`. PostgreSQL has
-`0001_initial`, `0002_pending_order`, `0003_job_keys`, `0004_schedules`, `0005_concurrency_limits`,
-`0006_concurrency_slots` and `0007_rate_limits`. The migrations of 6.0 drop the tables of 5.x, `sqlane_job_keys` and
-`sqlane_mutexes`. On MySQL and MariaDB, `0005_concurrency_limits` is one `ALTER TABLE`, which is atomic. The schedules
-migration has the same id on every dialect. It is needed only with schedules: `start()` throws a `ConfigError` that
-asks for `migrate()` when a process has schedules and the table is missing.
+`0004_schedules`, `0005_concurrency_limits`, `0006_concurrency_slots`, `0007_rate_limits` and `0008_job_list`.
+PostgreSQL has `0001_initial`, `0002_pending_order`, `0003_job_keys`, `0004_schedules`, `0005_concurrency_limits`,
+`0006_concurrency_slots`, `0007_rate_limits` and `0008_job_list`. The migrations of 6.0 drop the tables of 5.x,
+`sqlane_job_keys` and `sqlane_mutexes`. On MySQL and MariaDB, `0005_concurrency_limits` and `0008_job_list` are each
+one `ALTER TABLE`, which is atomic. The schedules migration has the same id on every dialect. It is needed only with
+schedules: `start()` throws a `ConfigError` that asks for `migrate()` when a process has schedules and the table is
+missing.
+
+`0008_job_list` builds the index `(job_name, created_at, id)` on the jobs. `sqlane.jobs` requires it: on MySQL and
+MariaDB, `jobs.list()` names it in an index hint and rejects without it.
+
+- The build waits for the open transactions that wrote the jobs, and the writes that come after it wait for the build.
+  On PostgreSQL, the migration sets no lock timeout after its lock, and `CREATE INDEX` blocks the writes of the table
+  while it builds, because a migration is one transaction and `CREATE INDEX CONCURRENTLY` cannot run in one. MySQL and
+  MariaDB build it online, but `ALTER TABLE` waits for the metadata lock, up to `lock_wait_timeout`.
+- On a large PostgreSQL table, build the index before the migration, with the name and the columns of the migration:
+  `CREATE INDEX CONCURRENTLY <prefix>jobs_list ON <prefix>jobs (job_name, created_at, id)`, where `<prefix>` is the
+  `tablePrefix` (`sqlane_` by default). The `IF NOT EXISTS` of the migration then skips it. A failed or cancelled
+  concurrent build leaves an invalid index of that name, which `IF NOT EXISTS` would also skip: check
+  `SELECT indisvalid FROM pg_index WHERE indexrelid = '<prefix>jobs_list'::regclass`, and drop and rebuild an invalid
+  one.
+- On MySQL, the `ALTER TABLE` commits before the id of the migration is recorded. A crash between the two makes the
+  next `migrate()` fail with `ER_DUP_KEYNAME` (1061), as with `0007_rate_limits`: record the id by hand
+  (`INSERT INTO <prefix>migrations (id, applied_at) VALUES ('0008_job_list', UTC_TIMESTAMP(3))`). MariaDB has
+  `ADD KEY IF NOT EXISTS`, so it runs again.
 
 ## Job states
 

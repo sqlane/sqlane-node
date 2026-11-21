@@ -151,6 +151,12 @@ export function mysqlMigrations(p) {
                 `ALTER TABLE ${p}jobs ADD COLUMN rate_limits JSON NULL AFTER limit_maxes`,
             ],
         },
+        {
+            // sqlane.jobs.list(): the jobs of a name, newest first, by enqueue time then id. One statement: atomic
+            // (MySQL has no ADD KEY IF NOT EXISTS). Online: inserts and updates go on while it builds.
+            id: '0008_job_list',
+            statements: [`ALTER TABLE ${p}jobs ADD KEY ${p}jobs_list (job_name, created_at, id)`],
+        },
     ];
 }
 

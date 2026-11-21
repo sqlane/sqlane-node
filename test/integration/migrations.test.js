@@ -27,9 +27,10 @@ const LOCK_SQL = {
 /** The migrations of the dialect, in order */
 const SIX = ['0005_concurrency_limits', '0006_concurrency_slots'];
 const RATE_LIMITS = ['0007_rate_limits'];
+const JOB_LIST = ['0008_job_list'];
 const ALL_MIGRATIONS = inject('databaseDialect') === 'postgres'
-    ? ['0001_initial', '0002_pending_order', '0003_job_keys', '0004_schedules', ...SIX, ...RATE_LIMITS]
-    : ['0001_initial', '0002_job_keys', '0004_schedules', ...SIX, ...RATE_LIMITS];
+    ? ['0001_initial', '0002_pending_order', '0003_job_keys', '0004_schedules', ...SIX, ...RATE_LIMITS, ...JOB_LIST]
+    : ['0001_initial', '0002_job_keys', '0004_schedules', ...SIX, ...RATE_LIMITS, ...JOB_LIST];
 
 /** @type {Record<'mysql' | 'postgres', { time: string, now: string }>} */
 const TIME_SQL = {
@@ -201,9 +202,13 @@ test('a database of 5.x: mutex keys become global limits with max 1, a hold beco
     const tablePrefix = nextPrefix();
     const sqlane = sqlaneOf(tablePrefix);
 
-    await migrateAllBut(tablePrefix, SIX.length + RATE_LIMITS.length, FIVE_X_ROWS_SQL[database.family](tablePrefix));
+    await migrateAllBut(
+        tablePrefix,
+        SIX.length + RATE_LIMITS.length + JOB_LIST.length,
+        FIVE_X_ROWS_SQL[database.family](tablePrefix),
+    );
 
-    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [...SIX, ...RATE_LIMITS] });
+    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [...SIX, ...RATE_LIMITS, ...JOB_LIST] });
 
     const [job] = await database.query(`SELECT limit_keys, limit_maxes, blocked_on, rate_limits FROM ${tablePrefix}jobs`);
 
@@ -218,9 +223,9 @@ test('a database of 6.0: 0007 adds the rate keys in µs and the rate limits of t
     const sqlane = sqlaneOf(tablePrefix);
     const api = defineRateLimit({ name: 'api', max: 10, per: '1s', burst: 2 });
 
-    await migrateAllBut(tablePrefix, RATE_LIMITS.length, SIX_ROWS_SQL[database.family](tablePrefix));
+    await migrateAllBut(tablePrefix, RATE_LIMITS.length + JOB_LIST.length, SIX_ROWS_SQL[database.family](tablePrefix));
 
-    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: RATE_LIMITS });
+    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [...RATE_LIMITS, ...JOB_LIST] });
 
     const [job] = await database.query(`SELECT limit_keys, limit_maxes, rate_limits FROM ${tablePrefix}jobs`);
 

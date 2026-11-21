@@ -149,6 +149,12 @@ export function postgresMigrations(p) {
                 `ALTER TABLE ${p}jobs ADD COLUMN IF NOT EXISTS rate_limits jsonb`,
             ],
         },
+        {
+            // sqlane.jobs.list(): the jobs of a name, newest first, by enqueue time then id. Not CONCURRENTLY: a
+            // migration is one transaction, so the build blocks the writes of the table while it runs.
+            id: '0008_job_list',
+            statements: [`CREATE INDEX IF NOT EXISTS ${p}jobs_list ON ${p}jobs (job_name, created_at, id)`],
+        },
     ];
 }
 

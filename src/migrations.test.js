@@ -2,8 +2,8 @@ import { expect, test } from 'vitest';
 import { ConfigError } from './errors.js';
 import { getMigrations, runMigrations } from './migrations.js';
 
-/** The migrations of 6.0, and of the rate limits */
-const SIX = ['0005_concurrency_limits', '0006_concurrency_slots', '0007_rate_limits'];
+/** The migrations of 6.0, of the rate limits and of the lists of jobs */
+const SIX = ['0005_concurrency_limits', '0006_concurrency_slots', '0007_rate_limits', '0008_job_list'];
 
 test.each([
     // No 0003 on MySQL and MariaDB: the ids are matched, never counted
@@ -58,6 +58,16 @@ test.each([
     expect(sql).toMatch(time);
     expect(sql).toMatch(column);
     expect(sql).toMatch(index);
+});
+
+test.each([
+    { dialect: 'mysql', index: /^ALTER TABLE q_jobs ADD KEY q_jobs_list \(job_name, created_at, id\)$/ },
+    { dialect: 'mariadb', index: /^ALTER TABLE q_jobs ADD KEY IF NOT EXISTS q_jobs_list \(job_name, created_at, id\)$/ },
+    { dialect: 'postgres', index: /^CREATE INDEX IF NOT EXISTS q_jobs_list ON q_jobs \(job_name, created_at, id\)$/ },
+])('$dialect: 0008_job_list: an index for the lists of a name, newest first', ({ dialect, index }) => {
+    const migrations = getMigrations({ dialect: /** @type {import('./types.js').Dialect} */ (dialect), tablePrefix: 'q_' });
+
+    expect(migrations.find(({ id }) => id === '0008_job_list')?.statements).toMatchObject([expect.stringMatching(index)]);
 });
 
 /**
