@@ -32,4 +32,7 @@ export async function exactOptionalTypes() {
     });
     await sqlane.jobs.cancel({ jobName: 'build_report', status: undefined, jobIds: undefined }, { strict: undefined });
     await sqlane.jobs.remove({ jobName: 'build_report' }, { connection: undefined, mode: undefined });
+
+    // keyStats: an option set to undefined counts as absent
+    await sqlane.jobs.keyStats({ limit: undefined, type: undefined, orderBy: undefined });
 }

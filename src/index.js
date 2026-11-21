@@ -105,6 +105,9 @@ export { getMigrations } from './migrations.js';
 /** @typedef {import('./types.js').JobStats} JobStats */
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 /** @typedef {import('./types.js').ListJobsOptions} ListJobsOptions */
+/** @typedef {import('./types.js').KeyStats} KeyStats */
+/** @typedef {import('./types.js').KeyStatsOptions} KeyStatsOptions */
+/** @typedef {import('./types.js').KeyStatsPage} KeyStatsPage */
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').Migration} Migration */

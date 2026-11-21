@@ -40,6 +40,9 @@ export type JobSelector = import('./types.js').JobSelector;
 export type JobStats = import('./types.js').JobStats;
 export type JobStatus = import('./types.js').JobStatus;
 export type ListJobsOptions = import('./types.js').ListJobsOptions;
+export type KeyStats = import('./types.js').KeyStats;
+export type KeyStatsOptions = import('./types.js').KeyStatsOptions;
+export type KeyStatsPage = import('./types.js').KeyStatsPage;
 export type Logger = import('./types.js').Logger;
 export type MigrateOptions = import('./types.js').MigrateOptions;
 export type Migration = import('./types.js').Migration;
@@ -131,6 +134,9 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /** @typedef {import('./types.js').JobStats} JobStats */
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 /** @typedef {import('./types.js').ListJobsOptions} ListJobsOptions */
+/** @typedef {import('./types.js').KeyStats} KeyStats */
+/** @typedef {import('./types.js').KeyStatsOptions} KeyStatsOptions */
+/** @typedef {import('./types.js').KeyStatsPage} KeyStatsPage */
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').Migration} Migration */

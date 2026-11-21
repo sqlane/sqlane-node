@@ -18,6 +18,8 @@ import type {
     JobPage,
     JobRecord,
     JobSelector,
+    KeyStatsOptions,
+    KeyStatsPage,
     JobStats,
     ListJobsOptions,
     MigrateOptions,
@@ -29,8 +31,9 @@ import type {
 } from './types.js';
 
 /**
- * The jobs in the database: `sqlane.jobs`. Read them; retry, cancel or remove them in bulk. Before `start()` and after
- * `close()` too. The reads and the batches require the migration `0008_job_list`.
+ * The jobs in the database: `sqlane.jobs`. Read them; retry, cancel or remove them in bulk; see the keys of the global
+ * limits. Before `start()` and after `close()` too. `get`, `list` and the batches require the migration
+ * `0008_job_list`; `keyStats` requires `0007`.
  * @template C The connections that the bulk methods accept as `connection`: those of the adapter.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobs | jobs}
  */
@@ -89,6 +92,17 @@ export interface SqlaneJobs<C = any> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsremove | jobs.remove}
      */
     remove(selector: JobSelector, options?: BulkOptions<C>): Promise<BulkResult>;
+
+    /**
+     * The keys of the global limits with blocked jobs, or with held or lingering slots, worst first: for alerts on a
+     * blocked chain (`orderBy: 'blocked'`) or a key held too long (`orderBy: 'held'`). One statement, whose cost grows
+     * with the number of blocked keys: poll it at the pace of an alert.
+     * @param options `limit` (1 to 1000, default 100), `type` (`'concurrency'` or `'rate'`; default: all types),
+     *     `orderBy` (`'blocked'`, the default, or `'held'`).
+     * @returns The keys of the page, and `truncated` when more keys matched.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#key-stats | jobs.keyStats}
+     */
+    keyStats(options?: KeyStatsOptions): Promise<KeyStatsPage>;
 }
 
 /**

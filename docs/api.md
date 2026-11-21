@@ -30,6 +30,7 @@ explains how sqlane works and why.
 - [`getStats`](#getstats)
 - [`jobs`](#jobs)
 - [Retry, cancel and remove](#retry-cancel-and-remove)
+- [Key stats](#key-stats)
 - [`wake`](#wake)
 - [Errors](#errors)
 - [Events](#events)
@@ -870,7 +871,8 @@ not support: the first `migrate()` or `start()` of an instance checks it
 ([server check](adapters.md#the-dialect-and-the-server-check)). If you prefer your own migration tool, use
 [`getMigrations`](#getmigrations) instead.
 
-[`sqlane.jobs`](#jobs) requires the migration `0008_job_list`, an index of the jobs. Its build waits for the writes of
+`get`, `list` and the batches of [`sqlane.jobs`](#jobs) require the migration `0008_job_list`, an index of the jobs;
+`keyStats` requires `0007_rate_limits`. The build of the index waits for the writes of
 the jobs, and they wait for it: on a large PostgreSQL table, build the index `CONCURRENTLY` first, as the
 [design](design.md#migrations) describes.
 
@@ -931,7 +933,8 @@ of the enqueues.
 ## `jobs`
 
 `sqlane.jobs` acts on the jobs in the database. It reads them, one job by its id or the jobs of a name a page at a time,
-and it retries, cancels and removes them in bulk. It is a frozen object of the instance.
+it retries, cancels and removes them in bulk, and it shows the keys of the global limits. It is a frozen object of the
+instance.
 
 ```ts
 sqlane.jobs.get<P = any>(jobId: string): Promise<JobRecord<P> | null>
@@ -939,10 +942,11 @@ sqlane.jobs.list<J extends JobDefinition | string>(filter: JobFilter<J>, options
 sqlane.jobs.retry(selector: JobSelector, options?: RetryOptions<C>): Promise<BulkResult>
 sqlane.jobs.cancel(selector: JobSelector, options?: BulkOptions<C>): Promise<BulkResult>
 sqlane.jobs.remove(selector: JobSelector, options?: BulkOptions<C>): Promise<BulkResult>
+sqlane.jobs.keyStats(options?: KeyStatsOptions): Promise<KeyStatsPage>
 ```
 
-The bulk methods are described in [Retry, cancel and remove](#retry-cancel-and-remove). The rest of this section is
-about the reads.
+The bulk methods are described in [Retry, cancel and remove](#retry-cancel-and-remove), and `keyStats` in
+[Key stats](#key-stats). The rest of this section is about the reads.
 
 - The reads are plain reads on the queue's pool, without locks. They never take a connection of your app.
 - They work before `start()`, after `close()`, and in a process that handles no job. `unknownJobs` does not apply to
@@ -1056,7 +1060,7 @@ A `JobRecord` is a job as the database has it. Every field is always present, ex
 | `lastError`               | `JobError` or `null`                                                      | The last error written to the job, kept when it later completes: of a failed attempt, of a stall (`StalledError`), of a `RateLimitedError` on a global rate key of the job, or of `jobs.cancel` (`JobCancelledError`). Not by a block when it is claimed, nor by a wait on a local rate limit.                                                                                                                                                                                                         |
 | `globalConcurrencyLimits` | `readonly { key, max }[]`                                                 | Its keys, sorted, with their maxes, as in `JobInfo`. `key` is the full key: `<limit>` or `<limit>:<value>`.                                                                                                                                                                                                                                                                                                                                                                                            |
 | `globalRateLimits`        | `readonly { limit, key, max, per, burst, cost }[]`                        | Its rate limits: the limit name and its key value, `null` for the limit itself, as in the `rate_limited` event. `per` is in milliseconds. Sorted by the full rate key, in byte order.                                                                                                                                                                                                                                                                                                                  |
-| `blockedOn`               | `{ type: 'concurrency', key }`, `{ type: 'rate', limit, key }`, or `null` | What a blocked job waits for: a concurrency key, the full key, or a rate limit and its key value. `null` when the job is not blocked.                                                                                                                                                                                                                                                                                                                                                                  |
+| `blockedOn`               | `{ type: 'concurrency', key }`, `{ type: 'rate', limit, key }`, or `null` | What a blocked job waits for: a concurrency key, the full key, or a rate limit and its key value. `null` when the job is not blocked. Its `type` may gain members in a minor: a `switch` needs a `default`.                                                                                                                                                                                                                                                                                            |
 | `failureJob`              | `string` or `null`                                                        | The name of its failure job, fixed at enqueue.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `payload`                 | `P`, optional                                                             | As JSON gives it back. A JSON `null` payload is present, as `null`. Absent when not asked for, or when the database holds no payload for the job: after its completion, briefly while its enqueue writes it, or after a failure with `MissingPayloadError`.                                                                                                                                                                                                                                            |
 
@@ -1204,6 +1208,87 @@ handle unknown ones.
 - `retry` and `remove` emit no event.
 
 The types `JobSelector`, `BulkOptions`, `RetryOptions` and `BulkResult` are exported from `@sqlane/core`.
+
+## Key stats
+
+`jobs.keyStats` lists the keys of the global limits that have blocked jobs, or held or lingering slots, worst first. It
+answers two alerts: a blocked chain (jobs that wait on a key for too long), and a key held too long.
+
+```ts
+sqlane.jobs.keyStats(options?: KeyStatsOptions): Promise<KeyStatsPage>
+```
+
+| Option    | Type                        | Default     | Description                                                                                    |
+| --------- | --------------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| `limit`   | integer                     | `100`       | The most keys of the page: 1 to 1000.                                                          |
+| `type`    | `'concurrency'` or `'rate'` | All types   | Only the keys of this type.                                                                    |
+| `orderBy` | `'blocked'` or `'held'`     | `'blocked'` | The order of the keys (below). `'held'` rejects with `type: 'rate'`: a rate key holds no slot. |
+
+It resolves to `{ keys, truncated }`: at most `limit` keys, and `truncated` when more keys matched. There is no cursor:
+it is a view of the worst keys, not a full list.
+
+A key of the page is one of two types. `type` may gain members in a minor, for example for the keys of a later feature:
+a `switch` on it needs a `default`.
+
+| Field (`type: 'concurrency'`) | Type             | Description                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `key`                         | `string`         | The full key, as in `JobRecord.globalConcurrencyLimits`.                                                                                                                                                                                                                                                                                                 |
+| `max`                         | `number \| null` | The max of the oldest blocked job, which the unblock uses; else the max of the job of the newest slot (by the time it was taken, then job id). `null` when neither exists, or when that job no longer carries the key (a lingering slot's job may be gone, and its id reused). Jobs of one key may carry different maxes after a deploy that changed it. |
+| `held`                        | `number`         | The slots of runs: also of a run whose process died, until stall recovery frees or lingers it, and orphan slots, until the recovery sweep deletes them.                                                                                                                                                                                                  |
+| `lingering`                   | `number`         | The slots that linger after a stall or a release on close, and whose linger has not ended. An ended linger counts nowhere.                                                                                                                                                                                                                               |
+| `blocked`                     | `number`         | The jobs blocked on the key, up to 1000.                                                                                                                                                                                                                                                                                                                 |
+| `blockedTruncated`            | `boolean`        | More than 1000 jobs are blocked on the key.                                                                                                                                                                                                                                                                                                              |
+| `oldestBlockedAgeMs`          | `number \| null` | `now − runAt` of the oldest blocked job. `null`: no job is blocked.                                                                                                                                                                                                                                                                                      |
+| `oldestHeldAgeMs`             | `number \| null` | The age of the oldest held or lingering slot, from the time it was taken: for a held slot, the `startedAt` of its run (the claim writes both from one time). `null`: no slot.                                                                                                                                                                            |
+
+| Field (`type: 'rate'`) | Type                       | Description                                                                                                  |
+| ---------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `limit`, `key`         | `string`, `string \| null` | The rate limit, and its key value (`null` for the limit itself), as in `JobRecord.globalRateLimits`.         |
+| `blocked`              | `number`                   | The jobs blocked on the key, up to 1000.                                                                     |
+| `blockedTruncated`     | `boolean`                  | More than 1000 jobs are blocked on the key.                                                                  |
+| `oldestBlockedAgeMs`   | `number`                   | `now − runAt` of the oldest blocked job.                                                                     |
+| `nextStartInMs`        | `number`                   | When the oldest blocked job may start, by its own settings and the debt of the key: 0 when it may start now. |
+
+**Which keys.** A concurrency key is listed while it has a blocked job, or a held or lingering slot. A rate key is listed
+only while jobs are blocked on it: its settings live in each job, so a key without a blocked job has none to compute a
+next start from.
+
+**Order.** `orderBy: 'blocked'` orders by `oldestBlockedAgeMs` descending, nulls last: for a blocked chain.
+`orderBy: 'held'` has three tiers: the concurrency keys with held or lingering slots, by `oldestHeldAgeMs` descending;
+then the other concurrency keys, by `oldestBlockedAgeMs` descending; then the rate keys, and any later type, by
+`oldestBlockedAgeMs` descending: for a key held too long. Ties go by the stored key in byte order, `@<limit>[:<key>]`
+for a rate key.
+
+**Times.** All the ages come from one database time, at the start of the statement, in integer milliseconds (±1 between
+databases).
+
+**Alerts.**
+
+- A blocked chain: a key whose `oldestBlockedAgeMs` grows.
+- A key held too long: a key whose `oldestHeldAgeMs` grows, with `orderBy: 'held'`; `lingering` slots point to a
+  stalled or released run.
+- A missed unblock: free room (`max − held − lingering > 0`) on a key with blocked jobs, for longer than the recovery
+  interval (30 s) plus a margin, while the names of the key have no due pending jobs (`getStats().oldestDueAgeMs` null
+  or small). Shorter, it is normal (an ended linger, a race), and the recovery sweep repairs it. With due pending jobs,
+  it means that no worker claims them.
+- A missed timer of a rate key: blocked jobs with `nextStartInMs` 0 for longer than the recovery interval plus a margin,
+  on the same condition. The sweep repairs it too.
+
+**What it does not show.**
+
+- The due jobs that no claim has seen yet: a job becomes blocked only when a claim finds its key full, so a name that no
+  process handles shows nothing here. See `getStats().oldestDueAgeMs`.
+- A job that waits on several keys counts only on the key it is blocked on.
+- The local limits, and the timers and floors that each process keeps in memory.
+
+**Cost.** Ranking the keys reads the head of each blocked key and the slot rows: its cost grows with the number of
+distinct blocked keys, whatever `limit` is. The details read at most about `limit × 2001` index entries (the probe of the cap and the count), plus a few lookups per key (its head job, the job of its newest slot, its rate row). Poll it at the pace of
+an alert, not of every metrics scrape.
+
+`keyStats` is one plain read on the queue's pool, without locks. It works before `start()` and after `close()`, and
+needs the migrations up to `0007_rate_limits`. It rejects with an `InvalidOptionsError` for an unknown option (also set
+to `undefined`), or a bad `limit`, `type` or `orderBy`; a known option set to `undefined` counts as absent. The types
+`KeyStats`, `KeyStatsOptions` and `KeyStatsPage` are exported from `@sqlane/core`.
 
 ## `wake`
 

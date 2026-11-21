@@ -850,7 +850,8 @@ export type JobRecord<P = any> = {
         cost: number;
     }[];
     /**
-     * What a blocked job waits for. Null when it is not blocked.
+     * What a blocked job waits for. Null when it is not blocked. Its `type` may
+     * gain members in a minor.
      */
     blockedOn: BlockedOn | null;
     /**
@@ -960,6 +961,51 @@ export type BulkResult = {
      * order of their first appearance. Empty for a filter.
      */
     ignoredJobs: BulkIgnoredJob[];
+};
+export type KeyStatsOptions = {
+    /**
+     * The most keys of the page: 1 to 1000. Default: 100.
+     */
+    limit?: number | undefined;
+    /**
+     * Only the keys of this type. Default: all types.
+     */
+    type?: 'concurrency' | 'rate' | undefined;
+    /**
+     * `blocked` (default): by the oldest blocked job. `held`: the
+     * concurrency keys with held or lingering slots by their oldest slot, then the other concurrency keys, then the
+     * rate keys, by their oldest blocked job. `held` rejects with `type: 'rate'`.
+     */
+    orderBy?: 'blocked' | 'held' | undefined;
+};
+export type KeyStats = {
+    type: 'concurrency';
+    key: string;
+    max: number | null;
+    held: number;
+    lingering: number;
+    blocked: number;
+    blockedTruncated: boolean;
+    oldestBlockedAgeMs: number | null;
+    oldestHeldAgeMs: number | null;
+} | {
+    type: 'rate';
+    limit: string;
+    key: string | null;
+    blocked: number;
+    blockedTruncated: boolean;
+    oldestBlockedAgeMs: number;
+    nextStartInMs: number;
+};
+export type KeyStatsPage = {
+    /**
+     * Worst first, by `orderBy`; ties by the stored key in byte order.
+     */
+    keys: KeyStats[];
+    /**
+     * More keys matched than `limit`.
+     */
+    truncated: boolean;
 };
 export type FailedJobPayload = {
     /**
@@ -1407,7 +1453,8 @@ export type Migration = {
  * @typedef {'pending' | 'blocked' | 'running' | 'completed' | 'failed'} JobStatus
  */
 /**
- * What a blocked job waits for: a concurrency key (the full key), or a rate limit and its key value.
+ * What a blocked job waits for: a concurrency key (the full key), or a rate limit and its key value. `type` may gain
+ * members in a minor: a `switch` needs a `default`.
  * @typedef {{ type: 'concurrency', key: string } | { type: 'rate', limit: string, key: string | null }} BlockedOn
  */
 /**
@@ -1439,7 +1486,8 @@ export type Migration = {
  * @property {readonly { limit: string, key: string | null, max: number, per: number, burst: number, cost: number }[]}
  *     globalRateLimits Its rate limits: the limit name and the key value (null: the limit itself), `per` in ms; sorted
  *     by the full rate key.
- * @property {BlockedOn | null} blockedOn What a blocked job waits for. Null when it is not blocked.
+ * @property {BlockedOn | null} blockedOn What a blocked job waits for. Null when it is not blocked. Its `type` may
+ *     gain members in a minor.
  * @property {string | null} failureJob The name of its failure job.
  * @property {P} [payload] Absent when not asked for, or when the database holds no payload for the job.
  */
@@ -1506,6 +1554,48 @@ export type Migration = {
  * @property {string[]} [affectedJobIds] Their ids, in no order: with `includeAffectedJobIds`.
  * @property {BulkIgnoredJob[]} ignoredJobs With `jobIds`: one entry per distinct id that it did not change, in the
  *     order of their first appearance. Empty for a filter.
+ */
+/**
+ * The options of `sqlane.jobs.keyStats()`.
+ * @typedef {object} KeyStatsOptions
+ * @property {number | undefined} [limit] The most keys of the page: 1 to 1000. Default: 100.
+ * @property {'concurrency' | 'rate' | undefined} [type] Only the keys of this type. Default: all types.
+ * @property {'blocked' | 'held' | undefined} [orderBy] `blocked` (default): by the oldest blocked job. `held`: the
+ *     concurrency keys with held or lingering slots by their oldest slot, then the other concurrency keys, then the
+ *     rate keys, by their oldest blocked job. `held` rejects with `type: 'rate'`.
+ */
+/**
+ * A key of `sqlane.jobs.keyStats()`, by `type`. `type` may gain members in a minor: a `switch` needs a `default`.
+ * @typedef {{
+ *     type: 'concurrency',
+ *     key: string,
+ *     max: number | null,
+ *     held: number,
+ *     lingering: number,
+ *     blocked: number,
+ *     blockedTruncated: boolean,
+ *     oldestBlockedAgeMs: number | null,
+ *     oldestHeldAgeMs: number | null,
+ * } | {
+ *     type: 'rate',
+ *     limit: string,
+ *     key: string | null,
+ *     blocked: number,
+ *     blockedTruncated: boolean,
+ *     oldestBlockedAgeMs: number,
+ *     nextStartInMs: number,
+ * }} KeyStats A concurrency key: the full key; the max of its oldest blocked job, else of the job of its newest slot
+ *     (null: neither, or that job no longer carries the key); its slots held by runs (orphans too, until the sweep) and
+ *     its lingering slots; its blocked jobs, up to 1000 (`blockedTruncated`: more); the age of its oldest blocked job
+ *     (`now − runAt`) and of its oldest held or lingering slot (from when it was taken: a run's `startedAt`). A rate
+ *     key: its limit and key (null for the limit itself), its blocked jobs, the age of the oldest, and the ms until it
+ *     may start, by its own settings (0: now).
+ */
+/**
+ * A page of `sqlane.jobs.keyStats()`.
+ * @typedef {object} KeyStatsPage
+ * @property {KeyStats[]} keys Worst first, by `orderBy`; ties by the stored key in byte order.
+ * @property {boolean} truncated More keys matched than `limit`.
  */
 /**
  * The payload of a failure job.

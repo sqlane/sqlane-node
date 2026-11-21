@@ -192,6 +192,35 @@ export function createJobsApi(store, bulk) {
                 nextCursor: last && encodeCursor({ jobName, statuses, ...last }),
             };
         },
+        keyStats: async (/** @type {import('./types.js').KeyStatsOptions | undefined} */ options = {}) => {
+            const where = 'jobs.keyStats';
+            const { limit = DEFAULT_LIMIT, type, orderBy = 'blocked' } = checkObject(
+                options,
+                ['limit', 'type', 'orderBy'],
+                'options',
+                { where, ErrorClass: InvalidOptionsError },
+            );
+
+            if (!Number.isSafeInteger(limit) || /** @type {number} */ (limit) < 1
+                || /** @type {number} */ (limit) > MAX_LIMIT) {
+                throw new InvalidOptionsError(`${where}: "limit" must be an integer from 1 to ${MAX_LIMIT}, got ${
+                    shown(limit)}`);
+            }
+
+            if (type !== undefined && type !== 'concurrency' && type !== 'rate') {
+                throw new InvalidOptionsError(`${where}: "type" must be 'concurrency' or 'rate', got ${shown(type)}`);
+            }
+
+            if (orderBy !== 'blocked' && orderBy !== 'held') {
+                throw new InvalidOptionsError(`${where}: "orderBy" must be 'blocked' or 'held', got ${shown(orderBy)}`);
+            }
+
+            if (type === 'rate' && orderBy === 'held') {
+                throw new InvalidOptionsError(`${where}: rate keys hold no slot: "orderBy: 'held'" needs another type`);
+            }
+
+            return store.keyStats({ limit: /** @type {number} */ (limit), type: type ?? null, orderBy });
+        },
         retry: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('retry', selector, options),
         cancel: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('cancel', selector, options),
         remove: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('remove', selector, options),

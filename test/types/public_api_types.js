@@ -25,6 +25,13 @@ import { prismaAdapter } from '@sqlane/core/adapter-prisma';
 import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
 import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm';
 
+/**
+ * @returns {Promise<any>} A method of a mock.
+ */
+async function anyMethod() {
+    return null;
+}
+
 /** The type tests: never called. */
 export async function publicApiTypes() {
     const mysqlPool = mysql.createPool({});
@@ -461,6 +468,62 @@ export async function publicApiTypes() {
         .toEqualTypeOf(/** @type {'not_found' | 'status' | 'no_payload'} */ ('status'));
     await sqlane.jobs.cancel({ jobName: job, status: 'blocked' }, { mode: 'batches' });
     await sqlane.jobs.remove({ jobName: 'build_report' }, { connection: mysqlPool, strict: false });
+
+    // keyStats: a page of keys, by type
+    const keyPage = await sqlane.jobs.keyStats({ limit: 10, type: 'concurrency', orderBy: 'held' });
+
+    expectTypeOf(keyPage.truncated).toBeBoolean();
+
+    for (const key of keyPage.keys) {
+        switch (key.type) {
+            case 'concurrency':
+                expectTypeOf(key.key).toBeString();
+                expectTypeOf(key.max).toEqualTypeOf(/** @type {number | null} */ (null));
+                expectTypeOf(key.oldestHeldAgeMs).toEqualTypeOf(/** @type {number | null} */ (null));
+                break;
+            case 'rate':
+                expectTypeOf(key.key).toEqualTypeOf(/** @type {string | null} */ (null));
+                expectTypeOf(key.nextStartInMs).toBeNumber();
+                expectTypeOf(key.oldestBlockedAgeMs).toBeNumber();
+                break;
+            default:
+                break;
+        }
+    }
+
+    // @ts-expect-error not a type of key
+    await sqlane.jobs.keyStats({ type: 'mutex' });
+    // @ts-expect-error not an order
+    await sqlane.jobs.keyStats({ orderBy: 'age' });
+    /** @type {import('@sqlane/core').KeyStatsOptions} */
+    const keyStatsOptions = { limit: 5 };
+
+    void keyStatsOptions;
+
+    // KeyStats is the union of the contract, exactly
+    expectTypeOf(/** @type {import('@sqlane/core').KeyStats} */ (/** @type {any} */ (null))).toEqualTypeOf(
+        /** @type {{
+         *     type: 'concurrency', key: string, max: number | null, held: number, lingering: number, blocked: number,
+         *     blockedTruncated: boolean, oldestBlockedAgeMs: number | null, oldestHeldAgeMs: number | null,
+         * } | {
+         *     type: 'rate', limit: string, key: string | null, blocked: number, blockedTruncated: boolean,
+         *     oldestBlockedAgeMs: number, nextStartInMs: number,
+         * }} */ (/** @type {any} */ (null)),
+    );
+
+    // A mock of SqlaneJobs needs keyStats
+    /** @type {import('@sqlane/core').SqlaneJobs} */
+    // @ts-expect-error keyStats is missing
+    const mockWithoutKeyStats = {
+        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod,
+    };
+    /** @type {import('@sqlane/core').SqlaneJobs} */
+    const mock = {
+        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod, keyStats: anyMethod,
+    };
+
+    void mockWithoutKeyStats;
+    void mock;
     /** @type {import('@sqlane/core').JobSelector} */
     const selector = { jobIds: ['a'] };
     /** @type {import('@sqlane/core').BulkOptions} */

@@ -881,6 +881,15 @@ The table lists each guarantee and the mechanism that keeps it.
   the age of the oldest due job. A stuck job is a `running` job with a `timed_out_at` time: it timed out, and its
   handler has not settled yet. A blocked job, on a full key or on a rate key, counts as pending. These numbers support
   alerts such as "the queue is stuck". OpenTelemetry support may come later, as a separate package.
+- **The start delay.** `JobInfo` and the `claimed` event carry the due time (`runAt`, the job's place in line) and the
+  start time (`startedAt`) of a run, both from the database clock: the start delay is `startedAt − runAt`.
+- **Keys.** `sqlane.jobs.keyStats()` lists the keys of the global limits with blocked jobs, or held or lingering slots,
+  worst first, in one statement on the queue's pool. The blocked keys come from a loose scan of the index of the
+  blocked jobs: one index entry per key (a recursive CTE on PostgreSQL; `GROUP BY status, blocked_on` with `MIN(run_at)`
+  on MySQL and MariaDB). The slots are aggregated per key. The details of the keys of the page are scalar subqueries:
+  the count of blocked jobs (stopped at 1000 by a probe with `OFFSET 1000`), the keys, maxes and rate settings of the
+  head job, the job of the newest slot, and the debt of a rate key. The max of a key and the next start of a rate key are
+  computed in JS from the head's stored settings, as the unblock computes them. No index of its own.
 
 ## Supported versions
 
