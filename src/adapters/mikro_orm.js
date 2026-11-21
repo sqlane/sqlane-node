@@ -258,6 +258,24 @@ export function mikroOrmAdapter(em, options) {
 
             return (await getInner()).inTransaction(await targetOf(connection, transaction), func);
         },
+        // An EntityManager outside a transaction: a READ COMMITTED transaction of sqlane's own on its client. Decided
+        // at once: the transaction context is read in the async context of the caller
+        poolTransaction: (connection, func) => {
+            if (transactionOf(connection)) {
+                return null;
+            }
+
+            return (async () => {
+                const delegate = await getInner();
+                const running = delegate.poolTransaction?.(await clientOf(connection, major), func);
+
+                if (!running) {
+                    throw new Error('mikroOrmAdapter: no transaction of its own on the client of the EntityManager');
+                }
+
+                return running;
+            })();
+        },
         afterCommit: (connection, onCommit) => {
             const transaction = transactionOf(connection);
 

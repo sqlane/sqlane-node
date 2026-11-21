@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from '
 import { connectTestDatabase } from '../support/test_database.js';
 import { kyselyAdapter } from '../../src/adapters/kysely.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
-import { readsAcrossCommit } from './helpers/isolation.js';
+import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/adapters/kysely.js').KyselyConnection} KyselyConnection */
@@ -43,10 +43,10 @@ afterAll(async () => {
  * A Kysely instance on the test database, with the CamelCasePlugin: sqlane must not see its renamed columns.
  * @param {KyselyModule} k
  * @param {boolean} [postgresJs] PostgreSQL through kysely-postgres-js, not pg.
+ * @param {string} [url] Default: the test database.
  * @returns {import('kysely').Kysely<any>}
  */
-function createDb(k, postgresJs = false) {
-    const url = inject('databaseUrl');
+function createDb(k, postgresJs = false, url = inject('databaseUrl')) {
     /** @type {import('kysely').Dialect} */
     let dialect;
 
@@ -140,6 +140,20 @@ describe.each([
     test('the queue transaction is READ COMMITTED', async () => {
         await expect(readsAcrossCommit(kyselyAdapter(queueDb, { dialect: inject('databaseDialect') }), database))
             .resolves.toStrictEqual([0, 1]);
+    });
+
+    test('poolTransaction: a transaction of its own at READ COMMITTED on a pool; null in a transaction', async () => {
+        const adapter = kyselyAdapter(queueDb, { dialect: inject('databaseDialect') });
+
+        // Destroyed with the others, after the tests
+        await expect(poolTransactionIsolation(adapter, database, db, async url => ({
+            pool: createDb(k, postgresJs, url),
+            close: async () => {},
+        })))
+            .resolves.toStrictEqual(readCommitted(database));
+        await db.transaction().execute(async (trx) => {
+            expect(adapter.poolTransaction?.(trx, async () => 1)).toBeNull();
+        });
     });
 
     test('enqueue in a transaction: the job commits with it, and rolls back with it', async () => {

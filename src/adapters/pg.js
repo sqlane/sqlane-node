@@ -165,6 +165,10 @@ export function pgAdapter(pool, options) {
         inTransaction: (connection, func) => (isPool(connection)
             ? inOwnTransaction(connection, toExecutor, func)
             : func(toExecutor(connection))),
+        // A pool: a READ COMMITTED transaction of sqlane's own on it
+        poolTransaction: (connection, func) => (isPool(connection)
+            ? inOwnTransaction(connection, toExecutor, func, true)
+            : null),
         inStatement: (connection, func) => func(toExecutor(connection)),
         // A pool: the enqueue ran in a transaction of its own, committed when it returned
         afterCommit: (connection, onCommit) => {

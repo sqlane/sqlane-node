@@ -6,7 +6,7 @@ import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
 import { dialectOptions } from './helpers/test_adapter.js';
 import { knexAdapter } from '../../src/adapters/knex.js';
-import { readsAcrossCommit } from './helpers/isolation.js';
+import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { preparedAfterAJob, SQLANE_STATEMENTS_SQL } from './helpers/prepared_statements.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
@@ -47,11 +47,14 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
     /** @type {Sqlane[]} */
     let instances = [];
 
-    /** @returns {import('knex').Knex} */
-    function createKnex() {
+    /**
+     * @param {string} [url] Default: the test database.
+     * @returns {import('knex').Knex}
+     */
+    function createKnex(url = inject('databaseUrl')) {
         return knexLib({
             client,
-            connection: inject('databaseUrl'),
+            connection: url,
             pool: { min: 0, max: 4 },
         });
     }
@@ -121,6 +124,20 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
     test('the queue transaction is READ COMMITTED', async () => {
         await expect(readsAcrossCommit(knexAdapter(queueKnex, adapterOptions), database))
             .resolves.toStrictEqual([0, 1]);
+    });
+
+    test('poolTransaction: a transaction of its own at READ COMMITTED on a pool; null in a transaction', async () => {
+        const adapter = knexAdapter(queueKnex, adapterOptions);
+
+        await expect(poolTransactionIsolation(adapter, database, knex, async (url) => {
+            const other = createKnex(url);
+
+            return { pool: other, close: () => other.destroy() };
+        }))
+            .resolves.toStrictEqual(readCommitted(database));
+        await knex.transaction(async (trx) => {
+            expect(adapter.poolTransaction?.(trx, async () => 1)).toBeNull();
+        });
     });
 
     test('enqueue in a knex transaction: the job commits with it, and rolls back with it', async () => {

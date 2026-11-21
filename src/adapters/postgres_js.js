@@ -117,6 +117,13 @@ export function postgresJsAdapter(sql, options) {
         inTransaction: (connection, func) => (isPool(connection)
             ? /** @type {NonNullable<PostgresJsSql['begin']>} */ (connection.begin)('', tx => func(executorOf(tx)))
             : func(executorOf(connection))),
+        // The pool: a READ COMMITTED transaction of sqlane's own on it
+        poolTransaction: (connection, func) => (isPool(connection)
+            ? /** @type {NonNullable<PostgresJsSql['begin']>} */ (connection.begin)(
+                    'isolation level read committed',
+                    tx => func(executorOf(tx)),
+                )
+            : null),
         inStatement: (connection, func) => func(executorOf(connection)),
         // The pool: the enqueue ran in a transaction of its own, committed when it returned
         afterCommit: (connection, onCommit) => {

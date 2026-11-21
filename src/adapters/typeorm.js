@@ -205,6 +205,14 @@ export function typeOrmAdapter(dataSource, options) {
                         (/** @type {ManagerLike} */ manager) => func(executorOf(manager.queryRunner)),
                     );
         },
+        // A DataSource, an EntityManager or a QueryRunner outside a transaction: a READ COMMITTED transaction of
+        // sqlane's own on its DataSource
+        poolTransaction: (connection, func) => (transactionRunnerOf(connection)
+            ? null
+            : dataSourceOf(connection).transaction(
+                    'READ COMMITTED',
+                    (/** @type {ManagerLike} */ manager) => func(executorOf(manager.queryRunner)),
+                )),
         afterCommit: (connection, onCommit) => {
             const runner = transactionRunnerOf(connection);
 

@@ -13,7 +13,7 @@ import { connectTestDatabase } from '../support/test_database.js';
 import { dialectOptions } from './helpers/test_adapter.js';
 import { drizzleAdapter } from '../../src/adapters/drizzle.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
-import { readsAcrossCommit } from './helpers/isolation.js';
+import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/adapters/drizzle.js').DrizzleConnection} DrizzleConnection */
@@ -47,10 +47,10 @@ afterAll(async () => {
  * A Drizzle database on a pool of its own.
  * @param {{ mysql: DrizzleFactory, postgres: DrizzleFactory }} factories
  * @param {boolean} postgresJs PostgreSQL through postgres.js, not node-postgres.
+ * @param {string} [url] Default: the test database.
  * @returns {DrizzleConnection}
  */
-function createDb(factories, postgresJs) {
-    const url = inject('databaseUrl');
+function createDb(factories, postgresJs, url = inject('databaseUrl')) {
     const isMysql = inject('databaseDialect') !== 'postgres';
     if (isMysql) {
         const pool = createPool({ uri: url, connectionLimit: 4 });
@@ -151,6 +151,20 @@ describe.each([
     test('the queue transaction is READ COMMITTED', async () => {
         await expect(readsAcrossCommit(drizzleAdapter(queueDb, dialectOptions()), database))
             .resolves.toStrictEqual([0, 1]);
+    });
+
+    test('poolTransaction: a transaction of its own at READ COMMITTED on a pool; null in a transaction', async () => {
+        const adapter = drizzleAdapter(queueDb, dialectOptions());
+
+        // Ended with the others, after the tests
+        await expect(poolTransactionIsolation(adapter, database, db, async url => ({
+            pool: createDb(/** @type {any} */ (factories), postgresJs, url),
+            close: async () => {},
+        })))
+            .resolves.toStrictEqual(readCommitted(database));
+        await db.transaction(async (/** @type {any} */ tx) => {
+            expect(adapter.poolTransaction?.(tx, async () => 1)).toBeNull();
+        });
     });
 
     test('enqueue in a transaction: the job commits with it, and rolls back with it', async () => {

@@ -7,7 +7,7 @@ import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
 import { prismaAdapter } from '../../src/adapters/prisma.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
-import { readsAcrossCommit } from './helpers/isolation.js';
+import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/adapters/prisma.js').PrismaClientLike} PrismaClientLike */
@@ -26,8 +26,11 @@ let prefixCount = 0;
 /** @type {Sqlane[]} */
 let instances = [];
 
-/** @returns {Promise<any>} A Prisma client of the generated client of the dialect. */
-async function createPrisma() {
+/**
+ * @param {string} [connectionUrl] Default: the test database.
+ * @returns {Promise<any>} A Prisma client of the generated client of the dialect.
+ */
+async function createPrisma(connectionUrl = inject('databaseUrl')) {
     // MariaDB: the client of the mysql provider
     const provider = dialect === 'postgres' ? 'postgres' : 'mysql';
     const clientPath = new URL(`../prisma/${provider}/generated/client.ts`, import.meta.url);
@@ -37,7 +40,7 @@ async function createPrisma() {
     }
 
     const { PrismaClient } = await import(clientPath.href);
-    const url = new URL(inject('databaseUrl'));
+    const url = new URL(connectionUrl);
     const adapter = dialect !== 'postgres'
         ? new PrismaMariaDb({
                 host: url.hostname,
@@ -142,6 +145,19 @@ test('sqlane.jobs: get and list through the adapter', async () => {
 
 test('the queue transaction is READ COMMITTED', async () => {
     await expect(readsAcrossCommit(prismaAdapter(queuePrisma, { dialect }), database)).resolves.toStrictEqual([0, 1]);
+});
+
+test('poolTransaction: a transaction of its own at READ COMMITTED on a client; null in a transaction', async () => {
+    const adapter = prismaAdapter(queuePrisma, { dialect });
+
+    await expect(poolTransactionIsolation(adapter, database, prisma, async (url) => {
+        const other = await createPrisma(url);
+
+        return { pool: other, close: () => other.$disconnect() };
+    })).resolves.toStrictEqual(readCommitted(database));
+    await prisma.$transaction(async (/** @type {any} */ tx) => {
+        expect(adapter.poolTransaction?.(tx, async () => 1)).toBeNull();
+    });
 });
 
 test('enqueue in an interactive transaction: the job commits with it, and rolls back with it', async () => {

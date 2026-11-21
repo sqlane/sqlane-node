@@ -1,5 +1,5 @@
 export type DrizzleDatabase = {
-    transaction: (func: (tx: any) => Promise<any>) => Promise<any>;
+    transaction: (func: (tx: any) => Promise<any>, config?: any) => Promise<any>;
 };
 export type DrizzleConnection = DrizzleDatabase;
 export type DrizzleAdapterOptions = {

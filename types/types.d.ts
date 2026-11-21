@@ -549,6 +549,13 @@ export type Adapter<C> = {
      */
     inStatement?: <T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T>;
     /**
+     * Used by sqlane, by the bulk methods of `sqlane.jobs`: a pool (or an ORM instance outside a transaction) → func
+     * in a READ COMMITTED transaction of sqlane's own on it, decided synchronously; a connection or a client in a
+     * transaction → `null`. Without it, a pool given as `connection` runs as a caller's connection, through
+     * `inTransaction`.
+     */
+    poolTransaction?: <T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T> | null;
+    /**
      * Used by sqlane, after an enqueue on the
      * connection: calls onCommit once its transaction commits (at once when it has committed: a pool), never when it
      * rolls back. Returns false when the adapter cannot tell (a connection in the caller's transaction): sqlane then
@@ -1216,6 +1223,11 @@ export type Migration = {
  * @property {<T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T>} [inStatement] Used by sqlane,
  *     PostgreSQL: runs func, which sends one statement: a pool → on the pool, outside a transaction (the statement is
  *     atomic); a connection or a client → on it, in the caller's transaction. Without it: `inTransaction`.
+ * @property {<T>(connection: C, func: (executor: Executor) => Promise<T>) => Promise<T> | null} [poolTransaction]
+ *     Used by sqlane, by the bulk methods of `sqlane.jobs`: a pool (or an ORM instance outside a transaction) → func
+ *     in a READ COMMITTED transaction of sqlane's own on it, decided synchronously; a connection or a client in a
+ *     transaction → `null`. Without it, a pool given as `connection` runs as a caller's connection, through
+ *     `inTransaction`.
  * @property {(connection: C, onCommit: () => void) => boolean} [afterCommit] Used by sqlane, after an enqueue on the
  *     connection: calls onCommit once its transaction commits (at once when it has committed: a pool), never when it
  *     rolls back. Returns false when the adapter cannot tell (a connection in the caller's transaction): sqlane then

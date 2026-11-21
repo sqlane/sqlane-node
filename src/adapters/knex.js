@@ -200,6 +200,10 @@ export function knexAdapter(knex, options) {
         inTransaction: (connection, func) => (isTransaction(connection)
             ? func(executorOf(connection, toExecutor))
             : connection.transaction(trx => func(executorOf(trx, toExecutor)))),
+        // A knex instance: a READ COMMITTED transaction of sqlane's own on it
+        poolTransaction: (connection, func) => (isTransaction(connection)
+            ? null
+            : connection.transaction(trx => func(executorOf(trx, toExecutor)), { isolationLevel: 'read committed' })),
         afterCommit: (connection, onCommit) => {
             if (!isTransaction(connection)) {
                 // A transaction of its own: committed when the enqueue returned

@@ -97,6 +97,14 @@ export function prismaAdapter(prisma, options) {
             tx => func(executorOf(tx)),
             { maxWait: MAX_WAIT_MS },
         ),
+        // A client: a READ COMMITTED transaction of sqlane's own on it, with the timeout of the queue's transactions
+        poolTransaction: (connection, func) => (TRANSACTION_SCOPE in connection
+            ? null
+            : connection.$transaction(tx => func(executorOf(tx)), {
+                    isolationLevel: 'ReadCommitted',
+                    timeout: QUEUE_TRANSACTION_TIMEOUT_MS,
+                    maxWait: MAX_WAIT_MS,
+                })),
         afterCommit: (connection, onCommit) => {
             if (TRANSACTION_SCOPE in connection) {
                 return false;
