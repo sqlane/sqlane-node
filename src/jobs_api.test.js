@@ -85,7 +85,7 @@ describe('list: unknown fields', () => {
         ['in the filter', { jobName: 'build_report', sort: undefined }, undefined],
         ['in the options', { jobName: 'build_report' }, { order: undefined }],
     ])('an unknown field set to undefined rejects %s', async (_, filter, options) => {
-        const jobs = createJobsApi(/** @type {any} */ ({}));
+        const jobs = createJobsApi(/** @type {any} */ ({}), /** @type {any} */ (null));
 
         await expect(jobs.list(/** @type {any} */ (filter), /** @type {any} */ (options)))
             .rejects.toBeInstanceOf(InvalidOptionsError);
@@ -103,7 +103,7 @@ describe('list: arguments whose message cannot be JSON', () => {
         ['a BigInt status', { jobName: 'build_report', status: 1n }, {}],
         ['a circular list of statuses', { jobName: 'build_report', status: circular }, {}],
     ])('%s rejects with an InvalidOptionsError', async (_, filter, options) => {
-        const jobs = createJobsApi(/** @type {any} */ ({}));
+        const jobs = createJobsApi(/** @type {any} */ ({}), /** @type {any} */ (null));
 
         await expect(jobs.list(/** @type {any} */ (filter), /** @type {any} */ (options)))
             .rejects.toBeInstanceOf(InvalidOptionsError);

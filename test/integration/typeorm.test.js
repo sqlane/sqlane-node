@@ -8,6 +8,7 @@ import { typeOrmAdapter } from '../../src/adapters/typeorm.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { dialectOptions } from './helpers/test_adapter.js';
+import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
@@ -132,6 +133,16 @@ describe.each([
         const { sqlane } = await freshSqlane();
 
         await expect(checkJobsRead(sqlane, dataSource)).resolves.toHaveLength(3);
+    });
+
+    test('sqlane.jobs: retry, cancel and remove through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsBulk(
+            sqlane,
+            dataSource,
+            func => dataSource.transaction((/** @type {any} */ manager) => func(manager)),
+        )).resolves.toBeUndefined();
     });
 
     test('the queue transaction is READ COMMITTED', async () => {

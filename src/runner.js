@@ -76,6 +76,8 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  * @property {() => boolean} isStarted
  * @property {() => boolean} isIdle Neither started, draining nor closed.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
+ * @property {(keys: string[]) => Promise<void>} unblockKeys Makes due the jobs blocked on keys with room, wakes and
+ *     hints them. Never rejects: a failure is an `error` event (operation `unblock`).
  * @property {(name: string) => boolean} canStartNow This process handles the name and has a free slot for it.
  */
 
@@ -632,6 +634,7 @@ export function createRunner({
         isStarted: () => state === 'started',
         isIdle: () => state === 'idle',
         emit,
+        unblockKeys,
         canStartNow: (name) => {
             const entry = registry.getEntry(name);
 

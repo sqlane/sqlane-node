@@ -1,10 +1,11 @@
-import type { CloseOptions, DrainOptions, DrainResult, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, Handler, HandlerPayload, JobDefinition, JobFilter, JobPage, JobRecord, JobStats, ListJobsOptions, MigrateOptions, ScheduleBaseOptions, ScheduleInfo, SchedulePayload, ScheduleTiming } from './types.js';
+import type { BulkOptions, BulkResult, CloseOptions, DrainOptions, DrainResult, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, Handler, HandlerPayload, JobDefinition, JobFilter, JobPage, JobRecord, JobSelector, JobStats, ListJobsOptions, MigrateOptions, RetryOptions, ScheduleBaseOptions, ScheduleInfo, SchedulePayload, ScheduleTiming } from './types.js';
 /**
- * The jobs in the database: `sqlane.jobs`. Plain reads on the queue's pool, before `start()` and after `close()` too.
- * They require the migration `0008_job_list`.
+ * The jobs in the database: `sqlane.jobs`. Read them; retry, cancel or remove them in bulk. Before `start()` and after
+ * `close()` too. The reads and the batches require the migration `0008_job_list`.
+ * @template C The connections that the bulk methods accept as `connection`: those of the adapter.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobs | jobs}
  */
-export interface SqlaneJobs {
+export interface SqlaneJobs<C = any> {
     /**
      * Reads one job, with its payload.
      * @param jobId The full id, as `enqueue` returns it: `<name>:<dedupe key>`, a slot id, or a ULID.
@@ -23,6 +24,35 @@ export interface SqlaneJobs {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobslist | jobs.list}
      */
     list<J extends JobDefinition | string>(filter: JobFilter<J>, options?: ListJobsOptions): Promise<JobPage<HandlerPayload<J>>>;
+    /**
+     * Runs failed jobs again: pending, due now, with the same id and enqueue time. A job without a payload is not
+     * retried.
+     * @param selector `jobIds`, up to 1000 full ids, or a filter: `jobName` and `status` (`'failed'`, the default).
+     * @param options `budget` (`'reset'`, the default: attempts and stalls back to 0; `'one_more'`: one more
+     *     attempt), `connection`, `mode`, `strict`, `includeAffectedJobIds`.
+     * @returns The count of the retried jobs, their ids with `includeAffectedJobIds`, and the ignored ids.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsretry | jobs.retry}
+     */
+    retry(selector: JobSelector, options?: RetryOptions<C>): Promise<BulkResult>;
+    /**
+     * Cancels pending and blocked jobs: they fail at once, with a `JobCancelledError`, without a failure job. A
+     * running job is not changed.
+     * @param selector `jobIds`, up to 1000 full ids, or a filter: `jobName` and `status` (`'pending'`, `'blocked'`;
+     *     both by default).
+     * @param options `connection`, `mode`, `strict`, `includeAffectedJobIds`.
+     * @returns The count of the cancelled jobs, their ids with `includeAffectedJobIds`, and the ignored ids.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobscancel | jobs.cancel}
+     */
+    cancel(selector: JobSelector, options?: BulkOptions<C>): Promise<BulkResult>;
+    /**
+     * Deletes jobs and their payloads, in any status but running. Their dedupe keys are free again.
+     * @param selector `jobIds`, up to 1000 full ids, or a filter: `jobName` and `status` (`'pending'`,
+     *     `'blocked'`, `'completed'`, `'failed'`; all four by default).
+     * @param options `connection`, `mode`, `strict`, `includeAffectedJobIds`.
+     * @returns The count of the removed jobs, their ids with `includeAffectedJobIds`, and the ignored ids.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsremove | jobs.remove}
+     */
+    remove(selector: JobSelector, options?: BulkOptions<C>): Promise<BulkResult>;
 }
 /**
  * A sqlane instance, made by `createSqlane()`: one per process. It enqueues jobs, runs the handlers of this process,
@@ -130,8 +160,8 @@ export interface Sqlane<C> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getstats | getStats}
      */
     getStats(): Promise<JobStats[]>;
-    /** The jobs in the database: read one by its id, or list the jobs of a name. */
-    readonly jobs: SqlaneJobs;
+    /** The jobs in the database: read them; retry, cancel or remove them in bulk. */
+    readonly jobs: SqlaneJobs<C>;
     /**
      * Low level: makes this process check for due jobs now, instead of at the next poll. Most apps don't need it:
      * sqlane wakes the process after an enqueue in it, and after a hint. It does nothing before `start()`.

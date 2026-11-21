@@ -8,6 +8,7 @@ import { checkSchedules } from './helpers/schedule_checks.js';
 import { prismaAdapter } from '../../src/adapters/prisma.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
+import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/adapters/prisma.js').PrismaClientLike} PrismaClientLike */
@@ -141,6 +142,16 @@ test('sqlane.jobs: get and list through the adapter', async () => {
     const { sqlane } = await freshSqlane();
 
     await expect(checkJobsRead(sqlane, prisma)).resolves.toHaveLength(3);
+});
+
+test('sqlane.jobs: retry, cancel and remove through the adapter', async () => {
+    const { sqlane } = await freshSqlane();
+
+    await expect(checkJobsBulk(
+        sqlane,
+        prisma,
+        func => prisma.$transaction((/** @type {any} */ tx) => func(tx)),
+    )).resolves.toBeUndefined();
 });
 
 test('the queue transaction is READ COMMITTED', async () => {

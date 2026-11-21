@@ -21,4 +21,15 @@ export async function exactOptionalTypes() {
     // The nextCursor of a page, as it comes: null on the last page
     await sqlane.jobs.list({ jobName: 'build_report' }, { cursor: nextCursor });
     await sqlane.jobs.list({ jobName: 'build_report' }, { cursor: null });
+
+    // The bulk methods: a field set to undefined counts as absent
+    await sqlane.jobs.retry({ jobIds: ['a'], jobName: undefined, status: undefined }, {
+        budget: undefined,
+        connection: undefined,
+        mode: undefined,
+        strict: undefined,
+        includeAffectedJobIds: undefined,
+    });
+    await sqlane.jobs.cancel({ jobName: 'build_report', status: undefined, jobIds: undefined }, { strict: undefined });
+    await sqlane.jobs.remove({ jobName: 'build_report' }, { connection: undefined, mode: undefined });
 }

@@ -10,6 +10,7 @@ import { checkSchedule } from './schedule.js';
 import { createScheduler } from './scheduler.js';
 import { checkServer } from './server_check.js';
 import { createJobsApi } from './jobs_api.js';
+import { createBulk } from './jobs_bulk.js';
 import { createStore } from './store/store.js';
 import { isMissingTableError } from './transient_error.js';
 import { checkDuration, checkInteger, checkObject, checkTablePrefix, isPlainObject } from './validate.js';
@@ -403,7 +404,16 @@ export function createSqlane(options) {
             applied: await runMigrations(adapter, tablePrefix, migrateOptions, () => checkServerOnce('migrate()')),
         }),
         getStats: () => store.getStats(),
-        jobs: createJobsApi(store),
+        jobs: createJobsApi(store, createBulk({
+            store,
+            adapter,
+            tablePrefix,
+            wakeFor,
+            unblockKeys: runner.unblockKeys,
+            emit: runner.emit,
+            reportError,
+            notifyChannel,
+        })),
         wake: () => runner.wake(),
     };
 }

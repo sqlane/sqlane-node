@@ -86,7 +86,7 @@ export function decodeCursor(value) {
  * @param {unknown} value
  * @returns {string} The value for an error message, whatever it is: JSON.stringify throws on a BigInt or a cycle.
  */
-function shown(value) {
+export function shown(value) {
     return inspect(value, { depth: 2, breakLength: Infinity });
 }
 
@@ -101,9 +101,10 @@ function isStatusSet(value) {
 
 /**
  * @param {unknown} status
+ * @param {string} where The method, for the message.
  * @returns {readonly JobStatus[] | null} The set, sorted. Null: every status.
  */
-function statusesOf(status) {
+export function statusesOf(status, where) {
     if (status === undefined) {
         return null;
     }
@@ -112,7 +113,7 @@ function statusesOf(status) {
 
     if (!list.length || list.some(item => !STATUSES.includes(/** @type {JobStatus} */ (item)))
         || new Set(list).size !== list.length) {
-        throw new InvalidOptionsError('jobs.list: "status" must be a status or a non-empty list of statuses without '
+        throw new InvalidOptionsError(`${where}: "status" must be a status or a non-empty list of statuses without `
             + `duplicates, of ${STATUSES.join(', ')}; got ${shown(status)}`);
     }
 
@@ -121,9 +122,11 @@ function statusesOf(status) {
 
 /**
  * @param {import('./store/store.js').Store} store
+ * @param {(operation: 'retry' | 'cancel' | 'remove', selector: unknown, options: unknown)
+ *     => Promise<import('./types.js').BulkResult>} bulk The bulk methods (jobs_bulk.js).
  * @returns {import('./sqlane.js').SqlaneJobs}
  */
-export function createJobsApi(store) {
+export function createJobsApi(store, bulk) {
     const scope = { where: 'jobs.list', ErrorClass: InvalidOptionsError };
 
     return Object.freeze({
@@ -157,7 +160,7 @@ export function createJobsApi(store) {
                     JOB_NAME_REGEXP}`);
             }
 
-            const statuses = statusesOf(status);
+            const statuses = statusesOf(status, 'jobs.list');
 
             if (!Number.isSafeInteger(limit) || /** @type {number} */ (limit) < 1
                 || /** @type {number} */ (limit) > MAX_LIMIT) {
@@ -189,5 +192,8 @@ export function createJobsApi(store) {
                 nextCursor: last && encodeCursor({ jobName, statuses, ...last }),
             };
         },
+        retry: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('retry', selector, options),
+        cancel: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('cancel', selector, options),
+        remove: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('remove', selector, options),
     });
 }

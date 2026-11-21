@@ -8,6 +8,7 @@ import { dialectOptions } from './helpers/test_adapter.js';
 import { knexAdapter } from '../../src/adapters/knex.js';
 import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { preparedAfterAJob, SQLANE_STATEMENTS_SQL } from './helpers/prepared_statements.js';
+import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<import('../../src/adapters/knex.js').KnexConnection>} Sqlane */
@@ -119,6 +120,16 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         const { sqlane } = await freshSqlane();
 
         await expect(checkJobsRead(sqlane, knex)).resolves.toHaveLength(3);
+    });
+
+    test('sqlane.jobs: retry, cancel and remove through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsBulk(
+            sqlane,
+            knex,
+            func => knex.transaction(trx => func(trx)),
+        )).resolves.toBeUndefined();
     });
 
     test('the queue transaction is READ COMMITTED', async () => {

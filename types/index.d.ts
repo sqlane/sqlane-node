@@ -2,14 +2,16 @@ export { createSqlane } from './create_sqlane.js';
 export { defineConcurrencyLimit } from './define_concurrency_limit.js';
 export { defineJob } from './define_job.js';
 export { defineRateLimit } from './define_rate_limit.js';
-export { ClosedError, ConfigError, DrainTimeoutError, FatalJobError, InvalidConcurrencyLimitError, InvalidOptionsError, InvalidRateLimitError, JobTimeoutError, LeaseLostError, MigrationLockTimeoutError, MissingPayloadError, PayloadTooLargeError, RateLimitedError, RetryJobError, ShutdownError, SqlaneError, UnknownJobError, } from './errors.js';
+export { ClosedError, ConfigError, DrainTimeoutError, FatalJobError, IgnoredJobsError, InvalidConcurrencyLimitError, InvalidOptionsError, InvalidRateLimitError, JobCancelledError, JobTimeoutError, LeaseLostError, MigrationLockTimeoutError, MissingPayloadError, PayloadTooLargeError, RateLimitedError, RetryJobError, ShutdownError, SqlaneError, UnknownJobError, } from './errors.js';
 export { getMigrations } from './migrations.js';
 export type Adapter<C> = import('./types.js').Adapter<C>;
 export type Sqlane<C> = import('./types.js').Sqlane<C>;
-export type SqlaneJobs = import('./sqlane.js').SqlaneJobs;
+export type SqlaneJobs<C = any> = import('./sqlane.js').SqlaneJobs<C>;
 export type SqlaneOptions<C> = import('./types.js').SqlaneOptions<C>;
 export type Jsonable<T> = import('./types.js').Jsonable<T>;
 export type Backoff = import('./types.js').Backoff;
+export type BulkOptions<C = any> = import('./types.js').BulkOptions<C>;
+export type BulkResult = import('./types.js').BulkResult;
 export type CloseOptions = import('./types.js').CloseOptions;
 export type ConcurrencyLimit = import('./types.js').ConcurrencyLimit;
 export type ConcurrencyLimitOptions = import('./types.js').ConcurrencyLimitOptions;
@@ -34,6 +36,7 @@ export type JobInfo = import('./types.js').JobInfo;
 export type JobPage<P = any> = import('./types.js').JobPage<P>;
 export type JobRecord<P = any> = import('./types.js').JobRecord<P>;
 export type JobOptions<P = any> = import('./types.js').JobOptions<P>;
+export type JobSelector = import('./types.js').JobSelector;
 export type JobStats = import('./types.js').JobStats;
 export type JobStatus = import('./types.js').JobStatus;
 export type ListJobsOptions = import('./types.js').ListJobsOptions;
@@ -44,6 +47,7 @@ export type RateLimit = import('./types.js').RateLimit;
 export type RateLimitKey = import('./types.js').RateLimitKey;
 export type RateLimitOptions = import('./types.js').RateLimitOptions;
 export type Retention = import('./types.js').Retention;
+export type RetryOptions<C = any> = import('./types.js').RetryOptions<C>;
 export type ScheduleFiredEvent = import('./types.js').ScheduleFiredEvent;
 export type ScheduleInfo = import('./types.js').ScheduleInfo;
 export type ScheduleOptions<P = any> = import('./types.js').ScheduleOptions<P>;
@@ -57,7 +61,10 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  * @typedef {import('./types.js').Sqlane<C>} Sqlane
  * @template C
  */
-/** @typedef {import('./sqlane.js').SqlaneJobs} SqlaneJobs */
+/**
+ * @typedef {import('./sqlane.js').SqlaneJobs<C>} SqlaneJobs
+ * @template [C=any]
+ */
 /**
  * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions
  * @template C
@@ -67,6 +74,11 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  * @template T
  */
 /** @typedef {import('./types.js').Backoff} Backoff */
+/**
+ * @typedef {import('./types.js').BulkOptions<C>} BulkOptions
+ * @template [C=any]
+ */
+/** @typedef {import('./types.js').BulkResult} BulkResult */
 /** @typedef {import('./types.js').CloseOptions} CloseOptions */
 /** @typedef {import('./types.js').ConcurrencyLimit} ConcurrencyLimit */
 /** @typedef {import('./types.js').ConcurrencyLimitOptions} ConcurrencyLimitOptions */
@@ -115,6 +127,7 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  * @typedef {import('./types.js').JobOptions<P>} JobOptions
  * @template [P=any]
  */
+/** @typedef {import('./types.js').JobSelector} JobSelector */
 /** @typedef {import('./types.js').JobStats} JobStats */
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 /** @typedef {import('./types.js').ListJobsOptions} ListJobsOptions */
@@ -125,6 +138,10 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /** @typedef {import('./types.js').RateLimitKey} RateLimitKey */
 /** @typedef {import('./types.js').RateLimitOptions} RateLimitOptions */
 /** @typedef {import('./types.js').Retention} Retention */
+/**
+ * @typedef {import('./types.js').RetryOptions<C>} RetryOptions
+ * @template [C=any]
+ */
 /** @typedef {import('./types.js').ScheduleFiredEvent} ScheduleFiredEvent */
 /** @typedef {import('./types.js').ScheduleInfo} ScheduleInfo */
 /**

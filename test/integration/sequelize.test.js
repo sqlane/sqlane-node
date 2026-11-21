@@ -8,6 +8,7 @@ import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { preparedAfterAJob, SQLANE_STATEMENTS_SQL } from './helpers/prepared_statements.js';
+import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/adapters/sequelize.js').SequelizeConnection} SequelizeConnection */
@@ -132,6 +133,16 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         const { sqlane } = await freshSqlane();
 
         await expect(checkJobsRead(sqlane, sequelize)).resolves.toHaveLength(3);
+    });
+
+    test('sqlane.jobs: retry, cancel and remove through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsBulk(
+            sqlane,
+            sequelize,
+            func => sequelize.transaction(t => func(t)),
+        )).resolves.toBeUndefined();
     });
 
     test('the queue transaction is READ COMMITTED', async () => {

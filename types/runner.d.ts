@@ -88,6 +88,11 @@ export type Runner = {
      */
     emit: (event: import('./types.js').SqlaneEvent) => void;
     /**
+     * Makes due the jobs blocked on keys with room, wakes and
+     * hints them. Never rejects: a failure is an `error` event (operation `unblock`).
+     */
+    unblockKeys: (keys: string[]) => Promise<void>;
+    /**
      * This process handles the name and has a free slot for it.
      */
     canStartNow: (name: string) => boolean;
@@ -121,6 +126,8 @@ export type Runner = {
  * @property {() => boolean} isStarted
  * @property {() => boolean} isIdle Neither started, draining nor closed.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
+ * @property {(keys: string[]) => Promise<void>} unblockKeys Makes due the jobs blocked on keys with room, wakes and
+ *     hints them. Never rejects: a failure is an `error` event (operation `unblock`).
  * @property {(name: string) => boolean} canStartNow This process handles the name and has a free slot for it.
  */
 /**

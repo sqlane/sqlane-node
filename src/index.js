@@ -9,9 +9,11 @@ export {
     ConfigError,
     DrainTimeoutError,
     FatalJobError,
+    IgnoredJobsError,
     InvalidConcurrencyLimitError,
     InvalidOptionsError,
     InvalidRateLimitError,
+    JobCancelledError,
     JobTimeoutError,
     LeaseLostError,
     MigrationLockTimeoutError,
@@ -33,7 +35,10 @@ export { getMigrations } from './migrations.js';
  * @typedef {import('./types.js').Sqlane<C>} Sqlane
  * @template C
  */
-/** @typedef {import('./sqlane.js').SqlaneJobs} SqlaneJobs */
+/**
+ * @typedef {import('./sqlane.js').SqlaneJobs<C>} SqlaneJobs
+ * @template [C=any]
+ */
 /**
  * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions
  * @template C
@@ -43,6 +48,11 @@ export { getMigrations } from './migrations.js';
  * @template T
  */
 /** @typedef {import('./types.js').Backoff} Backoff */
+/**
+ * @typedef {import('./types.js').BulkOptions<C>} BulkOptions
+ * @template [C=any]
+ */
+/** @typedef {import('./types.js').BulkResult} BulkResult */
 /** @typedef {import('./types.js').CloseOptions} CloseOptions */
 /** @typedef {import('./types.js').ConcurrencyLimit} ConcurrencyLimit */
 /** @typedef {import('./types.js').ConcurrencyLimitOptions} ConcurrencyLimitOptions */
@@ -91,6 +101,7 @@ export { getMigrations } from './migrations.js';
  * @typedef {import('./types.js').JobOptions<P>} JobOptions
  * @template [P=any]
  */
+/** @typedef {import('./types.js').JobSelector} JobSelector */
 /** @typedef {import('./types.js').JobStats} JobStats */
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 /** @typedef {import('./types.js').ListJobsOptions} ListJobsOptions */
@@ -101,6 +112,10 @@ export { getMigrations } from './migrations.js';
 /** @typedef {import('./types.js').RateLimitKey} RateLimitKey */
 /** @typedef {import('./types.js').RateLimitOptions} RateLimitOptions */
 /** @typedef {import('./types.js').Retention} Retention */
+/**
+ * @typedef {import('./types.js').RetryOptions<C>} RetryOptions
+ * @template [C=any]
+ */
 /** @typedef {import('./types.js').ScheduleFiredEvent} ScheduleFiredEvent */
 /** @typedef {import('./types.js').ScheduleInfo} ScheduleInfo */
 /**
