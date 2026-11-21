@@ -9,6 +9,7 @@ import { createRunner } from './runner.js';
 import { checkSchedule } from './schedule.js';
 import { createScheduler } from './scheduler.js';
 import { checkServer } from './server_check.js';
+import { createJobsApi } from './jobs_api.js';
 import { createStore } from './store/store.js';
 import { isMissingTableError } from './transient_error.js';
 import { checkDuration, checkInteger, checkObject, checkTablePrefix, isPlainObject } from './validate.js';
@@ -402,6 +403,7 @@ export function createSqlane(options) {
             applied: await runMigrations(adapter, tablePrefix, migrateOptions, () => checkServerOnce('migrate()')),
         }),
         getStats: () => store.getStats(),
+        jobs: createJobsApi(store),
         wake: () => runner.wake(),
     };
 }

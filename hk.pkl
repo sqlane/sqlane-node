@@ -16,6 +16,12 @@ steps {
         // A package of its own, with dependencies that CI does not install: see bench/compare/README.md
         exclude = List("bench/compare/**")
     }
+    // The type tests of an app with exactOptionalPropertyTypes, against the declarations (types/)
+    ["tsc_exact_optional"] {
+        glob = List("types/**", "test/types/**", "tsconfig.json", "package.json")
+        check = "tsc -p test/types/tsconfig.exact_optional.json"
+        depends = List("types")
+    }
     // The package that npm would publish: exports, files; TypeScript finds the declarations of each export (Are the
     // Types Wrong). One step: both pack the package, in the same place.
     ["publint"] {

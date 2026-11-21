@@ -33,6 +33,7 @@ export { getMigrations } from './migrations.js';
  * @typedef {import('./types.js').Sqlane<C>} Sqlane
  * @template C
  */
+/** @typedef {import('./sqlane.js').SqlaneJobs} SqlaneJobs */
 /**
  * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions
  * @template C
@@ -62,18 +63,37 @@ export { getMigrations } from './migrations.js';
  * @typedef {import('./types.js').HandlerContext<P>} HandlerContext
  * @template [P=any]
  */
+/**
+ * @typedef {import('./types.js').HandlerPayload<J>} HandlerPayload
+ * @template J
+ */
 /** @typedef {import('./types.js').Hint} Hint */
 /** @typedef {import('./types.js').JobDefaults} JobDefaults */
 /**
  * @typedef {import('./types.js').JobDefinition<P>} JobDefinition
  * @template [P=any]
  */
+/** @typedef {import('./types.js').JobError} JobError */
+/**
+ * @typedef {import('./types.js').JobFilter<J>} JobFilter
+ * @template {import('./types.js').JobDefinition | string} [J=import('./types.js').JobDefinition | string]
+ */
 /** @typedef {import('./types.js').JobInfo} JobInfo */
+/**
+ * @typedef {import('./types.js').JobPage<P>} JobPage
+ * @template [P=any]
+ */
+/**
+ * @typedef {import('./types.js').JobRecord<P>} JobRecord
+ * @template [P=any]
+ */
 /**
  * @typedef {import('./types.js').JobOptions<P>} JobOptions
  * @template [P=any]
  */
 /** @typedef {import('./types.js').JobStats} JobStats */
+/** @typedef {import('./types.js').JobStatus} JobStatus */
+/** @typedef {import('./types.js').ListJobsOptions} ListJobsOptions */
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').Migration} Migration */

@@ -2,7 +2,7 @@
 import mysql from 'mysql2/promise';
 import { expectTypeOf } from 'vitest';
 import { createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit } from '@sqlane/core';
-import type { Handler } from '@sqlane/core';
+import type { Handler, HandlerPayload } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
 type Report = { reportId: string; pages?: number };
@@ -64,4 +64,21 @@ export async function typedPayloadsTypes() {
     sqlane.handle(untyped, ({ payload }) => {
         expectTypeOf(payload).toBeAny();
     });
+
+    // sqlane.jobs: a definition types the payload of a list; a name gives any; get takes the type unchecked
+    const typedPage = await sqlane.jobs.list({ jobName: buildReport }, { includePayload: true });
+
+    expectTypeOf(typedPage.jobs[0].payload).toEqualTypeOf<Report | undefined>();
+
+    const namedPage = await sqlane.jobs.list({ jobName: 'build_report' });
+
+    expectTypeOf(namedPage.jobs[0].payload).toBeAny();
+
+    const read = await sqlane.jobs.get<Report>('build_report:r1');
+
+    expectTypeOf(read?.payload).toEqualTypeOf<Report | undefined>();
+
+    type Page = HandlerPayload<typeof buildReport>;
+
+    expectTypeOf<Page>().toEqualTypeOf<Report>();
 }

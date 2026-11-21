@@ -245,6 +245,22 @@ test('a database of 6.0: 0007 adds the rate keys in µs and the rate limits of t
         .toStrictEqual([{ key: '@api:1', max: 10, per_us: 1_000_000, burst: 2, cost: 1 }]);
 });
 
+test('a database of 7.x: 0008 adds the index of the lists; jobs.list pages through the jobs', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+
+    await migrateAllBut(tablePrefix, JOB_LIST.length, []);
+    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: JOB_LIST });
+
+    const added = await sqlane.enqueueMany(testAdapter.pool, 'ping', [{ payload: {} }, { payload: {} }, { payload: {} }]);
+    const page1 = await sqlane.jobs.list({ jobName: 'ping' }, { limit: 2 });
+    const page2 = await sqlane.jobs.list({ jobName: 'ping' }, { limit: 2, cursor: page1.nextCursor });
+
+    expect([page1.jobs.length, page2.jobs.length, page2.nextCursor]).toStrictEqual([2, 1, null]);
+    expect([...page1.jobs, ...page2.jobs].map(job => job.id).toSorted())
+        .toStrictEqual(added.map(({ id }) => id).toSorted());
+});
+
 test('concurrent migrations apply each version once', async () => {
     const tablePrefix = nextPrefix();
     const results = await Promise.all([sqlaneOf(tablePrefix).migrate(), sqlaneOf(tablePrefix).migrate()]);

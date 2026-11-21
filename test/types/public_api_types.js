@@ -416,6 +416,36 @@ export async function publicApiTypes() {
     expectTypeOf(schedule.nextRunAt).toEqualTypeOf(/** @type {Date | null} */ (null));
     expectTypeOf(schedule.lastJobId).toEqualTypeOf(/** @type {string | null} */ (null));
 
+    // sqlane.jobs: without a declared type the payload is any; the types are exported
+    const read = await sqlane.jobs.get('build_report:r1');
+
+    expectTypeOf(read).toEqualTypeOf(/** @type {import('@sqlane/core').JobRecord<any> | null} */ (null));
+    /** @typedef {import('@sqlane/core').JobRecord['blockedOn']} BlockedOn */
+    expectTypeOf(read?.blockedOn).toEqualTypeOf(/** @type {BlockedOn | undefined} */ (undefined));
+
+    /** @type {import('@sqlane/core').JobFilter} */
+    const filter = { jobName: job, status: ['pending', 'blocked'] };
+    /** @type {import('@sqlane/core').ListJobsOptions} */
+    const listOptions = { limit: 10, cursor: null, includePayload: undefined };
+    /** @type {import('@sqlane/core').JobPage} */
+    const page = await sqlane.jobs.list(filter, listOptions);
+    /** @type {import('@sqlane/core').JobStatus[]} */
+    const statuses = page.jobs.map(item => item.status);
+    /** @type {import('@sqlane/core').SqlaneJobs} */
+    const jobs = sqlane.jobs;
+
+    void statuses;
+    void jobs;
+    expectTypeOf(page.nextCursor).toEqualTypeOf(/** @type {string | null} */ (null));
+    expectTypeOf(page.jobs[0].lastError).toEqualTypeOf(/** @type {import('@sqlane/core').JobError | null} */ (null));
+    expectTypeOf(/** @type {import('@sqlane/core').FailedJobPayload['error']} */ ({ name: '', message: '' }))
+        .toEqualTypeOf(/** @type {import('@sqlane/core').JobError} */ ({ name: '', message: '' }));
+    await sqlane.jobs.list({ jobName: 'build_report', status: undefined }, { cursor: undefined });
+    // @ts-expect-error not a status
+    await sqlane.jobs.list({ jobName: 'build_report', status: 'done' });
+    // @ts-expect-error a list has the jobs of one name
+    await sqlane.jobs.list({ status: 'failed' });
+
     // The slot of a job of a schedule
     sqlane.handle(job, ({ job: info }) => {
         expectTypeOf(info.scheduledAt).toEqualTypeOf(/** @type {Date | null} */ (null));

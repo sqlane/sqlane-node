@@ -1,0 +1,9 @@
+{
+    // The type tests of an app with exactOptionalPropertyTypes: an optional field must say `| undefined` to take it
+    "extends": "../../tsconfig.json",
+    "compilerOptions": {
+        "exactOptionalPropertyTypes": true
+    },
+    "include": ["exact_optional_types.ts"],
+    "exclude": []
+}

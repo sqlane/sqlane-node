@@ -304,6 +304,20 @@ export type Store = {
     makeDue: (names: string[]) => Promise<void>;
     getStats: () => Promise<import('../types.js').JobStats[]>;
     /**
+     * A plain read, no lock.
+     */
+    getJob: (id: string) => Promise<import('../types.js').JobRecord | null>;
+    /**
+     * A plain read, no lock.
+     */
+    listJobs: (params: import('./job_reads.js').ListParams) => Promise<{
+        jobs: import('../types.js').JobRecord[];
+        last: {
+            enqueuedAtMs: number;
+            id: string;
+        } | null;
+    }>;
+    /**
      * Inserts the missing rows (2 statements per 500), then reads them.
      */
     registerSchedules: (schedules: {
@@ -558,6 +572,9 @@ export type SweepResult = {
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
  * @property {(names: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
  * @property {() => Promise<import('../types.js').JobStats[]>} getStats
+ * @property {(id: string) => Promise<import('../types.js').JobRecord | null>} getJob A plain read, no lock.
+ * @property {(params: import('./job_reads.js').ListParams) => Promise<{ jobs: import('../types.js').JobRecord[],
+ *     last: { enqueuedAtMs: number, id: string } | null }>} listJobs A plain read, no lock.
  * @property {(schedules: { id: string, name: string, spec: string }[], now: () => number)
  *     => Promise<ScheduleRead>} registerSchedules Inserts the missing rows (2 statements per 500), then reads them.
  * @property {(ids: string[] | null, now: () => number) => Promise<ScheduleRead>} readSchedules A plain read, no

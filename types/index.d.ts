@@ -6,6 +6,7 @@ export { ClosedError, ConfigError, DrainTimeoutError, FatalJobError, InvalidConc
 export { getMigrations } from './migrations.js';
 export type Adapter<C> = import('./types.js').Adapter<C>;
 export type Sqlane<C> = import('./types.js').Sqlane<C>;
+export type SqlaneJobs = import('./sqlane.js').SqlaneJobs;
 export type SqlaneOptions<C> = import('./types.js').SqlaneOptions<C>;
 export type Jsonable<T> = import('./types.js').Jsonable<T>;
 export type Backoff = import('./types.js').Backoff;
@@ -23,12 +24,19 @@ export type Executor = import('./types.js').Executor;
 export type FailedJobPayload = import('./types.js').FailedJobPayload;
 export type Handler<P = any> = import('./types.js').Handler<P>;
 export type HandlerContext<P = any> = import('./types.js').HandlerContext<P>;
+export type HandlerPayload<J> = import('./types.js').HandlerPayload<J>;
 export type Hint = import('./types.js').Hint;
 export type JobDefaults = import('./types.js').JobDefaults;
 export type JobDefinition<P = any> = import('./types.js').JobDefinition<P>;
+export type JobError = import('./types.js').JobError;
+export type JobFilter<J extends import('./types.js').JobDefinition | string = import('./types.js').JobDefinition | string> = import('./types.js').JobFilter<J>;
 export type JobInfo = import('./types.js').JobInfo;
+export type JobPage<P = any> = import('./types.js').JobPage<P>;
+export type JobRecord<P = any> = import('./types.js').JobRecord<P>;
 export type JobOptions<P = any> = import('./types.js').JobOptions<P>;
 export type JobStats = import('./types.js').JobStats;
+export type JobStatus = import('./types.js').JobStatus;
+export type ListJobsOptions = import('./types.js').ListJobsOptions;
 export type Logger = import('./types.js').Logger;
 export type MigrateOptions = import('./types.js').MigrateOptions;
 export type Migration = import('./types.js').Migration;
@@ -49,6 +57,7 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  * @typedef {import('./types.js').Sqlane<C>} Sqlane
  * @template C
  */
+/** @typedef {import('./sqlane.js').SqlaneJobs} SqlaneJobs */
 /**
  * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions
  * @template C
@@ -78,18 +87,37 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  * @typedef {import('./types.js').HandlerContext<P>} HandlerContext
  * @template [P=any]
  */
+/**
+ * @typedef {import('./types.js').HandlerPayload<J>} HandlerPayload
+ * @template J
+ */
 /** @typedef {import('./types.js').Hint} Hint */
 /** @typedef {import('./types.js').JobDefaults} JobDefaults */
 /**
  * @typedef {import('./types.js').JobDefinition<P>} JobDefinition
  * @template [P=any]
  */
+/** @typedef {import('./types.js').JobError} JobError */
+/**
+ * @typedef {import('./types.js').JobFilter<J>} JobFilter
+ * @template {import('./types.js').JobDefinition | string} [J=import('./types.js').JobDefinition | string]
+ */
 /** @typedef {import('./types.js').JobInfo} JobInfo */
+/**
+ * @typedef {import('./types.js').JobPage<P>} JobPage
+ * @template [P=any]
+ */
+/**
+ * @typedef {import('./types.js').JobRecord<P>} JobRecord
+ * @template [P=any]
+ */
 /**
  * @typedef {import('./types.js').JobOptions<P>} JobOptions
  * @template [P=any]
  */
 /** @typedef {import('./types.js').JobStats} JobStats */
+/** @typedef {import('./types.js').JobStatus} JobStatus */
+/** @typedef {import('./types.js').ListJobsOptions} ListJobsOptions */
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').Migration} Migration */

@@ -8,6 +8,7 @@ import { checkSchedules } from './helpers/schedule_checks.js';
 import { prismaAdapter } from '../../src/adapters/prisma.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
+import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/adapters/prisma.js').PrismaClientLike} PrismaClientLike */
 /** @typedef {import('../../src/types.js').Sqlane<PrismaClientLike>} Sqlane */
@@ -131,6 +132,12 @@ test('migrate() through Prisma: the tables, once', async () => {
     const { sqlane } = await freshSqlane();
 
     await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [] });
+});
+
+test('sqlane.jobs: get and list through the adapter', async () => {
+    const { sqlane } = await freshSqlane();
+
+    await expect(checkJobsRead(sqlane, prisma)).resolves.toHaveLength(3);
 });
 
 test('the queue transaction is READ COMMITTED', async () => {

@@ -14,6 +14,7 @@ import { dialectOptions } from './helpers/test_adapter.js';
 import { drizzleAdapter } from '../../src/adapters/drizzle.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
+import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/adapters/drizzle.js').DrizzleConnection} DrizzleConnection */
 /** @typedef {import('../../src/types.js').Sqlane<DrizzleConnection>} Sqlane */
@@ -140,6 +141,12 @@ describe.each([
 
         return { sqlane, p, events };
     }
+
+    test('sqlane.jobs: get and list through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsRead(sqlane, db)).resolves.toHaveLength(3);
+    });
 
     test('the queue transaction is READ COMMITTED', async () => {
         await expect(readsAcrossCommit(drizzleAdapter(queueDb, dialectOptions()), database))

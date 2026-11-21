@@ -8,6 +8,7 @@ import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { readsAcrossCommit } from './helpers/isolation.js';
 import { preparedAfterAJob, SQLANE_STATEMENTS_SQL } from './helpers/prepared_statements.js';
+import { checkJobsRead } from './helpers/jobs_read_checks.js';
 
 /** @typedef {import('../../src/adapters/sequelize.js').SequelizeConnection} SequelizeConnection */
 /** @typedef {import('../../src/types.js').Sqlane<SequelizeConnection>} Sqlane */
@@ -122,6 +123,12 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         const { sqlane, p } = await freshSqlane();
 
         await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+    });
+
+    test('sqlane.jobs: get and list through the adapter', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkJobsRead(sqlane, sequelize)).resolves.toHaveLength(3);
     });
 
     test('the queue transaction is READ COMMITTED', async () => {
