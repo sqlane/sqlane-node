@@ -10,7 +10,7 @@
         "@riverqueue/migrate": "0.3.2",
         "@sidequest/mysql-backend": "1.17.0",
         "@sidequest/postgres-backend": "1.17.0",
-        "bullmq": "6.7.4",
+        "bullmq": "6.7.7",
         "graphile-worker": "0.18.0",
         "ioredis": "6.0.0",
         "izi-queue": "0.10.0",
