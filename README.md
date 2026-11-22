@@ -210,12 +210,12 @@ transaction, so:
 - **[Graceful shutdown](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#close).** Running jobs get a
   deadline; the unfinished ones go back to the queue without using an attempt.
 - **And the basics:** [retries with backoff](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#backoff),
-  delayed jobs and deduplication by `jobId` ([enqueue](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue)),
+  delayed jobs and deduplication by `dedupeKey` ([enqueue](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue)),
   timeouts that abort the handler ([defineJob](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#definejob)),
   [crash recovery](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#leases-and-stalls),
   [typed payloads](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#typed-payloads),
   [events](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#events) and
-  [stats](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getstats), and
+  [stats](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsstats), and
   [migrations by version](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate), with rollback
   and schema checks.
 
@@ -298,7 +298,7 @@ await sqlane.schema.migrate();
 ```
 
 **3. Enqueue in your transaction.** Pass your transaction to `enqueue`: the job commits or rolls back with the order. A
-`jobId` deduplicates, and `delay` runs the job later
+`dedupeKey` deduplicates, and `delay` runs the job later
 ([enqueue options](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue)).
 
 ```ts
@@ -312,7 +312,7 @@ export async function placeOrder(total: number) {
     await db.transaction(async (tx) => {
         const [order] = await tx.insert(orders).values({ total }).returning();
         await sqlane.enqueue(tx, sendReceipt, { orderId: order.id }, {
-            jobId: `receipt-${order.id}`, // deduplicates
+            dedupeKey: `receipt-${order.id}`, // deduplicates
         });
     });
 }

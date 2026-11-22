@@ -31,7 +31,7 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 ## Non-goals
 
 - Exactly-once execution. Handlers must be idempotent.
-- A dashboard. `getStats()` gives the counts per job name, and the tables are plain SQL (see [Data](#data)).
+- A dashboard. `jobs.stats()` gives the counts per job name, and the tables are plain SQL (see [Data](#data)).
 - Priorities, or a strict order across processes.
 - Workflows, batches, job dependencies.
 - SQLite, other databases.
@@ -113,26 +113,26 @@ not depend on the `timezone` or `dateStrings` settings of the pool.
 
 ### `sqlane_jobs`
 
-| Column                                                                | Type              | Notes                                                                                                               |
-| --------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `id`                                                                  | varchar(255), PK  | `<job_name>:<job_id>`, or a new ULID without `jobId`. `<job_name>:schedule:[<key>:]<ISO>` for a slot of a schedule. |
-| `job_name`                                                            | varchar(128)      |                                                                                                                     |
-| `status`                                                              | varchar(16)       | `pending`, `blocked`, `running`, `completed`, `failed`.                                                             |
-| `run_at`                                                              | ts(3)             | Due time.                                                                                                           |
-| `attempts`, `max_attempts`                                            | int               |                                                                                                                     |
-| `stalls`, `max_stalls`                                                | int               |                                                                                                                     |
-| `limit_keys`, `limit_maxes`                                           | json / array null | The keys of the global limits and their maxes, frozen at enqueue, sorted by key. Written with the job row.          |
-| `rate_limits`                                                         | json null         | The rate keys with their settings, `[{ key, max, per_us, burst, cost }]`, frozen at enqueue, sorted by key.         |
-| `blocked_on`                                                          | varchar(255) null | The full key, or the rate key, of a `blocked` job.                                                                  |
-| `enqueue_token`                                                       | varchar(26)       | Per enqueue call: tells created rows from duplicates.                                                               |
-| `lock_token`                                                          | varchar(26) null  | Set by the claim. Every final write checks it.                                                                      |
-| `locked_by`                                                           | varchar(255) null | `<host>:<pid>:<ULID>`.                                                                                              |
-| `locked_until`                                                        | ts(3) null        | The lease.                                                                                                          |
-| `timed_out_at`                                                        | ts(3) null        | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`.                       |
-| `last_error`                                                          | json null         |                                                                                                                     |
-| `completed_retention_ms`, `failed_retention_ms`                       | bigint            | Frozen at enqueue.                                                                                                  |
-| `failure_job`                                                         | varchar(128) null | Frozen at enqueue.                                                                                                  |
-| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)             |                                                                                                                     |
+| Column                                                                | Type              | Notes                                                                                                                      |
+| --------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `id`                                                                  | varchar(255), PK  | `<job_name>:<dedupeKey>`, or a new ULID without `dedupeKey`. `<job_name>:schedule:[<key>:]<ISO>` for a slot of a schedule. |
+| `job_name`                                                            | varchar(128)      |                                                                                                                            |
+| `status`                                                              | varchar(16)       | `pending`, `blocked`, `running`, `completed`, `failed`.                                                                    |
+| `run_at`                                                              | ts(3)             | Due time.                                                                                                                  |
+| `attempts`, `max_attempts`                                            | int               |                                                                                                                            |
+| `stalls`, `max_stalls`                                                | int               |                                                                                                                            |
+| `limit_keys`, `limit_maxes`                                           | json / array null | The keys of the global limits and their maxes, frozen at enqueue, sorted by key. Written with the job row.                 |
+| `rate_limits`                                                         | json null         | The rate keys with their settings, `[{ key, max, per_us, burst, cost }]`, frozen at enqueue, sorted by key.                |
+| `blocked_on`                                                          | varchar(255) null | The full key, or the rate key, of a `blocked` job.                                                                         |
+| `enqueue_token`                                                       | varchar(26)       | Per enqueue call: tells created rows from duplicates.                                                                      |
+| `lock_token`                                                          | varchar(26) null  | Set by the claim. Every final write checks it.                                                                             |
+| `locked_by`                                                           | varchar(255) null | `<host>:<pid>:<ULID>`.                                                                                                     |
+| `locked_until`                                                        | ts(3) null        | The lease.                                                                                                                 |
+| `timed_out_at`                                                        | ts(3) null        | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`.                              |
+| `last_error`                                                          | json null         |                                                                                                                            |
+| `completed_retention_ms`, `failed_retention_ms`                       | bigint            | Frozen at enqueue.                                                                                                         |
+| `failure_job`                                                         | varchar(128) null | Frozen at enqueue.                                                                                                         |
+| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)             |                                                                                                                            |
 
 `attempts` counts the finished attempts: a completion, a retry and a failure each add one. A stall, a release and a
 wait on a rate limit add none; the stalls have their own count.
@@ -184,7 +184,7 @@ recovery deletes them in batches, with SKIP LOCKED: the keys of a limit per clie
 | `created_at`, `updated_at` | ts(3)             |                                                                                               |
 
 One small row per schedule, and no secondary index: each access is by primary key, or reads the whole table
-(`getSchedules`). An app without schedules never touches it. sqlane never deletes a row: services that share the table
+(`schedules.list`). An app without schedules never touches it. sqlane never deletes a row: services that share the table
 each know only their own schedules.
 
 ### Migrations
@@ -338,15 +338,15 @@ A `RateLimitedError` on local rate limits only sends the job back to `pending`, 
 
 In the caller's transaction, with its connection (with a pool: in a transaction of sqlane):
 
-1. Check the payload (JSON, at most `maxPayloadBytes`, default 256 KiB) and the options (`jobId`, `delay` or `runAt`,
+1. Check the payload (JSON, at most `maxPayloadBytes`, default 256 KiB) and the options (`dedupeKey`, `delay` or `runAt`,
    `maxAttempts`, `maxStalls`, `retention`, `failureJob`, `globalConcurrencyLimits`, `globalRateLimits`).
 2. The global limits: the enqueue option if given, else the definition's function of the payload; as keys, sorted,
    with their maxes. The same for the rate limits, as rate keys with their settings and costs.
 3. `INSERT` the jobs, with their keys, in the order of their ids. This order prevents deadlocks between concurrent
-   enqueues. Then `INSERT` the payloads of the rows that have this call's `enqueue_token`. With a `jobId`, an existing
+   enqueues. Then `INSERT` the payloads of the rows that have this call's `enqueue_token`. With a `dedupeKey`, an existing
    row means a duplicate. In this case, the enqueue returns `{ id, created: false }` and changes nothing, so it also
    skips the payload. Deduplication lasts while the row exists, in any state, so the retention is the deduplication
-   window. After cleanup has deleted the row, the same `jobId` adds a new job. On PostgreSQL, all of this is one
+   window. After cleanup has deleted the row, the same `dedupeKey` adds a new job. On PostgreSQL, all of this is one
    statement (a CTE), which is atomic even outside a transaction.
 4. PostgreSQL with the NOTIFY hint: `pg_notify` in the same transaction, delivered on commit.
 
@@ -357,7 +357,7 @@ rate.
 
 `enqueueMany` inserts many jobs in one statement per table and returns `{ id, created }[]` in input order. `created`
 comes from the call's `enqueue_token` (MySQL has no `RETURNING`): the payloads are inserted only for the rows with
-this token, never for a duplicate committed by another transaction. A `jobId`
+this token, never for a duplicate committed by another transaction. A `dedupeKey`
 repeated in one batch: the first is created, the rest are `created: false`.
 
 ### Dispatcher: one loop per process
@@ -655,7 +655,7 @@ limit without keys. A key of a limit of 1 is a mutex.
 - **Fair share.** A name whose due jobs all have full keys has no candidates: it takes no slot and banks nothing.
 - **Timeout.** JavaScript cannot stop a handler. On a timeout, sqlane aborts the `signal` with a `JobTimeoutError` and
   emits a `timed_out` event. The job stays `running`, and its lease is renewed. It keeps its slots and its slot of the
-  process until the handler settles, but for at most one more lease. During this time, `getStats()` counts it as
+  process until the handler settles, but for at most one more lease. During this time, `jobs.stats()` counts it as
   `stuck`. Then the attempt fails with the `JobTimeoutError`. The job is retried after its backoff, or it fails for
   good, and its slots are freed. This applies to all jobs, with or without keys.
 - **Linger.** The slots outlive their job row only in two cases, as rows with a `held_until` time. The first case is a
@@ -936,7 +936,7 @@ The table lists each guarantee and the mechanism that keeps it.
 | A job does not start before its data is visible.                                                                                                                                               | Other connections see only committed rows.                                                                                                                    |
 | A committed job runs at least once.                                                                                                                                                            | Leases, stall recovery, and the release on close.                                                                                                             |
 | Only the current owner saves the result of a job.                                                                                                                                              | The claim uses SKIP LOCKED, and every write checks the `lock_token`.                                                                                          |
-| A job with a `jobId` is added once while its row exists.                                                                                                                                       | The primary key is `<job_name>:<job_id>`.                                                                                                                     |
+| A job with a `dedupeKey` is added once while its row exists.                                                                                                                                   | The primary key is `<job_name>:<dedupeKey>`.                                                                                                                  |
 | At most `max` jobs with a common key of a global limit run at the same time, unless a handler ignores its `signal` past the lease or `exitsBy`, or two claims race during a change of the max. | The primary key `(key, slot)` of `sqlane_concurrency_slots`, the claim, and the linger of slots.                                                              |
 | A job blocked on a key is due again once the key has room.                                                                                                                                     | The unblock after each release and after each claim that blocks, and the sweep of the stall recovery.                                                         |
 | Any window of length `per` sees at most `max + burst − 1` starts of a key of a global rate limit, counted by cost, while its jobs carry one setting of the key.                                | The row of the key in `sqlane_rate_limits`, locked by the claim, whose `tat` moves in the transaction of the claim.                                           |
@@ -955,12 +955,15 @@ The table lists each guarantee and the mechanism that keeps it.
   `lease_lost`, `failure_job_not_added`, `schedule_fired` and `error`. The app maps the events to its metrics.
   `schedule_fired` comes once per decided slot in the cluster, from the process that decided it. `rate_limited` comes
   each time a handler's `RateLimitedError` makes its job wait. New event types may come in minor versions.
-- **Schedules.** `getSchedules()` gives the next slot, the last slot and the last job of each schedule, from the
+- **Schedules.** `schedules.list()` gives the next slot, the last slot and the last job of each schedule, from the
   table and from this process.
-- **Gauges.** For each job name, `getStats()` returns the number of pending, due, running, stuck and failed jobs, and
-  the age of the oldest due job. A stuck job is a `running` job with a `timed_out_at` time: it timed out, and its
-  handler has not settled yet. A blocked job, on a full key or on a rate key, counts as pending. These numbers support
-  alerts such as "the queue is stuck". OpenTelemetry support may come later, as a separate package.
+- **Gauges.** For each job name, `jobs.stats()` returns the number of pending, blocked, due, running, stuck, failed
+  and completed jobs, and the age of the oldest due job. A stuck job is a `running` job with a `timed_out_at` time: it
+  timed out, and its handler has not settled yet. A blocked job, on a full key or on a rate key, counts in `blocked`,
+  not in `pending`; a job held back by a local rate limit stays pending. The failed and completed jobs count until
+  cleanup deletes them. On MySQL and MariaDB the completed jobs are counted from the index `(status, job_name,
+  run_at)`. These numbers support alerts such as "the queue is stuck". OpenTelemetry support may come later, as a
+  separate package.
 - **The start delay.** `JobInfo` and the `claimed` event carry the due time (`runAt`, the job's place in line) and the
   start time (`startedAt`) of a run, both from the database clock: the start delay is `startedAt − runAt`.
 - **Keys.** `sqlane.jobs.keyStats()` lists the keys of the global limits with blocked jobs, or held or lingering slots,

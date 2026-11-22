@@ -24,7 +24,7 @@ and [MariaDB](#mariadb).
 | [MikroORM](#mikroorm)      | `@sqlane/core/adapter-mikro-orm`   | MikroORM 6 and 7              | ✅    | ✅      | ✅         |
 
 In the examples below, `buildReport` is the job definition of the [mysql2](#mysql2) example, and `reportId` is a
-string id of your app (a `jobId` must be a string). `db`, `sql`, `prisma`, `sequelize`, `dataSource` and `orm` are your
+string id of your app (a `dedupeKey` must be a string). `db`, `sql`, `prisma`, `sequelize`, `dataSource` and `orm` are your
 app's own instances, and `reports` and `Report` are your app's table and model.
 
 ## mysql2
@@ -64,7 +64,7 @@ export async function orderReport(reportId) {
     try {
         await connection.beginTransaction();
         await connection.query('INSERT INTO reports (id) VALUES (?)', [reportId]);
-        await sqlane.enqueue(connection, buildReport, { reportId }, { jobId: reportId });
+        await sqlane.enqueue(connection, buildReport, { reportId }, { dedupeKey: reportId });
         await connection.commit();
     } catch (error) {
         await connection.rollback();
@@ -118,7 +118,7 @@ const client = await appPool.connect();
 try {
     await client.query('BEGIN');
     await client.query('INSERT INTO reports (id) VALUES ($1)', [reportId]);
-    await sqlane.enqueue(client, buildReport, { reportId }, { jobId: reportId });
+    await sqlane.enqueue(client, buildReport, { reportId }, { dedupeKey: reportId });
     await client.query('COMMIT');
 } catch (error) {
     await client.query('ROLLBACK');
@@ -180,7 +180,7 @@ const sqlane = createSqlane({
 
 await sql.begin(async (sql) => {
     await sql`INSERT INTO reports ${sql({ id: reportId })}`;
-    await sqlane.enqueue(sql, buildReport, { reportId }, { jobId: reportId });
+    await sqlane.enqueue(sql, buildReport, { reportId }, { dedupeKey: reportId });
 });
 ```
 
@@ -222,7 +222,7 @@ const sqlane = createSqlane({ adapter: knexAdapter(queueDb, { dialect: 'postgres
 
 await db.transaction(async (trx) => {
     await trx('reports').insert({ id: reportId });
-    await sqlane.enqueue(trx, buildReport, { reportId }, { jobId: reportId });
+    await sqlane.enqueue(trx, buildReport, { reportId }, { dedupeKey: reportId });
 });
 ```
 
@@ -268,7 +268,7 @@ const sqlane = createSqlane({ adapter: kyselyAdapter(queueDb, { dialect: 'postgr
 
 await db.transaction().execute(async (trx) => {
     await trx.insertInto('reports').values({ id: reportId }).execute();
-    await sqlane.enqueue(trx, buildReport, { reportId }, { jobId: reportId });
+    await sqlane.enqueue(trx, buildReport, { reportId }, { dedupeKey: reportId });
 });
 ```
 
@@ -305,7 +305,7 @@ const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postg
 
 await db.transaction(async (tx) => {
     await tx.insert(reports).values({ id: reportId });
-    await sqlane.enqueue(tx, buildReport, { reportId }, { jobId: reportId });
+    await sqlane.enqueue(tx, buildReport, { reportId }, { dedupeKey: reportId });
 });
 ```
 
@@ -355,7 +355,7 @@ const sqlane = createSqlane({ adapter: prismaAdapter(queuePrisma, { dialect: 'po
 
 await prisma.$transaction(async (tx) => {
     await tx.report.create({ data: { id: reportId } });
-    await sqlane.enqueue(tx, buildReport, { reportId }, { jobId: reportId });
+    await sqlane.enqueue(tx, buildReport, { reportId }, { dedupeKey: reportId });
 });
 ```
 
@@ -422,7 +422,7 @@ const sqlane = createSqlane({ adapter: sequelizeAdapter(queueSequelize, { dialec
 
 await sequelize.transaction(async (t) => {
     await Report.create({ id: reportId }, { transaction: t });
-    await sqlane.enqueue(t, buildReport, { reportId }, { jobId: reportId });
+    await sqlane.enqueue(t, buildReport, { reportId }, { dedupeKey: reportId });
 });
 ```
 
@@ -478,7 +478,7 @@ const sqlane = createSqlane({ adapter: typeOrmAdapter(queueDataSource, { dialect
 
 await dataSource.transaction(async (manager) => {
     await manager.save(Report, { id: reportId });
-    await sqlane.enqueue(manager, buildReport, { reportId }, { jobId: reportId });
+    await sqlane.enqueue(manager, buildReport, { reportId }, { dedupeKey: reportId });
 });
 ```
 
@@ -512,7 +512,7 @@ const sqlane = createSqlane({ adapter: mikroOrmAdapter(queueOrm.em, { dialect: '
 
 await orm.em.transactional(async (em) => {
     em.persist(em.create(Report, { id: reportId }));
-    await sqlane.enqueue(em, buildReport, { reportId }, { jobId: reportId });
+    await sqlane.enqueue(em, buildReport, { reportId }, { dedupeKey: reportId });
 });
 ```
 
