@@ -28,7 +28,7 @@ test('the enqueue statement is pinned: its prepared statement does not change by
 
     // Changed on purpose? Measure with `pnpm bench:regression`, then pin the new hash.
     expect(createHash('sha256').update(sql).digest('hex'))
-        .toBe('1224ad97b44388f056eb6e68af0511dbcd2aaf61c30e131978c6d4be417553d6');
+        .toBe('b5c2279139744448cdbe9ef54ca40f4475749ff33b5f17aee108f5b108442982');
 });
 
 test('the jobs of slots: one NOTIFY per name, run by a reference', async () => {

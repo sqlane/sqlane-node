@@ -36,7 +36,7 @@ export async function insertScheduledJobsPostgres(executor, p, jobs, { enqueueTo
     const rows = await executor.query(`
         WITH input AS (
             SELECT * FROM jsonb_to_recordset($1::text::jsonb) AS r(
-                  id text, job_name text, payload jsonb, limit_keys text[], limit_maxes integer[], rate_limits jsonb,
+                  id text, job_name text, payload text, limit_keys text[], limit_maxes integer[], rate_limits jsonb,
                   max_attempts integer, max_stalls integer, completed_retention_ms bigint, failed_retention_ms bigint,
                   failure_job text, delay_ms bigint, run_at timestamptz
             )
@@ -57,7 +57,7 @@ export async function insertScheduledJobsPostgres(executor, p, jobs, { enqueueTo
         ),
         payloads AS (
             INSERT INTO ${p}payloads (id, payload)
-            SELECT input.id, input.payload FROM input JOIN inserted ON inserted.id = input.id
+            SELECT input.id, input.payload::jsonb FROM input JOIN inserted ON inserted.id = input.id
             ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload
         ),
         -- One NOTIFY per name that got a job: PostgreSQL drops only a repeat of the same channel and message
