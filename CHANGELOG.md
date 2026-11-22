@@ -1,5 +1,98 @@
 # @sqlane/core
 
+## 7.1.0
+
+### Minor Changes
+
+- [#139](https://github.com/sqlane/sqlane-node/pull/139) [`f46c32c`](https://github.com/sqlane/sqlane-node/commit/f46c32c1cd29aee93cc48d0d22b5f3f224d056db) - The migration `0008_job_list` adds an index on `(job_name, created_at, id)` of the jobs, for the lists of
+  `sqlane.jobs`, which require it. Run `migrate()`, or apply its statement with your own migration tool. The build waits
+  for the open transactions that wrote the jobs, and the writes wait for the build. On PostgreSQL it blocks the writes of
+  the table while it builds. On a large table, build it first, with the name and the columns of the migration, where
+  `<prefix>` is your `tablePrefix` (`sqlane_` by default):
+
+    ```sql
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS <prefix>jobs_list ON <prefix>jobs (job_name, created_at, id);
+    ```
+
+    The migration then skips it. A failed or cancelled concurrent build leaves an invalid index that the migration would
+    also skip: check `SELECT indisvalid FROM pg_index WHERE indexrelid = '<prefix>jobs_list'::regclass`, and if it is
+    `false`, drop the index and build it again.
+
+- [#140](https://github.com/sqlane/sqlane-node/pull/140) [`df781a7`](https://github.com/sqlane/sqlane-node/commit/df781a7fe9c615f969b0cc06ef66be9525a55c95) - `sqlane.jobs` retries, cancels and removes jobs in bulk.
+
+    - `jobs.retry(selector, options)` runs failed jobs again: pending, with the same id and enqueue time, due now or when
+      the lingering slots of their earlier runs end. `budget: 'reset'` (the default) sets `attempts` and `stalls` back to
+      0; `budget: 'one_more'` gives exactly one more attempt and changes the stored maxes. A job without a payload is not
+      retried.
+    - `jobs.cancel(selector, options)` fails pending and blocked jobs at once, with a `JobCancelledError` as `lastError` and
+      no failure job, and emits a `cancelled` event after the commit.
+    - `jobs.remove(selector, options)` deletes jobs in any status but running, with their payloads.
+
+    A selector is `{ jobIds }`, up to 1000 full ids, or a filter as `jobs.list` takes it. A call runs in one transaction by
+    default: sqlane's own, one of its own on a pool given as `connection`, or the caller's transaction. `mode: 'batches'`
+    walks a large filter in short transactions. `strict: true` rejects with an `IgnoredJobsError` when an id would be
+    ignored. The result has the count of the changed jobs, their ids with `includeAffectedJobIds`, and the ignored ids with
+    a reason. A running job is never changed.
+
+    New exports: `JobCancelledError`, `IgnoredJobsError`, and the types `JobSelector`, `BulkOptions`, `RetryOptions` and
+    `BulkResult`. `SqlaneJobs` gains a type parameter for the connection, with a default, and three methods: code that
+    implements it, such as a mock, needs them. The `SqlaneEvent` union gains `cancelled`: a `switch` over its types needs a
+    `default`. Adapters gain an optional member, `poolTransaction`; an adapter of your own without it runs a pool given as
+    `connection` as a caller's connection.
+
+- [#139](https://github.com/sqlane/sqlane-node/pull/139) [`f46c32c`](https://github.com/sqlane/sqlane-node/commit/f46c32c1cd29aee93cc48d0d22b5f3f224d056db) - `sqlane.jobs` reads the jobs in the database. `jobs.get(jobId)` returns one job with its payload, or `null`.
+  `jobs.list({ jobName, status }, { limit, cursor, includePayload })` lists the jobs of a name, newest first, a page at a
+  time, with an opaque cursor bound to its filter. A job is a `JobRecord`: its status, attempts, times, last error, keys,
+  what it is blocked on, and its payload. The reads require the migration `0008_job_list`.
+
+    The new types are `SqlaneJobs`, `JobRecord`, `JobStatus`, `JobError`, `JobFilter`, `ListJobsOptions` and `JobPage`, and
+    `HandlerPayload` is exported. `FailedJobPayload.error` is a `JobError`, the same shape as before.
+
+- [#141](https://github.com/sqlane/sqlane-node/pull/141) [`a648a30`](https://github.com/sqlane/sqlane-node/commit/a648a302b01294aa29095eb104ffc82ade27682f) - `sqlane.jobs.keyStats({ limit, type, orderBy })` lists the keys of the global limits that have blocked jobs, or held or
+  lingering slots, worst first: for alerts on a blocked chain (`orderBy: 'blocked'`) or on a key held too long
+  (`orderBy: 'held'`). A concurrency key shows its max, its held and lingering slots, its blocked jobs (up to 1000), and
+  the ages of its oldest blocked job and of its oldest slot. A rate key shows its blocked jobs, the age of the oldest, and
+  when it may start its next job. One statement on the queue's pool, with no new index or migration. New types:
+  `KeyStats`, `KeyStatsOptions`, `KeyStatsPage`.
+
+    Type change, none at run time: code that implements `SqlaneJobs` (a mock) needs `keyStats`.
+
+- [#141](https://github.com/sqlane/sqlane-node/pull/141) [`a648a30`](https://github.com/sqlane/sqlane-node/commit/a648a302b01294aa29095eb104ffc82ade27682f) - `JobInfo` and the `claimed` event carry the due time and the start time of a run. `JobInfo` gains `runAt` and
+  `startedAt`; the `claimed` event gains `runAt`, `enqueuedAt` and `startedAt`. `startedAt` is the database time of the
+  claim, the same as `JobRecord.startedAt`, so `startedAt − runAt` (the start delay) and `startedAt − enqueuedAt` (the
+  time since the enqueue) come from one clock. `runAt` is the job's due time as stored, its place in line: a block on a
+  key keeps it, and so does a `RateLimitedError` on a global rate key. The slots of global limits that a run takes get
+  its start time too.
+
+    Type changes, none at run time: a `JobInfo` or `HandlerContext` built by hand (in tests) needs `runAt` and
+    `startedAt`, and a `claimed` event built by hand needs `runAt`, `enqueuedAt` and `startedAt`.
+
+### Patch Changes
+
+- [#144](https://github.com/sqlane/sqlane-node/pull/144) [`d2f99f0`](https://github.com/sqlane/sqlane-node/commit/d2f99f04852da0a350a866b8acb7c43c73485206) - On MySQL and MariaDB, the reads of the jobs blocked on a key no longer grow with the number of blocked jobs. On MySQL
+  8.4, the unblock of a concurrency key and the search of candidates with global rate limits sorted every job blocked on
+  the key to find the oldest one, at each claim and completion; and the recovery sweep read every blocked job, on MySQL
+  and MariaDB, to list the blocked keys. Each now reads a few index entries: about 4,000 → under 50 with 2,000 jobs
+  blocked on a key.
+
+- [#137](https://github.com/sqlane/sqlane-node/pull/137) [`f8a67bc`](https://github.com/sqlane/sqlane-node/commit/f8a67bc2c118fb02e03fdc4697def09f8dd6a88c) - The `attempts` column of a completed job counts its last attempt too, as it does for a failed job. A job that completed
+  at its first attempt kept `attempts = 0`, as if it had never run; it now has 1. `attempts` counts the finished attempts:
+  a completion, a retry and a failure each add one, a stall, a release and a wait on a rate limit none. `JobInfo.attempt`
+  does not change.
+
+    The docs now state that a handler runs in the async context of `start()` or `drain()`, never in the context of the code
+    that woke the worker, such as an enqueue in a request, the commit of a transaction or a hint. Tests check it for each of
+    these paths.
+
+- [#143](https://github.com/sqlane/sqlane-node/pull/143) [`b8f2170`](https://github.com/sqlane/sqlane-node/commit/b8f217063362bb18da58f4a06e8f5560b2f24b2c) - A job whose error has a NUL character or a lone surrogate in its name, message, stack or code is failed or retried as
+  any other: the write of its error was refused by the database (a NUL by PostgreSQL, a lone surrogate by all of them),
+  and the job hung until its lease ran out. Each such character is now stored as U+FFFD, in `lastError` and in the
+  payload of the failure job. The cut of a long stack no longer splits a surrogate pair.
+
+- [#142](https://github.com/sqlane/sqlane-node/pull/142) [`2f32cdb`](https://github.com/sqlane/sqlane-node/commit/2f32cdb8e340e85af2d39089ac0613cab5a4ddf7) - On PostgreSQL, a job with a JSON `null` payload is enqueued: the enqueue, and the job of a schedule, failed with a
+  NOT NULL violation of the payload. A `null` payload is stored as JSON `null`, as on MySQL and MariaDB, and the handler
+  gets `null`.
+
 ## 7.0.4
 
 ### Patch Changes
