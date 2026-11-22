@@ -2,7 +2,7 @@ import { resolveDefaults } from './defaults.js';
 import { createEnqueuer } from './enqueue.js';
 import { createHintChannel } from './hint_channel.js';
 import { ClosedError, ConfigError } from './errors.js';
-import { runMigrations } from './migrations.js';
+import { rollbackMigrations, runMigrations } from './migrations.js';
 import { DEFAULT_MAX_PAYLOAD_BYTES } from './payload.js';
 import { createRegistry } from './registry.js';
 import { createRunner } from './runner.js';
@@ -412,6 +412,25 @@ export function createSqlane(options) {
                 return {
                     applied: await runMigrations(adapter, tablePrefix, migrateOptions, {
                         checkServer: () => checkServerOnce('schema.migrate()'),
+                        installedVersion: testInstalledVersion,
+                    }),
+                };
+            },
+            rollback: async (rollbackOptions) => {
+                if (runner.isClosed()) {
+                    throw new ClosedError('schema.rollback() after close()');
+                }
+
+                // Its DDL would wait behind the queries of this instance
+                if (!runner.isIdle() || startPromise) {
+                    throw new ConfigError(
+                        'schema.rollback() while started or draining: run it on an instance that is not started',
+                    );
+                }
+
+                return {
+                    reverted: await rollbackMigrations(adapter, tablePrefix, rollbackOptions, {
+                        checkServer: () => checkServerOnce('schema.rollback()'),
                         installedVersion: testInstalledVersion,
                     }),
                 };

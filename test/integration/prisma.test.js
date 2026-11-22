@@ -6,10 +6,11 @@ import { afterAll, afterEach, beforeAll, expect, inject, test } from 'vitest';
 import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
 import { prismaAdapter } from '../../src/adapters/prisma.js';
-import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineJob, MigrationLockTimeoutError } from '../../src/index.js';
 import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
+import { checkSchemaChanges } from './helpers/schema_checks.js';
 import { checkStartTimes } from './helpers/start_time_checks.js';
 
 /** @typedef {import('../../src/adapters/prisma.js').PrismaClientLike} PrismaClientLike */
@@ -139,10 +140,41 @@ test('schema.migrate() through Prisma: the tables, once', async () => {
     await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [] });
 });
 
+test('schema.rollback() through Prisma: a table lock held longer than lockTimeout, a MigrationLockTimeoutError', async () => {
+    const { sqlane, p } = await freshSqlane();
+    const locked = Promise.withResolvers();
+    const released = Promise.withResolvers();
+    // A transaction of the app that read the table: it holds its lock until it ends
+    const holder = prisma.$transaction(async (/** @type {any} */ tx) => {
+        await tx.$queryRawUnsafe(`SELECT count(*) AS n FROM ${p}jobs`);
+        locked.resolve(undefined);
+        await released.promise;
+    }, { timeout: 30_000 });
+
+    await locked.promise;
+
+    try {
+        await expect(sqlane.schema.rollback({ targetVersion: '6.0.0', lockTimeout: '1s' }))
+            .rejects.toThrow(MigrationLockTimeoutError);
+    } finally {
+        released.resolve(undefined);
+        await holder;
+    }
+
+    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).resolves.toStrictEqual({ reverted: ['0008_job_list'] });
+});
+
 test('sqlane.jobs: get and list through the adapter', async () => {
     const { sqlane } = await freshSqlane();
 
     await expect(checkJobsRead(sqlane, prisma)).resolves.toHaveLength(3);
+});
+
+test('the schema through the adapter: rollback(), then migrate() again', async () => {
+    const { sqlane } = await freshSqlane();
+
+    await expect(checkSchemaChanges(sqlane))
+        .resolves.toStrictEqual({ reverted: ['0008_job_list'], applied: ['0008_job_list'] });
 });
 
 test('the start time of a run: the event, JobInfo, JobRecord and its slots agree', async () => {

@@ -164,6 +164,7 @@ export function mariadbMigrations(p) {
             id: '0008_job_list',
             version: '7.1.0',
             statements: [`ALTER TABLE ${p}jobs ADD KEY IF NOT EXISTS ${p}jobs_list (job_name, created_at, id)`],
+            down: [`ALTER TABLE ${p}jobs DROP KEY IF EXISTS ${p}jobs_list`],
         },
     ];
 }

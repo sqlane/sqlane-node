@@ -447,6 +447,13 @@
  */
 
 /**
+ * @typedef {object} RollbackOptions
+ * @property {string} targetVersion `'X.Y.Z'`: the migrations tagged above it are reverted. From `'6.0.0'` up to the
+ *     installed version.
+ * @property {Duration} [lockTimeout] For the migration lock, and for each lock of a table. Default: `'10m'`.
+ */
+
+/**
  * @typedef {object} JobStats
  * @property {string} name The job name.
  * @property {number} pending The jobs that wait to run, also those not due yet and those blocked on a key.

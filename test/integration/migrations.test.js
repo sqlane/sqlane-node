@@ -33,6 +33,21 @@ const ALL_MIGRATIONS = inject('databaseDialect') === 'postgres'
     ? ['0001_initial', '0002_pending_order', '0003_job_keys', '0004_schedules', ...SIX, ...RATE_LIMITS, ...JOB_LIST]
     : ['0001_initial', '0002_job_keys', '0004_schedules', ...SIX, ...RATE_LIMITS, ...JOB_LIST];
 
+const isMysqlFamily = inject('databaseDialect') !== 'postgres';
+
+/** @type {Record<'mysql' | 'postgres', string>} The index of 0008 by the catalog: a row if it exists */
+const JOBS_LIST_SQL = {
+    mysql: `SELECT 1 AS found FROM information_schema.statistics
+             WHERE table_schema = DATABASE() AND index_name = CONCAT(?, 'jobs_list')`,
+    postgres: 'SELECT 1 AS found WHERE to_regclass($1 || \'jobs_list\') IS NOT NULL',
+};
+
+/** @type {Record<'mysql' | 'postgres', (p: string) => string>} The index of 0008, dropped by hand */
+const DROP_JOBS_LIST_SQL = {
+    mysql: p => `ALTER TABLE ${p}jobs DROP KEY ${p}jobs_list`,
+    postgres: p => `DROP INDEX ${p}jobs_list`,
+};
+
 /** @type {Record<'mysql' | 'postgres', { time: string, now: string }>} */
 const TIME_SQL = {
     mysql: { time: 'datetime(3)', now: 'UTC_TIMESTAMP(3)' },
@@ -348,6 +363,120 @@ test.each([
     await expect(listTables(tablePrefix)).resolves.toStrictEqual([]);
 });
 
+/**
+ * @param {string} tablePrefix
+ * @returns {Promise<boolean>} The index of 0008_job_list exists, by the catalog.
+ */
+async function hasJobsList(tablePrefix) {
+    return (await database.query(JOBS_LIST_SQL[database.family], [tablePrefix])).length > 0;
+}
+
+/**
+ * @param {string} tablePrefix
+ * @returns {Promise<string[]>} The recorded ids, sorted.
+ */
+async function recordedIds(tablePrefix) {
+    const rows = await database.query(`SELECT id FROM ${tablePrefix}migrations ORDER BY id`);
+
+    return rows.map(row => String(row.id));
+}
+
+test('rollback: reverts the migrations tagged above targetVersion; migrate() applies them again', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+
+    await sqlane.schema.migrate();
+    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).resolves.toStrictEqual({ reverted: JOB_LIST });
+    await expect(hasJobsList(tablePrefix)).resolves.toBe(false);
+    await expect(recordedIds(tablePrefix)).resolves.toStrictEqual(ALL_MIGRATIONS.slice(0, -JOB_LIST.length));
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: JOB_LIST });
+    await expect(hasJobsList(tablePrefix)).resolves.toBe(true);
+});
+
+test('rollback: nothing above targetVersion, or no table: nothing reverted', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+
+    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).resolves.toStrictEqual({ reverted: [] });
+    await expect(listTables(tablePrefix)).resolves.toStrictEqual([]);
+    await sqlane.schema.migrate({ targetVersion: '6.0.0' });
+    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).resolves.toStrictEqual({ reverted: [] });
+    await sqlane.schema.migrate();
+    await expect(sqlane.schema.rollback({ targetVersion: '7.1.0' })).resolves.toStrictEqual({ reverted: [] });
+    await expect(recordedIds(tablePrefix)).resolves.toStrictEqual(ALL_MIGRATIONS.toSorted());
+});
+
+test('rollback: a cut run is finished by running it again (the index gone, its record kept)', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+
+    await sqlane.schema.migrate();
+    await database.query(DROP_JOBS_LIST_SQL[database.family](tablePrefix));
+
+    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).resolves.toStrictEqual({ reverted: JOB_LIST });
+    await expect(recordedIds(tablePrefix)).resolves.toStrictEqual(ALL_MIGRATIONS.slice(0, -JOB_LIST.length));
+});
+
+test('rollback: a migration recorded but unknown to this version: a ConfigError, nothing reverted', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+
+    await sqlane.schema.migrate();
+    await database.query(`INSERT INTO ${tablePrefix}migrations (id, applied_at) VALUES ('0099_future', `
+        + `${TIME_SQL[database.family].now})`);
+
+    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).rejects.toThrow(new ConfigError(
+        'schema.rollback(): migrations unknown to this version are recorded (0099_future): a newer version of sqlane '
+        + 'applied them, and their down statements are not in this code',
+    ));
+    await expect(hasJobsList(tablePrefix)).resolves.toBe(true);
+    await expect(recordedIds(tablePrefix)).resolves.toContain('0008_job_list');
+});
+
+test('rollback: waits for the lock of a table up to lockTimeout, then a MigrationLockTimeoutError', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+    const holder = await testAdapter.connect();
+
+    await sqlane.schema.migrate();
+    // A transaction that read the table: it holds its lock (PostgreSQL ACCESS SHARE, a MySQL metadata lock)
+    await holder.begin();
+    await holder.execute(`SELECT count(*) FROM ${tablePrefix}jobs`);
+
+    try {
+        const startedAt = Date.now();
+
+        await expect(sqlane.schema.rollback({ targetVersion: '6.0.0', lockTimeout: '1s' }))
+            .rejects.toThrow(MigrationLockTimeoutError);
+        expect(Date.now() - startedAt).toBeLessThan(5000);
+    } finally {
+        await holder.rollback();
+        holder.release();
+    }
+
+    await expect(hasJobsList(tablePrefix)).resolves.toBe(true);
+    await expect(recordedIds(tablePrefix)).resolves.toContain('0008_job_list');
+});
+
+test.runIf(isMysqlFamily)('rollback: the lock_wait_timeout of the session is restored', async () => {
+    const pool = mysql.createPool({ uri: inject('databaseUrl'), connectionLimit: 1 });
+    const dialect = /** @type {'mysql' | 'mariadb'} */ (database.dialect);
+    const sqlane = createSqlane({ adapter: mysql2Adapter(pool, { dialect }), tablePrefix: nextPrefix() });
+
+    try {
+        await pool.query('SET SESSION lock_wait_timeout = 77');
+        await sqlane.schema.migrate();
+        await sqlane.schema.rollback({ targetVersion: '6.0.0', lockTimeout: '1s' });
+
+        const [rows] = await pool.query('SELECT @@SESSION.lock_wait_timeout AS seconds');
+
+        expect(Number(/** @type {any} */ (rows)[0].seconds)).toBe(77);
+    } finally {
+        await sqlane.close({ deadline: 0 });
+        await pool.end();
+    }
+});
+
 test('the check of the server: the version of the database, through the adapter', async () => {
     const [{ version }] = await testAdapter.adapter.queue.query(SERVER_VERSION_SQL, []);
     const server = parseServerVersion(String(version));
@@ -386,7 +515,6 @@ async function adapterWithSqlMode(sqlMode, options = {}) {
     return { adapter: mysql2Adapter(pool, { dialect, ...options }), pool };
 }
 
-const isMysqlFamily = inject('databaseDialect') !== 'postgres';
 const LACKING_STRICT = `the sql_mode of ${inject('databaseDialect') === 'mariadb' ? 'MariaDB' : 'MySQL'} lacks `
     + 'STRICT_TRANS_TABLES or STRICT_ALL_TABLES';
 

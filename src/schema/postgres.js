@@ -162,6 +162,7 @@ export function postgresMigrations(p) {
             id: '0008_job_list',
             version: '7.1.0',
             statements: [`CREATE INDEX IF NOT EXISTS ${p}jobs_list ON ${p}jobs (job_name, created_at, id)`],
+            down: [`DROP INDEX IF EXISTS ${p}jobs_list`],
         },
     ];
 }

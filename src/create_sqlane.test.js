@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { ClosedError, ConfigError } from './errors.js';
+import { ClosedError, ConfigError, InvalidOptionsError } from './errors.js';
 import { createSqlane } from './create_sqlane.js';
 import { defineConcurrencyLimit } from './define_concurrency_limit.js';
 import { defineJob } from './define_job.js';
@@ -225,6 +225,8 @@ describe('close()', () => {
         expect(() => sqlane.schedule('tick', { every: '1m' })).toThrow(ClosedError);
         await expect(sqlane.start()).rejects.toThrow(ClosedError);
         await expect(sqlane.schema.migrate()).rejects.toThrow(new ClosedError('schema.migrate() after close()'));
+        await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' }))
+            .rejects.toThrow(new ClosedError('schema.rollback() after close()'));
         await closing;
     });
 
@@ -521,5 +523,44 @@ describe('the check of the server', () => {
         await expect(sqlane.schema.migrate({ lockTimeout: 'soon' }))
             .rejects.toThrow('schema.migrate(): "lockTimeout" must be a duration');
         expect(versionQueries()).toBe(0);
+    });
+});
+
+describe('schema.rollback()', () => {
+    test.each([
+        ['no targetVersion', {}],
+        ['a targetVersion below 6.0.0', { targetVersion: '5.0.0' }],
+        ['a bad lockTimeout', { targetVersion: '6.0.0', lockTimeout: 'soon' }],
+    ])('%s: an InvalidOptionsError before any statement', async (_, options) => {
+        const { adapter, versionQueries } = fakeAdapter();
+        const sqlane = createSqlane({ adapter });
+
+        await expect(sqlane.schema.rollback(/** @type {any} */ (options))).rejects.toThrow(InvalidOptionsError);
+        expect(versionQueries()).toBe(0);
+    });
+
+    test('while started, starting or draining: a ConfigError', async () => {
+        const job = defineJob({ name: 'a' });
+        const sqlane = createSqlane({ adapter: fakeAdapter().adapter, jobs: [job] });
+        const message = 'schema.rollback() while started or draining: run it on an instance that is not started';
+
+        sqlane.handle(job, async () => {});
+
+        const starting = sqlane.start();
+
+        await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).rejects.toThrow(new ConfigError(message));
+        await starting;
+        await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).rejects.toThrow(new ConfigError(message));
+        await sqlane.close({ deadline: 0 });
+
+        const drained = createSqlane({ adapter: fakeAdapter().adapter, jobs: [job] });
+
+        drained.handle(job, async () => {});
+
+        const draining = drained.drain();
+
+        await expect(drained.schema.rollback({ targetVersion: '6.0.0' })).rejects.toThrow(new ConfigError(message));
+        await draining;
+        await drained.close({ deadline: 0 });
     });
 });

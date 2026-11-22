@@ -10,6 +10,7 @@ import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './he
 import { preparedAfterAJob, SQLANE_STATEMENTS_SQL } from './helpers/prepared_statements.js';
 import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
+import { checkSchemaChanges } from './helpers/schema_checks.js';
 import { checkStartTimes } from './helpers/start_time_checks.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<import('../../src/adapters/knex.js').KnexConnection>} Sqlane */
@@ -121,6 +122,13 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         const { sqlane } = await freshSqlane();
 
         await expect(checkJobsRead(sqlane, knex)).resolves.toHaveLength(3);
+    });
+
+    test('the schema through the adapter: rollback(), then migrate() again', async () => {
+        const { sqlane } = await freshSqlane();
+
+        await expect(checkSchemaChanges(sqlane))
+            .resolves.toStrictEqual({ reverted: ['0008_job_list'], applied: ['0008_job_list'] });
     });
 
     test('the start time of a run: the event, JobInfo, JobRecord and its slots agree', async () => {

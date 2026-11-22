@@ -125,6 +125,23 @@ export function isQuickRetryError(error) {
     }));
 }
 
+/** PostgreSQL: `lock_timeout` (55P03). MySQL, MariaDB: `lock_wait_timeout` and `innodb_lock_wait_timeout` (1205). */
+const LOCK_TIMEOUT_CODES = new Set(['55P03', 'ER_LOCK_WAIT_TIMEOUT']);
+
+/**
+ * A lock was not free in time: an advisory lock, or the lock of a table (PostgreSQL `lock_timeout`, MySQL and MariaDB
+ * `lock_wait_timeout`).
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isLockTimeoutError(error) {
+    return someError(error, fields => matches(fields, {
+        codes: LOCK_TIMEOUT_CODES,
+        errnos: LOCK_WAIT_TIMEOUT_ERRNOS,
+        kinds: new Set(),
+    }));
+}
+
 /** MySQL, MariaDB: an unknown system variable, such as `innodb_snapshot_isolation` before MariaDB 10.11.8 */
 const UNKNOWN_VARIABLE_CODES = new Set(['ER_UNKNOWN_SYSTEM_VARIABLE']);
 const UNKNOWN_VARIABLE_ERRNOS = new Set([1193]);

@@ -28,6 +28,14 @@ test.each(['mysql', 'mariadb', 'postgres'])('%s: each migration is tagged with a
     expect(versions.toSorted(compareVersions)).toStrictEqual(versions);
 });
 
+test.each(['mysql', 'mariadb', 'postgres'])('%s: each migration tagged above 6.0.0 has a down', (dialect) => {
+    const migrations = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_')
+        .filter(({ version }) => compareVersions(version, '6.0.0') > 0);
+
+    expect(migrations.map(({ id }) => id)).toContain('0008_job_list');
+    expect(migrations.filter(({ down }) => !down?.length).map(({ id }) => id)).toStrictEqual([]);
+});
+
 test.each(['mysql', 'mariadb', 'postgres'])('%s: 0004_schedules creates the table of the schedules', (dialect) => {
     const migrations = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_');
     const sql = migrations.find(({ id }) => id === '0004_schedules')?.statements.join('\n');

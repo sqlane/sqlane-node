@@ -24,6 +24,7 @@ import type {
     ListJobsOptions,
     MigrateOptions,
     RetryOptions,
+    RollbackOptions,
     ScheduleBaseOptions,
     ScheduleInfo,
     SchedulePayload,
@@ -45,6 +46,21 @@ export interface SqlaneSchema {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate | schema.migrate}
      */
     migrate(options?: MigrateOptions): Promise<{ applied: string[] }>;
+
+    /**
+     * Reverts the recorded migrations tagged above `targetVersion`, newest first: the down of each, then its record.
+     * Each down is safe to run again, so a cut rollback is finished by running it again. A down that drops a column or
+     * a table loses its data. Run it only when no process of a newer version uses the tables. Its DDL waits for the
+     * locks of the tables, and the queries of the queue wait behind it: pass a short `lockTimeout` while processes run.
+     *
+     * Rejects with a `ConfigError` when a recorded migration is unknown to this version, or on a started or draining
+     * instance.
+     * @param options `targetVersion`: the version to go back to, from `'6.0.0'` up to the installed version.
+     *     `lockTimeout`: how long to wait for the migration lock, and for each lock of a table; default `'10m'`.
+     * @returns The ids of the migrations that it reverted, newest first.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemarollback | schema.rollback}
+     */
+    rollback(options: RollbackOptions): Promise<{ reverted: string[] }>;
 }
 
 /**
@@ -242,7 +258,7 @@ export interface Sqlane<C> {
     /** The jobs in the database: read them; retry, cancel or remove them in bulk. */
     readonly jobs: SqlaneJobs<C>;
 
-    /** The `sqlane_*` tables: create or update them. */
+    /** The `sqlane_*` tables: create, update or roll them back. */
     readonly schema: SqlaneSchema;
 
     /**

@@ -711,6 +711,17 @@ export type MigrateOptions = {
      */
     lockTimeout?: Duration;
 };
+export type RollbackOptions = {
+    /**
+     * `'X.Y.Z'`: the migrations tagged above it are reverted. From `'6.0.0'` up to the
+     * installed version.
+     */
+    targetVersion: string;
+    /**
+     * For the migration lock, and for each lock of a table. Default: `'10m'`.
+     */
+    lockTimeout?: Duration;
+};
 export type JobStats = {
     /**
      * The job name.
@@ -1426,6 +1437,12 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * @property {string} [targetVersion] `'X.Y.Z'`: only the migrations tagged at or below it. From `'6.0.0'` up to the
  *     installed version. Default: every migration.
  * @property {Duration} [lockTimeout] Default: `'10m'`.
+ */
+/**
+ * @typedef {object} RollbackOptions
+ * @property {string} targetVersion `'X.Y.Z'`: the migrations tagged above it are reverted. From `'6.0.0'` up to the
+ *     installed version.
+ * @property {Duration} [lockTimeout] For the migration lock, and for each lock of a table. Default: `'10m'`.
  */
 /**
  * @typedef {object} JobStats

@@ -45,6 +45,7 @@ export type KeyStatsOptions = import('./types.js').KeyStatsOptions;
 export type KeyStatsPage = import('./types.js').KeyStatsPage;
 export type Logger = import('./types.js').Logger;
 export type MigrateOptions = import('./types.js').MigrateOptions;
+export type RollbackOptions = import('./types.js').RollbackOptions;
 export type RateLimit = import('./types.js').RateLimit;
 export type RateLimitKey = import('./types.js').RateLimitKey;
 export type RateLimitOptions = import('./types.js').RateLimitOptions;
@@ -139,6 +140,7 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /** @typedef {import('./types.js').KeyStatsPage} KeyStatsPage */
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
+/** @typedef {import('./types.js').RollbackOptions} RollbackOptions */
 /** @typedef {import('./types.js').RateLimit} RateLimit */
 /** @typedef {import('./types.js').RateLimitKey} RateLimitKey */
 /** @typedef {import('./types.js').RateLimitOptions} RateLimitOptions */

@@ -1,5 +1,11 @@
 import { expect, test } from 'vitest';
-import { isConnectionError, isMissingTableError, isQuickRetryError, isTransientDbError } from './transient_error.js';
+import {
+    isConnectionError,
+    isLockTimeoutError,
+    isMissingTableError,
+    isQuickRetryError,
+    isTransientDbError,
+} from './transient_error.js';
 
 test.each([
     ['a MySQL deadlock', { code: 'ER_LOCK_DEADLOCK', errno: 1213 }],
@@ -108,4 +114,20 @@ test.each([
     ['a duplicate key', { code: 'ER_DUP_ENTRY', errno: 1062 }, false],
 ])('%s: a quick retry: %s', (_, error, expected) => {
     expect(isQuickRetryError(error)).toBe(expected);
+});
+
+test.each([
+    ['a PostgreSQL lock_timeout', { code: '55P03' }, true],
+    ['a MySQL lock wait timeout', { code: 'ER_LOCK_WAIT_TIMEOUT', errno: 1205 }, true],
+    ['a MariaDB lock wait timeout of the mariadb driver', { errno: 1205, sqlState: 'HY000' }, true],
+    ['a PostgreSQL lock_timeout through Prisma', { code: 'P2010', meta: { code: '55P03' } }, true],
+    ['a MySQL lock wait timeout through Prisma', {
+        code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '1205' } } },
+    }, true],
+    ['a lock wait timeout wrapped by TypeORM', { driverError: { code: '55P03' } }, true],
+    ['a PostgreSQL deadlock', { code: '40P01' }, false],
+    ['a MySQL deadlock', { code: 'ER_LOCK_DEADLOCK', errno: 1213 }, false],
+    ['a plain error', new Error('boom'), false],
+])('%s: a lock timeout: %s', (_, error, expected) => {
+    expect(isLockTimeoutError(error)).toBe(expected);
 });

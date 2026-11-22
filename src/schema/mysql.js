@@ -163,6 +163,11 @@ export function mysqlMigrations(p) {
             id: '0008_job_list',
             version: '7.1.0',
             statements: [`ALTER TABLE ${p}jobs ADD KEY ${p}jobs_list (job_name, created_at, id)`],
+            // No DROP KEY IF EXISTS on MySQL: a run cut after the drop runs again
+            down: [{
+                ifIndexExists: [`${p}jobs`, `${p}jobs_list`],
+                sql: `ALTER TABLE ${p}jobs DROP KEY ${p}jobs_list`,
+            }],
         },
     ];
 }
