@@ -124,6 +124,8 @@ describe('with a definition', () => {
     test('the jobId of 7.x: an error that names the new option', () => {
         expect(() => build({ options: /** @type {any} */ ({ jobId: 'r1' }) }))
             .toThrow('enqueue("build_report"): "jobId" was renamed in 8.0: use "dedupeKey"');
+        expect(() => build({ options: /** @type {any} */ ({ jobId: undefined }) }))
+            .toThrow('enqueue("build_report"): "jobId" was renamed in 8.0: use "dedupeKey"');
     });
 
     test('a delay', () => {

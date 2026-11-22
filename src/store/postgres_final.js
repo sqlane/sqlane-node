@@ -760,8 +760,7 @@ export async function makeDue(executor, p, names) {
 }
 
 /**
- * The counts per job name, for alerts such as "queue stuck". It reads every row kept: no index covers the failed and
- * completed jobs.
+ * The counts per job name, for alerts such as "queue stuck". It reads every row kept, of every status.
  * @param {Executor} executor
  * @param {string} p
  * @returns {Promise<import('../types.js').JobStats[]>}

@@ -12,7 +12,7 @@ import {
     pendingSlots,
     previousSlot,
     scheduledAtOf,
-    slotJobId,
+    slotDedupeKeyOf,
 } from './schedule.js';
 
 const report = defineJob({ name: 'nightly_report' });
@@ -115,7 +115,7 @@ describe('slots', () => {
         const entry = checkSchedule(report, { every: '1500ms' });
 
         expect(nextSlot(entry, 1_000_000)).toBe(1_000_500);
-        expect(slotJobId(entry, 1_000_500)).toBe('schedule:1970-01-01T00:16:40.500Z');
+        expect(slotDedupeKeyOf(entry.key, 1_000_500)).toBe('schedule:1970-01-01T00:16:40.500Z');
     });
 
     test('cron: next, latest, previous', () => {
@@ -137,7 +137,7 @@ describe('job ids of slots', () => {
     ])('round trip %s', (_, options, jobId) => {
         const entry = checkSchedule(report, options);
 
-        expect(slotJobId(entry, slot)).toBe(jobId);
+        expect(slotDedupeKeyOf(entry.key, slot)).toBe(jobId);
         expect(scheduledAtOf(`nightly_report:${jobId}`)).toStrictEqual(new Date(slot));
     });
 

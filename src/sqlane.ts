@@ -173,8 +173,7 @@ export interface SqlaneJobs<C = any> {
     /**
      * Counts the jobs of each job name, for monitoring and alerts. A growing `oldestDueAgeMs` usually means that no
      * process handles the name, or that the workers can't keep up; a growing `blocked`, that a key of a global limit
-     * holds its jobs back (see `keyStats`). PostgreSQL reads every row kept; MySQL and MariaDB read the completed jobs
-     * in their index: poll it at the pace of a metric scrape.
+     * holds its jobs back (see `keyStats`). It reads every row kept: mind the interval of a metric scrape.
      * @returns One entry per name with jobs in any status, sorted by name. The failed and completed jobs count until
      *     the cleanup deletes them.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsstats | jobs.stats}

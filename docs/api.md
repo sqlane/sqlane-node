@@ -1136,13 +1136,9 @@ wait. `failed` and `completed` count the rows until cleanup deletes them, which 
 growing `oldestDueAgeMs` usually means that no process handles the name, or that the workers cannot keep up. A growing
 `blocked` can mean that a rate limit is below the rate of the enqueues, or that a key is held too long.
 
-It is one statement, without locks, on the queue's pool, and it works before `start()` and after `close()`. Its cost
-depends on the dialect:
-
-- PostgreSQL reads every row that sqlane keeps, as no index covers the failed and completed jobs.
-- MySQL and MariaDB read the rows of the pending, blocked, running and failed jobs, and only the index entries of the
-  completed jobs. That part grows with the throughput times the completed retention: mind the interval of your metric
-  scrape.
+It is one statement, without locks, on the queue's pool, and it works before `start()` and after `close()`. On every
+dialect it reads every row that sqlane keeps, so its cost grows with the throughput times the retentions: mind the
+interval of your metric scrape.
 
 ## `jobs`
 

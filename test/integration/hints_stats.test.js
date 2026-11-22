@@ -121,8 +121,9 @@ test('jobs.stats: the counts of each name', async () => {
 
     await sqlane.schema.migrate();
     await sqlane.enqueueMany(testAdapter.pool, 'a', [
-        { payload: {}, options: { runAt: new Date(Date.now() - 5000) } },
-        { payload: {}, options: { runAt: new Date(Date.now() - 1000) } },
+        // Wide margins: runAt comes from the clock of this host, and the database compares it with its own
+        { payload: {}, options: { runAt: new Date(Date.now() - 60_000) } },
+        { payload: {}, options: { runAt: new Date(Date.now() - 30_000) } },
         { payload: {}, options: { delay: '1h' } },
     ]);
 
@@ -172,7 +173,7 @@ test('jobs.stats: the counts of each name', async () => {
             oldestDueAgeMs: null,
         },
     ]);
-    expect(stats[0].oldestDueAgeMs).toBeGreaterThanOrEqual(4500);
+    expect(stats[0].oldestDueAgeMs).toBeGreaterThanOrEqual(50_000);
 });
 
 test('jobs.stats: a name with only completed jobs has an entry', async () => {

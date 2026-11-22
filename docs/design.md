@@ -961,9 +961,8 @@ The table lists each guarantee and the mechanism that keeps it.
   and completed jobs, and the age of the oldest due job. A stuck job is a `running` job with a `timed_out_at` time: it
   timed out, and its handler has not settled yet. A blocked job, on a full key or on a rate key, counts in `blocked`,
   not in `pending`; a job held back by a local rate limit stays pending. The failed and completed jobs count until
-  cleanup deletes them. On MySQL and MariaDB the completed jobs are counted from the index `(status, job_name,
-  run_at)`. These numbers support alerts such as "the queue is stuck". OpenTelemetry support may come later, as a
-  separate package.
+  cleanup deletes them. The count reads every row kept. These numbers support alerts such as "the queue is stuck".
+  OpenTelemetry support may come later, as a separate package.
 - **The start delay.** `JobInfo` and the `claimed` event carry the due time (`runAt`, the job's place in line) and the
   start time (`startedAt`) of a run, both from the database clock: the start delay is `startedAt − runAt`.
 - **Keys.** `sqlane.jobs.keyStats()` lists the keys of the global limits with blocked jobs, or held or lingering slots,

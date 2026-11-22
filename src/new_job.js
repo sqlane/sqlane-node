@@ -9,6 +9,7 @@ import {
     checkFailureJob,
     checkJobFields,
     checkObject,
+    isPlainObject,
     JOB_NAME_REGEXP,
     PRINTABLE_ID_REGEXP,
 } from './validate.js';
@@ -137,7 +138,8 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
         throw new InvalidOptionsError(`${where}: "mutexKeys" was removed in 6.0: use "globalConcurrencyLimits"`);
     }
 
-    if (/** @type {Record<string, unknown>} */ (options)?.jobId !== undefined) {
+    // Also `{ jobId: undefined }`: the code of 7.x, not an unknown option
+    if (isPlainObject(options) && 'jobId' in options) {
         throw new InvalidOptionsError(`${where}: "jobId" was renamed in 8.0: use "dedupeKey"`);
     }
 

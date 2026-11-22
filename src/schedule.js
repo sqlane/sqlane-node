@@ -245,15 +245,6 @@ export function previousSlot(entry, slotMs) {
 }
 
 /**
- * @param {ScheduleEntry} entry
- * @param {number} slotMs
- * @returns {string} The dedupe key of the slot: `schedule:[<key>:]<ISO>`.
- */
-export function slotJobId(entry, slotMs) {
-    return slotDedupeKeyOf(entry.key, slotMs);
-}
-
-/**
  * The slot of a job, from its id. Only the scheduler and the `slot` enqueue option make such ids.
  * @param {string} jobId The id of a job: `<name>:<dedupeKey>`, or a ULID.
  * @returns {Date | null} Null: not the job of a slot.

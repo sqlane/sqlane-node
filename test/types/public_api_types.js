@@ -234,6 +234,11 @@ export async function publicApiTypes() {
     await sqlane.enqueue(connection, job, {}, { dedupeKey: 42 });
     // @ts-expect-error jobId was renamed dedupeKey in 8.0
     await sqlane.enqueue(connection, job, {}, { jobId: 'r1' });
+    // Not a literal, with another option: neither the excess-property check nor the weak-type check applies
+    const oldOptions = { jobId: 'r1', delay: '1s' };
+
+    // @ts-expect-error jobId was renamed dedupeKey in 8.0, also in options that are not a literal
+    await sqlane.enqueue(connection, job, {}, oldOptions);
     // @ts-expect-error jobId was renamed dedupeKey in 8.0, in enqueueMany too
     await sqlane.enqueueMany(connection, job, [{ payload: {}, options: { jobId: 'r1' } }]);
 
