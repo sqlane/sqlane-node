@@ -225,6 +225,17 @@ test('enqueueMany: the results in the order of the items; a jobId repeated in th
     await expect(readJob(results[3].id)).resolves.toMatchObject({ payload: { reportId: 'none' } });
 });
 
+test('a JSON scalar payload is stored as it is: null, a number, a boolean, a string', async () => {
+    const payloads = [null, 0, false, '', 'text', []];
+    const results = await sqlane.enqueueMany(testAdapter.pool, 'scalar_payload', payloads.map(payload => ({ payload })));
+
+    expect(results.map(result => result.created)).toStrictEqual(payloads.map(() => true));
+
+    const jobs = await Promise.all(results.map(result => readJob(result.id)));
+
+    expect(jobs.map(job => job?.payload)).toStrictEqual(payloads);
+});
+
 test('enqueueMany adds 1,200 jobs at once', async () => {
     const items = Array.from({ length: 1200 }, (_, index) => ({ payload: { index }, options: { jobId: `bulk-${index}` } }));
     const results = await sqlane.enqueueMany(testAdapter.pool, 'send_email', items);

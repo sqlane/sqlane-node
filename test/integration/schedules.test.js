@@ -520,6 +520,27 @@ describe('the fire of the store', () => {
             .toStrictEqual([['tenant:eu'], [{ key: '@api:eu', max: 10, per_us: 1_000_000, burst: 2, cost: 2 }]]);
     });
 
+    test('the job of a slot keeps a null payload', async () => {
+        const { p } = await freshSqlane();
+        const slot = Math.floor((await dbNow()) / 1000) * 1000;
+
+        await register(p, ['tick'], slot - HOUR_MS);
+        await fire(p, [{ id: 'tick', slot }], {
+            buildJob: (/** @type {SlotCandidate} */ candidate) => buildNewJob({
+                name: candidate.name,
+                definition: null,
+                defaults,
+                payload: null,
+                options: { slot: { at: new Date(candidate.slot) } },
+                maxPayloadBytes: 1024,
+            }),
+        });
+
+        const rows = await query(`SELECT payload FROM ${p}payloads`);
+
+        expect(rows.map(row => parsedJson(row.payload))).toStrictEqual([null]);
+    });
+
     test('a holder that sleeps under the lock: the others return at once, busy', async () => {
         const { p } = await freshSqlane();
         const slot = Math.floor((await dbNow()) / 1000) * 1000;
