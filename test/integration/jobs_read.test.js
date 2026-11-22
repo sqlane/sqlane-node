@@ -1,6 +1,6 @@
 // sqlane.jobs.get() and sqlane.jobs.list(): the jobs as the database has them, on each dialect, through the public API.
 import { setTimeout as sleep } from 'node:timers/promises';
-import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import {
     createSqlane,
     defineConcurrencyLimit,
@@ -342,9 +342,7 @@ describe('jobs.get()', () => {
             await expect(sqlane.jobs.get(empty.id)).resolves.toMatchObject({ status: 'pending', payload: false });
         });
 
-    // On PostgreSQL, enqueue() of a null payload fails (jsonb_to_recordset makes it SQL NULL in a NOT NULL column): a
-    // bug of enqueue, fixed apart. The read of a JSON null payload is the same code on every database
-    test.skipIf(inject('databaseDialect') === 'postgres')('a JSON null payload is present, as null', async () => {
+    test('a JSON null payload is present, as null', async () => {
         const sqlane = await freshSqlane();
         const { id } = await sqlane.enqueue(testAdapter.pool, 'empty', null, { delay: '1h' });
         const job = await sqlane.jobs.get(id);
