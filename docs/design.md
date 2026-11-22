@@ -189,31 +189,97 @@ each know only their own schedules.
 
 ### Migrations
 
-sqlane ships its schema as versioned SQL for each dialect. You can apply it in two ways.
+sqlane ships its schema as versioned migrations for each dialect. `sqlane.schema` applies them, reverts them, drops
+their tables and checks them ([API](api.md#schemamigrate)). `sqlane_migrations` records the id of each applied
+migration, with `applied_at`.
 
-- `sqlane.migrate({ lockTimeout })` applies the missing versions and records them in `sqlane_migrations`. It resolves
-  to `{ applied }`, the ids of the versions that it applied. It works under a database lock, so several processes can
-  call it at once. It waits for the lock for up to `lockTimeout` (default `'10m'`). It runs on one connection of the
-  queue's pool. On PostgreSQL, it sets `statement_timeout = 0` for its transaction, so a long migration of a big table
-  is not cancelled.
-    - On PostgreSQL, the whole migration is one transaction under `pg_advisory_xact_lock`, because PostgreSQL can run
-      DDL in a transaction.
-    - On MySQL, the lock is `GET_LOCK`. MySQL commits each DDL statement on its own, so an interrupted migration runs
-      again from its start. For this reason, each statement is idempotent (`IF NOT EXISTS`).
-    - Some ORMs, such as Prisma, have no connection outside a transaction. With them, `migrate()` runs in a transaction
-      of the ORM (the adapter sets `transactionalConnection`), and the PostgreSQL migration does not begin or commit a
-      transaction of its own. sqlane calls `pg_advisory_xact_lock` in a `FROM` clause, because the function returns
-      `void`, and Prisma cannot read this type.
-- `getMigrations({ dialect, tablePrefix })` returns the SQL, for the app's own migration tool.
+**Tags.** Each migration is tagged in code with the lowest version of sqlane that ships it, per dialect. The ids differ
+between dialects, so the tags do too. Order is id order, and the tags never decrease with the ids (a unit test checks
+it).
 
-The migration ids are matched, never counted. MySQL and MariaDB have `0001_initial`, `0002_job_keys`,
-`0004_schedules`, `0005_concurrency_limits`, `0006_concurrency_slots`, `0007_rate_limits` and `0008_job_list`.
-PostgreSQL has `0001_initial`, `0002_pending_order`, `0003_job_keys`, `0004_schedules`, `0005_concurrency_limits`,
-`0006_concurrency_slots`, `0007_rate_limits` and `0008_job_list`. The migrations of 6.0 drop the tables of 5.x,
-`sqlane_job_keys` and `sqlane_mutexes`. On MySQL and MariaDB, `0005_concurrency_limits` and `0008_job_list` are each
-one `ALTER TABLE`, which is atomic. The schedules migration has the same id on every dialect. It is needed only with
-schedules: `start()` throws a `ConfigError` that asks for `migrate()` when a process has schedules and the table is
-missing.
+| Migration                 | PostgreSQL | MySQL | MariaDB |
+| ------------------------- | ---------- | ----- | ------- |
+| `0001_initial`            | 0.1.0      | 0.1.0 | 2.0.0   |
+| `0002_pending_order`      | 3.0.0      | -     | -       |
+| `0002_job_keys`           | -          | 3.0.0 | 3.0.0   |
+| `0003_job_keys`           | 3.0.0      | -     | -       |
+| `0004_schedules`          | 4.0.0      | 4.0.0 | 4.0.0   |
+| `0005_concurrency_limits` | 6.0.0      | 6.0.0 | 6.0.0   |
+| `0006_concurrency_slots`  | 6.0.0      | 6.0.0 | 6.0.0   |
+| `0007_rate_limits`        | 6.0.0      | 6.0.0 | 6.0.0   |
+| `0008_job_list`           | 7.1.0      | 7.1.0 | 7.1.0   |
+
+A migration merged before its release is tagged with the version that its changeset gives: the next minor, or the next
+major. If the release turns out higher, because a major is cut after it, the tag stays lower than the real release.
+This is harmless: every pin at or above the real version includes it, and it counts as part of that major's base.
+
+**What each method does.**
+
+- `schema.migrate({ targetVersion })` applies the known migrations tagged at or below `targetVersion` that are not
+  recorded, in id order. By default it applies every known migration.
+- `schema.rollback({ targetVersion })` reverts the recorded migrations tagged above `targetVersion`, newest first: the
+  down statements of each, then the delete of its record. It rejects when a recorded migration is unknown to this
+  version, because its down is not in this code. Every migration tagged after 6.0.0 has a down: today `0008_job_list`,
+  then every new one. A down that drops a column or a table loses its data; its comment and the changelog say so.
+- `targetVersion` goes from `6.0.0` up to the higher of the installed version and the highest tag. `0005` and `0006`
+  turned the mutex keys of 5.x into concurrency slots, which have no faithful reverse, so `6.0.0` is the floor.
+- `schema.drop()` drops every table that sqlane created under the prefix in any version, `IF EXISTS`: the current
+  tables, the legacy `sqlane_mutexes` and `sqlane_job_keys`, then `sqlane_migrations` last, in one `DROP TABLE` (atomic
+  on MySQL 8.4). It drops only if `sqlane_jobs` has `enqueue_token` and `lock_token` (every version since
+  `0001_initial`), or `sqlane_migrations` records `0001_initial`. Else it rejects and drops nothing.
+- `schema.rollback()` and `schema.drop()` reject while their instance is started or draining. Other processes on the
+  prefix are the app's concern.
+
+**Locks.** All three methods hold the migration lock of the prefix, and wait for it up to `lockTimeout` (default
+`'10m'`). They run on one connection of the queue's pool.
+
+- On PostgreSQL, the whole run is one transaction under `pg_advisory_xact_lock`, because PostgreSQL can run DDL in a
+  transaction. It sets `statement_timeout = 0` for its transaction, so a long migration of a big table is not
+  cancelled.
+- On MySQL and MariaDB, the lock is `GET_LOCK`, and each DDL statement commits on its own.
+- Some ORMs, such as Prisma, have no connection outside a transaction. With them, the run is a transaction of the ORM
+  (the adapter sets `transactionalConnection`), and sqlane does not begin or commit a transaction of its own. sqlane
+  calls `pg_advisory_xact_lock` in a `FROM` clause, because the function returns `void`, and Prisma cannot read this
+  type.
+- For `schema.rollback()` and `schema.drop()`, `lockTimeout` also bounds each statement's wait for the lock of its
+  table: PostgreSQL `lock_timeout`, MySQL and MariaDB `lock_wait_timeout`, restored after use. A timeout rejects with a
+  `MigrationLockTimeoutError`. While a DDL waits for its table lock, the queue's own queries on that table wait behind
+  it, as with `schema.migrate()`. So pass a short `lockTimeout`, such as `'10s'`, while processes run.
+  `schema.migrate()` sets no lock timeout after its own lock.
+
+**A cut run.** On PostgreSQL, a cut run leaves nothing: its transaction rolls back. On MySQL and MariaDB, each DDL
+commits, so a run can stop between two statements.
+
+- Each down statement is safe to run again: `IF EXISTS`, or a check of the catalog where the dialect has none (MySQL
+  has no `DROP INDEX IF EXISTS`). So a cut rollback is finished by running it again. Every up migration after
+  `0008_job_list` follows the same rule.
+- The older up migrations keep their own rules: not every one of their statements can run again on MySQL. On MariaDB,
+  they use `IF NOT EXISTS`. On MySQL, `0005_concurrency_limits` and `0008_job_list` are each one `ALTER TABLE`, which
+  is atomic, but a crash after it and before the record makes the next `schema.migrate()` fail, as does the
+  `ADD COLUMN` of `0007_rate_limits`: record the id by hand (see `0008_job_list` below).
+
+**The migration ids** are matched, never counted. MySQL and MariaDB have no `0003`. The migrations of 6.0 drop the
+tables of 5.x, `sqlane_job_keys` and `sqlane_mutexes`. The schedules migration has the same id on every dialect. It is
+needed only with schedules: `start()` throws a `ConfigError` that asks for `schema.migrate()` when a process has
+schedules and the table is missing.
+
+**The reads.** `schema.getMigrationStatus()` tells what `schema.migrate()` would do, by the records.
+`schema.findSchemaProblems()` tells whether the queries of this version find what they need, by the catalog. They can
+disagree: records written by hand, an index built beforehand, or a cut run.
+
+- Both only read, run outside any transaction, and never throw on a mismatch. sqlane never calls them by itself.
+- They look in the current schema only: MySQL and MariaDB `TABLE_SCHEMA = DATABASE()`, PostgreSQL the `search_path`
+  (`to_regclass`). A missing `sqlane_migrations` is read from the catalog, never by a failing `SELECT`, which would
+  abort a PostgreSQL transaction.
+- `findSchemaProblems()` compares with the definitions in `src/schema/expected.js`, written by hand from the
+  migrations, per dialect. A test on every supported server checks them: no problem after a fresh `schema.migrate()`,
+  after an upgrade from 6.0.0, and after the 5.x path.
+- A migration is required when it is tagged at or below the base of the installed major, `X.0.0`. Within a major,
+  the later migrations serve features that only fail on their own SQL without them (see [Versions](#versions)).
+
+**The prefix.** A prefix must not share a table name with the app. A collision on any one table already breaks sqlane,
+and `schema.drop()` drops it too. A `schema.migrate()` cut before its first table leaves only an empty
+`sqlane_migrations`, which `schema.drop()` refuses: run `schema.migrate()` again.
 
 `0008_job_list` builds the index `(job_name, created_at, id)` on the jobs. `sqlane.jobs` requires it: on MySQL and
 MariaDB, `jobs.list()` names it in an index hint and rejects without it.
@@ -229,9 +295,20 @@ MariaDB, `jobs.list()` names it in an index hint and rejects without it.
   `SELECT indisvalid FROM pg_index WHERE indexrelid = '<prefix>jobs_list'::regclass`, and drop and rebuild an invalid
   one.
 - On MySQL, the `ALTER TABLE` commits before the id of the migration is recorded. A crash between the two makes the
-  next `migrate()` fail with `ER_DUP_KEYNAME` (1061), as with `0007_rate_limits`: record the id by hand
+  next `schema.migrate()` fail with `ER_DUP_KEYNAME` (1061), as with `0007_rate_limits`: record the id by hand
   (`INSERT INTO <prefix>migrations (id, applied_at) VALUES ('0008_job_list', UTC_TIMESTAMP(3))`). MariaDB has
   `ADD KEY IF NOT EXISTS`, so it runs again.
+
+### Versions
+
+sqlane follows semantic versioning, and its schema follows these rules.
+
+- Within a major, migrations only add. The code of a minor runs on the schema of its major's base, `X.0.0`. Only the
+  feature that a later migration serves needs it, and that feature fails on its own SQL without it.
+- To upgrade within a major, run `schema.migrate()` before or after the deploy.
+- To upgrade to a new major, stop the processes of the old major, run `schema.migrate()`, then deploy.
+- Run `schema.rollback()` only when no process of a newer version uses the prefix.
+- One place runs `schema.migrate()` for a prefix. The processes on one prefix run the same major.
 
 ## Job states
 
@@ -813,16 +890,16 @@ jobs whose retention has ended. It deletes them in batches of 1000 with SKIP LOC
 
 - `enqueue` uses the caller's connection or transaction.
 - All other queue work uses the adapter's pool, which should be small. The queue's transactions on this pool use
-  `READ COMMITTED`. `migrate()` also runs on a connection of this pool.
+  `READ COMMITTED`. `schema.migrate()` also runs on a connection of this pool.
 - Handlers use whatever connections they open. `localMaxConcurrency` limits the running handlers of a process, so they
   cannot exhaust the app's pool.
 
 ### MariaDB
 
 MariaDB speaks the MySQL protocol, so the app tells the adapter (`{ dialect: 'mariadb' }`, see
-[Adapters](adapters.md#the-dialect-and-the-server-check)), and the first `start()` or `migrate()` checks it against
-`VERSION()`. MariaDB has SQL files of its own: `store/mariadb_*.js` and `schema/mariadb.js` are
-copies of the MySQL files, changed where MariaDB differs. A change of the MySQL SQL must be made in the copies too.
+[Adapters](adapters.md#the-dialect-and-the-server-check)), and the first `start()` or `schema.migrate()` checks it
+against `VERSION()`. MariaDB has SQL files of its own: `store/mariadb_*.js` and `schema/mariadb.js` are copies of the
+MySQL files, changed where MariaDB differs. A change of the MySQL SQL must be made in the copies too.
 
 - **Upserts.** MariaDB has no row alias (`INSERT … AS new`), so the upserts read the new values with `VALUES(column)`.
 - **Locks of a claim.** MariaDB has no `FOR UPDATE OF`. A claim and the final writes read the payload with a subquery,
@@ -901,7 +978,7 @@ The table lists each guarantee and the mechanism that keeps it.
 | PostgreSQL       | 15                          | 14 reached end of life (November 2026).                                                                                          |
 | Drivers and ORMs | See [Adapters](adapters.md) | `mysql2`, `mariadb` and `pg` are optional peer dependencies. They are drivers, not ORMs, and their major versions change rarely. |
 
-The first `start()` or `migrate()` checks the server's version, and on MySQL and MariaDB its `sql_mode`. An older
+The first `start()` or `schema.migrate()` checks the server's version, and on MySQL and MariaDB its `sql_mode`. An older
 server is a `ConfigError`, unless the adapter gets `allowUnsupportedDbVersion: true`
 ([the server check](adapters.md#the-dialect-and-the-server-check)).
 
@@ -944,15 +1021,17 @@ The source files in `src/` have snake_case names. These are the main ones:
   slots and runs the cleanup.
 - `enqueue.js` implements `enqueue` and `enqueueMany`.
 - `hint_channel.js` sends and receives the hints.
-- `migrations.js` implements `migrate()` and `getMigrations()`.
-- `server_check.js` checks the server at the first `start()` or `migrate()`: the database of `dialect`, its version,
-  and the `sql_mode` of MySQL and MariaDB.
+- `migrations.js` implements `schema.migrate()`, `schema.rollback()` and `schema.drop()`; `schema_status.js` implements
+  `schema.getMigrationStatus()` and `schema.findSchemaProblems()`; `version.js` reads the installed version and
+  compares versions.
+- `server_check.js` checks the server at the first `start()` or `schema.migrate()`: the database of `dialect`, its
+  version, and the `sql_mode` of MySQL and MariaDB.
 - `cron.js` parses cron expressions and finds their slots, `time_zone.js` reads wall-clock times from `Intl`,
   `schedule.js` checks the options of a schedule and computes its slots, and `scheduler.js` runs the timer and the
   fires of the schedules.
 - `errors.js` defines the error classes.
 - `store/` holds the SQL of each dialect behind one store interface.
-- `schema/` holds the schema of each dialect, as versioned migrations.
+- `schema/` holds the schema of each dialect, as tagged migrations, and `expected.js`, what they create.
 - `adapters/` holds one adapter per driver or ORM.
 
 Small helper modules, such as `backoff.js`, `duration.js` and `payload.js`, complete the list.

@@ -48,7 +48,7 @@ const sqlane = createSqlane({
     adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }),
     jobs: [sendReceipt],
 });
-await sqlane.migrate(); // creates the sqlane_* tables
+await sqlane.schema.migrate(); // creates the sqlane_* tables
 
 // Worker: runs the job after the commit, in this process or another
 sqlane.handle(sendReceipt, ({ payload }) => sendReceiptEmail(payload.orderId));
@@ -216,7 +216,8 @@ transaction, so:
   [typed payloads](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#typed-payloads),
   [events](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#events) and
   [stats](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getstats), and
-  [migrations as plain SQL](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getmigrations).
+  [migrations by version](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate), with rollback
+  and schema checks.
 
 How sqlane compares with BullMQ, pg-boss and 5 more:
 [features](https://github.com/sqlane/sqlane-node/blob/main/docs/features_vs_other_libs.md) ·
@@ -271,9 +272,9 @@ export const sendReceipt = defineJob<{ orderId: number }>({
 ```
 
 **2. Create the instance and the tables.** Give sqlane a small pool of its own, with 2–3 connections, so the queue and
-your app never wait for each other's connections. `migrate()` creates the `sqlane_*` tables and is safe to run from
-several processes at once. To use your own migration tool instead, take the SQL from
-[`getMigrations()`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getmigrations).
+your app never wait for each other's connections. `schema.migrate()` creates the `sqlane_*` tables and is safe to run
+from several processes at once. To run it from your own migration tool, pin a version in each migration file: see
+[`schema.migrate`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate).
 
 ```ts
 // sqlane.ts
@@ -293,7 +294,7 @@ export const sqlane = createSqlane({
     jobs: [sendReceipt],
 });
 
-await sqlane.migrate();
+await sqlane.schema.migrate();
 ```
 
 **3. Enqueue in your transaction.** Pass your transaction to `enqueue`: the job commits or rolls back with the order. A
@@ -346,6 +347,7 @@ process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));
 - The [examples folder](https://github.com/sqlane/sqlane-node/tree/main/examples) has more examples.
 - The [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists what changed in each version. The
   migration guides show how to upgrade your code to a new major version:
+    - [7.x → 8.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/8.md)
     - [6.x → 7.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/7.md)
     - [5.x → 6.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/6.md)
     - [4.x → 5.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/5.md)

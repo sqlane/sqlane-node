@@ -25,8 +25,11 @@ explains how sqlane works and why.
 - [`start`](#start)
 - [`drain`](#drain)
 - [`close`](#close)
-- [`migrate`](#migrate)
-- [`getMigrations`](#getmigrations)
+- [`schema.migrate`](#schemamigrate)
+- [`schema.rollback`](#schemarollback)
+- [`schema.drop`](#schemadrop)
+- [`schema.getMigrationStatus`](#schemagetmigrationstatus)
+- [`schema.findSchemaProblems`](#schemafindschemaproblems)
 - [`getStats`](#getstats)
 - [`jobs`](#jobs)
 - [Retry, cancel and remove](#retry-cancel-and-remove)
@@ -612,7 +615,8 @@ fires within 50 years. It throws a `ConfigError` after `start()`, and a `ClosedE
 
 `start()` checks each schedule further: an unknown name with `unknownJobs: 'reject'`, a payload that is not JSON or is
 above `maxPayloadBytes`, and bad global limits of the definition throw a `ConfigError`. So a bad payload fails at deploy
-time, not at 03:00. With schedules, `start()` also needs the table of migration `0004_schedules`: run `migrate()`.
+time, not at 03:00. With schedules, `start()` also needs the table of migration `0004_schedules`: run
+`schema.migrate()`.
 
 ### Cron syntax
 
@@ -773,14 +777,14 @@ stalled jobs and, if `cleanup` is on, deletes expired jobs. It starts the [sched
 second call does nothing, and concurrent calls share one start.
 
 With schedules, `start` registers them first. It rejects with a `ConfigError` for a bad schedule (see
-[`schedule`](#schedule)), and if the table of the schedules is missing: run `migrate()`. If the database is down,
+[`schedule`](#schedule)), and if the table of the schedules is missing: run `schema.migrate()`. If the database is down,
 `start` resolves anyway, emits an `error` event, and registers the schedules when the database is back. A rejected
 `start` can be called again.
 
-The first `start()` or `migrate()` of an instance checks the server: it rejects with a `ConfigError` if the server is
-not the database of the adapter's `dialect`, is below the supported version, or has a `sql_mode` that sqlane does not
-support ([server check](adapters.md#the-dialect-and-the-server-check)). If the database is down, `start` resolves
-anyway and emits an `error` event.
+The first `start()` or `schema.migrate()` of an instance checks the server: it rejects with a `ConfigError` if the
+server is not the database of the adapter's `dialect`, is below the supported version, or has a `sql_mode` that sqlane
+does not support ([server check](adapters.md#the-dialect-and-the-server-check)). If the database is down, `start`
+resolves anyway and emits an `error` event.
 
 `start` rejects with a `ConfigError` if a handled definition has a `failureJob` that is neither in `jobs` nor handled.
 It also rejects with one if a failure job has a `failureJob` of its own. It checks all the handlers together, so the
@@ -850,26 +854,32 @@ only what sqlane opened, such as the LISTEN connection and the hint subscription
 process.once('SIGTERM', () => sqlane.close({ deadline: '30s', exitsBy: '35s' }));
 ```
 
-## `migrate`
+## `schema.migrate`
 
-`migrate` creates or updates the tables of sqlane in the database.
+`schema.migrate` creates or updates the tables of sqlane in the database.
 
 ```ts
-sqlane.migrate(options?: { lockTimeout?: Duration }): Promise<{ applied: string[] }>
+sqlane.schema.migrate(options?: { targetVersion?: string, lockTimeout?: Duration }): Promise<{ applied: string[] }>
 ```
 
-`migrate` applies the missing migrations and resolves to the ids of the migrations it applied. It holds a database
-lock, so several processes can call it at the same time. It uses a connection of the adapter's pool.
+`schema.migrate` applies the missing migrations in order, and resolves to the ids of the migrations it applied. It
+holds a database lock, so several processes can call it at the same time. It uses a connection of the adapter's pool.
 
-| Option        | Type       | Default | Description                                                                                            |
-| ------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------ |
-| `lockTimeout` | `Duration` | `'10m'` | How long `migrate` waits for the lock. After it, `migrate` rejects with a `MigrationLockTimeoutError`. |
+Each migration is tagged with the lowest version of sqlane that ships it. With `targetVersion`, `schema.migrate`
+applies only the migrations tagged at or below that version. So a migration file of your app pins the schema of a
+version, and a new install replays the same steps.
 
-`migrate` rejects with an `InvalidOptionsError` for a bad `lockTimeout`. It rejects with a `ConfigError` if the server
+| Option          | Type       | Default         | Description                                                                                                                     |
+| --------------- | ---------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `targetVersion` | `string`   | Every migration | A version `'X.Y.Z'`, from `'6.0.0'` up to the installed version. `schema.migrate` applies the migrations tagged at or below it. |
+| `lockTimeout`   | `Duration` | `'10m'`         | How long `schema.migrate` waits for the lock. After it, `schema.migrate` rejects with a `MigrationLockTimeoutError`.            |
+
+`schema.migrate` rejects with an `InvalidOptionsError` for a bad `lockTimeout`, or for a `targetVersion` that is not
+`X.Y.Z` (`'v8.0.0'`, `'8.0'` or a pre-release), is below `'6.0.0'`, or is above the installed version. An installed
+pre-release, such as `8.0.0-rc.1`, counts as its base version, `8.0.0`. It rejects with a `ConfigError` if the server
 is not the database of the adapter's `dialect`, is below the supported version, or has a `sql_mode` that sqlane does
-not support: the first `migrate()` or `start()` of an instance checks it
-([server check](adapters.md#the-dialect-and-the-server-check)). If you prefer your own migration tool, use
-[`getMigrations`](#getmigrations) instead.
+not support: the first `schema.migrate()` or `start()` of an instance checks it
+([server check](adapters.md#the-dialect-and-the-server-check)). After `close()`, it rejects with a `ClosedError`.
 
 `get`, `list` and the batches of [`sqlane.jobs`](#jobs) require the migration `0008_job_list`, an index of the jobs;
 `keyStats` requires `0007_rate_limits`. The build of the index waits for the writes of
@@ -877,32 +887,204 @@ the jobs, and they wait for it: on a large PostgreSQL table, build the index `CO
 [design](design.md#migrations) describes.
 
 ```js
-const { applied } = await sqlane.migrate();
+const { applied } = await sqlane.schema.migrate();
 ```
 
-## `getMigrations`
+### From your own migration tool
 
-`getMigrations` returns the schema of sqlane as SQL, for your own migration tool.
+Call `schema.migrate` from a migration file of your tool, with the version that the file pins. A later file moves to a
+later version, and its down goes back with [`schema.rollback`](#schemarollback). The first file's down drops the
+tables with [`schema.drop`](#schemadrop).
 
-```ts
-getMigrations(options: { dialect: 'mysql' | 'mariadb' | 'postgres', tablePrefix?: string }): Migration[]
-```
+Do not run these calls inside a transaction of the tool. sqlane runs them on a connection of its own, so the
+transaction would not include them, and the locks that it holds can block them. Pass a short `lockTimeout`, such as
+`'10s'`, to `schema.rollback` and `schema.drop` while processes run: their DDL waits for the locks of the tables, and
+the queries of the queue wait behind it.
 
-Each migration has an `id` and a list of SQL `statements`. Apply them in order, and record the ids that you applied.
-
-| Option        | Type                                   | Default     | Description                                                           |
-| ------------- | -------------------------------------- | ----------- | --------------------------------------------------------------------- |
-| `dialect`     | `'mysql'`, `'mariadb'` or `'postgres'` | Required    | The database.                                                         |
-| `tablePrefix` | `string`                               | `'sqlane_'` | The prefix of the table names. Use the same one as in `createSqlane`. |
-
-`getMigrations` throws a `ConfigError` for a bad `dialect` or `tablePrefix`.
+A Sequelize CLI migration, in full. `@sqlane/core` is an ES module, so a CommonJS migration imports it with `import()`:
 
 ```js
-import { getMigrations } from '@sqlane/core';
+// migrations/20261120000000-sqlane.cjs
+'use strict';
 
-for (const { id, statements } of getMigrations({ dialect: 'postgres' })) {
-    // Run the statements with your tool, then record the id.
+/**
+ * A sqlane instance over the Sequelize instance of the migration: the same `tablePrefix` as in your app.
+ * @param {import('sequelize').Sequelize} sequelize
+ */
+async function sqlaneOf(sequelize) {
+    const { createSqlane } = await import('@sqlane/core');
+    const { sequelizeAdapter } = await import('@sqlane/core/adapter-sequelize');
+
+    return createSqlane({ adapter: sequelizeAdapter(sequelize, { dialect: 'postgres' }) });
 }
+
+module.exports = {
+    // Not inside queryInterface.sequelize.transaction(): sqlane runs on a connection of its own
+    async up(queryInterface) {
+        const sqlane = await sqlaneOf(queryInterface.sequelize);
+
+        await sqlane.schema.migrate({ targetVersion: '8.0.0' });
+    },
+    async down(queryInterface) {
+        const sqlane = await sqlaneOf(queryInterface.sequelize);
+
+        await sqlane.schema.drop({ lockTimeout: '10s' });
+    },
+};
+```
+
+A later file, with the same `sqlaneOf` function:
+
+```js
+// migrations/20270201000000-sqlane-8-2.cjs
+module.exports = {
+    async up(queryInterface) {
+        const sqlane = await sqlaneOf(queryInterface.sequelize);
+
+        await sqlane.schema.migrate({ targetVersion: '8.2.0' });
+    },
+    async down(queryInterface) {
+        const sqlane = await sqlaneOf(queryInterface.sequelize);
+
+        await sqlane.schema.rollback({ targetVersion: '8.0.0', lockTimeout: '10s' });
+    },
+};
+```
+
+## `schema.rollback`
+
+`schema.rollback` reverts the migrations tagged above a version.
+
+```ts
+sqlane.schema.rollback(options: { targetVersion: string, lockTimeout?: Duration }): Promise<{ reverted: string[] }>
+```
+
+`schema.rollback` reverts the recorded migrations tagged above `targetVersion`, newest first. For each one, it runs its
+down statements, then deletes its record. It resolves to the ids that it reverted. Nothing above the version, or no
+table of the migrations: `reverted` is empty. It holds the lock of `schema.migrate`.
+
+| Option          | Type       | Default  | Description                                                                                                                             |
+| --------------- | ---------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `targetVersion` | `string`   | Required | A version `'X.Y.Z'`, from `'6.0.0'` up to the installed version. The migrations tagged above it are reverted.                           |
+| `lockTimeout`   | `Duration` | `'10m'`  | How long `schema.rollback` waits for the lock, and for the lock of each table. After it, it rejects with a `MigrationLockTimeoutError`. |
+
+- Each down statement is safe to run again. A rollback that was cut, by a crash or a timeout, finishes when you run it
+  again.
+- A down that drops a column or a table loses its data. Today, the only down is that of `0008_job_list`, and it drops
+  an index.
+- Run it only when no process of a newer version uses the tables.
+- `'6.0.0'` is the lowest version: the migrations of 6.0 turned the mutex keys of 5.x into slots, and they have no way
+  back.
+
+`schema.rollback` rejects with an `InvalidOptionsError` for a missing or bad `targetVersion`, as in `schema.migrate`,
+or a bad `lockTimeout`. It rejects with a `ConfigError` when the table of the migrations records a migration that this
+version does not know: a newer version applied it, and its down is not in this code. It also rejects with a
+`ConfigError` while this instance is started or draining, and with a `ClosedError` after `close()`.
+
+```js
+const { reverted } = await sqlane.schema.rollback({ targetVersion: '8.0.0', lockTimeout: '10s' });
+```
+
+## `schema.drop`
+
+`schema.drop` drops the tables of sqlane, with their data.
+
+```ts
+sqlane.schema.drop(options?: { lockTimeout?: Duration }): Promise<{ dropped: string[] }>
+```
+
+`schema.drop` drops every table that sqlane created under the prefix in any version, in one statement: the current
+tables, the `mutexes` and `job_keys` of older versions, and the table of the migrations last. It resolves to the tables
+that existed. With no table, it does nothing. It holds the lock of `schema.migrate`. Stop the other processes on the
+prefix first.
+
+| Option        | Type       | Default | Description                                                                                                                          |
+| ------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `lockTimeout` | `Duration` | `'10m'` | How long `schema.drop` waits for the lock, and for the locks of the tables. After it, it rejects with a `MigrationLockTimeoutError`. |
+
+`schema.drop` drops only the tables of sqlane. It checks that `<prefix>jobs` has the columns `enqueue_token` and
+`lock_token`, or that `<prefix>migrations` records `0001_initial`. If neither holds, it rejects with a `ConfigError`
+that names the tables it found, and drops nothing. So pick a prefix that shares no table name with your app: a
+collision on any table already breaks sqlane, and `schema.drop` would drop that table too.
+
+`schema.drop` also rejects with a `ConfigError` when the table of the migrations records a migration that this version
+does not know (a newer version would leave tables behind), and while this instance is started or draining. It rejects
+with an `InvalidOptionsError` for a bad `lockTimeout`, and with a `ClosedError` after `close()`.
+
+A `schema.migrate()` cut before its first table leaves only an empty `<prefix>migrations`, which `schema.drop`
+refuses: run `schema.migrate()` again.
+
+```js
+const { dropped } = await sqlane.schema.drop({ lockTimeout: '10s' });
+```
+
+## `schema.getMigrationStatus`
+
+`schema.getMigrationStatus` tells what `schema.migrate` would do, by the records of the migrations.
+
+```ts
+sqlane.schema.getMigrationStatus(): Promise<MigrationStatus>
+```
+
+| Field             | Type       | Description                                                                                                     |
+| ----------------- | ---------- | --------------------------------------------------------------------------------------------------------------- |
+| `ok`              | `boolean`  | `missingRequired` is empty.                                                                                     |
+| `missingRequired` | `string[]` | The migrations not recorded and tagged up to the base of the installed major, `X.0.0`. This version needs them. |
+| `missingOptional` | `string[]` | The migrations not recorded and tagged above `X.0.0`. Only the features that they serve need them.              |
+| `unknownApplied`  | `string[]` | The migrations recorded but unknown to this version: a newer version migrated.                                  |
+
+It only reads, and never throws on a mismatch. It reads the table of the migrations only if the catalog has it, in the
+current schema. With no table, every migration is missing.
+
+## `schema.findSchemaProblems`
+
+`schema.findSchemaProblems` tells whether the queries of this version find what they need, by the catalog.
+
+```ts
+sqlane.schema.findSchemaProblems(): Promise<SchemaProblems>
+```
+
+It compares the tables of the prefix with the exact definitions that the migrations of this version create, per
+dialect, by name. It ignores anything extra: a column or an index of your own does no harm. It resolves to `ok`, true
+when no problem is required, and to `problems`:
+
+| Field      | Type      | Description                                                                                             |
+| ---------- | --------- | ------------------------------------------------------------------------------------------------------- |
+| `table`    | `string`  | The table, with its prefix.                                                                             |
+| `column`   | `string`  | The column of a column problem.                                                                         |
+| `index`    | `string`  | The index of an index problem, with its prefix. The primary key of MySQL and MariaDB is `PRIMARY`.      |
+| `issue`    | `string`  | `missing_table`, `missing_column`, `wrong_type`, `wrong_nullability`, `missing_index` or `wrong_index`. |
+| `expected` | `string`  | For a wrong type, nullability or index: what this version expects.                                      |
+| `found`    | `string`  | For a wrong type, nullability or index: what the catalog has.                                           |
+| `required` | `boolean` | False: from a migration tagged above the base of the installed major, `X.0.0`.                          |
+
+- **Types** are compared as the catalog reports them: MySQL and MariaDB `COLUMN_TYPE` without the display widths of
+  the integers (MariaDB stores JSON as `longtext`), PostgreSQL `format_type`, such as `timestamp(3) with time zone`.
+- **Collations** are compared where a migration sets one (`ascii_bin`, `COLLATE "C"`). A wrong collation is a
+  `wrong_type`: `expected` and `found` end with ` collate <name>`.
+- **Indexes**, primary keys included, are compared by name: their columns in order, uniqueness, and on PostgreSQL the
+  predicate of a partial index. On PostgreSQL, an index that a failed concurrent build left invalid is a `wrong_index`,
+  and `found` ends with ` invalid`.
+
+It only reads, never throws on a mismatch, and looks only in the current schema.
+
+### At boot and in a readiness probe
+
+sqlane runs neither read by itself: `start()`, `enqueue()` and `schema.migrate()` never call them. The two can disagree,
+for example after records written by hand, an index built beforehand, or a cut run. Check both, before `start()` or in
+a readiness probe, and the same in a process that only enqueues:
+
+```js
+const [status, schema] = await Promise.all([
+    sqlane.schema.getMigrationStatus(),
+    sqlane.schema.findSchemaProblems(),
+]);
+
+if (!status.ok || !schema.ok) {
+    throw new Error(`sqlane: the schema is not ready: ${JSON.stringify({ status, schema })}`);
+}
+
+await sqlane.start();
 ```
 
 ## `getStats`
@@ -952,7 +1134,7 @@ The bulk methods are described in [Retry, cancel and remove](#retry-cancel-and-r
 - They work before `start()`, after `close()`, and in a process that handles no job. `unknownJobs` does not apply to
   them: any valid job name may be read.
 - They require the migration `0008_job_list`. Without it, their behavior is not specified: `list` rejects on MySQL and
-  MariaDB. Before `migrate()`, or when the database fails, they reject with the error of the driver.
+  MariaDB. Before `schema.migrate()`, or when the database fails, they reject with the error of the driver.
 - A known field of the filter or the options that is `undefined` counts as absent. An unknown field rejects, also when
   its value is `undefined`.
 
@@ -1307,26 +1489,26 @@ nothing.
 All the errors of sqlane extend `SqlaneError`. Each error has a stable `code` that you can check. All the classes are
 exported from `@sqlane/core`.
 
-| Class                          | `code`                      | When                                                                                                                                                                                                                                                                                              |
-| ------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ConfigError`                  | `CONFIG`                    | The options of `createSqlane`, `defineJob`, `handle()`, `schedule()`, an adapter or `getMigrations` are bad. `start()` and `drain()` also throw it for a bad failure job. `start()` throws it for a bad schedule or a missing table of the schedules; with `migrate()`, for a wrong server.       |
-| `InvalidOptionsError`          | `INVALID_OPTIONS`           | The arguments of `enqueue`, `enqueueMany` or a method of `sqlane.jobs` are bad, for example a bad name or `jobId`, a `jobId` with the reserved prefix `schedule:`, `slot` with `jobId`, `delay` with `runAt`, or a payload that is not JSON.                                                      |
-| `PayloadTooLargeError`         | `PAYLOAD_TOO_LARGE`         | The payload is larger than `maxPayloadBytes`.                                                                                                                                                                                                                                                     |
-| `InvalidConcurrencyLimitError` | `INVALID_CONCURRENCY_LIMIT` | A job has more than 10 global keys, a key breaks the rules, a key has two maxes, or a global limit is not from `defineConcurrencyLimit`.                                                                                                                                                          |
-| `InvalidRateLimitError`        | `INVALID_RATE_LIMIT`        | A job has more than 10 global keys of concurrency and rate limits together, a rate key breaks the rules, a rate key has two settings, or a global rate limit is not from `defineRateLimit`. `limit.key()` or `limit.cost()` got a bad value or cost, or `new RateLimitedError()` got bad options. |
-| `UnknownJobError`              | `UNKNOWN_JOB`               | `enqueue` got an unknown job name, and `unknownJobs` is `'reject'`.                                                                                                                                                                                                                               |
-| `ClosedError`                  | `CLOSED`                    | `start`, `handle`, `schedule` or `drain` was called after `close()`.                                                                                                                                                                                                                              |
-| `DrainTimeoutError`            | `DRAIN_TIMEOUT`             | `drain()` did not finish within its `timeout`.                                                                                                                                                                                                                                                    |
-| `JobTimeoutError`              | `JOB_TIMEOUT`               | The handler's `signal` aborted because the timeout passed. It is also the error of the attempt.                                                                                                                                                                                                   |
-| `ShutdownError`                | `SHUTDOWN`                  | The handler's `signal` aborted because `close()` reached its deadline.                                                                                                                                                                                                                            |
-| `LeaseLostError`               | `LEASE_LOST`                | The handler's `signal` aborted because the process could not renew the lease until 30 s before it ends, for example because the database is unreachable.                                                                                                                                          |
-| `MissingPayloadError`          | `MISSING_PAYLOAD`           | sqlane did not find the payload of a job. The job fails for good with this error.                                                                                                                                                                                                                 |
-| `MigrationLockTimeoutError`    | `MIGRATION_LOCK_TIMEOUT`    | `migrate()` did not get the migration lock within its `lockTimeout`.                                                                                                                                                                                                                              |
-| `IgnoredJobsError`             | `IGNORED_JOBS`              | A bulk method of `sqlane.jobs` with `strict: true` would have ignored some of its ids: it changed nothing. `ignoredJobs` lists them.                                                                                                                                                              |
-| `JobCancelledError`            | `JOB_CANCELLED`             | The `lastError` of a job that `jobs.cancel` cancelled. `new JobCancelledError(message?, options?)`.                                                                                                                                                                                               |
-| `FatalJobError`                | `FATAL_JOB`                 | A handler threw it to fail the job at once. See below.                                                                                                                                                                                                                                            |
-| `RetryJobError`                | `RETRY_JOB`                 | A handler threw it to retry the job after a given delay. See below.                                                                                                                                                                                                                               |
-| `RateLimitedError`             | `RATE_LIMITED`              | A handler threw it because the other side limits the rate: the job waits for its rate limit. See below.                                                                                                                                                                                           |
+| Class                          | `code`                      | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------ | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ConfigError`                  | `CONFIG`                    | The options of `createSqlane`, `defineJob`, `handle()`, `schedule()` or an adapter are bad. `start()` and `drain()` also throw it for a bad failure job. `start()` throws it for a bad schedule or a missing table of the schedules; with `schema.migrate()`, for a wrong server. `schema.rollback()` and `schema.drop()` throw it while the instance is started or draining, or when a migration unknown to this version is recorded; `schema.drop()`, for tables that sqlane did not create. |
+| `InvalidOptionsError`          | `INVALID_OPTIONS`           | The arguments of `enqueue`, `enqueueMany`, a method of `sqlane.jobs` or of `sqlane.schema` are bad, for example a bad name or `jobId`, a `jobId` with the reserved prefix `schedule:`, `slot` with `jobId`, `delay` with `runAt`, a payload that is not JSON, or a `targetVersion` out of range.                                                                                                                                                                                               |
+| `PayloadTooLargeError`         | `PAYLOAD_TOO_LARGE`         | The payload is larger than `maxPayloadBytes`.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `InvalidConcurrencyLimitError` | `INVALID_CONCURRENCY_LIMIT` | A job has more than 10 global keys, a key breaks the rules, a key has two maxes, or a global limit is not from `defineConcurrencyLimit`.                                                                                                                                                                                                                                                                                                                                                       |
+| `InvalidRateLimitError`        | `INVALID_RATE_LIMIT`        | A job has more than 10 global keys of concurrency and rate limits together, a rate key breaks the rules, a rate key has two settings, or a global rate limit is not from `defineRateLimit`. `limit.key()` or `limit.cost()` got a bad value or cost, or `new RateLimitedError()` got bad options.                                                                                                                                                                                              |
+| `UnknownJobError`              | `UNKNOWN_JOB`               | `enqueue` got an unknown job name, and `unknownJobs` is `'reject'`.                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `ClosedError`                  | `CLOSED`                    | `start`, `handle`, `schedule`, `drain`, `schema.migrate`, `schema.rollback` or `schema.drop` was called after `close()`.                                                                                                                                                                                                                                                                                                                                                                       |
+| `DrainTimeoutError`            | `DRAIN_TIMEOUT`             | `drain()` did not finish within its `timeout`.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `JobTimeoutError`              | `JOB_TIMEOUT`               | The handler's `signal` aborted because the timeout passed. It is also the error of the attempt.                                                                                                                                                                                                                                                                                                                                                                                                |
+| `ShutdownError`                | `SHUTDOWN`                  | The handler's `signal` aborted because `close()` reached its deadline.                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `LeaseLostError`               | `LEASE_LOST`                | The handler's `signal` aborted because the process could not renew the lease until 30 s before it ends, for example because the database is unreachable.                                                                                                                                                                                                                                                                                                                                       |
+| `MissingPayloadError`          | `MISSING_PAYLOAD`           | sqlane did not find the payload of a job. The job fails for good with this error.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `MigrationLockTimeoutError`    | `MIGRATION_LOCK_TIMEOUT`    | `schema.migrate()`, `schema.rollback()` or `schema.drop()` did not get the migration lock within its `lockTimeout`; for `schema.rollback()` and `schema.drop()`, also the lock of a table.                                                                                                                                                                                                                                                                                                     |
+| `IgnoredJobsError`             | `IGNORED_JOBS`              | A bulk method of `sqlane.jobs` with `strict: true` would have ignored some of its ids: it changed nothing. `ignoredJobs` lists them.                                                                                                                                                                                                                                                                                                                                                           |
+| `JobCancelledError`            | `JOB_CANCELLED`             | The `lastError` of a job that `jobs.cancel` cancelled. `new JobCancelledError(message?, options?)`.                                                                                                                                                                                                                                                                                                                                                                                            |
+| `FatalJobError`                | `FATAL_JOB`                 | A handler threw it to fail the job at once. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `RetryJobError`                | `RETRY_JOB`                 | A handler threw it to retry the job after a given delay. See below.                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `RateLimitedError`             | `RATE_LIMITED`              | A handler threw it because the other side limits the rate: the job waits for its rate limit. See below.                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ```js
 import { SqlaneError } from '@sqlane/core';

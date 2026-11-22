@@ -1,5 +1,6 @@
-// The schema of sqlane on MySQL 8.4+. Each statement is idempotent: MySQL commits each DDL statement, so a migration
-// cut in the middle runs again from its start.
+// The schema of sqlane on MySQL 8.4+. MySQL commits each DDL statement, so a migration cut in the middle runs again
+// from its start. Most statements can run again (IF NOT EXISTS). The ALTER TABLE of 0005, 0007 and 0008 cannot: a
+// crash after one, before its record, needs the id recorded by hand. Every down, and every up after 0008, can.
 
 /** IDs, names, keys, tokens: ASCII, compared byte by byte (case-sensitive, like PostgreSQL). */
 const ASCII = 'CHARACTER SET ascii COLLATE ascii_bin';
