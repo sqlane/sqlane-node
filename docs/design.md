@@ -494,6 +494,22 @@ keys have room, at most twice the free slots of the name, and those with a full 
 7. `UPDATE` to `running` with a new `lock_token`, `locked_by`, `locked_until = now + lease` (4 minutes).
 8. Read the payloads.
 
+**The start time.** Each claim writes one time to `started_at` of its jobs and to `created_at` of their new slots: the
+start of the run, which `JobInfo.startedAt`, the `claimed` event and `JobRecord.startedAt` show. On PostgreSQL, the
+insert of the slots takes `clock_timestamp()` once, in a materialized CTE, and returns it (`RETURNING`) as epoch µs; the
+claim's last statement writes it to `started_at` as a parameter, and without slots takes `clock_timestamp()` itself.
+It returns the stored value, rounded to the millisecond. No statement is added to the hot path, but the time comes
+before the insert's waits: a wait on another claim's insert of the same slot makes `startedAt` early by that wait
+(milliseconds: the rest of the other claim's transaction). Taking it after the inserts would cost one more statement,
+as an `UPDATE` of the slots in the last statement did. MySQL and
+MariaDB have no `UPDATE … RETURNING`: the claim reads the database time in its latest read before the write (the lock
+read, the read of the slots or of the rate keys, the read of the acquired slots), and writes it back as epoch µs
+(`'1970-01-01' + INTERVAL ? MICROSECOND`, never a `Date`, which a driver's time zone would shift). The jobs `UPDATE`
+reaches the new slots in the same statement, through a derived table of the acquired holds joined by the slots'
+primary key: one row per hold, and no lock waits on the slots of other jobs. Its columns are `ascii`/`ascii_bin`, as
+those of the join: with the utf8mb4 of a bare parameter, the join cannot use a key on the derived table and reads it
+once per job, and MariaDB 11.8 fails on the collation mix.
+
 Then the handlers start. A job without its payload (a broken enqueue outside a transaction, a manual change) goes back
 to `pending` with a 1 s delay and no attempt used, while it is younger than 60 s (its payload can still be on the way).
 After that it fails for good with a `MissingPayloadError`, without retries; its failure job runs.
@@ -865,6 +881,15 @@ The table lists each guarantee and the mechanism that keeps it.
   the age of the oldest due job. A stuck job is a `running` job with a `timed_out_at` time: it timed out, and its
   handler has not settled yet. A blocked job, on a full key or on a rate key, counts as pending. These numbers support
   alerts such as "the queue is stuck". OpenTelemetry support may come later, as a separate package.
+- **The start delay.** `JobInfo` and the `claimed` event carry the due time (`runAt`, the job's place in line) and the
+  start time (`startedAt`) of a run, both from the database clock: the start delay is `startedAt − runAt`.
+- **Keys.** `sqlane.jobs.keyStats()` lists the keys of the global limits with blocked jobs, or held or lingering slots,
+  worst first, in one statement on the queue's pool. The blocked keys come from a loose scan of the index of the
+  blocked jobs: one index entry per key (a recursive CTE on PostgreSQL; `GROUP BY status, blocked_on` with `MIN(run_at)`
+  on MySQL and MariaDB). The slots are aggregated per key. The details of the keys of the page are scalar subqueries:
+  the count of blocked jobs (stopped at 1000 by a probe with `OFFSET 1000`), the keys, maxes and rate settings of the
+  head job, the job of the newest slot, and the debt of a rate key. The max of a key and the next start of a rate key are
+  computed in JS from the head's stored settings, as the unblock computes them. No index of its own.
 
 ## Supported versions
 

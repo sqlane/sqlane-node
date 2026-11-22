@@ -2,8 +2,12 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, test } from 'vitest';
 import { chooseRows } from '../../src/fair_share.js';
+import { pgExecutor } from '../../src/adapters/executors.js';
 import { incrementUs, waitUs } from '../../src/gcra.js';
 import { createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit } from '../../src/index.js';
+import * as mariadbWorker from '../../src/store/mariadb_worker.js';
+import * as mysqlWorker from '../../src/store/mysql_worker.js';
+import * as postgresWorker from '../../src/store/postgres_worker.js';
 import { probeSql } from '../../src/store/mysql_worker.js';
 import { createStore } from '../../src/store/store.js';
 import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
@@ -138,6 +142,71 @@ function claimWithBlocks(store, candidateIds, lockToken, fullIds = []) {
  */
 async function claimAll(store, candidateIds, lockToken) {
     return (await claimWithBlocks(store, candidateIds, lockToken)).jobs;
+}
+
+/** MySQL or MariaDB: the worker of the dialect */
+const MYSQL_WORKER = inject('databaseDialect') === 'mariadb' ? mariadbWorker : mysqlWorker;
+
+/**
+ * Waits up to 5 s for a run.
+ * @param {unknown[]} runs
+ * @returns {Promise<void>}
+ */
+async function untilRun(runs) {
+    const deadline = Date.now() + 5000;
+
+    // oxlint-disable-next-line no-await-in-loop -- polls
+    while (!runs.length && Date.now() < deadline) {
+        // oxlint-disable-next-line no-await-in-loop -- polls
+        await sleep(10);
+    }
+}
+
+/**
+ * An executor of a pg connection that waits 20 ms before the statement that starts the jobs: a time taken there, not
+ * at the slots, would differ from theirs.
+ * @param {import('pg').PoolClient} connection
+ * @returns {import('../../src/types.js').Executor}
+ */
+function slowStartExecutor(connection) {
+    const executor = pgExecutor(connection);
+
+    return {
+        ...executor,
+        query: async (sql, params) => {
+            if (/SET status = 'running'/u.test(sql)) {
+                await sleep(20);
+            }
+
+            return executor.query(sql, params);
+        },
+    };
+}
+
+/**
+ * An executor over a mysql2 connection, through `query` (text protocol) or `execute` (server-side prepared).
+ * @param {import('mysql2/promise').PoolConnection} connection
+ * @param {'query' | 'execute'} method
+ * @returns {import('../../src/types.js').Executor}
+ */
+function mysql2ExecutorOf(connection, method) {
+    /**
+     * @param {string} sql
+     * @param {readonly unknown[]} params
+     * @returns {Promise<any>}
+     */
+    const send = async (sql, params) => (await (method === 'execute'
+        ? connection.execute(sql, /** @type {any} */ ([...params]))
+        : connection.query(sql, [...params])))[0];
+
+    return {
+        query: async (sql, params) => {
+            const rows = await send(sql, params);
+
+            return Array.isArray(rows) ? rows : [];
+        },
+        run: async (sql, params) => (await send(sql, params)).affectedRows,
+    };
 }
 
 /**
@@ -857,6 +926,283 @@ describe('global concurrency limits', () => {
             { limit_key: 'order:1', slot: 0, job_id: 'old' },
             { limit_key: 'order:2', slot: 0, job_id: ended.id },
         ]);
+    });
+
+    describe.runIf(inject('databaseDialect') !== 'postgres').each(['query', 'execute'])(
+        'MySQL and MariaDB, through mysql2 %s',
+        (method) => {
+            test('the claim writes the start to the job and its slot without waiting on locked slots of others',
+                async () => {
+                    const { p, sqlane } = await freshTables();
+                    const many = defineConcurrencyLimit({ name: 'many', max: 10 });
+                    const keyed = defineJob({ name: 'keyed', timeout: '1m', globalConcurrencyLimits: () => [many] });
+                    const { id } = await sqlane.enqueue(testAdapter.pool, keyed, {}, { runAt: ago(1) });
+                    const pool = /** @type {import('mysql2/promise').Pool} */ (testAdapter.pool);
+
+                    // Held slots of the key: another job's, and a stale one of the same job under another lock
+                    await database.query(`INSERT INTO ${p}concurrency_slots
+                        (limit_key, slot, job_id, lock_token, held_until, created_at)
+                        VALUES ('many', 5, 'other', 'other', NULL, UTC_TIMESTAMP(3)),
+                               ('many', 6, ?, 'old', NULL, UTC_TIMESTAMP(3))`, [id]);
+
+                    const foreign = await pool.getConnection();
+                    const claimer = await pool.getConnection();
+
+                    try {
+                        // Another transaction holds them, by primary key, at READ COMMITTED: no gap locks
+                        await foreign.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+                        await foreign.beginTransaction();
+                        await foreign.query(`SELECT * FROM ${p}concurrency_slots
+                            WHERE (limit_key, slot) IN (('many', 5), ('many', 6)) FOR UPDATE`);
+                        await claimer.query('SET SESSION innodb_lock_wait_timeout = 1');
+                        await claimer.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+                        await claimer.beginTransaction();
+
+                        const executor = mysql2ExecutorOf(claimer, /** @type {'query' | 'execute'} */ (method));
+                        const { jobs } = await MYSQL_WORKER.claim(executor, p, {
+                            candidateIds: [id],
+                            fullIds: [],
+                            lockToken: 'T1',
+                            lockedBy: 'test',
+                            leaseMs: LEASE_MS,
+                            pick: locked => locked,
+                        });
+
+                        await claimer.commit();
+
+                        expect(jobs.map(job => job.id)).toStrictEqual([id]);
+
+                        const [row] = await database.query(`SELECT
+                            TIMESTAMPDIFF(MICROSECOND, '1970-01-01', j.started_at) DIV 1000 AS started_ms,
+                            TIMESTAMPDIFF(MICROSECOND, '1970-01-01', s.created_at) DIV 1000 AS slot_ms
+                            FROM ${p}jobs j JOIN ${p}concurrency_slots s ON s.job_id = j.id AND s.lock_token = 'T1'
+                            WHERE j.id = ?`, [id]);
+
+                        expect(Number(row.slot_ms)).toBe(Number(row.started_ms));
+                        expect(Number(row.started_ms)).toBe(Number(jobs[0].startedAt));
+                    } finally {
+                        await foreign.rollback();
+                        foreign.release();
+                        claimer.release();
+                    }
+                });
+
+            test('a wait on the row of a rate key: the job starts after the wait', async () => {
+                const { p, sqlane } = await freshTables();
+                const api = defineRateLimit({ name: 'api', max: 100, per: '1s' });
+                const call = defineJob({ name: 'call', globalRateLimits: () => [api.key('t1')] });
+                const { id } = await sqlane.enqueue(testAdapter.pool, call, {}, { runAt: ago(1) });
+                const pool = /** @type {import('mysql2/promise').Pool} */ (testAdapter.pool);
+
+                await database.query(`INSERT INTO ${p}rate_limits (limit_key, tat) VALUES ('@api:t1', UTC_TIMESTAMP(6))`);
+
+                const foreign = await pool.getConnection();
+                const claimer = await pool.getConnection();
+
+                try {
+                    // Another claim holds the row of the key: the claim waits on it
+                    await foreign.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+                    await foreign.beginTransaction();
+                    await foreign.query(`SELECT * FROM ${p}rate_limits WHERE limit_key = '@api:t1' FOR UPDATE`);
+                    await claimer.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+                    await claimer.beginTransaction();
+
+                    const claiming = MYSQL_WORKER.claim(
+                        mysql2ExecutorOf(claimer, /** @type {'query' | 'execute'} */ (method)),
+                        p,
+                        {
+                            candidateIds: [id],
+                            fullIds: [],
+                            lockToken: 'T1',
+                            lockedBy: 'test',
+                            leaseMs: LEASE_MS,
+                            pick: locked => locked,
+                        },
+                    );
+
+                    await sleep(300);
+
+                    const [{ ms }] = await database.query(
+                        'SELECT TIMESTAMPDIFF(MICROSECOND, \'1970-01-01\', UTC_TIMESTAMP(3)) DIV 1000 AS ms',
+                    );
+
+                    await foreign.commit();
+
+                    const { jobs } = await claiming;
+
+                    await claimer.commit();
+                    expect(jobs.map(job => job.id)).toStrictEqual([id]);
+                    expect(Number(jobs[0].startedAt)).toBeGreaterThanOrEqual(Number(ms));
+                } finally {
+                    await foreign.rollback();
+                    foreign.release();
+                    claimer.release();
+                }
+            });
+
+            test('a slot lost after a lock wait: the job without keys starts after the wait, not before it', async () => {
+                const { p, sqlane } = await freshTables();
+                const one = defineConcurrencyLimit({ name: 'one', max: 1 });
+                const keyed = defineJob({ name: 'keyed', timeout: '1m', globalConcurrencyLimits: () => [one] });
+                const withKey = await sqlane.enqueue(testAdapter.pool, keyed, {}, { runAt: ago(2) });
+                const plain = await sqlane.enqueue(testAdapter.pool, 'plain', {}, { runAt: ago(1) });
+                const pool = /** @type {import('mysql2/promise').Pool} */ (testAdapter.pool);
+                const foreign = await pool.getConnection();
+                const claimer = await pool.getConnection();
+
+                try {
+                    // Another claim takes the slot, and commits only later: the claim waits on its insert, then
+                    // gets no slot. Its read of the slots after the wait returns no row
+                    await foreign.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+                    await foreign.beginTransaction();
+                    await foreign.query(`INSERT INTO ${p}concurrency_slots
+                        (limit_key, slot, job_id, lock_token, held_until, created_at)
+                        VALUES ('one', 0, 'other', 'other', NULL, UTC_TIMESTAMP(3))`);
+                    await claimer.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+                    await claimer.beginTransaction();
+
+                    const claiming = MYSQL_WORKER.claim(
+                        mysql2ExecutorOf(claimer, /** @type {'query' | 'execute'} */ (method)),
+                        p,
+                        {
+                            candidateIds: [withKey.id, plain.id],
+                            fullIds: [],
+                            lockToken: 'T1',
+                            lockedBy: 'test',
+                            leaseMs: LEASE_MS,
+                            pick: locked => locked,
+                        },
+                    );
+
+                    await sleep(300);
+
+                    const [{ ms }] = await database.query(
+                        'SELECT TIMESTAMPDIFF(MICROSECOND, \'1970-01-01\', UTC_TIMESTAMP(3)) DIV 1000 AS ms',
+                    );
+
+                    await foreign.commit();
+
+                    const { jobs } = await claiming;
+
+                    await claimer.commit();
+                    expect(jobs.map(job => job.id)).toStrictEqual([plain.id]);
+                    expect(Number(jobs[0].startedAt)).toBeGreaterThanOrEqual(Number(ms));
+                } finally {
+                    await foreign.rollback();
+                    foreign.release();
+                    claimer.release();
+                }
+            });
+        },
+    );
+
+    describe.runIf(inject('databaseDialect') === 'postgres')('postgres: the start time is the time of the slots', () => {
+        const a = defineConcurrencyLimit({ name: 'a', max: 10 });
+        const b = defineConcurrencyLimit({ name: 'b', max: 10 });
+        const onA = defineJob({ name: 'on_a', timeout: '1m', globalConcurrencyLimits: () => [a] });
+        const onB = defineJob({ name: 'on_b', timeout: '1m', globalConcurrencyLimits: () => [b] });
+
+        test('a wait after the slots are taken: started_at is still their time, not that of the job update', async () => {
+            const { p, sqlane } = await freshTables();
+            const { id } = await sqlane.enqueue(testAdapter.pool, onA, {}, { runAt: ago(1) });
+            const claimer = await /** @type {Pool} */ (testAdapter.pool).connect();
+
+            try {
+                await claimer.query('BEGIN');
+
+                const { jobs } = await postgresWorker.claim(slowStartExecutor(claimer), p, {
+                    candidateIds: [id],
+                    fullIds: [],
+                    lockToken: 'T1',
+                    lockedBy: 'test',
+                    leaseMs: LEASE_MS,
+                    pick: locked => locked,
+                });
+
+                await claimer.query('COMMIT');
+                expect(jobs.map(job => job.id)).toStrictEqual([id]);
+
+                const [row] = await database.query(`SELECT
+                    (EXTRACT(EPOCH FROM j.started_at) * 1000000)::bigint AS started_us,
+                    (EXTRACT(EPOCH FROM s.created_at) * 1000000)::bigint AS slot_us
+                    FROM ${p}jobs j JOIN ${p}concurrency_slots s ON s.job_id = j.id WHERE j.id = $1`, [id]);
+
+                expect(row.started_us).toBe(row.slot_us);
+            } finally {
+                claimer.release();
+            }
+        });
+
+        test('a wait on the insert of a slot by another claim: the start time is before it, the same everywhere', async () => {
+            const { p } = await freshTables();
+            /** @type {import('../../src/types.js').SqlaneEvent[]} */
+            const events = [];
+            const sqlane = createSqlane({
+                adapter: testAdapter.adapter,
+                tablePrefix: p,
+                onEvent: event => events.push(event),
+            });
+            const pool = /** @type {Pool} */ (testAdapter.pool);
+            /**
+             * @type {{ info: import('../../src/types.js').JobInfo, record: any, slotMs: number, released: boolean }[]}
+             */
+            const runs = [];
+            let released = false;
+            let releaseMs = 0;
+
+            sqlane.handle(onA, async ({ job }) => {
+                const record = await sqlane.jobs.get(job.id);
+                const [slot] = await database.query(
+                    `SELECT (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS ms FROM ${p}concurrency_slots
+                      WHERE job_id = $1`,
+                    [job.id],
+                );
+
+                runs.push({ info: job, record, slotMs: Number(slot.ms), released });
+            });
+            sqlane.handle(onB, async () => {});
+
+            const x = await sqlane.enqueue(pool, onA, {}, { runAt: ago(2) });
+
+            await sqlane.enqueue(pool, onB, {}, { runAt: ago(2) });
+
+            const foreign = await pool.connect();
+
+            try {
+                // Another claim takes slot 0 of b, and commits only later: the claim takes slot 0 of a, then waits
+                // on that insert, and loses the slot of b
+                await foreign.query('BEGIN');
+                await foreign.query(`INSERT INTO ${p}concurrency_slots
+                    (limit_key, slot, job_id, lock_token, held_until, created_at)
+                    VALUES ('b', 0, 'other', 'other', NULL, clock_timestamp())`);
+                await sqlane.start();
+                await sleep(300);
+
+                const [{ ms }] = await database.query('SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint AS ms');
+
+                releaseMs = Number(ms);
+                released = true;
+                await foreign.query('COMMIT');
+
+                await untilRun(runs);
+            } finally {
+                await foreign.query('ROLLBACK');
+                foreign.release();
+                await sqlane.close();
+            }
+
+            const [run] = runs;
+            const claimed = /** @type {any} */ (events.find(event => event.type === 'claimed'));
+
+            // It started after the wait, with the time of its slot, from before the wait
+            expect(run.info.id).toBe(x.id);
+            expect(run.released).toBe(true);
+            expect(Number(run.info.startedAt)).toBeLessThan(releaseMs - 200);
+            expect(claimed.jobId).toBe(x.id);
+            expect(claimed.startedAt).toStrictEqual(run.info.startedAt);
+            expect(run.record.startedAt).toStrictEqual(run.info.startedAt);
+            expect(run.slotMs).toBe(Number(run.info.startedAt));
+        });
     });
 
     test('the sweep deletes the ended lingers and unblocks the jobs of keys with room', async () => {

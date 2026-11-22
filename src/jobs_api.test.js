@@ -121,3 +121,57 @@ test.each([
 ])('isPossibleJobId(%j): %s', (id, expected) => {
     expect(isPossibleJobId(id)).toBe(expected);
 });
+
+/**
+ * @returns {{ jobs: ReturnType<typeof createJobsApi>, calls: unknown[] }} The API over a store that records the calls
+ *     of keyStats.
+ */
+function withStore() {
+    /** @type {unknown[]} */
+    const calls = [];
+    const store = {
+        keyStats: async (/** @type {unknown} */ params) => {
+            calls.push(params);
+
+            return { keys: [], truncated: false };
+        },
+    };
+
+    return { jobs: createJobsApi(/** @type {any} */ (store), /** @type {any} */ (null)), calls };
+}
+
+describe('keyStats: options', () => {
+    test('the defaults: 100 keys, every type, ordered by the blocked jobs', async () => {
+        const { jobs, calls } = withStore();
+
+        await jobs.keyStats();
+        await jobs.keyStats({ limit: undefined, type: undefined, orderBy: undefined });
+        await jobs.keyStats({ limit: 3, type: 'concurrency', orderBy: 'held' });
+        expect(calls).toStrictEqual([
+            { limit: 100, type: null, orderBy: 'blocked' },
+            { limit: 100, type: null, orderBy: 'blocked' },
+            { limit: 3, type: 'concurrency', orderBy: 'held' },
+        ]);
+    });
+
+    test.each([
+        ['an unknown option', { unknown: 1 }],
+        ['an unknown option set to undefined', { unknown: undefined }],
+        ['a limit of 0', { limit: 0 }],
+        ['a limit of 1001', { limit: 1001 }],
+        ['a fractional limit', { limit: 1.5 }],
+        ['a string limit', { limit: '5' }],
+        ['a BigInt limit', { limit: 10n }],
+        ['an unknown type', { type: 'mutex' }],
+        ['a type of null', { type: null }],
+        ['an unknown order', { orderBy: 'age' }],
+        ['the held order of rate keys', { type: 'rate', orderBy: 'held' }],
+        ['null', null],
+        ['a string', 'x'],
+    ])('%s rejects with an InvalidOptionsError', async (_, options) => {
+        const { jobs, calls } = withStore();
+
+        await expect(jobs.keyStats(/** @type {any} */ (options))).rejects.toBeInstanceOf(InvalidOptionsError);
+        expect(calls).toStrictEqual([]);
+    });
+});

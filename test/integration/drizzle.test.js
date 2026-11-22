@@ -16,6 +16,7 @@ import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index
 import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
+import { checkStartTimes } from './helpers/start_time_checks.js';
 
 /** @typedef {import('../../src/adapters/drizzle.js').DrizzleConnection} DrizzleConnection */
 /** @typedef {import('../../src/types.js').Sqlane<DrizzleConnection>} Sqlane */
@@ -147,6 +148,12 @@ describe.each([
         const { sqlane } = await freshSqlane();
 
         await expect(checkJobsRead(sqlane, db)).resolves.toHaveLength(3);
+    });
+
+    test('the start time of a run: the event, JobInfo, JobRecord and its slots agree', async () => {
+        const { sqlane, p, events } = await freshSqlane();
+
+        await expect(checkStartTimes(sqlane, db, { p, database, events })).resolves.toBeUndefined();
     });
 
     test('sqlane.jobs: retry, cancel and remove through the adapter', async () => {

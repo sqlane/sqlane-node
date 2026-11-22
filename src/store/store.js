@@ -1,6 +1,7 @@
 // The store: the SQL of one dialect, bound to an adapter and a table prefix.
 import { setTimeout as sleep } from 'node:timers/promises';
 import { getJob, listJobs } from './job_reads.js';
+import { keyStats } from './key_stats.js';
 import * as mariadbFinal from './mariadb_final.js';
 import * as mariadbSchedules from './mariadb_schedules.js';
 import * as mariadbWorker from './mariadb_worker.js';
@@ -61,6 +62,8 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {number} maxStalls
  * @property {string | null} failureJob
  * @property {Date} enqueuedAt
+ * @property {Date} runAt Its due time, as stored: its place in line.
+ * @property {Date} startedAt The database time of the claim, as stored in `started_at`; also the time of its new slots.
  * @property {number} waitedMs Since it was due.
  * @property {string} lockToken
  */
@@ -226,6 +229,8 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {(id: string) => Promise<import('../types.js').JobRecord | null>} getJob A plain read, no lock.
  * @property {(params: import('./job_reads.js').ListParams) => Promise<{ jobs: import('../types.js').JobRecord[],
  *     last: { enqueuedAtMs: number, id: string } | null }>} listJobs A plain read, no lock.
+ * @property {(params: import('./key_stats.js').KeyStatsParams)
+ *     => Promise<import('../types.js').KeyStatsPage>} keyStats One statement on the queue's pool, no lock.
  * @property {(schedules: { id: string, name: string, spec: string }[], now: () => number)
  *     => Promise<ScheduleRead>} registerSchedules Inserts the missing rows (2 statements per 500), then reads them.
  * @property {(ids: string[] | null, now: () => number) => Promise<ScheduleRead>} readSchedules A plain read, no
@@ -465,6 +470,7 @@ export function createStore(adapter, tablePrefix, logger) {
         getStats: () => final.getStats(adapter.queue, p),
         getJob: id => getJob(adapter.queue, family, p, id),
         listJobs: params => listJobs(adapter.queue, family, p, params),
+        keyStats: params => keyStats(adapter.queue, family, p, params),
         registerSchedules: (entries, now) => schedules.registerSchedules(adapter.queue, p, entries, now),
         readSchedules: (ids, now) => schedules.readSchedules(adapter.queue, p, ids, now),
         fireSlots: params => inQueue(executor => schedules.fireSlots(executor, p, params)),

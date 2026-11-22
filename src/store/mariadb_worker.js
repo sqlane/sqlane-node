@@ -7,6 +7,7 @@ import { incrementsOf, splitByRate } from '../gcra.js';
 /** @typedef {import('./store.js').Candidate} Candidate */
 /** @typedef {import('./store.js').ClaimParams} ClaimParams */
 /** @typedef {import('./store.js').ClaimedJob} ClaimedJob */
+/** @typedef {{ key: string, slot: number, id: string }} SlotHold A slot of a key, taken for a job */
 
 /** The due jobs of each name with global limits that a search of candidates reads */
 export const LIMIT_WINDOW_SIZE = 500;
@@ -224,7 +225,8 @@ export async function findCandidates(executor, p, limitsByName, withRates) {
  * @param {string} p
  * @param {ClaimedJob[]} jobs The picked jobs with global limits.
  * @param {{ heldSlots: Map<string, Set<number>>, lockToken: string }} params The held slots of their keys.
- * @returns {Promise<Set<string>>} The ids of the jobs that got a slot of each key.
+ * @returns {Promise<{ withAll: Set<string>, holds: SlotHold[], nowMs: number }>} The ids of the jobs that got a slot
+ *     of each key; their slots; the database time of the read of the slots, after the waits of the insert.
  */
 async function takeSlots(executor, p, jobs, { heldSlots, lockToken }) {
     /** @type {Map<string, number>} The next slot to try of each key */
@@ -256,10 +258,16 @@ async function takeSlots(executor, p, jobs, { heldSlots, lockToken }) {
             held_until = IF(${p}concurrency_slots.held_until < ${NOW}, NULL, ${p}concurrency_slots.held_until)
     `, holds.flatMap(hold => [hold.key, hold.slot, hold.id, lockToken]));
 
-    const acquired = new Set((await executor.query(`
-        SELECT limit_key, job_id FROM ${p}concurrency_slots
+    // One more row, without a slot: the read gives its time also when it acquired nothing, after the waits of the
+    // insert
+    const acquiredRows = await executor.query(`
+        SELECT limit_key, job_id, ${epochMs(NOW)} AS nowms FROM ${p}concurrency_slots
          WHERE (limit_key, slot) IN (${holds.map(() => '(?, ?)').join(', ')}) AND lock_token = ?
-    `, [...holds.flatMap(hold => [hold.key, hold.slot]), lockToken])).map(row => `${row.job_id}\n${row.limit_key}`));
+        UNION ALL
+        SELECT NULL, NULL, ${epochMs(NOW)}
+    `, [...holds.flatMap(hold => [hold.key, hold.slot]), lockToken]);
+    const acquired = new Set(acquiredRows.filter(row => row.job_id !== null)
+        .map(row => `${row.job_id}\n${row.limit_key}`));
     const withAll = new Set(jobs
         .filter(job => job.limits.every(({ key }) => acquired.has(`${job.id}\n${key}`)))
         .map(job => job.id));
@@ -272,7 +280,11 @@ async function takeSlots(executor, p, jobs, { heldSlots, lockToken }) {
         `, [...partial.flatMap(hold => [hold.key, hold.slot]), lockToken]);
     }
 
-    return withAll;
+    return {
+        withAll,
+        holds: holds.filter(hold => withAll.has(hold.id)),
+        nowMs: Number(acquiredRows[0].nowms),
+    };
 }
 
 /**
@@ -282,7 +294,8 @@ async function takeSlots(executor, p, jobs, { heldSlots, lockToken }) {
  * @param {Executor} executor In the transaction of the claim.
  * @param {string} p
  * @param {string[]} keys Sorted.
- * @returns {Promise<Map<string, import('../gcra.js').RateKeyState>>}
+ * @returns {Promise<{ states: Map<string, import('../gcra.js').RateKeyState>, nowMs: number | null }>} The states of
+ *     the keys, and the database time of their read.
  */
 async function lockRateKeys(executor, p, keys) {
     await executor.query(`
@@ -299,15 +312,73 @@ async function lockRateKeys(executor, p, keys) {
          WHERE b.status = 'blocked' AND b.blocked_on = r.limit_key ORDER BY b.run_at, b.id LIMIT 1
     )`;
     const rows = await executor.query(`
-        SELECT r.limit_key, GREATEST(TIMESTAMPDIFF(MICROSECOND, ${NOW_US}, r.tat), 0) AS debt_us,
+        SELECT r.limit_key, GREATEST(TIMESTAMPDIFF(MICROSECOND, ${NOW_US}, r.tat), 0) AS debt_us, ${epochMs(NOW)} AS nowms,
                ${ofHead('b.id')} AS head_id, ${ofHead(epochMs('b.run_at'))} AS head_run_at_ms
           FROM ${p}rate_limits r WHERE r.limit_key IN (${placeholders(keys.length)})
     `, keys);
 
-    return new Map(rows.map(row => [String(row.limit_key), {
-        debtUs: Number(row.debt_us),
-        head: row.head_id === null ? null : { runAtMs: Number(row.head_run_at_ms), id: String(row.head_id) },
-    }]));
+    return {
+        states: new Map(rows.map(row => [String(row.limit_key), {
+            debtUs: Number(row.debt_us),
+            head: row.head_id === null ? null : { runAtMs: Number(row.head_run_at_ms), id: String(row.head_id) },
+        }])),
+        nowMs: rows.length ? Number(rows[0].nowms) : null,
+    };
+}
+
+/**
+ * @param {string} j The alias of the jobs, with its dot, or nothing.
+ * @returns {string} The columns of a started job: 4 parameters, the lock token, the process, the lease in µs and the
+ *     start in epoch µs.
+ */
+const startedColumns = j => `${j}status = 'running', ${j}lock_token = ?, ${j}locked_by = ?,
+               ${j}locked_until = ${NOW} + INTERVAL ? MICROSECOND, ${j}started_at = '1970-01-01' + INTERVAL ? MICROSECOND,
+               ${j}timed_out_at = NULL, ${j}updated_at = ${NOW}`;
+
+/**
+ * Starts the claimed jobs: running, with their lease, and `started_at` at `nowMs`, the database time of the claim's
+ * latest read. Their new slots get the same time, in the same statement: the slots of `holds` are read by their
+ * primary key, through a derived table of the holds, one row each. Its columns are ascii, as the columns that it joins:
+ * with the utf8mb4 of a bare parameter, the join cannot use a key on the derived table, and reads it once per job; a
+ * collation mix fails on MariaDB 11.8. The CASTs are in each branch of the UNION: MySQL 8.4 fails a prepared statement
+ * whose branches differ. No `UPDATE … RETURNING` on MySQL and MariaDB: the time is written, not read back. As epoch µs,
+ * never as a Date, which the time zone settings of a driver would shift.
+ * @param {Executor} executor In the transaction of the claim: the jobs and the slots are locked by it.
+ * @param {string} p
+ * @param {{ ids: string[], holds: SlotHold[], nowMs: number, lockToken: string,
+ *     lockedBy: string, leaseMs: number }} params
+ * @returns {Promise<void>}
+ */
+async function startJobs(executor, p, { ids, holds, nowMs, lockToken, lockedBy, leaseMs }) {
+    const setParams = [lockToken, lockedBy, leaseMs * 1000, nowMs * 1000];
+
+    if (!holds.length) {
+        await executor.query(`
+            UPDATE ${p}jobs FORCE INDEX (PRIMARY)
+               SET ${startedColumns('')}
+             WHERE id IN (${placeholders(ids.length)})
+        `, [...setParams, ...ids]);
+
+        return;
+    }
+
+    const ascii = 'CAST(? AS CHAR(255) CHARACTER SET ascii) COLLATE ascii_bin';
+    const rows = holds.map(() => `SELECT ${ascii} AS k, CAST(? AS SIGNED) AS sl, ${ascii} AS jid`).join(' UNION ALL ');
+
+    await executor.query(`
+        UPDATE ${p}jobs j FORCE INDEX (PRIMARY)
+          LEFT JOIN (${rows}) h ON h.jid = j.id
+          LEFT JOIN ${p}concurrency_slots s FORCE INDEX (PRIMARY)
+            ON s.limit_key = h.k AND s.slot = h.sl AND s.job_id = j.id AND s.lock_token = ?
+           SET ${startedColumns('j.')}, s.created_at = '1970-01-01' + INTERVAL ? MICROSECOND
+         WHERE j.id IN (${placeholders(ids.length)})
+    `, [
+        ...holds.flatMap(hold => [hold.key, hold.slot, hold.id]),
+        lockToken,
+        ...setParams,
+        nowMs * 1000,
+        ...ids,
+    ]);
 }
 
 /**
@@ -326,16 +397,19 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
         return { jobs: [], blockedKeys: [], blockedNames: [], rateWaits: [] };
     }
 
-    const locked = (await executor.query(`
+    const lockedRows = await executor.query(`
         SELECT id, job_name, CAST(limit_keys AS CHAR) AS limit_keys, CAST(limit_maxes AS CHAR) AS limit_maxes,
                CAST(rate_limits AS CHAR) AS rate_limits, attempts, max_attempts, stalls, max_stalls, failure_job,
                ${epochMs('created_at')} AS created_at_ms, ${epochMs('run_at')} AS run_at_ms,
-               TIMESTAMPDIFF(MICROSECOND, run_at, ${NOW}) DIV 1000 AS waited_ms
+               TIMESTAMPDIFF(MICROSECOND, run_at, ${NOW}) DIV 1000 AS waited_ms, ${epochMs(NOW)} AS nowms
           FROM ${p}jobs
          WHERE id IN (${placeholders(ids.length)}) AND status = 'pending' AND run_at <= ${NOW}
          ORDER BY run_at, id
            FOR UPDATE SKIP LOCKED
-    `, ids)).map(row => ({
+    `, ids);
+    // The database time of the claim's latest read before it writes the jobs: their start, and the time of their slots
+    let nowMs = lockedRows.length ? Number(lockedRows[0].nowms) : null;
+    const locked = lockedRows.map(row => ({
         runAtMs: Number(row.run_at_ms),
         /** @type {ClaimedJob} */
         job: {
@@ -349,6 +423,9 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
             maxStalls: Number(row.max_stalls),
             failureJob: row.failure_job === null ? null : String(row.failure_job),
             enqueuedAt: new Date(Number(row.created_at_ms)),
+            runAt: new Date(Number(row.run_at_ms)),
+            // Set by the write of the claim
+            startedAt: new Date(Number.NaN),
             waitedMs: Number(row.waited_ms),
             lockToken,
         },
@@ -359,9 +436,11 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
 
     if (keys.length) {
         const slotRows = await executor.query(`
-            SELECT s.limit_key, s.slot FROM ${p}concurrency_slots s
+            SELECT s.limit_key, s.slot, ${epochMs(NOW)} AS nowms FROM ${p}concurrency_slots s
              WHERE s.limit_key IN (${placeholders(keys.length)}) AND ${HELD}
         `, keys);
+
+        nowMs = slotRows.length ? Number(slotRows[0].nowms) : nowMs;
 
         for (const row of slotRows) {
             const key = String(row.limit_key);
@@ -388,7 +467,10 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     }
 
     const rateKeys = [...new Set(withRoom.flatMap(({ job }) => job.rateLimits.map(limit => limit.key)))].toSorted();
-    const rateStates = rateKeys.length ? await lockRateKeys(executor, p, rateKeys) : new Map();
+    const rateRead = rateKeys.length ? await lockRateKeys(executor, p, rateKeys) : { states: new Map(), nowMs: null };
+    const rateStates = rateRead.states;
+
+    nowMs = rateRead.nowMs ?? nowMs;
     const { open, blocked: overRate, waits } = splitByRate(withRoom, rateStates);
 
     blocked.push(...overRate);
@@ -404,10 +486,12 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
 
     const picked = pick(open, held, new Map([...rateStates].map(([key, state]) => [key, state.debtUs])));
     const pickedWithLimits = picked.filter(row => row.limits.length);
-    const withSlots = pickedWithLimits.length
+    const slotsTaken = pickedWithLimits.length
         ? await takeSlots(executor, p, pickedWithLimits, { heldSlots, lockToken })
-        : new Set();
-    const claimed = picked.filter(row => !row.limits.length || withSlots.has(row.id));
+        : { withAll: new Set(), holds: [], nowMs: /** @type {number | null} */ (null) };
+    const claimed = picked.filter(row => !row.limits.length || slotsTaken.withAll.has(row.id));
+
+    nowMs = slotsTaken.nowMs ?? nowMs;
     // Only the jobs that start take their quota
     const increments = [...incrementsOf(claimed)];
 
@@ -421,13 +505,18 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     }
 
     if (claimed.length) {
-        await executor.query(`
-            UPDATE ${p}jobs FORCE INDEX (PRIMARY)
-               SET status = 'running', lock_token = ?, locked_by = ?,
-                   locked_until = ${NOW} + INTERVAL ? MICROSECOND, started_at = ${NOW}, timed_out_at = NULL,
-                   updated_at = ${NOW}
-             WHERE id IN (${placeholders(claimed.length)})
-        `, [lockToken, lockedBy, leaseMs * 1000, ...claimed.map(row => row.id)]);
+        await startJobs(executor, p, {
+            ids: claimed.map(row => row.id),
+            holds: slotsTaken.holds,
+            nowMs: /** @type {number} */ (nowMs),
+            lockToken,
+            lockedBy,
+            leaseMs,
+        });
+
+        for (const job of claimed) {
+            job.startedAt = new Date(/** @type {number} */ (nowMs));
+        }
     }
 
     return {
@@ -469,7 +558,7 @@ export async function claimDue(executor, p, { requests, free, lockToken, lockedB
     const locked = (await executor.query(prefix + requests.map(() => `(
         SELECT j.id, j.job_name, ${epochMs('j.run_at')} AS run_at_ms, j.attempts, j.max_attempts, j.stalls,
                j.max_stalls, j.failure_job, ${epochMs('j.created_at')} AS created_at_ms, j.limit_keys IS NOT NULL OR j.rate_limits IS NOT NULL AS has_limits,
-               TIMESTAMPDIFF(MICROSECOND, j.run_at, ${NOW}) DIV 1000 AS waited_ms,
+               TIMESTAMPDIFF(MICROSECOND, j.run_at, ${NOW}) DIV 1000 AS waited_ms, ${epochMs(NOW)} AS nowms,
                -- A subquery, not a join: MariaDB has no FOR UPDATE OF, so a join would lock the payload row too
                (SELECT CAST(pl.payload AS CHAR) FROM ${p}payloads pl WHERE pl.id = j.id) AS payload
           FROM ${p}jobs j FORCE INDEX (${p}jobs_status_name_run_at)
@@ -492,6 +581,9 @@ export async function claimDue(executor, p, { requests, free, lockToken, lockedB
                 maxStalls: Number(row.max_stalls),
                 failureJob: row.failure_job === null ? null : String(row.failure_job),
                 enqueuedAt: new Date(Number(row.created_at_ms)),
+                runAt: new Date(Number(row.run_at_ms)),
+                // The time of the lock read: nothing waits after it (SKIP LOCKED; then a plain read of payloads)
+                startedAt: new Date(Number(row.nowms)),
                 waitedMs: Number(row.waited_ms),
                 lockToken,
                 // payload is NOT NULL: a null is a missing payload row
@@ -520,13 +612,14 @@ export async function claimDue(executor, p, { requests, free, lockToken, lockedB
     }
 
     if (picked.length) {
-        await executor.query(`
-            UPDATE ${p}jobs FORCE INDEX (PRIMARY)
-               SET status = 'running', lock_token = ?, locked_by = ?,
-                   locked_until = ${NOW} + INTERVAL ? MICROSECOND, started_at = ${NOW}, timed_out_at = NULL,
-                   updated_at = ${NOW}
-             WHERE id IN (${placeholders(picked.length)})
-        `, [lockToken, lockedBy, leaseMs * 1000, ...picked.map(job => job.id)]);
+        await startJobs(executor, p, {
+            ids: picked.map(job => job.id),
+            holds: [],
+            nowMs: Number(picked[0].startedAt),
+            lockToken,
+            lockedBy,
+            leaseMs,
+        });
     }
 
     // In the transaction: the claimed jobs are running

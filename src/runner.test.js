@@ -299,7 +299,7 @@ function runnerWithHeldJobs(withKeys, {
         maxStalls: 2,
         failureJob: null,
         enqueuedAt: new Date(),
-        waitedMs: 0,
+        waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: `token-${index + 1}`,
         payload: { found: true, payload: null },
     }));
@@ -647,7 +647,7 @@ async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
         maxStalls: 2,
         failureJob: null,
         enqueuedAt: new Date(),
-        waitedMs: 0,
+        waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: 'token-1',
         payload: { found: true, payload: null },
     };
@@ -1011,7 +1011,7 @@ function dueJobOf(name) {
         maxStalls: 2,
         failureJob: null,
         enqueuedAt: new Date(),
-        waitedMs: 0,
+        waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: `token-${name}`,
         payload: { found: true, payload: null },
     };
@@ -1259,7 +1259,7 @@ function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}
 
         return {
             id: `${name}-${id}`, name, attempts: 0, maxAttempts: 1, stalls: 0, maxStalls: 1, failureJob: null,
-            enqueuedAt: new Date(0), waitedMs: 0, limits: name === 'keyed' ? [{ key: `k${id}`, max: 1 }] : [],
+            enqueuedAt: new Date(0), waitedMs: 0, runAt: new Date(0), startedAt: new Date(0), limits: name === 'keyed' ? [{ key: `k${id}`, max: 1 }] : [],
             rateLimits: [],
             lockToken: 't',
             payload: { found: true, payload: {} },
@@ -1782,7 +1782,7 @@ function dueJob(id, name) {
         maxStalls: 2,
         failureJob: null,
         enqueuedAt: new Date(),
-        waitedMs: 0,
+        waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: 'token',
         payload: { found: true, payload: null },
     };

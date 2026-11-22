@@ -3,11 +3,17 @@ export type ProbeRow = import('./store.js').ProbeRow;
 export type Candidate = import('./store.js').Candidate;
 export type ClaimParams = import('./store.js').ClaimParams;
 export type ClaimedJob = import('./store.js').ClaimedJob;
+export type SlotHold = {
+    key: string;
+    slot: number;
+    id: string;
+};
 /** @typedef {import('../types.js').Executor} Executor */
 /** @typedef {import('./store.js').ProbeRow} ProbeRow */
 /** @typedef {import('./store.js').Candidate} Candidate */
 /** @typedef {import('./store.js').ClaimParams} ClaimParams */
 /** @typedef {import('./store.js').ClaimedJob} ClaimedJob */
+/** @typedef {{ key: string, slot: number, id: string }} SlotHold A slot of a key, taken for a job */
 /** The due jobs of each name with global limits that a search of candidates reads */
 export declare const LIMIT_WINDOW_SIZE = 500;
 /**

@@ -25,6 +25,13 @@ import { prismaAdapter } from '@sqlane/core/adapter-prisma';
 import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
 import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm';
 
+/**
+ * @returns {Promise<any>} A method of a mock.
+ */
+async function anyMethod() {
+    return null;
+}
+
 /** The type tests: never called. */
 export async function publicApiTypes() {
     const mysqlPool = mysql.createPool({});
@@ -461,6 +468,62 @@ export async function publicApiTypes() {
         .toEqualTypeOf(/** @type {'not_found' | 'status' | 'no_payload'} */ ('status'));
     await sqlane.jobs.cancel({ jobName: job, status: 'blocked' }, { mode: 'batches' });
     await sqlane.jobs.remove({ jobName: 'build_report' }, { connection: mysqlPool, strict: false });
+
+    // keyStats: a page of keys, by type
+    const keyPage = await sqlane.jobs.keyStats({ limit: 10, type: 'concurrency', orderBy: 'held' });
+
+    expectTypeOf(keyPage.truncated).toBeBoolean();
+
+    for (const key of keyPage.keys) {
+        switch (key.type) {
+            case 'concurrency':
+                expectTypeOf(key.key).toBeString();
+                expectTypeOf(key.max).toEqualTypeOf(/** @type {number | null} */ (null));
+                expectTypeOf(key.oldestHeldAgeMs).toEqualTypeOf(/** @type {number | null} */ (null));
+                break;
+            case 'rate':
+                expectTypeOf(key.key).toEqualTypeOf(/** @type {string | null} */ (null));
+                expectTypeOf(key.nextStartInMs).toBeNumber();
+                expectTypeOf(key.oldestBlockedAgeMs).toBeNumber();
+                break;
+            default:
+                break;
+        }
+    }
+
+    // @ts-expect-error not a type of key
+    await sqlane.jobs.keyStats({ type: 'mutex' });
+    // @ts-expect-error not an order
+    await sqlane.jobs.keyStats({ orderBy: 'age' });
+    /** @type {import('@sqlane/core').KeyStatsOptions} */
+    const keyStatsOptions = { limit: 5 };
+
+    void keyStatsOptions;
+
+    // KeyStats is the union of the contract, exactly
+    expectTypeOf(/** @type {import('@sqlane/core').KeyStats} */ (/** @type {any} */ (null))).toEqualTypeOf(
+        /** @type {{
+         *     type: 'concurrency', key: string, max: number | null, held: number, lingering: number, blocked: number,
+         *     blockedTruncated: boolean, oldestBlockedAgeMs: number | null, oldestHeldAgeMs: number | null,
+         * } | {
+         *     type: 'rate', limit: string, key: string | null, blocked: number, blockedTruncated: boolean,
+         *     oldestBlockedAgeMs: number, nextStartInMs: number,
+         * }} */ (/** @type {any} */ (null)),
+    );
+
+    // A mock of SqlaneJobs needs keyStats
+    /** @type {import('@sqlane/core').SqlaneJobs} */
+    // @ts-expect-error keyStats is missing
+    const mockWithoutKeyStats = {
+        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod,
+    };
+    /** @type {import('@sqlane/core').SqlaneJobs} */
+    const mock = {
+        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod, keyStats: anyMethod,
+    };
+
+    void mockWithoutKeyStats;
+    void mock;
     /** @type {import('@sqlane/core').JobSelector} */
     const selector = { jobIds: ['a'] };
     /** @type {import('@sqlane/core').BulkOptions} */
@@ -496,9 +559,50 @@ export async function publicApiTypes() {
     // @ts-expect-error scheduledAt is required in a context built by hand
     const builtByHand = {
         id: 'a', name: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
+        runAt: new Date(), startedAt: new Date(),
+    };
+    /** @type {import('@sqlane/core').JobInfo} */
+    // @ts-expect-error runAt is required in a context built by hand
+    const withoutRunAt = {
+        id: 'a', name: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
+        scheduledAt: null, startedAt: new Date(),
+    };
+    /** @type {import('@sqlane/core').JobInfo} */
+    // @ts-expect-error startedAt is required in a context built by hand
+    const withoutStartedAt = {
+        id: 'a', name: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
+        scheduledAt: null, runAt: new Date(),
+    };
+    const claimedBase = { type: /** @type {const} */ ('claimed'), jobId: 'a', jobName: 'a', attempt: 1 };
+    /** @type {import('@sqlane/core').SqlaneEvent} */
+    // @ts-expect-error a claimed event built by hand needs runAt
+    const claimedWithoutRunAt = { ...claimedBase, enqueuedAt: new Date(), startedAt: new Date() };
+    /** @type {import('@sqlane/core').SqlaneEvent} */
+    // @ts-expect-error a claimed event built by hand needs enqueuedAt
+    const claimedWithoutEnqueuedAt = { ...claimedBase, runAt: new Date(), startedAt: new Date() };
+    /** @type {import('@sqlane/core').SqlaneEvent} */
+    // @ts-expect-error a claimed event built by hand needs startedAt
+    const claimedWithoutStartedAt = { ...claimedBase, runAt: new Date(), enqueuedAt: new Date() };
+    /** @type {import('@sqlane/core').SqlaneEvent} */
+    const claimedEvent = { ...claimedBase, runAt: new Date(), enqueuedAt: new Date(), startedAt: new Date() };
+    /** @type {import('@sqlane/core').JobInfo} */
+    const complete = {
+        id: 'a', name: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
+        scheduledAt: null, runAt: new Date(), startedAt: new Date(),
     };
 
     void builtByHand;
+    void withoutRunAt;
+    void withoutStartedAt;
+    void complete;
+    void claimedWithoutRunAt;
+    void claimedWithoutEnqueuedAt;
+    void claimedWithoutStartedAt;
+    void claimedEvent;
+    sqlane.handle(job, ({ job: info }) => {
+        expectTypeOf(info.runAt).toEqualTypeOf(new Date());
+        expectTypeOf(info.startedAt).toEqualTypeOf(new Date());
+    });
 
     // enqueue: a slot run by hand
     await sqlane.enqueue(connection, job, {}, { slot: { at: new Date(), key: 'tenant-42' } });
@@ -512,6 +616,12 @@ export async function publicApiTypes() {
     createSqlane({
         adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }),
         onEvent: (event) => {
+            if (event.type === 'claimed') {
+                expectTypeOf(event.runAt).toEqualTypeOf(new Date());
+                expectTypeOf(event.enqueuedAt).toEqualTypeOf(new Date());
+                expectTypeOf(event.startedAt).toEqualTypeOf(new Date());
+            }
+
             if (event.type === 'schedule_fired') {
                 expectTypeOf(event.scheduledAt).toEqualTypeOf(new Date());
                 expectTypeOf(event.jobId).toEqualTypeOf(/** @type {string | null} */ (null));

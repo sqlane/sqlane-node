@@ -8,6 +8,7 @@ import { poolTransactionIsolation, readCommitted } from './helpers/isolation.js'
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
+import { checkStartTimes } from './helpers/start_time_checks.js';
 
 /** @typedef {import('../../src/adapters/postgres_js.js').PostgresJsConnection} PostgresJsConnection */
 /** @typedef {import('../../src/types.js').Sqlane<PostgresJsConnection>} Sqlane */
@@ -118,6 +119,12 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
         const { sqlane } = await freshSqlane();
 
         await expect(checkJobsRead(sqlane, sql)).resolves.toHaveLength(3);
+    });
+
+    test('the start time of a run: the event, JobInfo, JobRecord and its slots agree', async () => {
+        const { sqlane, p, events } = await freshSqlane();
+
+        await expect(checkStartTimes(sqlane, sql, { p, database, events })).resolves.toBeUndefined();
     });
 
     test('sqlane.jobs: retry, cancel and remove through the adapter', async () => {

@@ -41,6 +41,14 @@ export type ClaimedJob = {
     failureJob: string | null;
     enqueuedAt: Date;
     /**
+     * Its due time, as stored: its place in line.
+     */
+    runAt: Date;
+    /**
+     * The database time of the claim, as stored in `started_at`; also the time of its new slots.
+     */
+    startedAt: Date;
+    /**
      * Since it was due.
      */
     waitedMs: number;
@@ -318,6 +326,10 @@ export type Store = {
         } | null;
     }>;
     /**
+     * One statement on the queue's pool, no lock.
+     */
+    keyStats: (params: import('./key_stats.js').KeyStatsParams) => Promise<import('../types.js').KeyStatsPage>;
+    /**
      * Inserts the missing rows (2 statements per 500), then reads them.
      */
     registerSchedules: (schedules: {
@@ -425,6 +437,8 @@ export type SweepResult = {
  * @property {number} maxStalls
  * @property {string | null} failureJob
  * @property {Date} enqueuedAt
+ * @property {Date} runAt Its due time, as stored: its place in line.
+ * @property {Date} startedAt The database time of the claim, as stored in `started_at`; also the time of its new slots.
  * @property {number} waitedMs Since it was due.
  * @property {string} lockToken
  */
@@ -575,6 +589,8 @@ export type SweepResult = {
  * @property {(id: string) => Promise<import('../types.js').JobRecord | null>} getJob A plain read, no lock.
  * @property {(params: import('./job_reads.js').ListParams) => Promise<{ jobs: import('../types.js').JobRecord[],
  *     last: { enqueuedAtMs: number, id: string } | null }>} listJobs A plain read, no lock.
+ * @property {(params: import('./key_stats.js').KeyStatsParams)
+ *     => Promise<import('../types.js').KeyStatsPage>} keyStats One statement on the queue's pool, no lock.
  * @property {(schedules: { id: string, name: string, spec: string }[], now: () => number)
  *     => Promise<ScheduleRead>} registerSchedules Inserts the missing rows (2 statements per 500), then reads them.
  * @property {(ids: string[] | null, now: () => number) => Promise<ScheduleRead>} readSchedules A plain read, no
