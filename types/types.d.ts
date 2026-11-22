@@ -150,27 +150,31 @@ export type EnqueueBaseOptions = {
      * definition; `[]` clears them.
      */
     globalRateLimits?: readonly (RateLimit | RateLimitKey)[];
-};
-export type EnqueueJobIdOption = {
     /**
-     * 1–120 printable ASCII characters, not starting with `schedule:`. Dedupe: a job with this
-     * id is added once while its row exists.
+     * Renamed in 8.0: use `dedupeKey`.
      */
-    jobId?: string;
+    jobId?: never;
+};
+export type EnqueueDedupeKeyOption = {
     /**
-     * Not with `jobId`.
+     * 1–120 printable ASCII characters, not starting with `schedule:`. The job id is
+     * `<name>:<dedupeKey>`: a job with this id is added once while its row exists.
+     */
+    dedupeKey?: string;
+    /**
+     * Not with `dedupeKey`.
      */
     slot?: never;
 };
 export type EnqueueSlotOption = {
     /**
-     * Runs a slot of a schedule by hand: the job gets the `jobId` of the slot.
+     * Runs a slot of a schedule by hand: the job gets the dedupe key of the slot.
      */
     slot: SlotOptions;
     /**
      * Not with `slot`.
      */
-    jobId?: never;
+    dedupeKey?: never;
 };
 export type EnqueueOptions = EnqueueBaseOptions & ({
     delay?: Duration;
@@ -178,14 +182,14 @@ export type EnqueueOptions = EnqueueBaseOptions & ({
 } | {
     runAt: Date;
     delay?: never;
-}) & (EnqueueJobIdOption | EnqueueSlotOption);
+}) & (EnqueueDedupeKeyOption | EnqueueSlotOption);
 export type EnqueueResult = {
     /**
-     * `<job_name>:<jobId>`, or a new ULID without a `jobId`.
+     * `<job_name>:<dedupeKey>`, or a new ULID without a `dedupeKey`.
      */
     id: string;
     /**
-     * False: a job with this `jobId` exists already, nothing was added.
+     * False: a job with this id exists already, nothing was added.
      */
     created: boolean;
 };
@@ -1147,7 +1151,7 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  */
 /** @typedef {ExponentialBackoff | FixedBackoff} Backoff */
 /**
- * How long a finished job is kept. It is also the dedupe window of its `jobId`.
+ * How long a finished job is kept. It is also the dedupe window of its `dedupeKey`.
  * @typedef {object} Retention
  * @property {Duration} [completed] Default: `'1h'`.
  * @property {Duration} [failed] Default: `'30d'`.
@@ -1212,7 +1216,7 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * @typedef {[DeclaredPayload<J>] extends [never] ? any : DeclaredPayload<J>} HandlerPayload
  */
 /**
- * A slot of a schedule, run by hand: the job gets the `jobId` that the scheduler gives the slot.
+ * A slot of a schedule, run by hand: the job gets the dedupe key that the scheduler gives the slot.
  * @typedef {object} SlotOptions
  * @property {Date} at The slot, in the years 1970 to 9999.
  * @property {string} [key] The `key` of the schedule.
@@ -1228,28 +1232,29 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  *     of the definition; `[]` clears them.
  * @property {readonly (RateLimit | RateLimitKey)[]} [globalRateLimits] Replace the global rate limits of the
  *     definition; `[]` clears them.
+ * @property {never} [jobId] Renamed in 8.0: use `dedupeKey`.
  */
 /**
- * @typedef {object} EnqueueJobIdOption
- * @property {string} [jobId] 1–120 printable ASCII characters, not starting with `schedule:`. Dedupe: a job with this
- *     id is added once while its row exists.
- * @property {never} [slot] Not with `jobId`.
+ * @typedef {object} EnqueueDedupeKeyOption
+ * @property {string} [dedupeKey] 1–120 printable ASCII characters, not starting with `schedule:`. The job id is
+ *     `<name>:<dedupeKey>`: a job with this id is added once while its row exists.
+ * @property {never} [slot] Not with `dedupeKey`.
  */
 /**
  * @typedef {object} EnqueueSlotOption
- * @property {SlotOptions} slot Runs a slot of a schedule by hand: the job gets the `jobId` of the slot.
- * @property {never} [jobId] Not with `slot`.
+ * @property {SlotOptions} slot Runs a slot of a schedule by hand: the job gets the dedupe key of the slot.
+ * @property {never} [dedupeKey] Not with `slot`.
  */
 /**
- * The options of an enqueue: `delay` or `runAt`, not both; `jobId` or `slot`, not both.
+ * The options of an enqueue: `delay` or `runAt`, not both; `dedupeKey` or `slot`, not both.
  * @typedef {EnqueueBaseOptions
  *     & ({ delay?: Duration, runAt?: never } | { runAt: Date, delay?: never })
- *     & (EnqueueJobIdOption | EnqueueSlotOption)} EnqueueOptions
+ *     & (EnqueueDedupeKeyOption | EnqueueSlotOption)} EnqueueOptions
  */
 /**
  * @typedef {object} EnqueueResult
- * @property {string} id `<job_name>:<jobId>`, or a new ULID without a `jobId`.
- * @property {boolean} created False: a job with this `jobId` exists already, nothing was added.
+ * @property {string} id `<job_name>:<dedupeKey>`, or a new ULID without a `dedupeKey`.
+ * @property {boolean} created False: a job with this id exists already, nothing was added.
  */
 /**
  * @template P

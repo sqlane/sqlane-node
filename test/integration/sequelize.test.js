@@ -184,24 +184,24 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         const app = sequelize;
 
         await sequelize.transaction(async (t) => {
-            await expect(sqlane.enqueue(/** @type {any} */ (t), 'ping', { n: 1 }, { jobId: 'a' }))
+            await expect(sqlane.enqueue(/** @type {any} */ (t), 'ping', { n: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(sequelize.transaction(async (t) => {
-            await sqlane.enqueue(/** @type {any} */ (t), 'ping', { n: 2 }, { jobId: 'b' });
+            await sqlane.enqueue(/** @type {any} */ (t), 'ping', { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-        await expect(sqlane.enqueue(app, 'ping', { n: 3 }, { jobId: 'a' })).resolves.toMatchObject({ created: false });
+        await expect(sqlane.enqueue(app, 'ping', { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
     });
 
     test('an unmanaged transaction, and an instance (a transaction of its own)', async () => {
         const { sqlane, p } = await freshSqlane();
         const t = await sequelize.transaction();
 
-        await sqlane.enqueue(/** @type {any} */ (t), 'ping', {}, { jobId: 'unmanaged' });
+        await sqlane.enqueue(/** @type {any} */ (t), 'ping', {}, { dedupeKey: 'unmanaged' });
         await t.commit();
         await sqlane.enqueueMany(/** @type {any} */ (sequelize), 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
 
@@ -233,13 +233,13 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         await sqlane.start();
         await expect(sequelize.transaction(async (outer) => {
             await sequelize.transaction({ transaction: outer }, async (inner) => {
-                await sqlane.enqueue(/** @type {any} */ (inner), 'ping', {}, { jobId: 'rolled_back' });
+                await sqlane.enqueue(/** @type {any} */ (inner), 'ping', {}, { dedupeKey: 'rolled_back' });
             });
             throw new Error('outer rollback');
         })).rejects.toThrow('outer rollback');
         await sequelize.transaction(async (outer) => {
             await sequelize.transaction({ transaction: outer }, async (inner) => {
-                await sqlane.enqueue(/** @type {any} */ (inner), 'ping', {}, { jobId: 'committed' });
+                await sqlane.enqueue(/** @type {any} */ (inner), 'ping', {}, { dedupeKey: 'committed' });
             });
         });
 

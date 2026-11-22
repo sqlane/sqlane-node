@@ -116,11 +116,11 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         const { sqlane, p } = await freshSqlane();
 
         await expect(sequelize.transaction(async () => {
-            await sqlane.enqueue(sequelize, 'ping', {}, { jobId: 'rolled_back' });
+            await sqlane.enqueue(sequelize, 'ping', {}, { dedupeKey: 'rolled_back' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
         await sequelize.transaction(async () => {
-            await sqlane.enqueue(sequelize, 'ping', {}, { jobId: 'committed' });
+            await sqlane.enqueue(sequelize, 'ping', {}, { dedupeKey: 'committed' });
             // Not visible before the commit of the CLS transaction
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });

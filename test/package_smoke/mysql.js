@@ -63,7 +63,7 @@ await done;
 console.log('2. Rollback: order 2 and its job');
 await transaction(async (connection) => {
     await connection.query('INSERT INTO orders (id) VALUES (?)', [2]);
-    await sqlane.enqueue(connection, sendReceipt, { orderId: 2 }, { jobId: 'order-2' });
+    await sqlane.enqueue(connection, sendReceipt, { orderId: 2 }, { dedupeKey: 'order-2' });
     throw new Error('payment declined');
 }).catch(error => console.log(`   rolled back: ${error.message}`));
 

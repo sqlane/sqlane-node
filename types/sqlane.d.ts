@@ -72,7 +72,7 @@ export interface SqlaneSchema {
 export interface SqlaneJobs<C = any> {
     /**
      * Reads one job, with its payload.
-     * @param jobId The full id, as `enqueue` returns it: `<name>:<dedupe key>`, a slot id, or a ULID.
+     * @param jobId The full id, as `enqueue` returns it: `<name>:<dedupeKey>`, a slot id, or a ULID.
      * @returns The job. Null: no job has this id, or the string cannot be a job id.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsget | jobs.get}
      */
@@ -167,9 +167,9 @@ export interface Sqlane<C> {
      * @param job The job definition, or a job name. A name takes its definition from `jobs` or the handled names; else
      *     the job gets the instance defaults.
      * @param payload JSON. With a typed definition, such as `defineJob<{ orderId: number }>(…)`, its type is checked.
-     * @param options `jobId` to dedupe or `slot` to run a schedule slot by hand; `delay` or `runAt`; and overrides of
-     *     the definition for this job.
-     * @returns The job id, and `created: false` when a job with this `jobId` exists already: nothing was added.
+     * @param options `dedupeKey` to dedupe or `slot` to run a schedule slot by hand; `delay` or `runAt`; and overrides
+     *     of the definition for this job.
+     * @returns The job id, and `created: false` when a job with this id exists already: nothing was added.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue | enqueue}
      */
     enqueue<J extends JobDefinition | string, P>(connection: C, job: J, payload: EnqueuePayload<J, P>, options?: EnqueueOptions): Promise<EnqueueResult>;
@@ -179,8 +179,8 @@ export interface Sqlane<C> {
      * @param connection Your transaction, or a connection in one, of the adapter's library; or a pool.
      * @param job The job definition, or a job name.
      * @param items Each a `payload` and optional `options`, as in `enqueue`.
-     * @returns The results, in the order of the items. Two items with one `jobId`: the first adds the job, the next
-     *     get `created: false`.
+     * @returns The results, in the order of the items. Two items with one `dedupeKey`: the first adds the job, the
+     *     next get `created: false`.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueuemany | enqueueMany}
      */
     enqueueMany<J extends JobDefinition | string, P>(connection: C, job: J, items: readonly EnqueueManyItem<J, P>[]): Promise<EnqueueResult[]>;

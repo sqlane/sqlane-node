@@ -19,7 +19,7 @@ export declare class ConfigError extends SqlaneError {
      */
     constructor(message: string, options?: ErrorOptions);
 }
-/** Bad enqueue options: a bad name or `jobId`, `delay` with `runAt`. */
+/** Bad enqueue options: a bad name or `dedupeKey`, `delay` with `runAt`. */
 export declare class InvalidOptionsError extends SqlaneError {
     /**
      * @param {string} message

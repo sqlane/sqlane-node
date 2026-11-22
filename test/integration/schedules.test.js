@@ -696,7 +696,7 @@ describe('the fire of the store', () => {
             await listener.query(`LISTEN ${p}ready`);
 
             const jobs = ['alpha', 'beta', 'gamma', 'alpha'].map((name, index) => buildNewJob({
-                name, definition: null, defaults, payload: {}, options: { jobId: `j${index}` }, maxPayloadBytes: 1024,
+                name, definition: null, defaults, payload: {}, options: { dedupeKey: `j${index}` }, maxPayloadBytes: 1024,
             }));
 
             await testAdapter.adapter.queueTransaction(executor => insertScheduledJobsPostgres(executor, p, jobs, {

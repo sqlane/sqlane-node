@@ -1,5 +1,5 @@
 export declare const MAX_KEY_LENGTH = 64;
-/** The prefix of the `jobId` of a slot: reserved */
+/** The prefix of the dedupe key of a slot: reserved */
 export declare const SLOT_PREFIX = "schedule:";
 export type Timing = {
     kind: 'cron';
@@ -80,12 +80,13 @@ export declare function isSlotKey(key: unknown): boolean;
  */
 export declare function isSlotTime(ms: number): boolean;
 /**
- * The `jobId` of a slot (the job id without its name): the scheduler and the `slot` enqueue option build the same one.
+ * The dedupe key of a slot (the job id without its name): the scheduler and the `slot` enqueue option build the same
+ * one.
  * @param {string | null | undefined} key
  * @param {number} slotMs
  * @returns {string}
  */
-export declare function slotJobIdOf(key: string | null | undefined, slotMs: number): string;
+export declare function slotDedupeKeyOf(key: string | null | undefined, slotMs: number): string;
 /**
  * Checks the options of `schedule()`.
  * @param {unknown} job A job definition or a name.
@@ -114,12 +115,12 @@ export declare function previousSlot(entry: ScheduleEntry, slotMs: number): numb
 /**
  * @param {ScheduleEntry} entry
  * @param {number} slotMs
- * @returns {string} The `jobId` of the slot: `schedule:[<key>:]<ISO>`.
+ * @returns {string} The dedupe key of the slot: `schedule:[<key>:]<ISO>`.
  */
 export declare function slotJobId(entry: ScheduleEntry, slotMs: number): string;
 /**
  * The slot of a job, from its id. Only the scheduler and the `slot` enqueue option make such ids.
- * @param {string} jobId The id of a job: `<name>:<jobId>`, or a ULID.
+ * @param {string} jobId The id of a job: `<name>:<dedupeKey>`, or a ULID.
  * @returns {Date | null} Null: not the job of a slot.
  */
 export declare function scheduledAtOf(jobId: string): Date | null;

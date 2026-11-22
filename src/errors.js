@@ -31,7 +31,7 @@ export class ConfigError extends SqlaneError {
     }
 }
 
-/** Bad enqueue options: a bad name or `jobId`, `delay` with `runAt`. */
+/** Bad enqueue options: a bad name or `dedupeKey`, `delay` with `runAt`. */
 export class InvalidOptionsError extends SqlaneError {
     /**
      * @param {string} message

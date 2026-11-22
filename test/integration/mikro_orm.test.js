@@ -199,17 +199,17 @@ describe.each([
         const { sqlane, p } = await freshSqlane();
 
         await orm.em.transactional(async (/** @type {any} */ em) => {
-            await expect(sqlane.enqueue(em, 'ping', { n: 1 }, { jobId: 'a' }))
+            await expect(sqlane.enqueue(em, 'ping', { n: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(orm.em.transactional(async (/** @type {any} */ em) => {
-            await sqlane.enqueue(em, 'ping', { n: 2 }, { jobId: 'b' });
+            await sqlane.enqueue(em, 'ping', { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-        await expect(sqlane.enqueue(orm.em, 'ping', { n: 3 }, { jobId: 'a' }))
+        await expect(sqlane.enqueue(orm.em, 'ping', { n: 3 }, { dedupeKey: 'a' }))
             .resolves.toMatchObject({ created: false });
     });
 
@@ -217,11 +217,11 @@ describe.each([
         const { sqlane, p } = await freshSqlane();
 
         await expect(orm.em.transactional(async () => {
-            await sqlane.enqueue(orm.em, 'ping', {}, { jobId: 'rolled_back' });
+            await sqlane.enqueue(orm.em, 'ping', {}, { dedupeKey: 'rolled_back' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
         await orm.em.transactional(async () => {
-            await sqlane.enqueue(orm.em, 'ping', {}, { jobId: 'committed' });
+            await sqlane.enqueue(orm.em, 'ping', {}, { dedupeKey: 'committed' });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
 
@@ -290,13 +290,13 @@ describe.each([
 
         await expect(orm.em.transactional(async (/** @type {any} */ outer) => {
             await outer.transactional(async (/** @type {any} */ inner) => {
-                await sqlane.enqueue(inner, 'ping', {}, { jobId: 'rolled_back' });
+                await sqlane.enqueue(inner, 'ping', {}, { dedupeKey: 'rolled_back' });
             });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
         await orm.em.transactional(async (/** @type {any} */ outer) => {
             await outer.transactional(async (/** @type {any} */ inner) => {
-                await sqlane.enqueue(inner, 'ping', {}, { jobId: 'committed' });
+                await sqlane.enqueue(inner, 'ping', {}, { dedupeKey: 'committed' });
             });
         });
 

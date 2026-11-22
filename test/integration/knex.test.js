@@ -169,7 +169,7 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         const { sqlane, p } = await freshSqlane();
 
         await knex.transaction(async (trx) => {
-            await expect(sqlane.enqueue(trx, 'ping', { n: 1 }, { jobId: 'a' })).resolves.toStrictEqual({
+            await expect(sqlane.enqueue(trx, 'ping', { n: 1 }, { dedupeKey: 'a' })).resolves.toStrictEqual({
                 id: 'ping:a',
                 created: true,
             });
@@ -177,13 +177,13 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(knex.transaction(async (trx) => {
-            await sqlane.enqueue(trx, 'ping', { n: 2 }, { jobId: 'b' });
+            await sqlane.enqueue(trx, 'ping', { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
         // The dedupe sees the committed job
-        await expect(sqlane.enqueue(knex, 'ping', { n: 3 }, { jobId: 'a' })).resolves.toMatchObject({ created: false });
+        await expect(sqlane.enqueue(knex, 'ping', { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
     });
 
     test('enqueue on a knex instance: a transaction of its own', async () => {
@@ -219,13 +219,13 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         await sqlane.start();
         await expect(knex.transaction(async (outer) => {
             await outer.transaction(async (inner) => {
-                await sqlane.enqueue(inner, 'ping', {}, { jobId: 'rolled_back' });
+                await sqlane.enqueue(inner, 'ping', {}, { dedupeKey: 'rolled_back' });
             });
             throw new Error('outer rollback');
         })).rejects.toThrow('outer rollback');
         await knex.transaction(async (outer) => {
             await outer.transaction(async (inner) => {
-                await sqlane.enqueue(inner, 'ping', {}, { jobId: 'committed' });
+                await sqlane.enqueue(inner, 'ping', {}, { dedupeKey: 'committed' });
             });
         });
 

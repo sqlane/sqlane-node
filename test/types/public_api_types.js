@@ -214,13 +214,13 @@ export async function publicApiTypes() {
     await sqlane.enqueue(connection, job, { id: 1n });
     // @ts-expect-error a Date in an array is not JSON
     await sqlane.enqueue(connection, job, { dates: [new Date()] });
-    await sqlane.enqueueMany(connection, job, [{ payload: { a: 1 } }, { payload: { a: 2 }, options: { jobId: 'a2' } }]);
+    await sqlane.enqueueMany(connection, job, [{ payload: { a: 1 } }, { payload: { a: 2 }, options: { dedupeKey: 'a2' } }]);
     // @ts-expect-error a Date is not JSON, in enqueueMany too
     await sqlane.enqueueMany(connection, job, [{ payload: { at: new Date() } }]);
 
     // enqueue: the options
     await sqlane.enqueue(connection, job, {}, {
-        jobId: 'r1',
+        dedupeKey: 'r1',
         delay: '10s',
         maxAttempts: 5,
         globalConcurrencyLimits: [heavy, heavy.key('a'), heavy.key(1)],
@@ -230,8 +230,12 @@ export async function publicApiTypes() {
     await sqlane.enqueue(connection, job, {}, { runAt: new Date() });
     // @ts-expect-error delay or runAt, not both
     await sqlane.enqueue(connection, job, {}, { delay: '1s', runAt: new Date() });
-    // @ts-expect-error jobId is a string
-    await sqlane.enqueue(connection, job, {}, { jobId: 42 });
+    // @ts-expect-error dedupeKey is a string
+    await sqlane.enqueue(connection, job, {}, { dedupeKey: 42 });
+    // @ts-expect-error jobId was renamed dedupeKey in 8.0
+    await sqlane.enqueue(connection, job, {}, { jobId: 'r1' });
+    // @ts-expect-error jobId was renamed dedupeKey in 8.0, in enqueueMany too
+    await sqlane.enqueueMany(connection, job, [{ payload: {}, options: { jobId: 'r1' } }]);
 
     // handle: no options; local limits and weights are in the definition
     sqlane.handle(job, () => {});
@@ -274,7 +278,7 @@ export async function publicApiTypes() {
     });
 
     await sqlane.enqueue(connection, syncOrder, { orderId: 1 });
-    await sqlane.enqueue(connection, syncOrder, { orderId: 1, note: 'n' }, { jobId: 'o1' });
+    await sqlane.enqueue(connection, syncOrder, { orderId: 1, note: 'n' }, { dedupeKey: 'o1' });
     // @ts-expect-error orderId is a number
     await sqlane.enqueue(connection, syncOrder, { orderId: '1' });
     // @ts-expect-error orderId is required
@@ -642,8 +646,8 @@ export async function publicApiTypes() {
     // enqueue: a slot run by hand
     await sqlane.enqueue(connection, job, {}, { slot: { at: new Date(), key: 'tenant-42' } });
     await sqlane.enqueue(connection, job, {}, { slot: { at: new Date() }, delay: '1m' });
-    // @ts-expect-error slot or jobId, not both
-    await sqlane.enqueue(connection, job, {}, { slot: { at: new Date() }, jobId: 'x' });
+    // @ts-expect-error slot or dedupeKey, not both
+    await sqlane.enqueue(connection, job, {}, { slot: { at: new Date() }, dedupeKey: 'x' });
     // @ts-expect-error slot.at is a Date
     await sqlane.enqueue(connection, job, {}, { slot: { at: '2026-01-01' } });
 

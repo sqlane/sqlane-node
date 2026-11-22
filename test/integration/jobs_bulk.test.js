@@ -453,13 +453,13 @@ describe('jobs.cancel()', () => {
 
     test('a cancelled job keeps blocking its dedupe key until it is removed', async () => {
         const { sqlane } = await fresh();
-        const { id } = await sqlane.enqueue(testAdapter.pool, 'ping', {}, { jobId: 'k', delay: '1h' });
+        const { id } = await sqlane.enqueue(testAdapter.pool, 'ping', {}, { dedupeKey: 'k', delay: '1h' });
 
         await sqlane.jobs.cancel({ jobIds: [id] });
-        await expect(sqlane.enqueue(testAdapter.pool, 'ping', {}, { jobId: 'k' })).resolves
+        await expect(sqlane.enqueue(testAdapter.pool, 'ping', {}, { dedupeKey: 'k' })).resolves
             .toMatchObject({ created: false });
         await sqlane.jobs.remove({ jobIds: [id] });
-        await expect(sqlane.enqueue(testAdapter.pool, 'ping', {}, { jobId: 'k' })).resolves
+        await expect(sqlane.enqueue(testAdapter.pool, 'ping', {}, { dedupeKey: 'k' })).resolves
             .toMatchObject({ created: true });
     });
 });

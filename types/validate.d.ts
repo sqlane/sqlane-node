@@ -1,4 +1,4 @@
-/** A job name: no `:` (the job id is `<name>:<jobId>`), lowercase. */
+/** A job name: no `:` (the job id is `<name>:<dedupeKey>`), lowercase. */
 export declare const JOB_NAME_REGEXP: RegExp;
 /** A table prefix: the longest table name, `<prefix>migrations`, stays within the 63 characters of PostgreSQL. */
 export declare const TABLE_PREFIX_REGEXP: RegExp;

@@ -103,7 +103,7 @@ async function inTransaction(func, commit = true) {
 
 test('adds the job in the caller\'s transaction, with the values frozen at enqueue', async () => {
     const result = await inTransaction(connection => sqlane.enqueue(connection, buildReport, { reportId: 'r1' }, {
-        jobId: 'r1',
+        dedupeKey: 'r1',
         delay: '1m',
     }));
 
@@ -154,15 +154,15 @@ test('the global rate limits: a JSON array sorted by key, with their settings in
 });
 
 test('a rollback adds no job', async () => {
-    await inTransaction(connection => sqlane.enqueue(connection, buildReport, { reportId: 'r2' }, { jobId: 'r2' }), false);
+    await inTransaction(connection => sqlane.enqueue(connection, buildReport, { reportId: 'r2' }, { dedupeKey: 'r2' }), false);
 
     await expect(readJob('build_report:r2')).resolves.toBeUndefined();
 });
 
-test('a jobId adds one job while its row exists: a duplicate changes nothing', async () => {
-    const first = await sqlane.enqueue(testAdapter.pool, buildReport, { reportId: 'r3' }, { jobId: 'r3' });
+test('a dedupeKey adds one job while its row exists: a duplicate changes nothing', async () => {
+    const first = await sqlane.enqueue(testAdapter.pool, buildReport, { reportId: 'r3' }, { dedupeKey: 'r3' });
     const second = await sqlane.enqueue(testAdapter.pool, buildReport, { reportId: 'other' }, {
-        jobId: 'r3',
+        dedupeKey: 'r3',
         globalConcurrencyLimits: [report.key('other')],
     });
 
@@ -184,9 +184,9 @@ test('a duplicate in a concurrent transaction waits for it, then is not created'
     try {
         await first.begin();
         await second.begin();
-        await sqlane.enqueue(first.raw, buildReport, { reportId: 'first' }, { jobId: 'r4' });
+        await sqlane.enqueue(first.raw, buildReport, { reportId: 'first' }, { dedupeKey: 'r4' });
 
-        const secondEnqueue = sqlane.enqueue(second.raw, buildReport, { reportId: 'second' }, { jobId: 'r4' });
+        const secondEnqueue = sqlane.enqueue(second.raw, buildReport, { reportId: 'second' }, { dedupeKey: 'r4' });
 
         await first.commit();
 
@@ -209,11 +209,11 @@ test('a runAt is stored as that instant, whatever the session time zone', async 
     await expect(readJob(id)).resolves.toMatchObject({ run_at_ms: runAt.getTime() });
 });
 
-test('enqueueMany: the results in the order of the items; a jobId repeated in the call is added once', async () => {
+test('enqueueMany: the results in the order of the items; a dedupeKey repeated in the call is added once', async () => {
     const items = [
-        { payload: { reportId: 'm1' }, options: { jobId: 'm1' } },
-        { payload: { reportId: 'm2' }, options: { jobId: 'm2' } },
-        { payload: { reportId: 'again' }, options: { jobId: 'm1' } },
+        { payload: { reportId: 'm1' }, options: { dedupeKey: 'm1' } },
+        { payload: { reportId: 'm2' }, options: { dedupeKey: 'm2' } },
+        { payload: { reportId: 'again' }, options: { dedupeKey: 'm1' } },
         { payload: { reportId: 'none' } },
     ];
     const results = await inTransaction(connection => sqlane.enqueueMany(connection, buildReport, items));
@@ -237,7 +237,7 @@ test('a JSON scalar payload is stored as it is: null, a number, a boolean, a str
 });
 
 test('enqueueMany adds 1,200 jobs at once', async () => {
-    const items = Array.from({ length: 1200 }, (_, index) => ({ payload: { index }, options: { jobId: `bulk-${index}` } }));
+    const items = Array.from({ length: 1200 }, (_, index) => ({ payload: { index }, options: { dedupeKey: `bulk-${index}` } }));
     const results = await sqlane.enqueueMany(testAdapter.pool, 'send_email', items);
 
     expect(results.filter(result => result.created)).toHaveLength(1200);
@@ -251,8 +251,8 @@ test('enqueueMany adds 1,200 jobs at once', async () => {
 
 test('a bad item adds no job of the call', async () => {
     const items = [
-        { payload: { reportId: 'b1' }, options: { jobId: 'b1' } },
-        { payload: { reportId: 'b2' }, options: { jobId: 'b2', delay: 'soon' } },
+        { payload: { reportId: 'b1' }, options: { dedupeKey: 'b1' } },
+        { payload: { reportId: 'b2' }, options: { dedupeKey: 'b2', delay: 'soon' } },
     ];
 
     await expect(sqlane.enqueueMany(testAdapter.pool, buildReport, items)).rejects.toThrow(InvalidOptionsError);

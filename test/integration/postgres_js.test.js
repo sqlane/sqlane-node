@@ -161,17 +161,17 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
         const { sqlane, p } = await freshSqlane();
 
         await sql.begin(async (/** @type {any} */ tx) => {
-            await expect(sqlane.enqueue(tx, 'ping', { n: 1 }, { jobId: 'a' }))
+            await expect(sqlane.enqueue(tx, 'ping', { n: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(sql.begin(async (/** @type {any} */ tx) => {
-            await sqlane.enqueue(tx, 'ping', { n: 2 }, { jobId: 'b' });
+            await sqlane.enqueue(tx, 'ping', { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-        await expect(sqlane.enqueue(sql, 'ping', { n: 3 }, { jobId: 'a' })).resolves.toMatchObject({ created: false });
+        await expect(sqlane.enqueue(sql, 'ping', { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
     });
 
     test('a savepoint rolls back with the outer transaction; the pool: a transaction of its own', async () => {
@@ -179,7 +179,7 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
 
         await expect(sql.begin(async (/** @type {any} */ tx) => {
             await tx.savepoint(async (/** @type {any} */ inner) => {
-                await sqlane.enqueue(inner, 'ping', {}, { jobId: 'rolled_back' });
+                await sqlane.enqueue(inner, 'ping', {}, { dedupeKey: 'rolled_back' });
             });
             throw new Error('outer rollback');
         })).rejects.toThrow('outer rollback');
@@ -259,7 +259,7 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
         const { sqlane, p } = await freshSqlane();
 
         await camel.begin(async (/** @type {any} */ tx) => {
-            await expect(sqlane.enqueue(tx, 'ping', { someKey: 1 }, { jobId: 'a' }))
+            await expect(sqlane.enqueue(tx, 'ping', { someKey: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
         });
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);

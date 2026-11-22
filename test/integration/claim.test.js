@@ -261,7 +261,7 @@ describe('probe', () => {
 
     test.runIf(inject('databaseDialect') !== 'postgres')('mysql: a loose index scan', async () => {
         const { p, sqlane } = await freshTables();
-        const items = Array.from({ length: 2000 }, (_, index) => ({ payload: {}, options: { jobId: `j${index}` } }));
+        const items = Array.from({ length: 2000 }, (_, index) => ({ payload: {}, options: { dedupeKey: `j${index}` } }));
 
         await Promise.all(Array.from({ length: 20 }, (_, index) => sqlane.enqueueMany(testAdapter.pool, `n${index}`, items)));
         await database.query(`ANALYZE TABLE ${p}jobs`);

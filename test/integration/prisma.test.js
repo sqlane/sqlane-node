@@ -213,17 +213,17 @@ test('enqueue in an interactive transaction: the job commits with it, and rolls 
     const { sqlane, p } = await freshSqlane();
 
     await prisma.$transaction(async (/** @type {any} */ tx) => {
-        await expect(sqlane.enqueue(tx, 'ping', { n: 1 }, { jobId: 'a' }))
+        await expect(sqlane.enqueue(tx, 'ping', { n: 1 }, { dedupeKey: 'a' }))
             .resolves.toStrictEqual({ id: 'ping:a', created: true });
         await expect(statuses(p)).resolves.toStrictEqual([]);
     });
     await expect(prisma.$transaction(async (/** @type {any} */ tx) => {
-        await sqlane.enqueue(tx, 'ping', { n: 2 }, { jobId: 'b' });
+        await sqlane.enqueue(tx, 'ping', { n: 2 }, { dedupeKey: 'b' });
         throw new Error('rollback');
     })).rejects.toThrow('rollback');
 
     await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-    await expect(sqlane.enqueue(prisma, 'ping', { n: 3 }, { jobId: 'a' })).resolves.toMatchObject({ created: false });
+    await expect(sqlane.enqueue(prisma, 'ping', { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
 });
 
 test('a client: a transaction of its own', async () => {

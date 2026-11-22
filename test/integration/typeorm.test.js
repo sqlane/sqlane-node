@@ -182,17 +182,17 @@ describe.each([
         const { sqlane, p } = await freshSqlane();
 
         await dataSource.transaction(async (/** @type {any} */ manager) => {
-            await expect(sqlane.enqueue(manager, 'ping', { n: 1 }, { jobId: 'a' }))
+            await expect(sqlane.enqueue(manager, 'ping', { n: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(dataSource.transaction(async (/** @type {any} */ manager) => {
-            await sqlane.enqueue(manager, 'ping', { n: 2 }, { jobId: 'b' });
+            await sqlane.enqueue(manager, 'ping', { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-        await expect(sqlane.enqueue(dataSource, 'ping', { n: 3 }, { jobId: 'a' }))
+        await expect(sqlane.enqueue(dataSource, 'ping', { n: 3 }, { dedupeKey: 'a' }))
             .resolves.toMatchObject({ created: false });
     });
 
@@ -233,14 +233,14 @@ describe.each([
         try {
             await rolledBack.startTransaction();
             await rolledBack.startTransaction();
-            await sqlane.enqueue(rolledBack, 'ping', {}, { jobId: 'rolled_back' });
+            await sqlane.enqueue(rolledBack, 'ping', {}, { dedupeKey: 'rolled_back' });
             // The release of the savepoint: not the commit
             await rolledBack.commitTransaction();
             await rolledBack.rollbackTransaction();
 
             await committed.startTransaction();
             await committed.startTransaction();
-            await sqlane.enqueue(committed, 'ping', {}, { jobId: 'committed' });
+            await sqlane.enqueue(committed, 'ping', {}, { dedupeKey: 'committed' });
             await committed.commitTransaction();
             await committed.commitTransaction();
         } finally {

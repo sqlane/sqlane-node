@@ -196,17 +196,17 @@ describe.each([
         const { sqlane, p } = await freshSqlane();
 
         await db.transaction(async (tx) => {
-            await expect(sqlane.enqueue(tx, 'ping', { n: 1 }, { jobId: 'a' }))
+            await expect(sqlane.enqueue(tx, 'ping', { n: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(db.transaction(async (tx) => {
-            await sqlane.enqueue(tx, 'ping', { n: 2 }, { jobId: 'b' });
+            await sqlane.enqueue(tx, 'ping', { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-        await expect(sqlane.enqueue(db, 'ping', { n: 3 }, { jobId: 'a' })).resolves.toMatchObject({ created: false });
+        await expect(sqlane.enqueue(db, 'ping', { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
     });
 
     test('a nested transaction rolls back with the outer one; a database: a transaction of its own', async () => {
@@ -214,7 +214,7 @@ describe.each([
 
         await expect(db.transaction(async (outer) => {
             await outer.transaction(async (/** @type {DrizzleConnection} */ inner) => {
-                await sqlane.enqueue(inner, 'ping', {}, { jobId: 'rolled_back' });
+                await sqlane.enqueue(inner, 'ping', {}, { dedupeKey: 'rolled_back' });
             });
             throw new Error('outer rollback');
         })).rejects.toThrow('outer rollback');
