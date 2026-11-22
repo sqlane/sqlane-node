@@ -136,11 +136,12 @@ export async function findCandidates(executor, p, limitsByName, withRates) {
     const conditions = names.map(() => '(job_name = ? AND name_rank <= ?)').join(' OR ');
     /**
      * @param {string} column
-     * @returns {string} Of the oldest job blocked on the key.
+     * @returns {string} Of the oldest job blocked on the key. Ordered by the whole prefix of `jobs_blocked`: else
+     *     MySQL 8.4 sorts every blocked job of the key.
      */
     const ofHead = column => `(
         SELECT ${column} FROM ${p}jobs b FORCE INDEX (${p}jobs_blocked)
-         WHERE b.status = 'blocked' AND b.blocked_on = f.limit_key ORDER BY b.run_at, b.id LIMIT 1
+         WHERE b.status = 'blocked' AND b.blocked_on = f.limit_key ORDER BY b.status, b.blocked_on, b.run_at, b.id LIMIT 1
     )`;
     const rates = `
         wr AS (
@@ -301,11 +302,12 @@ async function lockRateKeys(executor, p, keys) {
 
     /**
      * @param {string} column
-     * @returns {string} Of the oldest job blocked on the key.
+     * @returns {string} Of the oldest job blocked on the key. Ordered by the whole prefix of `jobs_blocked`: else
+     *     MySQL 8.4 sorts every blocked job of the key.
      */
     const ofHead = column => `(
         SELECT ${column} FROM ${p}jobs b FORCE INDEX (${p}jobs_blocked)
-         WHERE b.status = 'blocked' AND b.blocked_on = r.limit_key ORDER BY b.run_at, b.id LIMIT 1
+         WHERE b.status = 'blocked' AND b.blocked_on = r.limit_key ORDER BY b.status, b.blocked_on, b.run_at, b.id LIMIT 1
     )`;
     const rows = await executor.query(`
         SELECT r.limit_key, GREATEST(TIMESTAMPDIFF(MICROSECOND, ${NOW_US}, r.tat), 0) AS debt_us, ${epochMs(NOW)} AS nowms,

@@ -436,11 +436,12 @@ export async function unblock(executor, p, keys, inTransaction = func => func(ex
     // The oldest blocked job of each key: its keys and maxes; and the held slots of the key
     /**
      * @param {string} column
-     * @returns {string}
+     * @returns {string} Ordered by the whole prefix of `jobs_blocked`: else MySQL 8.4 sorts every blocked job of the
+     *     key.
      */
     const ofOldest = column => `(
         SELECT CAST(j.${column} AS CHAR) FROM ${p}jobs j FORCE INDEX (${p}jobs_blocked)
-         WHERE j.status = 'blocked' AND j.blocked_on = f.limit_key ORDER BY j.run_at, j.id LIMIT 1
+         WHERE j.status = 'blocked' AND j.blocked_on = f.limit_key ORDER BY j.status, j.blocked_on, j.run_at, j.id LIMIT 1
     )`;
     const heads = await executor.query(`
         SELECT h.limit_key, h.limit_keys, h.limit_maxes,
@@ -688,8 +689,9 @@ export async function sweepSlots(executor, p, limit, parts) {
     for (let after = ''; ;) {
         // oxlint-disable-next-line no-await-in-loop -- batches one after the other
         const keys = (await executor.query(`
-            SELECT DISTINCT blocked_on FROM ${p}jobs FORCE INDEX (${p}jobs_blocked)
-             WHERE status = 'blocked' AND blocked_on > ? ORDER BY blocked_on LIMIT ?
+            SELECT blocked_on FROM ${p}jobs FORCE INDEX (${p}jobs_blocked)
+             WHERE status = 'blocked' AND blocked_on > ?
+             GROUP BY status, blocked_on ORDER BY status, blocked_on LIMIT ?
         `, [after, limit])).map(row => String(row.blocked_on));
 
         if (!keys.length) {

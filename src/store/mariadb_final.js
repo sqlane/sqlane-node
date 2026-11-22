@@ -685,8 +685,9 @@ export async function sweepSlots(executor, p, limit, parts) {
     for (let after = ''; ;) {
         // oxlint-disable-next-line no-await-in-loop -- batches one after the other
         const keys = (await executor.query(`
-            SELECT DISTINCT blocked_on FROM ${p}jobs FORCE INDEX (${p}jobs_blocked)
-             WHERE status = 'blocked' AND blocked_on > ? ORDER BY blocked_on LIMIT ?
+            SELECT blocked_on FROM ${p}jobs FORCE INDEX (${p}jobs_blocked)
+             WHERE status = 'blocked' AND blocked_on > ?
+             GROUP BY status, blocked_on ORDER BY status, blocked_on LIMIT ?
         `, [after, limit])).map(row => String(row.blocked_on));
 
         if (!keys.length) {
