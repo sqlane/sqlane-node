@@ -482,6 +482,8 @@ test.runIf(isMysqlFamily)('rollback: the lock_wait_timeout of the session is res
         await sqlane.schema.rollback({ targetVersion: '6.0.0', lockTimeout: '1s' });
         await expect(sessionTimeout()).resolves.toBe(77);
     } finally {
+        // An assertion that failed before the rollback above leaves the holder's transaction open
+        await holder.rollback().catch(() => {});
         holder.release();
         await sqlane.close({ deadline: 0 });
         await pool.end();
