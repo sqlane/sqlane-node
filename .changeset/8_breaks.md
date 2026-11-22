@@ -9,8 +9,8 @@ Breaking changes:
 
 - `sqlane.getStats()` is now `sqlane.jobs.stats()`. `pending` no longer counts the blocked jobs: add the new `blocked`
   for the number of 7.x. The new `completed` counts the completed jobs until cleanup deletes them, and a name with only
-  completed jobs now has an entry. `stats()` reads every row kept, on every dialect: on MySQL and MariaDB it now also
-  reads the rows of the completed jobs, so check the interval of your metric scrape.
+  completed jobs now has an entry. `stats()` reads every row kept, on every dialect, as
+  7.x did.
 - `sqlane.getSchedules()` is now `sqlane.schedules.list()`, with the same result.
 - The enqueue option `jobId` is now `dedupeKey`, with the same rules, in `enqueue` and in the items of `enqueueMany`.
   The job id is still `<job name>:<dedupeKey>`. `jobId` rejects with an `InvalidOptionsError` that names `dedupeKey`.
