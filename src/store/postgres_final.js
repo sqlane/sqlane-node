@@ -760,7 +760,8 @@ export async function makeDue(executor, p, names) {
 }
 
 /**
- * The counts per job name, for alerts such as "queue stuck".
+ * The counts per job name, for alerts such as "queue stuck". It reads every row kept: no index covers the failed and
+ * completed jobs.
  * @param {Executor} executor
  * @param {string} p
  * @returns {Promise<import('../types.js').JobStats[]>}
@@ -768,15 +769,16 @@ export async function makeDue(executor, p, names) {
 export async function getStats(executor, p) {
     const rows = await executor.query(`
         SELECT job_name,
-               count(*) FILTER (WHERE status IN ('pending', 'blocked')) AS pending,
+               count(*) FILTER (WHERE status = 'pending') AS pending,
+               count(*) FILTER (WHERE status = 'blocked') AS blocked,
                count(*) FILTER (WHERE status = 'pending' AND run_at <= ${NOW}) AS due,
                count(*) FILTER (WHERE status = 'running') AS running,
                count(*) FILTER (WHERE status = 'running' AND timed_out_at IS NOT NULL) AS stuck,
                count(*) FILTER (WHERE status = 'failed') AS failed,
+               count(*) FILTER (WHERE status = 'completed') AS completed,
                (EXTRACT(EPOCH FROM ${NOW} - min(run_at) FILTER (WHERE status = 'pending' AND run_at <= ${NOW}))
                    * 1000)::bigint AS oldest_due_age_ms
           FROM ${p}jobs
-         WHERE status IN ('pending', 'blocked', 'running', 'failed')
          GROUP BY job_name
          ORDER BY job_name
     `, []);
@@ -784,10 +786,12 @@ export async function getStats(executor, p) {
     return rows.map(row => ({
         name: String(row.job_name),
         pending: Number(row.pending),
+        blocked: Number(row.blocked),
         due: Number(row.due),
         running: Number(row.running),
         stuck: Number(row.stuck),
         failed: Number(row.failed),
+        completed: Number(row.completed),
         oldestDueAgeMs: row.oldest_due_age_ms === null ? null : Number(row.oldest_due_age_ms),
     }));
 }

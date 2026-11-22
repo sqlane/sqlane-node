@@ -794,7 +794,9 @@ export async function makeDue(executor, p, names) {
 }
 
 /**
- * The counts per job name, for alerts such as "queue stuck". Reads the status index only.
+ * The counts per job name, for alerts such as "queue stuck". One statement, so one snapshot: the jobs that wait, run or
+ * failed, from their rows; the completed jobs in a branch of their own, which reads only the index
+ * `jobs_status_name_run_at`.
  * @param {Executor} executor
  * @param {string} p
  * @returns {Promise<import('../types.js').JobStats[]>}
@@ -802,15 +804,32 @@ export async function makeDue(executor, p, names) {
 export async function getStats(executor, p) {
     const rows = await executor.query(`
         SELECT job_name,
-               SUM(status IN ('pending', 'blocked')) AS pending,
-               SUM(status = 'pending' AND run_at <= ${NOW}) AS due,
-               SUM(status = 'running') AS running,
-               SUM(status = 'running' AND timed_out_at IS NOT NULL) AS stuck,
-               SUM(status = 'failed') AS failed,
-               TIMESTAMPDIFF(MICROSECOND, MIN(IF(status = 'pending' AND run_at <= ${NOW}, run_at, NULL)), ${NOW})
-                   DIV 1000 AS oldest_due_age_ms
-          FROM ${p}jobs
-         WHERE status IN ('pending', 'blocked', 'running', 'failed')
+               SUM(pending) AS pending,
+               SUM(blocked) AS blocked,
+               SUM(due) AS due,
+               SUM(running) AS running,
+               SUM(stuck) AS stuck,
+               SUM(failed) AS failed,
+               SUM(completed) AS completed,
+               MIN(oldest) AS oldest_due_age_ms
+          FROM (SELECT job_name,
+                       SUM(status = 'pending') AS pending,
+                       SUM(status = 'blocked') AS blocked,
+                       SUM(status = 'pending' AND run_at <= ${NOW}) AS due,
+                       SUM(status = 'running') AS running,
+                       SUM(status = 'running' AND timed_out_at IS NOT NULL) AS stuck,
+                       SUM(status = 'failed') AS failed,
+                       0 AS completed,
+                       TIMESTAMPDIFF(MICROSECOND, MIN(IF(status = 'pending' AND run_at <= ${NOW}, run_at, NULL)),
+                           ${NOW}) DIV 1000 AS oldest
+                  FROM ${p}jobs
+                 WHERE status IN ('pending', 'blocked', 'running', 'failed')
+                 GROUP BY job_name
+                UNION ALL
+                SELECT job_name, 0, 0, 0, 0, 0, 0, COUNT(*), NULL
+                  FROM ${p}jobs
+                 WHERE status = 'completed'
+                 GROUP BY job_name) counts
          GROUP BY job_name
          ORDER BY job_name
     `, []);
@@ -818,10 +837,12 @@ export async function getStats(executor, p) {
     return rows.map(row => ({
         name: String(row.job_name),
         pending: Number(row.pending),
+        blocked: Number(row.blocked),
         due: Number(row.due),
         running: Number(row.running),
         stuck: Number(row.stuck),
         failed: Number(row.failed),
+        completed: Number(row.completed),
         oldestDueAgeMs: row.oldest_due_age_ms === null ? null : Number(row.oldest_due_age_ms),
     }));
 }

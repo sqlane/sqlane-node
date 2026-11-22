@@ -63,8 +63,8 @@ export interface SqlaneSchema {
     findSchemaProblems(): Promise<SchemaProblems>;
 }
 /**
- * The jobs in the database: `sqlane.jobs`. Read them; retry, cancel or remove them in bulk; see the keys of the global
- * limits. Before `start()` and after `close()` too. `get`, `list` and the batches require the migration
+ * The jobs in the database: `sqlane.jobs`. Read and count them; retry, cancel or remove them in bulk; see the keys of
+ * the global limits. Before `start()` and after `close()` too. `get`, `list` and the batches require the migration
  * `0008_job_list`; `keyStats` requires `0007`.
  * @template C The connections that the bulk methods accept as `connection`: those of the adapter.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobs | jobs}
@@ -127,6 +127,16 @@ export interface SqlaneJobs<C = any> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#key-stats | jobs.keyStats}
      */
     keyStats(options?: KeyStatsOptions): Promise<KeyStatsPage>;
+    /**
+     * Counts the jobs of each job name, for monitoring and alerts. A growing `oldestDueAgeMs` usually means that no
+     * process handles the name, or that the workers can't keep up; a growing `blocked`, that a key of a global limit
+     * holds its jobs back (see `keyStats`). PostgreSQL reads every row kept; MySQL and MariaDB read the completed jobs
+     * in their index: poll it at the pace of a metric scrape.
+     * @returns One entry per name with jobs in any status, sorted by name. The failed and completed jobs count until
+     *     the cleanup deletes them.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsstats | jobs.stats}
+     */
+    stats(): Promise<JobStats[]>;
 }
 /**
  * A sqlane instance, made by `createSqlane()`: one per process. It enqueues jobs, runs the handlers of this process,
@@ -217,14 +227,7 @@ export interface Sqlane<C> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#close | close}
      */
     close(options?: CloseOptions): Promise<void>;
-    /**
-     * Counts the jobs of each job name, for monitoring and alerts. A growing `oldestDueAgeMs` usually means that no
-     * process handles the name, or that the workers can't keep up.
-     * @returns One entry per name with pending, running or failed jobs, sorted by name.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getstats | getStats}
-     */
-    getStats(): Promise<JobStats[]>;
-    /** The jobs in the database: read them; retry, cancel or remove them in bulk. */
+    /** The jobs in the database: read and count them; retry, cancel or remove them in bulk. */
     readonly jobs: SqlaneJobs<C>;
     /** The `sqlane_*` tables: create, update, roll back or drop them; check them. */
     readonly schema: SqlaneSchema;

@@ -221,6 +221,7 @@ export function createJobsApi(store, bulk) {
 
             return store.keyStats({ limit: /** @type {number} */ (limit), type: type ?? null, orderBy });
         },
+        stats: () => store.getStats(),
         retry: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('retry', selector, options),
         cancel: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('cancel', selector, options),
         remove: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('remove', selector, options),

@@ -526,15 +526,30 @@ export async function publicApiTypes() {
          * }} */ (/** @type {any} */ (null)),
     );
 
-    // A mock of SqlaneJobs needs keyStats
+    // stats: blocked apart from pending, and completed
+    const [stats] = await sqlane.jobs.stats();
+
+    expectTypeOf(stats.blocked).toBeNumber();
+    expectTypeOf(stats.completed).toBeNumber();
+    expectTypeOf(stats.oldestDueAgeMs).toEqualTypeOf(/** @type {number | null} */ (null));
+    // @ts-expect-error getStats() is now jobs.stats()
+    void sqlane.getStats;
+
+    // A mock of SqlaneJobs needs keyStats and stats
     /** @type {import('@sqlane/core').SqlaneJobs} */
     // @ts-expect-error keyStats is missing
     const mockWithoutKeyStats = {
-        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod,
+        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod, stats: anyMethod,
     };
     /** @type {import('@sqlane/core').SqlaneJobs} */
     const mock = {
-        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod, keyStats: anyMethod,
+        get: anyMethod,
+        list: anyMethod,
+        retry: anyMethod,
+        cancel: anyMethod,
+        remove: anyMethod,
+        keyStats: anyMethod,
+        stats: anyMethod,
     };
 
     void mockWithoutKeyStats;

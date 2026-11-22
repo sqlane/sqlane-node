@@ -1306,7 +1306,7 @@ describe('global concurrency limits', () => {
         expect(both.limited.toSorted()).toStrictEqual(['other', 'plain']);
     });
 
-    test('getStats counts the blocked jobs as pending', async () => {
+    test('jobs.stats counts the blocked jobs apart from the pending ones', async () => {
         const { sqlane, store } = await freshTables();
         const first = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
         const waiting = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(10) });
@@ -1314,8 +1314,8 @@ describe('global concurrency limits', () => {
         await claimAll(store, [first.id], 'T1');
         await claimWithBlocks(store, [], 'T2', [waiting.id]);
 
-        await expect(sqlane.getStats()).resolves.toMatchObject([
-            { name: 'sync_order', pending: 1, due: 0, running: 1 },
+        await expect(sqlane.jobs.stats()).resolves.toMatchObject([
+            { name: 'sync_order', pending: 0, blocked: 1, due: 0, running: 1 },
         ]);
     });
 });
@@ -1908,14 +1908,14 @@ describe('global rate limits', () => {
         expect([...ratedNames]).toStrictEqual(['mixed']);
     });
 
-    test('getStats counts the jobs blocked on a rate key as pending', async () => {
+    test('jobs.stats counts the jobs blocked on a rate key apart from the pending ones', async () => {
         const { sqlane, store } = await freshTables();
 
         await enqueueCalls(sqlane, 6, { account: 'a1' });
         await claimCandidates(store, new Map([['call_api', 10]]), 'T1');
 
-        await expect(sqlane.getStats()).resolves.toMatchObject([
-            { name: 'call_api', pending: 2, due: 0, running: 4 },
+        await expect(sqlane.jobs.stats()).resolves.toMatchObject([
+            { name: 'call_api', pending: 0, blocked: 2, due: 0, running: 4 },
         ]);
     });
 });

@@ -454,7 +454,6 @@ export function createSqlane(options) {
             getMigrationStatus: () => getMigrationStatus(adapter, tablePrefix, { installedVersion }),
             findSchemaProblems: () => findSchemaProblems(adapter, tablePrefix, { installedVersion }),
         },
-        getStats: () => store.getStats(),
         jobs: createJobsApi(store, createBulk({
             store,
             adapter,

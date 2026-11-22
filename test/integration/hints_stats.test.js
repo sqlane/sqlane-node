@@ -114,7 +114,7 @@ async function timeUntil(condition, timeoutMs) {
     return Date.now() - startedAt;
 }
 
-test('getStats: the counts of each name', async () => {
+test('jobs.stats: the counts of each name', async () => {
     const p = nextPrefix();
     const sqlane = sqlaneOn(p);
     const store = createStore(testAdapter.adapter, p);
@@ -126,10 +126,10 @@ test('getStats: the counts of each name', async () => {
         { payload: {}, options: { delay: '1h' } },
     ]);
 
-    const { id: runningId } = await sqlane.enqueue(testAdapter.pool, 'b', {});
-    const { id: failedId } = await sqlane.enqueue(testAdapter.pool, 'b', {});
+    const ids = await Promise.all([1, 2, 3, 4].map(async () => (await sqlane.enqueue(testAdapter.pool, 'b', {})).id));
+    const [runningId, failedId, ...completedIds] = ids;
     const { jobs: claimed } = await store.claim({
-        candidateIds: [runningId, failedId],
+        candidateIds: ids,
         fullIds: [],
         lockToken: 'TOKEN',
         lockedBy: 'test',
@@ -144,14 +144,57 @@ test('getStats: the counts of each name', async () => {
             throw new Error('none');
         },
     });
+    await store.completeJobs(claimed.filter(job => completedIds.includes(job.id)));
 
-    const stats = await sqlane.getStats();
+    const stats = await sqlane.jobs.stats();
 
-    expect(stats).toMatchObject([
-        { name: 'a', pending: 3, due: 2, running: 0, stuck: 0, failed: 0 },
-        { name: 'b', pending: 0, due: 0, running: 1, stuck: 1, failed: 1, oldestDueAgeMs: null },
+    expect(stats).toStrictEqual([
+        {
+            name: 'a',
+            pending: 3,
+            blocked: 0,
+            due: 2,
+            running: 0,
+            stuck: 0,
+            failed: 0,
+            completed: 0,
+            oldestDueAgeMs: expect.any(Number),
+        },
+        {
+            name: 'b',
+            pending: 0,
+            blocked: 0,
+            due: 0,
+            running: 1,
+            stuck: 1,
+            failed: 1,
+            completed: 2,
+            oldestDueAgeMs: null,
+        },
     ]);
     expect(stats[0].oldestDueAgeMs).toBeGreaterThanOrEqual(4500);
+});
+
+test('jobs.stats: a name with only completed jobs has an entry', async () => {
+    const p = nextPrefix();
+    const sqlane = sqlaneOn(p);
+
+    await sqlane.schema.migrate();
+    await sqlane.enqueue(testAdapter.pool, 'done', {});
+    sqlane.handle('done', () => {});
+    await sqlane.drain();
+
+    await expect(sqlane.jobs.stats()).resolves.toStrictEqual([{
+        name: 'done',
+        pending: 0,
+        blocked: 0,
+        due: 0,
+        running: 0,
+        stuck: 0,
+        failed: 0,
+        completed: 1,
+        oldestDueAgeMs: null,
+    }]);
 });
 
 describe('hints', () => {

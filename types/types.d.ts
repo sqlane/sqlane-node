@@ -795,9 +795,13 @@ export type JobStats = {
      */
     name: string;
     /**
-     * The jobs that wait to run, also those not due yet and those blocked on a key.
+     * The jobs that wait to run, due or not yet, and not blocked on a key.
      */
     pending: number;
+    /**
+     * The jobs blocked on a key of a global concurrency or rate limit.
+     */
+    blocked: number;
     /**
      * The pending jobs that are due now.
      */
@@ -815,7 +819,11 @@ export type JobStats = {
      */
     failed: number;
     /**
-     * How long the oldest due job has waited, in ms. Null: no job is due.
+     * The completed jobs that sqlane still keeps.
+     */
+    completed: number;
+    /**
+     * How long the oldest due pending job has waited, in ms. Null: no job is due.
      */
     oldestDueAgeMs: number | null;
 };
@@ -1548,12 +1556,14 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
 /**
  * @typedef {object} JobStats
  * @property {string} name The job name.
- * @property {number} pending The jobs that wait to run, also those not due yet and those blocked on a key.
+ * @property {number} pending The jobs that wait to run, due or not yet, and not blocked on a key.
+ * @property {number} blocked The jobs blocked on a key of a global concurrency or rate limit.
  * @property {number} due The pending jobs that are due now.
  * @property {number} running The jobs that run now.
  * @property {number} stuck Timed out, the handler has not settled.
  * @property {number} failed The failed jobs that sqlane still keeps.
- * @property {number | null} oldestDueAgeMs How long the oldest due job has waited, in ms. Null: no job is due.
+ * @property {number} completed The completed jobs that sqlane still keeps.
+ * @property {number | null} oldestDueAgeMs How long the oldest due pending job has waited, in ms. Null: no job is due.
  */
 /**
  * An error as sqlane stores it: the last error of a job, and the error of a failure job.

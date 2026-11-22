@@ -177,7 +177,9 @@ export declare function deleteExpiredJobs(executor: Executor, p: string, limit: 
  */
 export declare function makeDue(executor: Executor, p: string, names: string[]): Promise<void>;
 /**
- * The counts per job name, for alerts such as "queue stuck". Reads the status index only.
+ * The counts per job name, for alerts such as "queue stuck". One statement, so one snapshot: the jobs that wait, run or
+ * failed, from their rows; the completed jobs in a branch of their own, which reads only the index
+ * `jobs_status_name_run_at`.
  * @param {Executor} executor
  * @param {string} p
  * @returns {Promise<import('../types.js').JobStats[]>}

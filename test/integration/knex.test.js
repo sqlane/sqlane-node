@@ -264,8 +264,11 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         await expect(sqlane.drain({ includeDelayed: true }))
             .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
         expect(failures).toStrictEqual(['failing']);
-        // The names with pending, running or failed jobs
-        await expect(sqlane.getStats()).resolves.toMatchObject([{ name: 'failing', pending: 0, failed: 1 }]);
+        await expect(sqlane.jobs.stats()).resolves.toMatchObject([
+            { name: 'failing', pending: 0, failed: 1, completed: 0 },
+            { name: 'report', pending: 0, completed: 2 },
+            { name: 'report_failed', pending: 0, completed: 1 },
+        ]);
         expect((await statuses(p)).toSorted()).toStrictEqual(['completed', 'completed', 'completed', 'failed']);
     });
 
