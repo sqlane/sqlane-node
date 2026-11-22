@@ -7,7 +7,8 @@ The schema moves to `sqlane.schema`, and each migration is tagged with the versi
 per file. `schema.rollback({ targetVersion })` reverts the migrations tagged above a version, and `schema.drop()` drops
 the tables of sqlane. `schema.getMigrationStatus()` reads the recorded migrations, and `schema.findSchemaProblems()`
 compares the tables, columns and indexes with what this version needs: check both before `start()` or in a readiness
-probe. 8.0 does not change the schema.
+probe. 8.0 adds no migration; a database below 7.1 runs `schema.migrate()` for `0008_job_list`, which 8.0
+requires.
 
 Breaking changes:
 
