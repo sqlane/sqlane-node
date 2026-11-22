@@ -7,14 +7,8 @@ export type ErrorJson = {
     code?: string;
 };
 /**
- * @typedef {object} ErrorJson
- * @property {string} name
- * @property {string} message
- * @property {string} [stack]
- * @property {string} [code]
- */
-/**
- * The JSON of an error, for `last_error` and the failure job. A thrown non-Error becomes its string.
+ * The JSON of an error, for `last_error` and the failure job. A thrown non-Error becomes its string. Its texts are
+ * well-formed and without NUL (see storableText).
  * @param {unknown} error
  * @returns {ErrorJson}
  */

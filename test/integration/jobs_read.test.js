@@ -10,6 +10,7 @@ import {
     InvalidOptionsError,
     RateLimitedError,
 } from '../../src/index.js';
+import { MAX_STACK_LENGTH } from '../../src/error_json.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
 
@@ -323,6 +324,25 @@ describe('jobs.get()', () => {
             scheduledAt: at,
         });
     });
+
+    test('an error with a NUL, a lone surrogate, and a stack cut inside a surrogate pair is kept, as well-formed text',
+        async () => {
+            const sqlane = await freshSqlane();
+            const error = new FatalJobError('a\u0000b\uD800c');
+
+            error.stack = `${'x'.repeat(MAX_STACK_LENGTH - 1)}\u{1F600}`;
+            sqlane.handle('broken_text', () => {
+                throw error;
+            });
+
+            const { id } = await sqlane.enqueue(testAdapter.pool, 'broken_text', {});
+
+            await sqlane.drain();
+            await expect(sqlane.jobs.get(id)).resolves.toMatchObject({
+                status: 'failed',
+                lastError: { name: 'FatalJobError', message: 'a\uFFFDb\uFFFDc', stack: 'x'.repeat(MAX_STACK_LENGTH - 1) },
+            });
+        });
 
     test('a job retried, then completed, keeps the error of its failed attempt; a falsy JSON payload is present',
         async () => {
