@@ -1,8 +1,8 @@
 /**
  * @param {string} p The table prefix.
- * @returns {import('../types.js').Migration[]}
+ * @returns {import('../migrations.js').Migration[]}
  */
-export declare function mariadbMigrations(p: string): import('../types.js').Migration[];
+export declare function mariadbMigrations(p: string): import('../migrations.js').Migration[];
 /**
  * @param {string} p
  * @returns {string}

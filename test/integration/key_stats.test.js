@@ -1,13 +1,12 @@
 // sqlane.jobs.keyStats(): the keys with blocked jobs, or with held or lingering slots, on each database. Through the
 // public API where it is cheap; raw SQL for the states that take time or volume (the convention of the store tests).
 import { setTimeout as sleep } from 'node:timers/promises';
-import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import {
     createSqlane,
     defineConcurrencyLimit,
     defineJob,
     defineRateLimit,
-    getMigrations,
     InvalidOptionsError,
 } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
@@ -79,7 +78,7 @@ async function fresh(options = {}) {
     const p = nextPrefix();
     const sqlane = sqlaneOn(p, options);
 
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
 
     return { sqlane, p };
 }
@@ -298,7 +297,7 @@ describe('keyStats', () => {
         const first = sqlaneOn(p);
         const sync = defineJob({ name: 'sync', timeout: '10s', globalConcurrencyLimits: () => [ORDER.key('a')] });
 
-        await first.migrate();
+        await first.schema.migrate();
         first.handle(sync, ({ signal }) => new Promise((resolve) => {
             signal.addEventListener('abort', resolve);
         }));
@@ -556,7 +555,7 @@ describe('keyStats', () => {
         const p = nextPrefix();
         const sqlane = sqlaneOn(p);
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         const [job] = await enqueued(sqlane, 'unhandled', 1, { globalConcurrencyLimits: [ORDER.key('a')] });
 
@@ -595,13 +594,7 @@ describe('keyStats', () => {
         const p = nextPrefix();
         const sqlane = sqlaneOn(p);
 
-        const migrations = getMigrations({ dialect: inject('databaseDialect'), tablePrefix: p })
-            .filter(({ id }) => id !== '0008_job_list');
-
-        for (const sql of migrations.flatMap(({ statements }) => statements)) {
-            // oxlint-disable-next-line no-await-in-loop -- in order
-            await database.query(sql);
-        }
+        await sqlane.schema.migrate({ targetVersion: '7.0.0' });
 
         const [job] = await enqueued(sqlane, 'a', 1, { globalConcurrencyLimits: [ORDER.key('a')] });
 

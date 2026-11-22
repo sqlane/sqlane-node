@@ -80,7 +80,7 @@ export const SCENARIOS = [
             const [job] = definitions(lib, 1);
             const sqlane = create({ jobs: [job] });
 
-            await sqlane.migrate();
+            await sqlane.schema.migrate();
 
             const stats = await measure(async () => {
                 for (let index = 0; index < 100; index++) {
@@ -100,7 +100,7 @@ export const SCENARIOS = [
             const [job] = definitions(lib, 1);
             const sqlane = create({ jobs: [job] });
 
-            await sqlane.migrate();
+            await sqlane.schema.migrate();
 
             const stats = await measure(async () => {
                 for (let batch = 0; batch < 10; batch++) {
@@ -124,7 +124,7 @@ export const SCENARIOS = [
             const sqlane = create({ jobs, localMaxConcurrency: 1 });
 
             handleAll(sqlane, jobs);
-            await sqlane.migrate();
+            await sqlane.schema.migrate();
 
             for (let index = 0; index < JOBS; index++) {
                 await sqlane.enqueue(pool, jobs[(index * 7) % NAMES], { index });
@@ -151,7 +151,7 @@ export const SCENARIOS = [
             const sqlane = create({ jobs });
 
             handleAll(sqlane, jobs);
-            await sqlane.migrate();
+            await sqlane.schema.migrate();
 
             const stats = await measure(async () => {
                 await sqlane.drain();
@@ -179,7 +179,7 @@ export const SCENARIOS = [
             const sqlane = create({ jobs, localMaxConcurrency: 1 });
 
             handleAll(sqlane, jobs);
-            await sqlane.migrate();
+            await sqlane.schema.migrate();
 
             for (let index = 0; index < 100; index++) {
                 await sqlane.enqueue(pool, jobs[index % 2], { key: index % 10 });
@@ -213,7 +213,7 @@ export const SCENARIOS = [
             const sqlane = create({ jobs, localMaxConcurrency: 1 });
 
             handleAll(sqlane, jobs);
-            await sqlane.migrate();
+            await sqlane.schema.migrate();
 
             for (let index = 0; index < 100; index++) {
                 await sqlane.enqueue(pool, jobs[index % 2], { key: index % 10 });
@@ -256,7 +256,7 @@ export const SCENARIOS = [
                 sqlane.schedule(job, { every: '10s' });
             }
 
-            await sqlane.migrate();
+            await sqlane.schema.migrate();
             await sqlane.start();
 
             // The first slot may come during the registration: measure the next one, from 2 s before it

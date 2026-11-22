@@ -702,6 +702,11 @@ export type CloseOptions = {
 };
 export type MigrateOptions = {
     /**
+     * `'X.Y.Z'`: only the migrations tagged at or below it. From `'6.0.0'` up to the
+     * installed version. Default: every migration.
+     */
+    targetVersion?: string;
+    /**
      * Default: `'10m'`.
      */
     lockTimeout?: Duration;
@@ -1025,16 +1030,6 @@ export type FailedJobPayload = {
     error: JobError;
 };
 export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
-export type Migration = {
-    /**
-     * Such as `0001_initial`.
-     */
-    id: string;
-    /**
-     * Its SQL, in order.
-     */
-    statements: readonly string[];
-};
 /**
  * A duration: non-negative safe integer milliseconds, or decimal quantities with lowercase units in descending
  * order (`w`, `d`, `h`, `m`, `s`, `ms`), each at most once: `'500ms'`, `'4m30s'`, `'1d 1h 1ms'`.
@@ -1428,6 +1423,8 @@ export type Migration = {
  */
 /**
  * @typedef {object} MigrateOptions
+ * @property {string} [targetVersion] `'X.Y.Z'`: only the migrations tagged at or below it. From `'6.0.0'` up to the
+ *     installed version. Default: every migration.
  * @property {Duration} [lockTimeout] Default: `'10m'`.
  */
 /**
@@ -1608,10 +1605,5 @@ export type Migration = {
  * A sqlane instance, made by `createSqlane()`. Its methods and their docs are in sqlane.ts.
  * @template C The connections that `enqueue` accepts.
  * @typedef {import('./sqlane.js').Sqlane<C>} Sqlane
- */
-/**
- * @typedef {object} Migration
- * @property {string} id Such as `0001_initial`.
- * @property {readonly string[]} statements Its SQL, in order.
  */
 export {};

@@ -441,6 +441,8 @@
 
 /**
  * @typedef {object} MigrateOptions
+ * @property {string} [targetVersion] `'X.Y.Z'`: only the migrations tagged at or below it. From `'6.0.0'` up to the
+ *     installed version. Default: every migration.
  * @property {Duration} [lockTimeout] Default: `'10m'`.
  */
 
@@ -639,12 +641,6 @@
  * A sqlane instance, made by `createSqlane()`. Its methods and their docs are in sqlane.ts.
  * @template C The connections that `enqueue` accepts.
  * @typedef {import('./sqlane.js').Sqlane<C>} Sqlane
- */
-
-/**
- * @typedef {object} Migration
- * @property {string} id Such as `0001_initial`.
- * @property {readonly string[]} statements Its SQL, in order.
  */
 
 // oxlint-disable-next-line unicorn/require-module-specifiers -- makes the file a module: its typedefs are exported

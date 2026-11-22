@@ -118,7 +118,7 @@ async function freshTables() {
     const p = `${database.tablePrefix}${prefixCount}_`;
     const sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: p });
 
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
 
     return { p, sqlane, store: createStore(testAdapter.adapter, p) };
 }

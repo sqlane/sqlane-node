@@ -30,7 +30,7 @@ const sqlane = createSqlane({
     onEvent: event => events.emit(event.type, event),
 });
 
-await sqlane.migrate(); // creates the sqlane_* tables
+await sqlane.schema.migrate(); // creates the sqlane_* tables
 await appPool.query('DROP TABLE IF EXISTS orders');
 await appPool.query('CREATE TABLE orders (id INT PRIMARY KEY)');
 

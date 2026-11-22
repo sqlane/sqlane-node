@@ -95,7 +95,7 @@ async function freshSqlane(options = {}) {
     });
 
     instances.push(sqlane);
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
 
     return { sqlane, p, events };
 }
@@ -127,16 +127,16 @@ async function waitFor(condition) {
     }
 }
 
-test('schedules: start() without the table asks for migrate(); a slot adds its job', async () => {
+test('schedules: start() without the table asks for schema.migrate(); a slot adds its job', async () => {
     const { sqlane, p } = await freshSqlane();
 
     await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
 });
 
-test('migrate() through Prisma: the tables, once', async () => {
+test('schema.migrate() through Prisma: the tables, once', async () => {
     const { sqlane } = await freshSqlane();
 
-    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [] });
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [] });
 });
 
 test('sqlane.jobs: get and list through the adapter', async () => {

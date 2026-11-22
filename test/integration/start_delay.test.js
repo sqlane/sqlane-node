@@ -84,7 +84,7 @@ async function fresh(options = {}) {
     const p = nextPrefix();
     const { sqlane, events } = sqlaneOn(p, options);
 
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
 
     return { sqlane, events, p };
 }
@@ -306,7 +306,7 @@ test('after a release on close: the due time of the release', async () => {
     const p = nextPrefix();
     const { sqlane: first, events: firstEvents } = sqlaneOn(p);
 
-    await first.migrate();
+    await first.schema.migrate();
     first.handle('long', ({ signal }) => new Promise((resolve) => {
         signal.addEventListener('abort', resolve);
     }));
@@ -342,7 +342,7 @@ test('after a stall: the due time that stall recovery stored', async () => {
     const timings = { ...TIMINGS, leaseMs: 1000, renewIntervalMs: 200 };
     const { sqlane: first, events: firstEvents } = sqlaneOn(p, /** @type {any} */ ({ timings }));
 
-    await first.migrate();
+    await first.schema.migrate();
     first.handle('stuck', () => sleep(60_000));
     await first.start();
 
@@ -378,7 +378,7 @@ test('after jobs.retry(): the due time of the retry', async () => {
     const p = nextPrefix();
     const { sqlane: first } = sqlaneOn(p);
 
-    await first.migrate();
+    await first.schema.migrate();
     first.handle('broken', () => {
         throw new FatalJobError('boom');
     });

@@ -98,7 +98,7 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         });
 
         instances.push(sqlane);
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         return { sqlane, p, events };
     }
@@ -111,7 +111,7 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         return (await database.query(`SELECT status FROM ${p}jobs ORDER BY id`)).map(row => String(row.status));
     }
 
-    test('schedules: start() without the table asks for migrate(); a slot adds its job', async () => {
+    test('schedules: start() without the table asks for schema.migrate(); a slot adds its job', async () => {
         const { sqlane, p } = await freshSqlane();
 
         await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);

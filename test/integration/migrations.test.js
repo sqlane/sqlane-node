@@ -4,9 +4,10 @@ import {
     ConfigError,
     createSqlane,
     defineRateLimit,
-    getMigrations,
+    InvalidOptionsError,
     MigrationLockTimeoutError,
 } from '../../src/index.js';
+import { migrationsOf } from '../../src/migrations.js';
 import { mysql2Adapter } from '../../src/adapters/mysql2.js';
 import { parseServerVersion, SERVER_VERSION_SQL } from '../../src/server_check.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
@@ -120,10 +121,15 @@ function nextPrefix() {
 
 /**
  * @param {string} tablePrefix
+ * @param {string} [installedVersion] In place of the version of package.json.
  * @returns {import('../../src/types.js').Sqlane<any>}
  */
-function sqlaneOf(tablePrefix) {
-    return createSqlane({ adapter: testAdapter.adapter, tablePrefix });
+function sqlaneOf(tablePrefix, installedVersion) {
+    return createSqlane(/** @type {import('../../src/types.js').SqlaneOptions<any>} */ ({
+        adapter: testAdapter.adapter,
+        tablePrefix,
+        installedVersion,
+    }));
 }
 
 /**
@@ -133,7 +139,7 @@ function sqlaneOf(tablePrefix) {
  * @param {string[]} rowsSql Rows of that version, added before the record of the migrations.
  */
 async function migrateAllBut(tablePrefix, count, rowsSql) {
-    const migrations = getMigrations({ dialect: database.dialect, tablePrefix }).slice(0, -count);
+    const migrations = migrationsOf(database.dialect, tablePrefix).slice(0, -count);
 
     for (const sql of [...migrations.flatMap(migration => migration.statements), ...rowsSql]) {
         // oxlint-disable-next-line no-await-in-loop -- DDL in order
@@ -174,25 +180,25 @@ test('applies the migrations once', async () => {
     const tablePrefix = nextPrefix();
     const sqlane = sqlaneOf(tablePrefix);
 
-    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
     await expect(listTables(tablePrefix)).resolves.toStrictEqual(
         ['concurrency_slots', 'jobs', 'migrations', 'payloads', 'rate_limits', 'schedules']
             .map(table => `${tablePrefix}${table}`).toSorted(),
     );
-    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [] });
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [] });
 });
 
 test('a database of 3.x applies only 0004_schedules, and keeps its jobs', async () => {
     const tablePrefix = nextPrefix();
     const sqlane = sqlaneOf(tablePrefix);
 
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
     // As 3.x left it: without the table of the schedules and its record
     await database.query(`DROP TABLE ${tablePrefix}schedules`);
     await database.query(`DELETE FROM ${tablePrefix}migrations WHERE id = '0004_schedules'`);
     await sqlane.enqueue(testAdapter.pool, 'nightly_report', {});
 
-    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: ['0004_schedules'] });
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: ['0004_schedules'] });
     await expect(database.query(`SELECT job_name FROM ${tablePrefix}jobs`))
         .resolves.toStrictEqual([{ job_name: 'nightly_report' }]);
     await expect(database.query(`SELECT id FROM ${tablePrefix}schedules`)).resolves.toStrictEqual([]);
@@ -208,7 +214,7 @@ test('a database of 5.x: mutex keys become global limits with max 1, a hold beco
         FIVE_X_ROWS_SQL[database.family](tablePrefix),
     );
 
-    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [...SIX, ...RATE_LIMITS, ...JOB_LIST] });
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [...SIX, ...RATE_LIMITS, ...JOB_LIST] });
 
     const [job] = await database.query(`SELECT limit_keys, limit_maxes, blocked_on, rate_limits FROM ${tablePrefix}jobs`);
 
@@ -225,7 +231,7 @@ test('a database of 6.0: 0007 adds the rate keys in µs and the rate limits of t
 
     await migrateAllBut(tablePrefix, RATE_LIMITS.length + JOB_LIST.length, SIX_ROWS_SQL[database.family](tablePrefix));
 
-    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: [...RATE_LIMITS, ...JOB_LIST] });
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [...RATE_LIMITS, ...JOB_LIST] });
 
     const [job] = await database.query(`SELECT limit_keys, limit_maxes, rate_limits FROM ${tablePrefix}jobs`);
 
@@ -250,7 +256,7 @@ test('a database of 7.x: 0008 adds the index of the lists; jobs.list pages throu
     const sqlane = sqlaneOf(tablePrefix);
 
     await migrateAllBut(tablePrefix, JOB_LIST.length, []);
-    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: JOB_LIST });
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: JOB_LIST });
 
     const added = await sqlane.enqueueMany(testAdapter.pool, 'ping', [{ payload: {} }, { payload: {} }, { payload: {} }]);
     const page1 = await sqlane.jobs.list({ jobName: 'ping' }, { limit: 2 });
@@ -263,14 +269,14 @@ test('a database of 7.x: 0008 adds the index of the lists; jobs.list pages throu
 
 test('concurrent migrations apply each version once', async () => {
     const tablePrefix = nextPrefix();
-    const results = await Promise.all([sqlaneOf(tablePrefix).migrate(), sqlaneOf(tablePrefix).migrate()]);
+    const results = await Promise.all([sqlaneOf(tablePrefix).schema.migrate(), sqlaneOf(tablePrefix).schema.migrate()]);
 
     expect(results.flatMap(result => result.applied)).toStrictEqual(ALL_MIGRATIONS);
 });
 
 test('ids are case-sensitive', async () => {
     const tablePrefix = nextPrefix();
-    await sqlaneOf(tablePrefix).migrate();
+    await sqlaneOf(tablePrefix).schema.migrate();
     await database.query(INSERT_TWO_PAYLOADS_SQL[database.family](`${tablePrefix}payloads`), ['job:ABC', 'job:abc']);
 
     await expect(database.query(`SELECT id FROM ${tablePrefix}payloads ORDER BY id`))
@@ -285,28 +291,61 @@ test('waits for the migration lock up to lockTimeout', async () => {
     await database.query(lock, [lockName]);
 
     try {
-        await expect(sqlaneOf(tablePrefix).migrate({ lockTimeout: '1s' }))
+        await expect(sqlaneOf(tablePrefix).schema.migrate({ lockTimeout: '1s' }))
             .rejects.toThrow(MigrationLockTimeoutError);
     } finally {
         await database.query(unlock, [lockName]);
     }
 
-    await expect(sqlaneOf(tablePrefix).migrate({ lockTimeout: '1s' }))
+    await expect(sqlaneOf(tablePrefix).schema.migrate({ lockTimeout: '1s' }))
         .resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
 });
 
-test('getMigrations gives the statements that migrate() applies', async () => {
+test('targetVersion: the migrations tagged up to it, then the next ones', async () => {
+    const sqlane = sqlaneOf(nextPrefix());
+
+    await expect(sqlane.schema.migrate({ targetVersion: '6.0.0' }))
+        .resolves.toStrictEqual({ applied: ALL_MIGRATIONS.slice(0, -JOB_LIST.length) });
+    await expect(sqlane.schema.migrate({ targetVersion: '7.1.0' })).resolves.toStrictEqual({ applied: JOB_LIST });
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [] });
+});
+
+test('a targetVersion with no migration of its own: the migrations tagged below it', async () => {
+    await expect(sqlaneOf(nextPrefix()).schema.migrate({ targetVersion: '7.0.4' }))
+        .resolves.toStrictEqual({ applied: ALL_MIGRATIONS.slice(0, -JOB_LIST.length) });
+});
+
+test('without targetVersion: every known migration, also those tagged above the installed version', async () => {
+    await expect(sqlaneOf(nextPrefix(), '7.0.4').schema.migrate()).resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
+});
+
+test('a targetVersion above the installed version, up to the highest tag (merged before its release)', async () => {
+    await expect(sqlaneOf(nextPrefix(), '7.0.4').schema.migrate({ targetVersion: '7.1.0' }))
+        .resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
+});
+
+test('an installed pre-release counts as its base version', async () => {
+    await expect(sqlaneOf(nextPrefix(), '8.0.0-rc.1').schema.migrate({ targetVersion: '8.0.0' }))
+        .resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
+});
+
+test.each([
+    { targetVersion: '5.9.0', installed: '7.1.0' },
+    { targetVersion: '7.1.1', installed: '7.1.0' },
+    { targetVersion: '7.1.1', installed: '7.0.4' },
+    { targetVersion: '8.0.1', installed: '8.0.0-rc.1' },
+    { targetVersion: 'v7.1.0', installed: '7.1.0' },
+    { targetVersion: '7.1.0-rc.1', installed: '7.1.0' },
+    { targetVersion: null, installed: '7.1.0' },
+])('targetVersion $targetVersion, $installed installed: an InvalidOptionsError, nothing applied', async ({
+    targetVersion, installed,
+}) => {
     const tablePrefix = nextPrefix();
-    const [migration] = getMigrations({ dialect: database.dialect, tablePrefix });
+    const sqlane = sqlaneOf(tablePrefix, installed);
 
-    for (const sql of migration.statements) {
-        // oxlint-disable-next-line no-await-in-loop -- DDL in order
-        await database.query(sql);
-    }
-
-    await expect(listTables(tablePrefix)).resolves.toStrictEqual(
-        ['jobs', 'mutexes', 'payloads'].map(table => `${tablePrefix}${table}`),
-    );
+    await expect(sqlane.schema.migrate({ targetVersion: /** @type {any} */ (targetVersion) }))
+        .rejects.toThrow(InvalidOptionsError);
+    await expect(listTables(tablePrefix)).resolves.toStrictEqual([]);
 });
 
 test('the check of the server: the version of the database, through the adapter', async () => {
@@ -324,8 +363,9 @@ test('the check of the server: another dialect, a ConfigError before any table',
     const p = nextPrefix();
     const sqlane = createSqlane({ adapter: { ...testAdapter.adapter, dialect: other }, tablePrefix: p });
 
-    await expect(sqlane.migrate()).rejects.toThrow(ConfigError);
-    await expect(sqlane.migrate()).rejects.toThrow(`migrate(): "dialect" is "${other}", but the database is `);
+    await expect(sqlane.schema.migrate()).rejects.toThrow(ConfigError);
+    await expect(sqlane.schema.migrate())
+        .rejects.toThrow(`schema.migrate(): "dialect" is "${other}", but the database is `);
     await expect(sqlane.start()).rejects.toThrow(ConfigError);
     await sqlane.close({ deadline: 0 });
     await expect(listTables(p)).resolves.toStrictEqual([]);
@@ -356,8 +396,8 @@ test.runIf(isMysqlFamily)('the check of the server: a sql_mode without strict mo
     const sqlane = createSqlane({ adapter, tablePrefix: p });
 
     try {
-        await expect(sqlane.migrate()).rejects.toThrow(ConfigError);
-        await expect(sqlane.migrate()).rejects.toThrow(`migrate(): ${LACKING_STRICT}`);
+        await expect(sqlane.schema.migrate()).rejects.toThrow(ConfigError);
+        await expect(sqlane.schema.migrate()).rejects.toThrow(`schema.migrate(): ${LACKING_STRICT}`);
         await expect(sqlane.start()).rejects.toThrow(`start(): ${LACKING_STRICT}`);
         await expect(listTables(p)).resolves.toStrictEqual([]);
     } finally {
@@ -374,7 +414,7 @@ test.runIf(isMysqlFamily)('the check of the server: allowUnsupportedDbConfigurat
     const sqlane = createSqlane({ adapter, tablePrefix: nextPrefix(), logger });
 
     try {
-        await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
+        await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
         expect(logger.warn).toHaveBeenCalledOnce();
         expect(logger.warn).toHaveBeenCalledWith(
             expect.objectContaining({ dialect: database.dialect, sqlMode: 'NO_ENGINE_SUBSTITUTION', forbidden: [] }),
@@ -394,9 +434,9 @@ test.runIf(isMysqlFamily)('the check of the server: NO_BACKSLASH_ESCAPES, a Conf
     const sqlane = createSqlane({ adapter, tablePrefix: p });
 
     try {
-        await expect(sqlane.migrate()).rejects.toThrow(ConfigError);
-        await expect(sqlane.migrate())
-            .rejects.toThrow(/^migrate\(\): the sql_mode of (MySQL|MariaDB) has NO_BACKSLASH_ESCAPES: /u);
+        await expect(sqlane.schema.migrate()).rejects.toThrow(ConfigError);
+        await expect(sqlane.schema.migrate())
+            .rejects.toThrow(/^schema\.migrate\(\): the sql_mode of (MySQL|MariaDB) has NO_BACKSLASH_ESCAPES: /u);
         await expect(listTables(p)).resolves.toStrictEqual([]);
     } finally {
         await sqlane.close({ deadline: 0 });

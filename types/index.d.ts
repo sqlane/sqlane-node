@@ -3,10 +3,10 @@ export { defineConcurrencyLimit } from './define_concurrency_limit.js';
 export { defineJob } from './define_job.js';
 export { defineRateLimit } from './define_rate_limit.js';
 export { ClosedError, ConfigError, DrainTimeoutError, FatalJobError, IgnoredJobsError, InvalidConcurrencyLimitError, InvalidOptionsError, InvalidRateLimitError, JobCancelledError, JobTimeoutError, LeaseLostError, MigrationLockTimeoutError, MissingPayloadError, PayloadTooLargeError, RateLimitedError, RetryJobError, ShutdownError, SqlaneError, UnknownJobError, } from './errors.js';
-export { getMigrations } from './migrations.js';
 export type Adapter<C> = import('./types.js').Adapter<C>;
 export type Sqlane<C> = import('./types.js').Sqlane<C>;
 export type SqlaneJobs<C = any> = import('./sqlane.js').SqlaneJobs<C>;
+export type SqlaneSchema = import('./sqlane.js').SqlaneSchema;
 export type SqlaneOptions<C> = import('./types.js').SqlaneOptions<C>;
 export type Jsonable<T> = import('./types.js').Jsonable<T>;
 export type Backoff = import('./types.js').Backoff;
@@ -45,7 +45,6 @@ export type KeyStatsOptions = import('./types.js').KeyStatsOptions;
 export type KeyStatsPage = import('./types.js').KeyStatsPage;
 export type Logger = import('./types.js').Logger;
 export type MigrateOptions = import('./types.js').MigrateOptions;
-export type Migration = import('./types.js').Migration;
 export type RateLimit = import('./types.js').RateLimit;
 export type RateLimitKey = import('./types.js').RateLimitKey;
 export type RateLimitOptions = import('./types.js').RateLimitOptions;
@@ -68,6 +67,7 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  * @typedef {import('./sqlane.js').SqlaneJobs<C>} SqlaneJobs
  * @template [C=any]
  */
+/** @typedef {import('./sqlane.js').SqlaneSchema} SqlaneSchema */
 /**
  * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions
  * @template C
@@ -139,7 +139,6 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /** @typedef {import('./types.js').KeyStatsPage} KeyStatsPage */
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
-/** @typedef {import('./types.js').Migration} Migration */
 /** @typedef {import('./types.js').RateLimit} RateLimit */
 /** @typedef {import('./types.js').RateLimitKey} RateLimitKey */
 /** @typedef {import('./types.js').RateLimitOptions} RateLimitOptions */

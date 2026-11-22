@@ -137,7 +137,7 @@ describe.each([
         });
 
         instances.push(sqlane);
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         return { sqlane, p, events };
     }

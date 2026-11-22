@@ -31,6 +31,23 @@ import type {
 } from './types.js';
 
 /**
+ * The tables of sqlane: `sqlane.schema`. Each migration is tagged with the lowest version of sqlane that ships it.
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate | schema}
+ */
+export interface SqlaneSchema {
+    /**
+     * Creates or updates the `sqlane_*` tables: applies the missing migrations, in order. It holds a database lock, so
+     * several processes can run it at once. Run it from your own migration tool to pin a version, but not inside the
+     * tool's transaction.
+     * @param options `targetVersion`: apply only the migrations tagged at or below it, from `'6.0.0'` up to the
+     *     installed version; default: every migration. `lockTimeout`: how long to wait for the lock; default `'10m'`.
+     * @returns The ids of the migrations that it applied.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate | schema.migrate}
+     */
+    migrate(options?: MigrateOptions): Promise<{ applied: string[] }>;
+}
+
+/**
  * The jobs in the database: `sqlane.jobs`. Read them; retry, cancel or remove them in bulk; see the keys of the global
  * limits. Before `start()` and after `close()` too. `get`, `list` and the batches require the migration
  * `0008_job_list`; `keyStats` requires `0007`.
@@ -215,15 +232,6 @@ export interface Sqlane<C> {
     close(options?: CloseOptions): Promise<void>;
 
     /**
-     * Creates or updates the `sqlane_*` tables. It holds a database lock, so several processes can run it at once. To
-     * use your own migration tool instead, take the SQL from `getMigrations()`.
-     * @param options `lockTimeout`: how long to wait for the lock. Default: `'10m'`.
-     * @returns The ids of the migrations that it applied.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#migrate | migrate}
-     */
-    migrate(options?: MigrateOptions): Promise<{ applied: string[] }>;
-
-    /**
      * Counts the jobs of each job name, for monitoring and alerts. A growing `oldestDueAgeMs` usually means that no
      * process handles the name, or that the workers can't keep up.
      * @returns One entry per name with pending, running or failed jobs, sorted by name.
@@ -233,6 +241,9 @@ export interface Sqlane<C> {
 
     /** The jobs in the database: read them; retry, cancel or remove them in bulk. */
     readonly jobs: SqlaneJobs<C>;
+
+    /** The `sqlane_*` tables: create or update them. */
+    readonly schema: SqlaneSchema;
 
     /**
      * Low level: makes this process check for due jobs now, instead of at the next poll. Most apps don't need it:

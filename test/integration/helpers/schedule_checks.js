@@ -3,8 +3,8 @@ import { expect } from 'vitest';
 import { ConfigError } from '../../../src/index.js';
 
 /**
- * The schedules through an adapter: start() without the table of the schedules asks for migrate() (the error of the
- * driver, wrapped by the ORM), then a slot adds its job.
+ * The schedules through an adapter: start() without the table of the schedules asks for schema.migrate() (the error of
+ * the driver, wrapped by the ORM), then a slot adds its job.
  * @param {import('../../../src/types.js').Sqlane<any>} sqlane Migrated, not started.
  * @param {string} p Its table prefix.
  * @param {import('../../support/test_database.js').TestDatabaseConnection} database
@@ -17,8 +17,8 @@ export async function checkSchedules(sqlane, p, database) {
     sqlane.schedule('tick', { every: '1s' });
 
     await expect(sqlane.start()).rejects.toThrow(ConfigError);
-    await expect(sqlane.start()).rejects.toThrow(`start(): the table ${p}schedules is missing: run migrate()`);
-    await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: ['0004_schedules'] });
+    await expect(sqlane.start()).rejects.toThrow(`start(): the table ${p}schedules is missing: run schema.migrate()`);
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: ['0004_schedules'] });
     await sqlane.start();
 
     const deadline = Date.now() + 5000;

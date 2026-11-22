@@ -109,7 +109,7 @@ async function fresh(options = {}) {
     const p = nextPrefix();
     const { sqlane, events } = sqlaneOn(p, options);
 
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
 
     return { sqlane, events, p };
 }
@@ -251,7 +251,7 @@ describe('jobs.retry()', () => {
         sqlane.handle('flaky_failed', ({ payload }) => {
             failures.push(payload.job.attempt);
         });
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, flaky, {});
 
@@ -349,7 +349,7 @@ describe('jobs.retry()', () => {
             const { sqlane: worker } = sqlaneOn(p, { hint, pollInterval: '10s' });
             const { sqlane: producer, events } = sqlaneOn(p, { hint });
 
-            await producer.migrate();
+            await producer.schema.migrate();
 
             const [id] = await failedJobs(p, 'ping', [{}]);
             const ran = /** @type {string[]} */ ([]);
@@ -374,7 +374,7 @@ describe('jobs.retry()', () => {
         const { promise: never } = Promise.withResolvers();
 
         sqlane.handle(sync, () => never);
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, sync, {});
 
@@ -405,7 +405,7 @@ describe('jobs.cancel()', () => {
             const withFailure = defineJob({ name: 'report', failureJob: 'report_failed' });
 
             sqlane.handle('report_failed', () => {});
-            await sqlane.migrate();
+            await sqlane.schema.migrate();
 
             const { id } = await sqlane.enqueue(testAdapter.pool, withFailure, { n: 1 }, { delay: '1h' });
             const { id: blocked } = await sqlane.enqueue(testAdapter.pool, withFailure, { n: 2 });
@@ -492,7 +492,7 @@ describe('jobs.remove()', () => {
             const hooks = hookAdapter(testAdapter.adapter);
             const { sqlane } = sqlaneOn(p, { adapter: hooks.adapter });
 
-            await sqlane.migrate();
+            await sqlane.schema.migrate();
 
             const { id } = await sqlane.enqueue(testAdapter.pool, 'ping', { n: 1 });
 
@@ -526,7 +526,7 @@ describe('jobs.remove()', () => {
             const ran = [];
             const { handler, release } = holdingFirst(ran);
 
-            await worker.migrate();
+            await worker.schema.migrate();
             worker.handle(a, handler);
             other.handle(b, () => {});
 
@@ -564,7 +564,7 @@ describe('jobs.remove()', () => {
         const { sqlane, events } = sqlaneOn(p, { adapter: hooks.adapter });
         const order = defineConcurrencyLimit({ name: 'order', max: 1 });
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, 'ping', {}, { globalConcurrencyLimits: [order] });
         const { id: blocked } = await sqlane.enqueue(testAdapter.pool, 'ping', {}, { globalConcurrencyLimits: [order] });
@@ -611,7 +611,7 @@ describe('selectors, results and strict', () => {
         const hooks = hookAdapter(testAdapter.adapter);
         const { sqlane } = sqlaneOn(p, { adapter: hooks.adapter });
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         const [{ id: first }, { id: second }] = await sqlane.enqueueMany(testAdapter.pool, 'ping', [
             { payload: {}, options: { delay: '1h' } },
@@ -634,7 +634,7 @@ describe('selectors, results and strict', () => {
         const hooks = hookAdapter(testAdapter.adapter);
         const { sqlane } = sqlaneOn(p, { adapter: hooks.adapter });
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, 'ping', {}, { delay: '1h' });
 
@@ -661,7 +661,7 @@ describe('selectors, results and strict', () => {
         // The ids and the events too: on MySQL and MariaDB they come from the lock, not from the write
         const options = /** @type {any} */ ({ mode, includeAffectedJobIds: true });
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         // Blocked, then made pending between the read and the lock: a cancel of blocked jobs leaves it
         const { id: blocked } = await sqlane.enqueue(testAdapter.pool, 'ping', {}, { delay: '1h' });
@@ -690,7 +690,7 @@ describe('selectors, results and strict', () => {
         const hooks = hookAdapter(testAdapter.adapter);
         const { sqlane, events } = sqlaneOn(p, { adapter: hooks.adapter });
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, 'ping', {}, { delay: '1h' });
 
@@ -719,7 +719,7 @@ describe('selectors, results and strict', () => {
         const hooks = hookAdapter(testAdapter.adapter);
         const { sqlane } = sqlaneOn(p, { adapter: hooks.adapter });
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, 'ping', {}, { delay: '1h' });
 
@@ -789,7 +789,7 @@ describe('transactions', () => {
         const { sqlane } = sqlaneOn(p, { onEvent: readStatusOnCancel(holder, reads) });
 
         holder.sqlane = sqlane;
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, 'ping', {}, { delay: '1h' });
 
@@ -803,7 +803,7 @@ describe('transactions', () => {
         const hooks = hookAdapter(testAdapter.adapter);
         const { sqlane, events } = sqlaneOn(p, { adapter: hooks.adapter });
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         const [{ id: first }, { id: second }] = await sqlane.enqueueMany(testAdapter.pool, 'ping', [
             { payload: {}, options: { delay: '1h' } },
@@ -827,7 +827,7 @@ describe('transactions', () => {
         /** @type {string[]} */
         const ran = [];
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
         worker.handle('ping', ({ job }) => {
             ran.push(job.id);
         });
@@ -857,7 +857,7 @@ describe('batches', () => {
         /** @type {string[]} */
         const late = [];
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         for (let at = 0; at < 5; at++) {
             // oxlint-disable-next-line no-await-in-loop -- 2500 jobs
@@ -882,7 +882,7 @@ describe('batches', () => {
         const hooks = hookAdapter(testAdapter.adapter);
         const { sqlane } = sqlaneOn(p, { adapter: hooks.adapter });
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
         await failedJobs(p, 'flaky', Array.from({ length: 1500 }, () => ({})));
         // After the first retry write, and before the next batch is read (the first batch has committed): its jobs fail
         // again, so a walk without its keyset would read them again
@@ -1025,7 +1025,7 @@ describe('wakes, hints and the work after the commit', () => {
         const ran = [];
         const { handler, release } = holdingFirst(ran);
 
-        await worker.migrate();
+        await worker.schema.migrate();
         worker.handle(a, handler);
         other.handle(b, () => {});
 
@@ -1083,7 +1083,7 @@ describe('wakes, hints and the work after the commit', () => {
             const p = nextPrefix();
             const { sqlane } = sqlaneOn(p, { adapter: pgAdapter(testAdapter.pool, { dialect: 'postgres', notify: true }) });
 
-            await sqlane.migrate();
+            await sqlane.schema.migrate();
 
             const [id] = await failedJobs(p, 'ping', [{}]);
             const client = await testAdapter.pool.connect();
@@ -1138,7 +1138,7 @@ describe('wakes, hints and the work after the commit', () => {
         const ran = [];
         const { handler, release } = holdingFirst(ran);
 
-        await worker.migrate();
+        await worker.schema.migrate();
         worker.handle(a, handler);
         other.handle(b, () => {});
 

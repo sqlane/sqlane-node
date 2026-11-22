@@ -99,7 +99,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         });
 
         instances.push(sqlane);
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         return { sqlane, p, events };
     }

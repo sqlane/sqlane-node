@@ -17,7 +17,7 @@ import { checkDuration, checkInteger, checkObject, checkTablePrefix, isPlainObje
 
 const OPTION_NAMES = [
     'adapter', 'jobs', 'localMaxConcurrency', 'defaults', 'unknownJobs', 'hint', 'logger', 'onEvent', 'tablePrefix',
-    'pollInterval', 'maxPayloadBytes', 'cleanup', 'timings',
+    'pollInterval', 'maxPayloadBytes', 'cleanup', 'timings', 'installedVersion',
 ];
 
 /**
@@ -156,6 +156,8 @@ export function createSqlane(options) {
     const notifyChannel = adapter.notify ? `${tablePrefix}ready` : null;
     // Undocumented, for the tests of sqlane
     const testTimings = /** @type {{ timings?: object }} */ (options).timings;
+    // Undocumented, for the tests of sqlane: in place of the version of package.json
+    const testInstalledVersion = /** @type {{ installedVersion?: string }} */ (options).installedVersion;
     const store = createStore(adapter, tablePrefix, options.logger);
     const runner = createRunner({
         store,
@@ -242,7 +244,7 @@ export function createSqlane(options) {
     let serverChecked = null;
 
     /**
-     * Checks the server once: the first `start()` or `migrate()`, then their calls share the result.
+     * Checks the server once: the first `start()` or `schema.migrate()`, then their calls share the result.
      * @param {string} where The caller, for the errors.
      * @returns {Promise<void>}
      */
@@ -291,9 +293,10 @@ export function createSqlane(options) {
                 read = await scheduler.register();
             } catch (error) {
                 if (isMissingTableError(error)) {
-                    throw new ConfigError(`start(): the table ${tablePrefix}schedules is missing: run migrate()`, {
-                        cause: error,
-                    });
+                    throw new ConfigError(
+                        `start(): the table ${tablePrefix}schedules is missing: run schema.migrate()`,
+                        { cause: error },
+                    );
                 }
 
                 // The database is down: start anyway, the registration retries
@@ -400,9 +403,20 @@ export function createSqlane(options) {
 
             return closePromise;
         },
-        migrate: async migrateOptions => ({
-            applied: await runMigrations(adapter, tablePrefix, migrateOptions, () => checkServerOnce('migrate()')),
-        }),
+        schema: {
+            migrate: async (migrateOptions) => {
+                if (runner.isClosed()) {
+                    throw new ClosedError('schema.migrate() after close()');
+                }
+
+                return {
+                    applied: await runMigrations(adapter, tablePrefix, migrateOptions, {
+                        checkServer: () => checkServerOnce('schema.migrate()'),
+                        installedVersion: testInstalledVersion,
+                    }),
+                };
+            },
+        },
         getStats: () => store.getStats(),
         jobs: createJobsApi(store, createBulk({
             store,

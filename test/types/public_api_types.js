@@ -7,7 +7,6 @@ import {
     defineConcurrencyLimit,
     defineJob,
     defineRateLimit,
-    getMigrations,
     IgnoredJobsError,
     JobCancelledError,
     RateLimitedError,
@@ -64,9 +63,15 @@ export async function publicApiTypes() {
     // MariaDB: the mysql2 adapter with its dialect
     expectTypeOf(mysql2Adapter(mysqlPool, { dialect: 'mariadb' }).dialect)
         .toEqualTypeOf(/** @type {import('@sqlane/core').Dialect} */ ('mariadb'));
-    getMigrations({ dialect: 'mariadb' });
     // @ts-expect-error mysql2 is not a PostgreSQL driver
     mysql2Adapter(mysqlPool, { dialect: 'postgres' });
+
+    // schema.migrate: up to a version, or every migration
+    expectTypeOf(await sqlane.schema.migrate({ targetVersion: '7.1.0', lockTimeout: '10s' }))
+        .toEqualTypeOf(/** @type {{ applied: string[] }} */ ({ applied: [] }));
+    await sqlane.schema.migrate();
+    // @ts-expect-error migrate() is now schema.migrate()
+    await sqlane.migrate();
 
     await pgSqlane.enqueue(await pgPool.connect(), job, {});
     // @ts-expect-error a mysql2 connection is not a connection of the pg adapter

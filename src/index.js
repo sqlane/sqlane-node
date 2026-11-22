@@ -25,7 +25,6 @@ export {
     SqlaneError,
     UnknownJobError,
 } from './errors.js';
-export { getMigrations } from './migrations.js';
 
 /**
  * @typedef {import('./types.js').Adapter<C>} Adapter
@@ -39,6 +38,7 @@ export { getMigrations } from './migrations.js';
  * @typedef {import('./sqlane.js').SqlaneJobs<C>} SqlaneJobs
  * @template [C=any]
  */
+/** @typedef {import('./sqlane.js').SqlaneSchema} SqlaneSchema */
 /**
  * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions
  * @template C
@@ -110,7 +110,6 @@ export { getMigrations } from './migrations.js';
 /** @typedef {import('./types.js').KeyStatsPage} KeyStatsPage */
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
-/** @typedef {import('./types.js').Migration} Migration */
 /** @typedef {import('./types.js').RateLimit} RateLimit */
 /** @typedef {import('./types.js').RateLimitKey} RateLimitKey */
 /** @typedef {import('./types.js').RateLimitOptions} RateLimitOptions */

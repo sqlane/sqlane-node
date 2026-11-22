@@ -55,7 +55,7 @@ const appPool = mysql.createPool({ uri: process.env.DATABASE_URL }); // your app
 const queuePool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 3 }); // the queue's own pool
 const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }), jobs: [buildReport] });
 
-await sqlane.migrate(); // or getMigrations({ dialect: 'mysql' }) for your own migration tool
+await sqlane.schema.migrate(); // creates or updates the sqlane_* tables
 
 // Producer: the report row and its job commit together, or neither does
 export async function orderReport(reportId) {

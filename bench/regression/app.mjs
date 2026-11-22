@@ -493,7 +493,7 @@ function countsWithLatencies() {
 let producerDone = null;
 
 if (role === 'setup') {
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
 } else if (role === 'worker') {
     for (const definition of definitions) {
         sqlane.handle(definition, trace ? runTraceJob : async () => {});

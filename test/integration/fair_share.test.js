@@ -68,7 +68,7 @@ async function freshSqlane(options = {}) {
     const p = nextPrefix();
     const sqlane = instanceOn(p, options);
 
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
 
     return { sqlane, p };
 }
@@ -237,7 +237,7 @@ describe('the worked examples', () => {
         const sqlane = instanceOn(p);
         const store = createStore(testAdapter.adapter, p);
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
         await enqueue(sqlane, 'a', 10);
         await enqueue(sqlane, 'b', 3);
 
@@ -470,7 +470,7 @@ describe('ties and processes', () => {
             timings: { random: () => seed },
         }));
 
-        await all[0].migrate();
+        await all[0].schema.migrate();
 
         for (const sqlane of all) {
             for (const name of names) {

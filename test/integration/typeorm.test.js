@@ -119,12 +119,12 @@ describe.each([
         });
 
         instances.push(sqlane);
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         return { sqlane, p, events };
     }
 
-    test('schedules: start() without the table asks for migrate(); a slot adds its job', async () => {
+    test('schedules: start() without the table asks for schema.migrate(); a slot adds its job', async () => {
         const { sqlane, p } = await freshSqlane();
 
         await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);

@@ -59,7 +59,7 @@ async function freshSqlane(options = {}, { migrate = true } = {}) {
     instances.push(sqlane);
 
     if (migrate) {
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
     }
 
     return sqlane;
@@ -679,7 +679,7 @@ describe('sqlane.jobs', () => {
             expect(Object.isFrozen(sqlane.jobs)).toBe(true);
         });
 
-    test('before migrate(): the reads reject with the error of the database', async () => {
+    test('before schema.migrate(): the reads reject with the error of the database', async () => {
         const sqlane = await freshSqlane({}, { migrate: false });
 
         await expect(sqlane.jobs.get('ping:x')).rejects.toThrow(/exist/);

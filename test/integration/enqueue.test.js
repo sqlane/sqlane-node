@@ -53,7 +53,7 @@ beforeAll(async () => {
     database = await connectTestDatabase();
     testAdapter = createTestAdapter();
     sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: database.tablePrefix, jobs: [buildReport] });
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
 });
 
 afterAll(async () => {

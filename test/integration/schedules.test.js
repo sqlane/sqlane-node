@@ -84,7 +84,7 @@ async function freshSqlane(options = {}) {
     const p = nextPrefix();
     const { sqlane, events } = instanceOn(p, options);
 
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
 
     return { sqlane, p, events };
 }
@@ -451,14 +451,15 @@ function outcomes(results) {
 }
 
 describe('start()', () => {
-    test('without the migration: a ConfigError that says to run migrate(), and no timer', async () => {
+    test('without the migration: a ConfigError that says to run schema.migrate(), and no timer', async () => {
         const p = nextPrefix();
         const { sqlane } = instanceOn(p);
 
         sqlane.schedule('tick', { every: '1s' });
 
         await expect(sqlane.start()).rejects.toThrow(ConfigError);
-        await expect(sqlane.start()).rejects.toThrow(`start(): the table ${p}schedules is missing: run migrate()`);
+        await expect(sqlane.start())
+            .rejects.toThrow(`start(): the table ${p}schedules is missing: run schema.migrate()`);
     });
 
     test('a database that is down: start() resolves, reports the error, and registers when it is back', async () => {
@@ -479,7 +480,7 @@ describe('the fire of the store', () => {
         const p = nextPrefix();
         const { sqlane } = instanceOn(p);
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         const slot = Math.floor((await dbNow()) / 1000) * 1000;
 
@@ -906,7 +907,7 @@ describe('schedules end to end', () => {
         /** @type {Record<string, number>} */
         const startedAt = {};
 
-        await scheduler.sqlane.migrate();
+        await scheduler.sqlane.schema.migrate();
 
         for (const name of ['alpha', 'beta']) {
             scheduler.sqlane.schedule(name, { every: '2s' });
