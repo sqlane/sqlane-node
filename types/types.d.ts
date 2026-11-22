@@ -524,8 +524,8 @@ export type ScheduleInfo = {
 export type Dialect = 'mysql' | 'mariadb' | 'postgres';
 export type Adapter<C> = {
     /**
-     * The database, as the app named it. The first `start()` or `migrate()` of an instance
-     * checks it against the server.
+     * The database, as the app named it. The first `start()` or call of `schema.migrate()`,
+     * `schema.rollback()` or `schema.drop()` of an instance checks it against the server.
      */
     dialect: Dialect;
     /**
@@ -702,7 +702,90 @@ export type CloseOptions = {
 };
 export type MigrateOptions = {
     /**
+     * `'X.Y.Z'`: only the migrations tagged at or below it. From `'6.0.0'` up to the
+     * installed version. Default: every migration.
+     */
+    targetVersion?: string;
+    /**
      * Default: `'10m'`.
+     */
+    lockTimeout?: Duration;
+};
+export type RollbackOptions = {
+    /**
+     * `'X.Y.Z'`: the migrations tagged above it are reverted. From `'6.0.0'` up to the
+     * installed version.
+     */
+    targetVersion: string;
+    /**
+     * For the migration lock, and for each lock of a table. Default: `'10m'`.
+     */
+    lockTimeout?: Duration;
+};
+export type MigrationStatus = {
+    /**
+     * `missingRequired` is empty.
+     */
+    ok: boolean;
+    /**
+     * Not recorded, tagged up to the base of the installed major (`X.0.0`): the
+     * queries of this version need them.
+     */
+    missingRequired: string[];
+    /**
+     * Not recorded, tagged above `X.0.0`: only the features that they serve need
+     * them.
+     */
+    missingOptional: string[];
+    /**
+     * Recorded, unknown to this version: a newer version migrated.
+     */
+    unknownApplied: string[];
+};
+export type SchemaIssue = 'missing_table' | 'missing_column' | 'wrong_type' | 'wrong_nullability' | 'missing_index' | 'wrong_index';
+export type SchemaProblem = {
+    /**
+     * With its prefix.
+     */
+    table: string;
+    /**
+     * The column of a column issue.
+     */
+    column?: string;
+    /**
+     * The index of an index issue, with its prefix (MySQL's primary key: `PRIMARY`).
+     */
+    index?: string;
+    /**
+     * What is wrong.
+     */
+    issue: SchemaIssue;
+    /**
+     * For a wrong type, nullability or index: what this version expects.
+     */
+    expected?: string;
+    /**
+     * For a wrong type, nullability or index: what the catalog has.
+     */
+    found?: string;
+    /**
+     * False: from a migration tagged above the base of the installed major (`X.0.0`).
+     */
+    required: boolean;
+};
+export type SchemaProblems = {
+    /**
+     * No problem with `required: true`.
+     */
+    ok: boolean;
+    /**
+     * Every problem, required or not.
+     */
+    problems: SchemaProblem[];
+};
+export type DropOptions = {
+    /**
+     * For the migration lock, and for the locks of the tables. Default: `'10m'`.
      */
     lockTimeout?: Duration;
 };
@@ -1025,16 +1108,6 @@ export type FailedJobPayload = {
     error: JobError;
 };
 export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
-export type Migration = {
-    /**
-     * Such as `0001_initial`.
-     */
-    id: string;
-    /**
-     * Its SQL, in order.
-     */
-    statements: readonly string[];
-};
 /**
  * A duration: non-negative safe integer milliseconds, or decimal quantities with lowercase units in descending
  * order (`w`, `d`, `h`, `m`, `s`, `ms`), each at most once: `'500ms'`, `'4m30s'`, `'1d 1h 1ms'`.
@@ -1349,8 +1422,8 @@ export type Migration = {
  * The connections that `enqueue` accepts (C), and the queue's own pool. Made by `mysql2Adapter()` or `pgAdapter()`.
  * @template C
  * @typedef {object} Adapter
- * @property {Dialect} dialect The database, as the app named it. The first `start()` or `migrate()` of an instance
- *     checks it against the server.
+ * @property {Dialect} dialect The database, as the app named it. The first `start()` or call of `schema.migrate()`,
+ *     `schema.rollback()` or `schema.drop()` of an instance checks it against the server.
  * @property {boolean} [allowUnsupportedDbVersion] A server below the supported minimum (MySQL 8.4, MariaDB 10.11,
  *     PostgreSQL 15) logs a warning instead of a `ConfigError`.
  * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: a `sql_mode` that lacks a required flag,
@@ -1428,7 +1501,49 @@ export type Migration = {
  */
 /**
  * @typedef {object} MigrateOptions
+ * @property {string} [targetVersion] `'X.Y.Z'`: only the migrations tagged at or below it. From `'6.0.0'` up to the
+ *     installed version. Default: every migration.
  * @property {Duration} [lockTimeout] Default: `'10m'`.
+ */
+/**
+ * @typedef {object} RollbackOptions
+ * @property {string} targetVersion `'X.Y.Z'`: the migrations tagged above it are reverted. From `'6.0.0'` up to the
+ *     installed version.
+ * @property {Duration} [lockTimeout] For the migration lock, and for each lock of a table. Default: `'10m'`.
+ */
+/**
+ * What `schema.migrate()` would do, by the records of the migrations.
+ * @typedef {object} MigrationStatus
+ * @property {boolean} ok `missingRequired` is empty.
+ * @property {string[]} missingRequired Not recorded, tagged up to the base of the installed major (`X.0.0`): the
+ *     queries of this version need them.
+ * @property {string[]} missingOptional Not recorded, tagged above `X.0.0`: only the features that they serve need
+ *     them.
+ * @property {string[]} unknownApplied Recorded, unknown to this version: a newer version migrated.
+ */
+/**
+ * @typedef {'missing_table' | 'missing_column' | 'wrong_type' | 'wrong_nullability' | 'missing_index' | 'wrong_index'}
+ *     SchemaIssue
+ */
+/**
+ * @typedef {object} SchemaProblem
+ * @property {string} table With its prefix.
+ * @property {string} [column] The column of a column issue.
+ * @property {string} [index] The index of an index issue, with its prefix (MySQL's primary key: `PRIMARY`).
+ * @property {SchemaIssue} issue What is wrong.
+ * @property {string} [expected] For a wrong type, nullability or index: what this version expects.
+ * @property {string} [found] For a wrong type, nullability or index: what the catalog has.
+ * @property {boolean} required False: from a migration tagged above the base of the installed major (`X.0.0`).
+ */
+/**
+ * Whether the queries of this version find what they need, by the catalog.
+ * @typedef {object} SchemaProblems
+ * @property {boolean} ok No problem with `required: true`.
+ * @property {SchemaProblem[]} problems Every problem, required or not.
+ */
+/**
+ * @typedef {object} DropOptions
+ * @property {Duration} [lockTimeout] For the migration lock, and for the locks of the tables. Default: `'10m'`.
  */
 /**
  * @typedef {object} JobStats
@@ -1608,10 +1723,5 @@ export type Migration = {
  * A sqlane instance, made by `createSqlane()`. Its methods and their docs are in sqlane.ts.
  * @template C The connections that `enqueue` accepts.
  * @typedef {import('./sqlane.js').Sqlane<C>} Sqlane
- */
-/**
- * @typedef {object} Migration
- * @property {string} id Such as `0001_initial`.
- * @property {readonly string[]} statements Its SQL, in order.
  */
 export {};

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
-import { ConfigError } from './errors.js';
-import { getMigrations, runMigrations } from './migrations.js';
+import { migrationsOf, runMigrations } from './migrations.js';
+import { compareVersions, parseVersion } from './version.js';
 
 /** The migrations of 6.0, of the rate limits and of the lists of jobs */
 const SIX = ['0005_concurrency_limits', '0006_concurrency_slots', '0007_rate_limits', '0008_job_list'];
@@ -11,31 +11,40 @@ test.each([
     { dialect: 'mariadb', ids: ['0001_initial', '0002_job_keys', '0004_schedules', ...SIX] },
     { dialect: 'postgres', ids: ['0001_initial', '0002_pending_order', '0003_job_keys', '0004_schedules', ...SIX] },
 ])('$dialect: the migrations use the table prefix', ({ dialect, ids }) => {
-    const migrations = getMigrations({ dialect: /** @type {import('./types.js').Dialect} */ (dialect), tablePrefix: 'q_' });
+    const migrations = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_');
 
     expect(migrations.map(({ id }) => id)).toStrictEqual(ids);
     expect(migrations[0].statements.join('\n')).toMatch(/CREATE TABLE IF NOT EXISTS q_jobs /);
     expect(migrations[0].statements.join('\n')).not.toMatch(/sqlane_/);
 });
 
-test.each([
-    ['an unknown dialect', { dialect: 'sqlite' }],
-    ['an uppercase prefix', { dialect: 'mysql', tablePrefix: 'Q_' }],
-    ['a prefix with a quote', { dialect: 'mysql', tablePrefix: 'q`; DROP' }],
-    ['a prefix of 33 characters', { dialect: 'postgres', tablePrefix: `q${'_'.repeat(32)}` }],
-])('rejects %s', (_, options) => {
-    expect(() => getMigrations(/** @type {any} */ (options))).toThrow(ConfigError);
+test.each(['mysql', 'mariadb', 'postgres'])('%s: each migration is tagged with a version; tags never decrease', (
+    dialect,
+) => {
+    const migrations = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_');
+    const versions = migrations.map(({ version }) => version);
+
+    expect(versions.filter(version => !parseVersion(version))).toStrictEqual([]);
+    expect(versions.toSorted(compareVersions)).toStrictEqual(versions);
+});
+
+test.each(['mysql', 'mariadb', 'postgres'])('%s: each migration tagged above 6.0.0 has a down', (dialect) => {
+    const migrations = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_')
+        .filter(({ version }) => compareVersions(version, '6.0.0') > 0);
+
+    expect(migrations.map(({ id }) => id)).toContain('0008_job_list');
+    expect(migrations.filter(({ down }) => !down?.length).map(({ id }) => id)).toStrictEqual([]);
 });
 
 test.each(['mysql', 'mariadb', 'postgres'])('%s: 0004_schedules creates the table of the schedules', (dialect) => {
-    const migrations = getMigrations({ dialect: /** @type {import('./types.js').Dialect} */ (dialect), tablePrefix: 'q_' });
+    const migrations = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_');
     const sql = migrations.find(({ id }) => id === '0004_schedules')?.statements.join('\n');
 
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS q_schedules /);
 });
 
 test('mariadb: the collation of MariaDB 10.11 (it has no utf8mb4_0900_bin)', () => {
-    const sql = getMigrations({ dialect: 'mariadb' }).flatMap(({ statements }) => statements).join('\n');
+    const sql = migrationsOf('mariadb', 'sqlane_').flatMap(({ statements }) => statements).join('\n');
 
     expect(sql).toMatch(/COLLATE = utf8mb4_bin/);
     expect(sql).not.toMatch(/utf8mb4_0900_bin/);
@@ -51,7 +60,7 @@ test.each([
 ])('$dialect: 0007_rate_limits: the table of the rate keys, in µs, with an index on tat, and the column of the jobs', ({
     dialect, time, column, index,
 }) => {
-    const migrations = getMigrations({ dialect: /** @type {import('./types.js').Dialect} */ (dialect), tablePrefix: 'q_' });
+    const migrations = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_');
     const sql = migrations.find(({ id }) => id === '0007_rate_limits')?.statements.join('\n');
 
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS q_rate_limits /);
@@ -65,7 +74,7 @@ test.each([
     { dialect: 'mariadb', index: /^ALTER TABLE q_jobs ADD KEY IF NOT EXISTS q_jobs_list \(job_name, created_at, id\)$/ },
     { dialect: 'postgres', index: /^CREATE INDEX IF NOT EXISTS q_jobs_list ON q_jobs \(job_name, created_at, id\)$/ },
 ])('$dialect: 0008_job_list: an index for the lists of a name, newest first', ({ dialect, index }) => {
-    const migrations = getMigrations({ dialect: /** @type {import('./types.js').Dialect} */ (dialect), tablePrefix: 'q_' });
+    const migrations = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_');
 
     expect(migrations.find(({ id }) => id === '0008_job_list')?.statements).toMatchObject([expect.stringMatching(index)]);
 });
@@ -78,7 +87,7 @@ test.each([
 async function postgresStatements(lockTimeout) {
     /** @type {{ sql: string, params: readonly unknown[] }[]} */
     const statements = [];
-    const applied = getMigrations({ dialect: 'postgres' }).map(({ id }) => ({ id }));
+    const applied = migrationsOf('postgres', 'sqlane_').map(({ id }) => ({ id }));
     /** @type {import('./types.js').Executor} */
     const executor = {
         query: async (sql, params) => {

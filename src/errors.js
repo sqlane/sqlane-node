@@ -278,7 +278,10 @@ export class RateLimitedError extends SqlaneError {
     }
 }
 
-/** `migrate()` did not get the migration lock in its `lockTimeout`. */
+/**
+ * `schema.migrate()`, `schema.rollback()` or `schema.drop()` did not get the migration lock in its `lockTimeout`; for
+ * `schema.rollback()` and `schema.drop()`, also the lock of a table.
+ */
 export class MigrationLockTimeoutError extends SqlaneError {
     /**
      * @param {string} message

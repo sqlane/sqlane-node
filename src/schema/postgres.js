@@ -2,12 +2,13 @@
 
 /**
  * @param {string} p The table prefix.
- * @returns {import('../types.js').Migration[]}
+ * @returns {import('../migrations.js').Migration[]}
  */
 export function postgresMigrations(p) {
     return [
         {
             id: '0001_initial',
+            version: '0.1.0',
             statements: [
                 `CREATE TABLE IF NOT EXISTS ${p}jobs (
                     id varchar(255) COLLATE "C" NOT NULL PRIMARY KEY,
@@ -56,6 +57,7 @@ export function postgresMigrations(p) {
             // The claims read the due jobs of a name in the order of (run_at, id): from the index, with no sort, in
             // every plan (a cached generic one too). The index has the pending jobs only: small.
             id: '0002_pending_order',
+            version: '3.0.0',
             statements: [
                 `DROP INDEX IF EXISTS ${p}jobs_pending`,
                 `CREATE INDEX IF NOT EXISTS ${p}jobs_pending ON ${p}jobs (job_name, run_at, id) WHERE status = 'pending'`,
@@ -65,6 +67,7 @@ export function postgresMigrations(p) {
             // The FIFO of a mutex key, and the wake after its release, read the pending jobs of a key in order: a row
             // per key of each pending job. A claim deletes the rows of its jobs, a return to pending adds them again.
             id: '0003_job_keys',
+            version: '3.0.0',
             statements: [
                 `CREATE TABLE IF NOT EXISTS ${p}job_keys (
                     mutex_key varchar(255) COLLATE "C" NOT NULL,
@@ -84,6 +87,7 @@ export function postgresMigrations(p) {
         {
             // The cursor of each schedule: its last decided slot. Needed only with schedules.
             id: '0004_schedules',
+            version: '4.0.0',
             statements: [
                 `CREATE TABLE IF NOT EXISTS ${p}schedules (
                     id varchar(255) COLLATE "C" NOT NULL PRIMARY KEY,
@@ -100,6 +104,7 @@ export function postgresMigrations(p) {
             // 6.0: global concurrency limits replace mutex keys. A job's keys get their maxes; a job with a full key
             // is `blocked` on it, out of the due jobs, until a release of the key.
             id: '0005_concurrency_limits',
+            version: '6.0.0',
             statements: [
                 `ALTER TABLE ${p}jobs DROP CONSTRAINT IF EXISTS ${p}jobs_status`,
                 `ALTER TABLE ${p}jobs DROP CONSTRAINT IF EXISTS ${p}jobs_states`,
@@ -115,6 +120,7 @@ export function postgresMigrations(p) {
         {
             // A mutex key of 5.x gets the max 1; its hold becomes slot 0 of its key. The job_keys and their FIFO go.
             id: '0006_concurrency_slots',
+            version: '6.0.0',
             statements: [
                 `CREATE TABLE IF NOT EXISTS ${p}concurrency_slots (
                     limit_key varchar(255) COLLATE "C" NOT NULL,
@@ -139,6 +145,7 @@ export function postgresMigrations(p) {
             // Rate limits: the next allowed start of each rate key (its theoretical arrival time, GCRA), in µs; the
             // rate keys of a job, frozen at enqueue with their settings, as a JSON array sorted by key.
             id: '0007_rate_limits',
+            version: '6.0.0',
             statements: [
                 `CREATE TABLE IF NOT EXISTS ${p}rate_limits (
                     limit_key varchar(255) COLLATE "C" NOT NULL PRIMARY KEY,
@@ -153,7 +160,9 @@ export function postgresMigrations(p) {
             // sqlane.jobs.list(): the jobs of a name, newest first, by enqueue time then id. Not CONCURRENTLY: a
             // migration is one transaction, so the build blocks the writes of the table while it runs.
             id: '0008_job_list',
+            version: '7.1.0',
             statements: [`CREATE INDEX IF NOT EXISTS ${p}jobs_list ON ${p}jobs (job_name, created_at, id)`],
+            down: [`DROP INDEX IF EXISTS ${p}jobs_list`],
         },
     ];
 }

@@ -119,7 +119,7 @@ test('getStats: the counts of each name', async () => {
     const sqlane = sqlaneOn(p);
     const store = createStore(testAdapter.adapter, p);
 
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
     await sqlane.enqueueMany(testAdapter.pool, 'a', [
         { payload: {}, options: { runAt: new Date(Date.now() - 5000) } },
         { payload: {}, options: { runAt: new Date(Date.now() - 1000) } },
@@ -161,7 +161,7 @@ describe('hints', () => {
         const producer = sqlaneOn(p, { hint });
         const worker = sqlaneOn(p, { hint, pollInterval: '10s' });
 
-        await producer.migrate();
+        await producer.schema.migrate();
         worker.handle('ping', () => {});
         await worker.start();
         await sleep(100);
@@ -192,7 +192,7 @@ describe('hints', () => {
         /** @type {unknown[]} */
         const stores = [];
 
-        await producer.migrate();
+        await producer.schema.migrate();
         worker.handle('ping', () => {
             stores.push(storage.getStore());
         });
@@ -223,7 +223,7 @@ describe('hints', () => {
             },
         });
 
-        await producer.migrate();
+        await producer.schema.migrate();
         await expect(producer.enqueue(testAdapter.pool, 'ping', {})).resolves.toMatchObject({ created: true });
         await sleep(20);
         expect(errors).toMatchObject([{ type: 'error', operation: 'hint_publish' }]);
@@ -241,7 +241,7 @@ describe('hints', () => {
         /** @type {(() => void) | null} */
         let finishFirst = null;
 
-        await first.migrate();
+        await first.schema.migrate();
         first.handle(firstJob, () => new Promise((resolve) => {
             finishFirst = () => resolve(undefined);
         }));
@@ -268,7 +268,7 @@ describe('hints', () => {
         const producer = sqlaneOn(p, { adapter });
         const worker = sqlaneOn(p, { adapter, pollInterval: '10s' });
 
-        await producer.migrate();
+        await producer.schema.migrate();
         worker.handle('ping', () => {});
         await worker.start();
         await sleep(200);

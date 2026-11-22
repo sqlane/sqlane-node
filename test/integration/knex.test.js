@@ -10,6 +10,7 @@ import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './he
 import { preparedAfterAJob, SQLANE_STATEMENTS_SQL } from './helpers/prepared_statements.js';
 import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
+import { checkSchemaChanges, SCHEMA_CHANGES } from './helpers/schema_checks.js';
 import { checkStartTimes } from './helpers/start_time_checks.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<import('../../src/adapters/knex.js').KnexConnection>} Sqlane */
@@ -98,7 +99,7 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         });
 
         instances.push(sqlane);
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         return { sqlane, p, events };
     }
@@ -111,7 +112,7 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         return (await database.query(`SELECT status FROM ${p}jobs ORDER BY id`)).map(row => String(row.status));
     }
 
-    test('schedules: start() without the table asks for migrate(); a slot adds its job', async () => {
+    test('schedules: start() without the table asks for schema.migrate(); a slot adds its job', async () => {
         const { sqlane, p } = await freshSqlane();
 
         await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
@@ -121,6 +122,12 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         const { sqlane } = await freshSqlane();
 
         await expect(checkJobsRead(sqlane, knex)).resolves.toHaveLength(3);
+    });
+
+    test('the schema through the adapter: rollback(), migrate() again, drop()', async () => {
+        const { sqlane, p } = await freshSqlane();
+
+        await expect(checkSchemaChanges(sqlane, p)).resolves.toStrictEqual(SCHEMA_CHANGES);
     });
 
     test('the start time of a run: the event, JobInfo, JobRecord and its slots agree', async () => {

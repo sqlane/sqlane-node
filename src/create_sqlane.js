@@ -2,7 +2,8 @@ import { resolveDefaults } from './defaults.js';
 import { createEnqueuer } from './enqueue.js';
 import { createHintChannel } from './hint_channel.js';
 import { ClosedError, ConfigError } from './errors.js';
-import { runMigrations } from './migrations.js';
+import { dropTables, rollbackMigrations, runMigrations } from './migrations.js';
+import { findSchemaProblems, getMigrationStatus } from './schema_status.js';
 import { DEFAULT_MAX_PAYLOAD_BYTES } from './payload.js';
 import { createRegistry } from './registry.js';
 import { createRunner } from './runner.js';
@@ -17,7 +18,7 @@ import { checkDuration, checkInteger, checkObject, checkTablePrefix, isPlainObje
 
 const OPTION_NAMES = [
     'adapter', 'jobs', 'localMaxConcurrency', 'defaults', 'unknownJobs', 'hint', 'logger', 'onEvent', 'tablePrefix',
-    'pollInterval', 'maxPayloadBytes', 'cleanup', 'timings',
+    'pollInterval', 'maxPayloadBytes', 'cleanup', 'timings', 'installedVersion',
 ];
 
 /**
@@ -156,6 +157,8 @@ export function createSqlane(options) {
     const notifyChannel = adapter.notify ? `${tablePrefix}ready` : null;
     // Undocumented, for the tests of sqlane
     const testTimings = /** @type {{ timings?: object }} */ (options).timings;
+    // Undocumented, for the tests of sqlane: in place of the version of package.json
+    const { installedVersion } = /** @type {{ installedVersion?: string }} */ (options);
     const store = createStore(adapter, tablePrefix, options.logger);
     const runner = createRunner({
         store,
@@ -242,7 +245,7 @@ export function createSqlane(options) {
     let serverChecked = null;
 
     /**
-     * Checks the server once: the first `start()` or `migrate()`, then their calls share the result.
+     * Checks the server once: the first `start()` or `schema.migrate()`, then their calls share the result.
      * @param {string} where The caller, for the errors.
      * @returns {Promise<void>}
      */
@@ -257,6 +260,21 @@ export function createSqlane(options) {
         })();
 
         return serverChecked;
+    }
+
+    /**
+     * `schema.rollback()` and `schema.drop()`: on an instance that is not started, closed or draining. Their DDL would
+     * wait behind the queries of this instance.
+     * @param {string} where The caller, for the errors.
+     */
+    function checkSchemaChange(where) {
+        if (runner.isClosed()) {
+            throw new ClosedError(`${where} after close()`);
+        }
+
+        if (!runner.isIdle() || startPromise) {
+            throw new ConfigError(`${where} while started or draining: run it on an instance that is not started`);
+        }
     }
 
     /**
@@ -291,9 +309,10 @@ export function createSqlane(options) {
                 read = await scheduler.register();
             } catch (error) {
                 if (isMissingTableError(error)) {
-                    throw new ConfigError(`start(): the table ${tablePrefix}schedules is missing: run migrate()`, {
-                        cause: error,
-                    });
+                    throw new ConfigError(
+                        `start(): the table ${tablePrefix}schedules is missing: run schema.migrate()`,
+                        { cause: error },
+                    );
                 }
 
                 // The database is down: start anyway, the registration retries
@@ -400,9 +419,41 @@ export function createSqlane(options) {
 
             return closePromise;
         },
-        migrate: async migrateOptions => ({
-            applied: await runMigrations(adapter, tablePrefix, migrateOptions, () => checkServerOnce('migrate()')),
-        }),
+        schema: {
+            migrate: async (migrateOptions) => {
+                if (runner.isClosed()) {
+                    throw new ClosedError('schema.migrate() after close()');
+                }
+
+                return {
+                    applied: await runMigrations(adapter, tablePrefix, migrateOptions, {
+                        checkServer: () => checkServerOnce('schema.migrate()'),
+                        installedVersion,
+                    }),
+                };
+            },
+            rollback: async (rollbackOptions) => {
+                checkSchemaChange('schema.rollback()');
+
+                return {
+                    reverted: await rollbackMigrations(adapter, tablePrefix, rollbackOptions, {
+                        checkServer: () => checkServerOnce('schema.rollback()'),
+                        installedVersion,
+                    }),
+                };
+            },
+            drop: async (dropOptions) => {
+                checkSchemaChange('schema.drop()');
+
+                return {
+                    dropped: await dropTables(adapter, tablePrefix, dropOptions, {
+                        checkServer: () => checkServerOnce('schema.drop()'),
+                    }),
+                };
+            },
+            getMigrationStatus: () => getMigrationStatus(adapter, tablePrefix, { installedVersion }),
+            findSchemaProblems: () => findSchemaProblems(adapter, tablePrefix, { installedVersion }),
+        },
         getStats: () => store.getStats(),
         jobs: createJobsApi(store, createBulk({
             store,

@@ -86,7 +86,7 @@ export const adapter = {
             notes.push('test-only option: lease 3 s (default and minimum public: 4 min)');
         }
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
 
         /** @type {Map<string, import('../../../src/types.js').JobDefinition>} */
         const definitions = new Map();

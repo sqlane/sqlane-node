@@ -1,11 +1,19 @@
 import { describe, expect, test, vi } from 'vitest';
-import { ClosedError, ConfigError } from './errors.js';
+import { ClosedError, ConfigError, InvalidOptionsError } from './errors.js';
 import { createSqlane } from './create_sqlane.js';
 import { defineConcurrencyLimit } from './define_concurrency_limit.js';
 import { defineJob } from './define_job.js';
 
 test('createSqlane needs an adapter', () => {
     expect(() => createSqlane(/** @type {any} */ ({}))).toThrow(ConfigError);
+});
+
+test.each([
+    ['an uppercase prefix', 'Q_'],
+    ['a prefix with a quote', 'q`; DROP'],
+    ['a prefix of 33 characters', `q${'_'.repeat(32)}`],
+])('createSqlane rejects %s', (_, tablePrefix) => {
+    expect(() => createSqlane({ adapter: fakeAdapter().adapter, tablePrefix })).toThrow(ConfigError);
 });
 
 /**
@@ -117,13 +125,14 @@ describe('schedule() and start()', () => {
         await expect(sqlane.start()).rejects.toThrow(/schedule\("keyed"\)/);
     });
 
-    test('a missing table: start() throws a ConfigError that says to run migrate(), and can be called again', async () => {
+    test('a missing table: start() throws a ConfigError that says to run schema.migrate(), and can be called again', async () => {
         const { adapter, statements } = fakeAdapter({ missingTable: true });
         const sqlane = createSqlane({ adapter });
 
         sqlane.schedule('tick', { every: '1m' });
 
-        await expect(sqlane.start()).rejects.toThrow('start(): the table sqlane_schedules is missing: run migrate()');
+        await expect(sqlane.start())
+            .rejects.toThrow('start(): the table sqlane_schedules is missing: run schema.migrate()');
         await expect(sqlane.start()).rejects.toThrow(ConfigError);
         expect(statements).toHaveLength(2);
         await sqlane.close({ deadline: 0 });
@@ -208,13 +217,17 @@ function holdRegistration(adapter) {
 }
 
 describe('close()', () => {
-    test('closes at once: handle(), schedule() and start() throw a ClosedError right after it', async () => {
+    test('closes at once: handle(), schedule(), start() and schema.migrate() then throw a ClosedError', async () => {
         const sqlane = createSqlane({ adapter: fakeAdapter().adapter });
         const closing = sqlane.close({ deadline: 0 });
 
         expect(() => sqlane.handle('tick', () => {})).toThrow(ClosedError);
         expect(() => sqlane.schedule('tick', { every: '1m' })).toThrow(ClosedError);
         await expect(sqlane.start()).rejects.toThrow(ClosedError);
+        await expect(sqlane.schema.migrate()).rejects.toThrow(new ClosedError('schema.migrate() after close()'));
+        await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' }))
+            .rejects.toThrow(new ClosedError('schema.rollback() after close()'));
+        await expect(sqlane.schema.drop()).rejects.toThrow(new ClosedError('schema.drop() after close()'));
         await closing;
     });
 
@@ -289,24 +302,24 @@ function workerStartedWhileDown(options) {
 }
 
 describe('the check of the server', () => {
-    test('migrate() then start(): one statement; a process that only enqueues runs none', async () => {
+    test('schema.migrate() then start(): one statement; a process that only enqueues runs none', async () => {
         const { adapter, versionQueries } = fakeAdapter();
         const sqlane = createSqlane({ adapter });
 
         expect(versionQueries()).toBe(0);
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
         await sqlane.start();
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
         await sqlane.close({ deadline: 0 });
 
         expect(versionQueries()).toBe(1);
     });
 
-    test('concurrent start() and migrate(): one statement', async () => {
+    test('concurrent start() and schema.migrate(): one statement', async () => {
         const { adapter, versionQueries } = fakeAdapter();
         const sqlane = createSqlane({ adapter });
 
-        await Promise.all([sqlane.start(), sqlane.migrate(), sqlane.start()]);
+        await Promise.all([sqlane.start(), sqlane.schema.migrate(), sqlane.start()]);
         await sqlane.close({ deadline: 0 });
 
         expect(versionQueries()).toBe(1);
@@ -317,13 +330,13 @@ describe('the check of the server', () => {
         { dialect: 'mariadb', version: '8.4.13', server: 'MySQL 8.4.13', fix: 'mysql' },
         { dialect: 'postgres', version: '8.4.13', server: 'MySQL 8.4.13', fix: 'mysql' },
         { dialect: 'mysql', version: 'PostgreSQL 15.19 on x86_64-pc-linux-gnu', server: 'PostgreSQL 15.19', fix: 'postgres' },
-    ])('"$dialect" on $server: start() and migrate() throw a ConfigError', async ({ dialect, version, server, fix }) => {
+    ])('"$dialect" on $server: start() and schema.migrate() throw a ConfigError', async ({ dialect, version, server, fix }) => {
         const { adapter, versionQueries } = fakeAdapter({ dialect: /** @type {any} */ (dialect), version });
         const sqlane = createSqlane({ adapter });
         const message = `"dialect" is "${dialect}", but the database is ${server}: pass dialect: '${fix}' to the adapter`;
 
         await expect(sqlane.start()).rejects.toThrow(new ConfigError(`start(): ${message}`));
-        await expect(sqlane.migrate()).rejects.toThrow(new ConfigError(`migrate(): ${message}`));
+        await expect(sqlane.schema.migrate()).rejects.toThrow(new ConfigError(`schema.migrate(): ${message}`));
         // A failed check runs again
         expect(versionQueries()).toBe(2);
         await sqlane.close({ deadline: 0 });
@@ -333,21 +346,22 @@ describe('the check of the server', () => {
         const version = 'CockroachDB CCL v24.1.0 (x86_64-pc-linux-gnu)';
         const sqlane = createSqlane({ adapter: fakeAdapter({ version }).adapter });
 
-        await expect(sqlane.migrate())
-            .rejects.toThrow(`migrate(): "dialect" is "postgres", but the database is ${JSON.stringify(version)}`);
+        const message = `"dialect" is "postgres", but the database is ${JSON.stringify(version)}`;
+
+        await expect(sqlane.schema.migrate()).rejects.toThrow(`schema.migrate(): ${message}`);
     });
 
     test.each([
         { dialect: 'mysql', version: '8.0.39-0ubuntu0.22.04.1', message: 'MySQL 8.0.39 is below the supported minimum 8.4' },
         { dialect: 'mariadb', version: '10.6.18-MariaDB', message: 'MariaDB 10.6.18 is below the supported minimum 10.11' },
         { dialect: 'postgres', version: 'PostgreSQL 14.12 on x86_64', message: 'PostgreSQL 14.12 is below the supported minimum 15' },
-    ])('$dialect below the minimum: start() and migrate() throw a ConfigError', async ({ dialect, version, message }) => {
+    ])('$dialect below the minimum: start() and schema.migrate() throw a ConfigError', async ({ dialect, version, message }) => {
         const { adapter } = fakeAdapter({ dialect: /** @type {any} */ (dialect), version });
         const sqlane = createSqlane({ adapter });
         const hint = 'upgrade it, or pass allowUnsupportedDbVersion: true to the adapter';
 
         await expect(sqlane.start()).rejects.toThrow(new ConfigError(`start(): ${message}: ${hint}`));
-        await expect(sqlane.migrate()).rejects.toThrow(new ConfigError(`migrate(): ${message}: ${hint}`));
+        await expect(sqlane.schema.migrate()).rejects.toThrow(new ConfigError(`schema.migrate(): ${message}: ${hint}`));
         await sqlane.close({ deadline: 0 });
     });
 
@@ -356,7 +370,7 @@ describe('the check of the server', () => {
         const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
         const sqlane = createSqlane({ adapter, logger });
 
-        await sqlane.migrate();
+        await sqlane.schema.migrate();
         await sqlane.start();
         await sqlane.close({ deadline: 0 });
 
@@ -371,25 +385,26 @@ describe('the check of the server', () => {
         const adapter = fakeAdapter({ dialect: 'mysql', version: '10.6.18-MariaDB', allowUnsupportedDbVersion: true }).adapter;
         const sqlane = createSqlane({ adapter });
 
-        await expect(sqlane.migrate()).rejects.toThrow('"dialect" is "mysql", but the database is MariaDB 10.6.18');
+        await expect(sqlane.schema.migrate())
+            .rejects.toThrow('"dialect" is "mysql", but the database is MariaDB 10.6.18');
     });
 
     test('allowUnsupportedDbVersion without a logger: silent', async () => {
         const adapter = fakeAdapter({ version: 'PostgreSQL 13.16', allowUnsupportedDbVersion: true }).adapter;
         const sqlane = createSqlane({ adapter });
 
-        await expect(sqlane.migrate()).resolves.toStrictEqual({ applied: expect.any(Array) });
+        await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: expect.any(Array) });
     });
 
-    test('a sql_mode without strict mode: start() and migrate() throw a ConfigError', async () => {
+    test('a sql_mode without strict mode: start() and schema.migrate() throw a ConfigError', async () => {
         const { adapter, versionQueries } = fakeAdapter({ dialect: 'mysql', version: '8.4.13', sqlMode: 'NO_ENGINE_SUBSTITUTION' });
         const sqlane = createSqlane({ adapter });
         const message = 'the sql_mode of MySQL lacks STRICT_TRANS_TABLES or STRICT_ALL_TABLES, NO_ZERO_DATE, '
             + 'NO_ZERO_IN_DATE and ERROR_FOR_DIVISION_BY_ZERO';
 
         await expect(sqlane.start()).rejects.toThrow(`start(): ${message}: `);
-        await expect(sqlane.migrate()).rejects.toThrow(`migrate(): ${message}: `);
-        await expect(sqlane.migrate()).rejects.toThrow(ConfigError);
+        await expect(sqlane.schema.migrate()).rejects.toThrow(`schema.migrate(): ${message}: `);
+        await expect(sqlane.schema.migrate()).rejects.toThrow(ConfigError);
         expect(versionQueries()).toBe(3);
         await sqlane.close({ deadline: 0 });
     });
@@ -419,7 +434,7 @@ describe('the check of the server', () => {
         ]]);
     });
 
-    test('a database that is down: migrate() rejects, and checks again', async () => {
+    test('a database that is down: schema.migrate() rejects, and checks again', async () => {
         const { adapter, versionQueries } = fakeAdapter();
         const down = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
 
@@ -427,8 +442,8 @@ describe('the check of the server', () => {
 
         const sqlane = createSqlane({ adapter });
 
-        await expect(sqlane.migrate()).rejects.toThrow(down);
-        await sqlane.migrate();
+        await expect(sqlane.schema.migrate()).rejects.toThrow(down);
+        await sqlane.schema.migrate();
         await sqlane.start();
         await sqlane.close({ deadline: 0 });
 
@@ -502,11 +517,65 @@ describe('the check of the server', () => {
         expect(statements.filter(sql => /delay_ms|FOR UPDATE|SKIP LOCKED/u.test(sql))).toStrictEqual([]);
     });
 
-    test('a bad lockTimeout: migrate() rejects before any statement', async () => {
+    test('a bad lockTimeout: schema.migrate() rejects before any statement', async () => {
         const { adapter, versionQueries } = fakeAdapter();
         const sqlane = createSqlane({ adapter });
 
-        await expect(sqlane.migrate({ lockTimeout: 'soon' })).rejects.toThrow('"lockTimeout" must be a duration');
+        await expect(sqlane.schema.migrate({ lockTimeout: 'soon' }))
+            .rejects.toThrow('schema.migrate(): "lockTimeout" must be a duration');
         expect(versionQueries()).toBe(0);
     });
+});
+
+describe('schema.rollback()', () => {
+    test.each([
+        ['no targetVersion', {}],
+        ['a targetVersion below 6.0.0', { targetVersion: '5.0.0' }],
+        ['a bad lockTimeout', { targetVersion: '6.0.0', lockTimeout: 'soon' }],
+    ])('%s: an InvalidOptionsError before any statement', async (_, options) => {
+        const { adapter, versionQueries } = fakeAdapter();
+        const sqlane = createSqlane({ adapter });
+
+        await expect(sqlane.schema.rollback(/** @type {any} */ (options))).rejects.toThrow(InvalidOptionsError);
+        expect(versionQueries()).toBe(0);
+    });
+});
+
+describe.each([
+    { method: 'rollback', call: (/** @type {any} */ sqlane) => sqlane.schema.rollback({ targetVersion: '6.0.0' }) },
+    { method: 'drop', call: (/** @type {any} */ sqlane) => sqlane.schema.drop() },
+])('schema.$method()', ({ method, call }) => {
+    test('while started, starting or draining: a ConfigError', async () => {
+        const job = defineJob({ name: 'a' });
+        const sqlane = createSqlane({ adapter: fakeAdapter().adapter, jobs: [job] });
+        const message = `schema.${method}() while started or draining: run it on an instance that is not started`;
+
+        sqlane.handle(job, async () => {});
+
+        const starting = sqlane.start();
+
+        await expect(call(sqlane)).rejects.toThrow(new ConfigError(message));
+        await starting;
+        await expect(call(sqlane)).rejects.toThrow(new ConfigError(message));
+        await sqlane.close({ deadline: 0 });
+
+        const drained = createSqlane({ adapter: fakeAdapter().adapter, jobs: [job] });
+
+        drained.handle(job, async () => {});
+
+        const draining = drained.drain();
+
+        await expect(call(drained)).rejects.toThrow(new ConfigError(message));
+        await draining;
+        await drained.close({ deadline: 0 });
+    });
+});
+
+test('schema.drop(): a bad lockTimeout, an InvalidOptionsError before any statement', async () => {
+    const { adapter, versionQueries } = fakeAdapter();
+    const sqlane = createSqlane({ adapter });
+
+    await expect(sqlane.schema.drop({ lockTimeout: 'soon' }))
+        .rejects.toThrow(new InvalidOptionsError('schema.drop(): "lockTimeout" must be a duration'));
+    expect(versionQueries()).toBe(0);
 });

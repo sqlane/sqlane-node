@@ -12,7 +12,7 @@ export const SQLANE_STATEMENTS_SQL = 'SELECT count(*)::int AS statements FROM pg
  * @returns {Promise<number>}
  */
 export async function preparedAfterAJob(sqlane, connection, query) {
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
     sqlane.handle('ping', () => {});
     await sqlane.enqueue(connection, 'ping', {});
 

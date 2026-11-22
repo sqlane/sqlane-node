@@ -41,7 +41,7 @@ beforeAll(async () => {
     const sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: p, jobs: [rated, limited] });
     const items = Array.from({ length: BLOCKED }, () => ({ payload: {} }));
 
-    await sqlane.migrate();
+    await sqlane.schema.migrate();
     await sqlane.enqueueMany(testAdapter.pool, rated, items);
     await sqlane.enqueueMany(testAdapter.pool, limited, items);
     await database.query(`

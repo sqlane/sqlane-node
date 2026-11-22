@@ -1,4 +1,67 @@
-import type { BulkOptions, BulkResult, CloseOptions, DrainOptions, DrainResult, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, Handler, HandlerPayload, JobDefinition, JobFilter, JobPage, JobRecord, JobSelector, KeyStatsOptions, KeyStatsPage, JobStats, ListJobsOptions, MigrateOptions, RetryOptions, ScheduleBaseOptions, ScheduleInfo, SchedulePayload, ScheduleTiming } from './types.js';
+import type { BulkOptions, BulkResult, CloseOptions, DrainOptions, DrainResult, DropOptions, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, Handler, HandlerPayload, JobDefinition, JobFilter, JobPage, JobRecord, JobSelector, KeyStatsOptions, KeyStatsPage, JobStats, ListJobsOptions, MigrateOptions, MigrationStatus, RetryOptions, RollbackOptions, ScheduleBaseOptions, ScheduleInfo, SchedulePayload, ScheduleTiming, SchemaProblems } from './types.js';
+/**
+ * The tables of sqlane: `sqlane.schema`. Each migration is tagged with the lowest version of sqlane that ships it.
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate | schema}
+ */
+export interface SqlaneSchema {
+    /**
+     * Creates or updates the `sqlane_*` tables: applies the missing migrations, in order. It holds a database lock, so
+     * several processes can run it at once. Run it from your own migration tool to pin a version, but not inside the
+     * tool's transaction.
+     * @param options `targetVersion`: apply only the migrations tagged at or below it, from `'6.0.0'` up to the
+     *     installed version; default: every migration. `lockTimeout`: how long to wait for the lock; default `'10m'`.
+     * @returns The ids of the migrations that it applied.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate | schema.migrate}
+     */
+    migrate(options?: MigrateOptions): Promise<{
+        applied: string[];
+    }>;
+    /**
+     * Reverts the recorded migrations tagged above `targetVersion`, newest first: the down of each, then its record.
+     * Each down is safe to run again, so a cut rollback is finished by running it again. A down that drops a column or
+     * a table loses its data. Run it only when no process of a newer version uses the tables. Its DDL waits for the
+     * locks of the tables, and the queries of the queue wait behind it: pass a short `lockTimeout` while processes run.
+     *
+     * Rejects with a `ConfigError` when a recorded migration is unknown to this version, or on a started or draining
+     * instance.
+     * @param options `targetVersion`: the version to go back to, from `'6.0.0'` up to the installed version.
+     *     `lockTimeout`: how long to wait for the migration lock, and for each lock of a table; default `'10m'`.
+     * @returns The ids of the migrations that it reverted, newest first.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemarollback | schema.rollback}
+     */
+    rollback(options: RollbackOptions): Promise<{
+        reverted: string[];
+    }>;
+    /**
+     * Drops every table that sqlane created under the prefix, in any version, with their data: `<p>migrations` last.
+     * Stop the other processes on the prefix first. It drops only the tables of sqlane: when `<p>jobs` is not a table
+     * of sqlane and `<p>migrations` does not record `0001_initial`, it rejects with a `ConfigError` and drops nothing.
+     * Also a `ConfigError` when a recorded migration is unknown to this version, or on a started or draining instance.
+     * @param options `lockTimeout`: how long to wait for the migration lock, and for the locks of the tables; default
+     *     `'10m'`.
+     * @returns The tables that existed.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemadrop | schema.drop}
+     */
+    drop(options?: DropOptions): Promise<{
+        dropped: string[];
+    }>;
+    /**
+     * What `migrate()` would do, by the records of the migrations: a read, for a readiness probe. It never throws on a
+     * mismatch.
+     * @returns `ok` when no migration that the installed major needs is missing; the missing ids, required (tagged up
+     *     to `X.0.0` of the installed major) or optional; the recorded ids unknown to this version.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemagetmigrationstatus}
+     */
+    getMigrationStatus(): Promise<MigrationStatus>;
+    /**
+     * Whether the queries of this version find what they need, by the catalog: the tables, columns (type, nullability,
+     * collation) and indexes that its migrations create, by name. Anything extra is ignored. A read, for a readiness
+     * probe: it never throws on a mismatch.
+     * @returns `ok` when no problem is required, and the problems.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemafindschemaproblems}
+     */
+    findSchemaProblems(): Promise<SchemaProblems>;
+}
 /**
  * The jobs in the database: `sqlane.jobs`. Read them; retry, cancel or remove them in bulk; see the keys of the global
  * limits. Before `start()` and after `close()` too. `get`, `list` and the batches require the migration
@@ -155,16 +218,6 @@ export interface Sqlane<C> {
      */
     close(options?: CloseOptions): Promise<void>;
     /**
-     * Creates or updates the `sqlane_*` tables. It holds a database lock, so several processes can run it at once. To
-     * use your own migration tool instead, take the SQL from `getMigrations()`.
-     * @param options `lockTimeout`: how long to wait for the lock. Default: `'10m'`.
-     * @returns The ids of the migrations that it applied.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#migrate | migrate}
-     */
-    migrate(options?: MigrateOptions): Promise<{
-        applied: string[];
-    }>;
-    /**
      * Counts the jobs of each job name, for monitoring and alerts. A growing `oldestDueAgeMs` usually means that no
      * process handles the name, or that the workers can't keep up.
      * @returns One entry per name with pending, running or failed jobs, sorted by name.
@@ -173,6 +226,8 @@ export interface Sqlane<C> {
     getStats(): Promise<JobStats[]>;
     /** The jobs in the database: read them; retry, cancel or remove them in bulk. */
     readonly jobs: SqlaneJobs<C>;
+    /** The `sqlane_*` tables: create, update, roll back or drop them; check them. */
+    readonly schema: SqlaneSchema;
     /**
      * Low level: makes this process check for due jobs now, instead of at the next poll. Most apps don't need it:
      * sqlane wakes the process after an enqueue in it, and after a hint. It does nothing before `start()`.

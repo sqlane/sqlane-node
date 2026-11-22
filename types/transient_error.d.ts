@@ -53,6 +53,13 @@ export declare function isMissingTableError(error: unknown): boolean;
  */
 export declare function isQuickRetryError(error: unknown): boolean;
 /**
+ * A lock was not free in time: an advisory lock, or the lock of a table (PostgreSQL `lock_timeout`, MySQL and MariaDB
+ * `lock_wait_timeout`).
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export declare function isLockTimeoutError(error: unknown): boolean;
+/**
  * The server does not know a system variable that a statement sets.
  * @param {unknown} error
  * @returns {boolean}

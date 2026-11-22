@@ -1,15 +1,9 @@
 // Scenarios: migrations; a hint over any pub/sub; stats.
-import { getMigrations } from '@sqlane/core';
 import { sqlane } from './sqlane.js';
 
 /** @returns {Promise<void>} */
 export async function migrate() {
-    await sqlane.migrate({ lockTimeout: '5m' });
-}
-
-/** @returns {string[]} The SQL for the app's own migration tool. */
-export function migrationSql() {
-    return getMigrations({ dialect: 'postgres' }).flatMap(migration => migration.statements);
+    await sqlane.schema.migrate({ lockTimeout: '5m' });
 }
 
 /**

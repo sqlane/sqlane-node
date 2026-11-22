@@ -7,12 +7,13 @@ const ASCII = 'CHARACTER SET ascii COLLATE ascii_bin';
 
 /**
  * @param {string} p The table prefix.
- * @returns {import('../types.js').Migration[]}
+ * @returns {import('../migrations.js').Migration[]}
  */
 export function mariadbMigrations(p) {
     return [
         {
             id: '0001_initial',
+            version: '2.0.0',
             statements: [
                 `CREATE TABLE IF NOT EXISTS ${p}jobs (
                     id VARCHAR(255) ${ASCII} NOT NULL,
@@ -63,6 +64,7 @@ export function mariadbMigrations(p) {
             // The FIFO of a mutex key, and the wake after its release, read the pending jobs of a key in order: a row
             // per key of each pending job. A claim deletes the rows of its jobs, a return to pending adds them again.
             id: '0002_job_keys',
+            version: '3.0.0',
             statements: [
                 `CREATE TABLE IF NOT EXISTS ${p}job_keys (
                     mutex_key VARCHAR(255) ${ASCII} NOT NULL,
@@ -84,6 +86,7 @@ export function mariadbMigrations(p) {
             // The cursor of each schedule: its last decided slot. Needed only with schedules. The id is the same on
             // every dialect: it skips 0003, which only PostgreSQL has.
             id: '0004_schedules',
+            version: '4.0.0',
             statements: [
                 `CREATE TABLE IF NOT EXISTS ${p}schedules (
                     id VARCHAR(255) ${ASCII} NOT NULL,
@@ -102,6 +105,7 @@ export function mariadbMigrations(p) {
             // is `blocked` on it, out of the due jobs, until a release of the key. One statement: atomic. CHANGE
             // COLUMN, not RENAME COLUMN: MariaDB keeps the JSON check of the column under its old name.
             id: '0005_concurrency_limits',
+            version: '6.0.0',
             statements: [
                 `ALTER TABLE ${p}jobs
                     DROP CONSTRAINT ${p}jobs_status,
@@ -116,6 +120,7 @@ export function mariadbMigrations(p) {
         {
             // A mutex key of 5.x gets the max 1; its hold becomes slot 0 of its key. The job_keys and their FIFO go.
             id: '0006_concurrency_slots',
+            version: '6.0.0',
             statements: [
                 `CREATE TABLE IF NOT EXISTS ${p}concurrency_slots (
                     limit_key VARCHAR(255) ${ASCII} NOT NULL,
@@ -141,6 +146,7 @@ export function mariadbMigrations(p) {
             // Rate limits: the next allowed start of each rate key (its theoretical arrival time, GCRA), in µs; the
             // rate keys of a job, frozen at enqueue with their settings, as a JSON array sorted by key.
             id: '0007_rate_limits',
+            version: '6.0.0',
             statements: [
                 `CREATE TABLE IF NOT EXISTS ${p}rate_limits (
                     limit_key VARCHAR(255) ${ASCII} NOT NULL,
@@ -156,7 +162,9 @@ export function mariadbMigrations(p) {
             // sqlane.jobs.list(): the jobs of a name, newest first, by enqueue time then id. Online: inserts and
             // updates go on while it builds.
             id: '0008_job_list',
+            version: '7.1.0',
             statements: [`ALTER TABLE ${p}jobs ADD KEY IF NOT EXISTS ${p}jobs_list (job_name, created_at, id)`],
+            down: [`ALTER TABLE ${p}jobs DROP KEY IF EXISTS ${p}jobs_list`],
         },
     ];
 }

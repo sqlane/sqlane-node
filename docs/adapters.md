@@ -55,7 +55,7 @@ const appPool = mysql.createPool({ uri: process.env.DATABASE_URL }); // your app
 const queuePool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 3 }); // the queue's own pool
 const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }), jobs: [buildReport] });
 
-await sqlane.migrate(); // or getMigrations({ dialect: 'mysql' }) for your own migration tool
+await sqlane.schema.migrate(); // creates or updates the sqlane_* tables
 
 // Producer: the report row and its job commit together, or neither does
 export async function orderReport(reportId) {
@@ -140,9 +140,9 @@ database.
 
 **Prepared statements.** By default (`prepare: true`), sqlane runs its SQL as named prepared statements
 (`sqlane_<hash>`). Each connection parses and plans a statement once, and PostgreSQL then reuses a cached plan. sqlane
-has about 55 statements at run time, and 40 more on the connection that runs `migrate()`. Their number does not grow
-with the job names, the keys or the batch sizes. A connection that has run them all keeps 2–3.5 MB of plans (PostgreSQL
-17); the largest, the claims and `enqueueMany`, take about 0.3 MB each.
+has about 55 statements at run time, and 40 more on the connection that runs `schema.migrate()`. Their number does not
+grow with the job names, the keys or the batch sizes. A connection that has run them all keeps 2–3.5 MB of plans
+(PostgreSQL 17); the largest, the claims and `enqueueMany`, take about 0.3 MB each.
 
 A pooler in transaction mode without prepared statement support, such as PgBouncer before 1.21, cannot keep them: set
 `{ prepare: false }` there. PgBouncer 1.21 and later keep them in transaction mode with `max_prepared_statements` at
@@ -193,12 +193,12 @@ keep its transform. A reserved connection (`sql.reserve()`) must be in a transac
 database.
 
 **Prepared statements.** sqlane runs its SQL as named prepared statements, as postgres.js runs its tagged queries: each
-connection parses and plans a statement once. Their number and memory are those of the [pg adapter](#pg): about 55,
-and 40 more for `migrate()`; 2–3.5 MB per connection. `postgres({ prepare: false })`, for a pooler in transaction mode
-without prepared statement support, turns them off for sqlane's SQL too. With PgBouncer 1.21 or later, set
-`max_prepared_statements` to at least 100, plus your app's own. Do not run
-`DISCARD ALL` or `DEALLOCATE ALL` on a connection that sqlane uses: postgres.js remembers what it prepared, and a
-statement in a transaction then fails with "prepared statement … does not exist".
+connection parses and plans a statement once. Their number and memory are those of the [pg adapter](#pg): about 55, and
+40 more for `schema.migrate()`; 2–3.5 MB per connection. `postgres({ prepare: false })`, for a pooler in transaction
+mode without prepared statement support, turns them off for sqlane's SQL too. With PgBouncer 1.21 or later, set
+`max_prepared_statements` to at least 100, plus your app's own. Do not run `DISCARD ALL` or `DEALLOCATE ALL` on a
+connection that sqlane uses: postgres.js remembers what it prepared, and a statement in a transaction then fails with
+"prepared statement … does not exist".
 
 ## Knex
 
@@ -235,7 +235,7 @@ In that case, the workers check the database once and find nothing. This costs o
 **Prepared statements.** With the `pg` client, `{ prepare: true }` runs sqlane's SQL as named prepared statements
 (`sqlane_<hash>`), on the queue's connections and on the connection of a transaction that you pass to `enqueue`. Each
 connection then parses and plans a statement once, as with the [pg adapter](#pg), where they are on by default. sqlane
-has about 55 statements at run time, and 40 more on the connection that runs `migrate()`; 2–3.5 MB of plans per
+has about 55 statements at run time, and 40 more on the connection that runs `schema.migrate()`; 2–3.5 MB of plans per
 connection. The option is off by default, because sqlane cannot see a pooler in transaction mode in front of the
 database. Behind PgBouncer, turn it on only with 1.21 or later and `max_prepared_statements` at least 100, plus your
 app's own: its default is 200 since 1.24; set it on 1.21–1.23. Do not run `DISCARD ALL` or `DEALLOCATE ALL` on a
@@ -367,8 +367,8 @@ database a few times. Other processes need a [hint](api.md#hint).
 > [external tables](https://www.prisma.io/docs/orm/prisma-schema/data-model/externally-managed-tables), or Prisma
 > Migrate sees them as drift and proposes to drop them.
 
-With the tables listed, Prisma Migrate leaves them alone, and `sqlane.migrate()` creates them. External tables are a
-Preview feature of Prisma, so they need the `externalTables` flag. This example is for PostgreSQL with the default
+With the tables listed, Prisma Migrate leaves them alone, and `sqlane.schema.migrate()` creates them. External tables
+are a Preview feature of Prisma, so they need the `externalTables` flag. This example is for PostgreSQL with the default
 `tablePrefix`, `sqlane_`:
 
 ```ts
@@ -395,7 +395,7 @@ export default defineConfig({
 On MySQL and MariaDB, list the names without the schema: `'sqlane_jobs'`, and so on. With another `tablePrefix`, the
 names start with it. A new version of sqlane can add a table: its migration guide and the changelog then say so.
 
-Prisma has no connection outside a transaction, so `migrate()` runs in one transaction.
+Prisma has no connection outside a transaction, so `schema.migrate()` runs in one transaction.
 
 **Prepared statements.** sqlane runs its SQL through Prisma's raw queries and has no option for them. On PostgreSQL,
 `@prisma/adapter-pg` sends unnamed statements unless you give it a `statementNameGenerator`, which then names sqlane's
@@ -525,11 +525,11 @@ for MikroORM's own queries. So `sqlane.enqueue(orm.em, …)` there commits or ro
 
 **Prepared statements.** With `@mikro-orm/postgresql`, `{ prepare: true }` runs sqlane's SQL as named prepared
 statements (`sqlane_<hash>`). In MikroORM 6, this covers all of sqlane's SQL, through knex. MikroORM 7 sends its SQL
-through Kysely, which runs unnamed statements, so sqlane runs the queue's own SQL (claims, leases, results, `migrate()`)
-on the pg pool under it, and an enqueue still runs unnamed. In MikroORM 7, `prepare` needs 7.2 or later, and the pool
-that MikroORM creates, not a Kysely instance or dialect of `driverOptions`. Their number, their memory, PgBouncer and
-`DISCARD ALL` are as for [Knex](#knex): the option is off by default for the same reason. On MySQL and MariaDB,
-`prepare` throws a `ConfigError`.
+through Kysely, which runs unnamed statements, so sqlane runs the queue's own SQL (claims, leases, results,
+`schema.migrate()`) on the pg pool under it, and an enqueue still runs unnamed. In MikroORM 7, `prepare` needs 7.2 or
+later, and the pool that MikroORM creates, not a Kysely instance or dialect of `driverOptions`. Their number, their
+memory, PgBouncer and `DISCARD ALL` are as for [Knex](#knex): the option is off by default for the same reason. On MySQL
+and MariaDB, `prepare` throws a `ConfigError`.
 
 ## Two pools
 
@@ -538,7 +538,7 @@ sqlane works with two kinds of connections.
 - **Your app's connection.** You pass it to `enqueue`. It is usually the transaction in which you write your business
   data, so the job joins that transaction.
 - **The queue's own pool.** You pass it once to the adapter, when you create the sqlane instance. sqlane uses it to
-  find and claim jobs, to renew leases, to save results and to run `migrate()`. A lease is the time for which a
+  find and claim jobs, to renew leases, to save results and to run `schema.migrate()`. A lease is the time for which a
   process owns a running job.
 
 Give the queue a small pool of its own, with 2 or 3 connections. Then the queue and your app do not wait for each
@@ -584,7 +584,7 @@ throws a `ConfigError`.
 When the library tells its database, the adapter checks the dialect against it, and throws a `ConfigError` on a
 mismatch. Knex, Drizzle, Sequelize and TypeORM check when you create the adapter, MikroORM 6 at its first query.
 
-**The server check.** The first `start()` or `migrate()` of an instance asks the server for its version, in one
+**The server check.** The first `start()` or `schema.migrate()` of an instance asks the server for its version, in one
 statement. On MySQL and MariaDB, a second statement reads the `sql_mode` of the session. It checks three things:
 
 - The server is the database of `dialect`. MariaDB is the server whose version contains `MariaDB`. PostgreSQL is the
@@ -593,11 +593,11 @@ statement. On MySQL and MariaDB, a second statement reads the `sql_mode` of the 
 - The version is supported: MySQL 8.4, MariaDB 10.11 or PostgreSQL 15, or later.
 - MySQL and MariaDB: the `sql_mode` has the flags below.
 
-If a check fails, `start()` or `migrate()` rejects with a `ConfigError`. The instance keeps the result, so `migrate()`
-then `start()` asks once. A process that only enqueues never asks. If the database is down, `start()` resolves anyway
-and emits an `error` event with the operation `server_check`. The worker then checks again before it claims a job, and
-claims nothing until the check passes. If the check then fails, the worker emits the `ConfigError` as an `error` event
-and claims no job.
+If a check fails, `start()` or `schema.migrate()` rejects with a `ConfigError`. The instance keeps the result, so
+`schema.migrate()` then `start()` asks once. A process that only enqueues never asks. If the database is down, `start()`
+resolves anyway and emits an `error` event with the operation `server_check`. The worker then checks again before it
+claims a job, and claims nothing until the check passes. If the check then fails, the worker emits the `ConfigError` as
+an `error` event and claims no job.
 
 **Older versions.** With `allowUnsupportedDbVersion: true`, the adapter runs on a server below the supported version.
 sqlane then logs a warning once per instance, through the `logger` of `createSqlane`. It still checks the database.

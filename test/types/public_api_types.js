@@ -7,7 +7,6 @@ import {
     defineConcurrencyLimit,
     defineJob,
     defineRateLimit,
-    getMigrations,
     IgnoredJobsError,
     JobCancelledError,
     RateLimitedError,
@@ -64,9 +63,25 @@ export async function publicApiTypes() {
     // MariaDB: the mysql2 adapter with its dialect
     expectTypeOf(mysql2Adapter(mysqlPool, { dialect: 'mariadb' }).dialect)
         .toEqualTypeOf(/** @type {import('@sqlane/core').Dialect} */ ('mariadb'));
-    getMigrations({ dialect: 'mariadb' });
     // @ts-expect-error mysql2 is not a PostgreSQL driver
     mysql2Adapter(mysqlPool, { dialect: 'postgres' });
+
+    // schema.migrate: up to a version, or every migration
+    expectTypeOf(await sqlane.schema.migrate({ targetVersion: '7.1.0', lockTimeout: '10s' }))
+        .toEqualTypeOf(/** @type {{ applied: string[] }} */ ({ applied: [] }));
+    await sqlane.schema.migrate();
+    expectTypeOf(await sqlane.schema.rollback({ targetVersion: '7.0.0', lockTimeout: '10s' }))
+        .toEqualTypeOf(/** @type {{ reverted: string[] }} */ ({ reverted: [] }));
+    expectTypeOf(await sqlane.schema.drop({ lockTimeout: '10s' }))
+        .toEqualTypeOf(/** @type {{ dropped: string[] }} */ ({ dropped: [] }));
+    expectTypeOf((await sqlane.schema.getMigrationStatus()).missingRequired)
+        .toEqualTypeOf(/** @type {string[]} */ ([]));
+    expectTypeOf((await sqlane.schema.findSchemaProblems()).problems)
+        .toEqualTypeOf(/** @type {import('@sqlane/core').SchemaProblem[]} */ ([]));
+    // @ts-expect-error rollback needs a target
+    await sqlane.schema.rollback({});
+    // @ts-expect-error migrate() is now schema.migrate()
+    await sqlane.migrate();
 
     await pgSqlane.enqueue(await pgPool.connect(), job, {});
     // @ts-expect-error a mysql2 connection is not a connection of the pg adapter
