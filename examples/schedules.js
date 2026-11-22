@@ -38,7 +38,7 @@ for (const tenantId of [41, 42]) {
 export async function runSchedules() {
     await sqlane.start();
 
-    for (const schedule of await sqlane.getSchedules()) {
+    for (const schedule of await sqlane.schedules.list()) {
         console.log(schedule.id, schedule.nextRunAt?.toISOString());
     }
 }

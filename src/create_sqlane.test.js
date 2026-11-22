@@ -187,12 +187,13 @@ describe('schedule() and start()', () => {
         expect(statements.filter(sql => sql.includes('FOR UPDATE'))).toStrictEqual([]);
     });
 
-    test('getSchedules() before start(): the registered schedules, a missing table is an empty one', async () => {
+    test('schedules.list() before start(): the registered schedules, a missing table is an empty one', async () => {
         const sqlane = createSqlane({ adapter: fakeAdapter({ missingTable: true }).adapter });
 
-        await expect(sqlane.getSchedules()).resolves.toStrictEqual([]);
+        expect(Object.isFrozen(sqlane.schedules)).toBe(true);
+        await expect(sqlane.schedules.list()).resolves.toStrictEqual([]);
         sqlane.schedule('tick', { every: '1m', key: 'a' });
-        await expect(sqlane.getSchedules()).resolves.toMatchObject([
+        await expect(sqlane.schedules.list()).resolves.toMatchObject([
             { id: 'tick:a', name: 'tick', spec: 'every 60000', registered: true, lastSlotAt: null, lastJobId: null },
         ]);
     });

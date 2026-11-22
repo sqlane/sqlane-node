@@ -183,6 +183,19 @@ export interface SqlaneJobs<C = any> {
 }
 
 /**
+ * The schedules: `sqlane.schedules`. Before `start()` and after `close()` too.
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#scheduleslist | schedules}
+ */
+export interface SqlaneSchedules {
+    /**
+     * Lists the schedules of the table and those registered in this process, sorted by id. It works before `start()`.
+     * @returns The schedules. `registered: false`: a schedule of another service, or one removed from the code.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#scheduleslist | schedules.list}
+     */
+    list(): Promise<ScheduleInfo[]>;
+}
+
+/**
  * A sqlane instance, made by `createSqlane()`: one per process. It enqueues jobs, runs the handlers of this process,
  * and fires its schedules.
  * @template C The connections that `enqueue` accepts: those of the adapter's driver or ORM.
@@ -255,13 +268,6 @@ export interface Sqlane<C> {
     ): void;
 
     /**
-     * Lists the schedules of the table and those registered in this process, sorted by id. It works before `start()`.
-     * @returns The schedules. `registered: false`: a schedule of another service, or one removed from the code.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getschedules | getSchedules}
-     */
-    getSchedules(): Promise<ScheduleInfo[]>;
-
-    /**
      * Starts the worker of this process: it claims and runs the due jobs of the handled names, renews leases, recovers
      * stalled jobs, deletes expired ones and fires the schedules of this process. A second call does nothing.
      *
@@ -293,6 +299,9 @@ export interface Sqlane<C> {
 
     /** The jobs in the database: read and count them; retry, cancel or remove them in bulk. */
     readonly jobs: SqlaneJobs<C>;
+
+    /** The schedules: list them. */
+    readonly schedules: SqlaneSchedules;
 
     /** The `sqlane_*` tables: create, update, roll back or drop them; check them. */
     readonly schema: SqlaneSchema;

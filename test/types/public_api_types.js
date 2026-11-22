@@ -434,7 +434,12 @@ export async function publicApiTypes() {
     // @ts-expect-error the payload type of the options is not the one of the definition
     sqlane.schedule(syncOrder, otherPayload);
 
-    const [schedule] = await sqlane.getSchedules();
+    /** @type {import('@sqlane/core').SqlaneSchedules} */
+    const schedules = sqlane.schedules;
+    const [schedule] = await schedules.list();
+
+    // @ts-expect-error getSchedules() is now schedules.list()
+    void sqlane.getSchedules;
 
     expectTypeOf(schedule.nextAt).toEqualTypeOf(/** @type {Date | null} */ (null));
     expectTypeOf(schedule.nextRunAt).toEqualTypeOf(/** @type {Date | null} */ (null));
