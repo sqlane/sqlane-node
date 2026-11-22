@@ -1,27 +1,6 @@
 // The reads of the catalog for the schema: in the current schema only (MySQL and MariaDB `DATABASE()`, PostgreSQL its
-// `search_path`). A table is looked up before it is read: a failing SELECT would abort a PostgreSQL transaction. Each
-// read selects a boolean or `1 AS found`: a column that every client reads (Prisma).
-
-/**
- * @param {import('../types.js').Executor} executor
- * @param {import('../types.js').Dialect} dialect
- * @param {string} table
- * @returns {Promise<boolean>}
- */
-export async function tableExists(executor, dialect, table) {
-    if (dialect === 'postgres') {
-        const [{ found }] = await executor.query('SELECT to_regclass($1) IS NOT NULL AS found', [table]);
-
-        return found === true;
-    }
-
-    const rows = await executor.query(
-        'SELECT 1 AS found FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?',
-        [table],
-    );
-
-    return rows.length > 0;
-}
+// `search_path`). A table is looked up in the catalog before it is read: a failing SELECT would abort a PostgreSQL
+// transaction. Each read selects columns that every client reads (Prisma): no `void`, and `1 AS found`.
 
 /**
  * MySQL and MariaDB.
@@ -39,29 +18,13 @@ export async function indexExists(executor, table, index) {
 
 /**
  * @param {import('../types.js').Executor} executor
- * @param {import('../types.js').Dialect} dialect
- * @param {string} table
- * @returns {Promise<string[]>} Its columns. None: no such table.
- */
-export async function columnNames(executor, dialect, table) {
-    const rows = dialect === 'postgres'
-        ? await executor.query(`SELECT attname AS name FROM pg_attribute
-            WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped`, [table])
-        : await executor.query(`SELECT column_name AS name FROM information_schema.columns
-            WHERE table_schema = DATABASE() AND table_name = ?`, [table]);
-
-    return rows.map(row => String(row.name));
-}
-
-/**
- * @param {import('../types.js').Executor} executor
- * @param {import('../types.js').Dialect} dialect
  * @param {string} p The table prefix.
- * @returns {Promise<Set<string>>} The ids in `<p>migrations`, as strings. None: no such table, or no `id` column (a
- *     table of the app under the prefix).
+ * @param {ColumnRead[]} [columns] The columns of the prefix, from `readColumns`: no `<p>migrations` with an `id`
+ *     column (none, or a table of the app) gives no id. Omitted: the table exists, created just before.
+ * @returns {Promise<Set<string>>} The ids in `<p>migrations`, as strings.
  */
-export async function recordedIds(executor, dialect, p) {
-    if (!(await columnNames(executor, dialect, `${p}migrations`)).includes('id')) {
+export async function recordedIds(executor, p, columns) {
+    if (columns && !columns.some(({ table, column }) => table === `${p}migrations` && column === 'id')) {
         return new Set();
     }
 
@@ -81,7 +44,7 @@ export async function recordedIds(executor, dialect, p) {
  */
 
 /**
- * The columns of the tables of the prefix.
+ * The columns of the base tables of the prefix: also which tables exist.
  * @param {import('../types.js').Executor} executor
  * @param {import('../types.js').Dialect} dialect
  * @param {string} p
@@ -106,10 +69,12 @@ export async function readColumns(executor, dialect, p) {
         }));
     }
 
-    const rows = await executor.query(`SELECT table_name AS table_name, column_name AS column_name,
-            column_type AS column_type, is_nullable AS is_nullable, collation_name AS collation_name
-          FROM information_schema.columns
-         WHERE table_schema = DATABASE() AND LEFT(table_name, CHAR_LENGTH(?)) = ?`, [p, p]);
+    const rows = await executor.query(`SELECT c.table_name AS table_name, c.column_name AS column_name,
+            c.column_type AS column_type, c.is_nullable AS is_nullable, c.collation_name AS collation_name
+          FROM information_schema.columns c
+          JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+         WHERE c.table_schema = DATABASE() AND t.table_type = 'BASE TABLE'
+           AND LEFT(c.table_name, CHAR_LENGTH(?)) = ?`, [p, p]);
 
     return rows.map(row => ({
         table: String(row.table_name),

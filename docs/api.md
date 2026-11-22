@@ -901,22 +901,37 @@ transaction would not include them, and the locks that it holds can block them. 
 `'10s'`, to `schema.rollback` and `schema.drop` while processes run: their DDL waits for the locks of the tables, and
 the queries of the queue wait behind it.
 
-A Sequelize CLI migration, in full. `@sqlane/core` is an ES module, so a CommonJS migration imports it with `import()`:
+A Sequelize CLI migration, in full. `@sqlane/core` is an ES module, so CommonJS code imports it with `import()`. A
+module outside the folder of the migrations creates the instance, for every migration file:
 
 ```js
-// migrations/20261120000000-sqlane.cjs
+// db/sqlane_schema.cjs
 'use strict';
 
 /**
- * A sqlane instance over the Sequelize instance of the migration: the same `tablePrefix` as in your app.
+ * A sqlane instance over the Sequelize instance of a migration.
  * @param {import('sequelize').Sequelize} sequelize
  */
 async function sqlaneOf(sequelize) {
     const { createSqlane } = await import('@sqlane/core');
     const { sequelizeAdapter } = await import('@sqlane/core/adapter-sequelize');
 
-    return createSqlane({ adapter: sequelizeAdapter(sequelize, { dialect: 'postgres' }) });
+    return createSqlane({
+        // Your database: 'postgres', 'mysql' or 'mariadb'
+        adapter: sequelizeAdapter(sequelize, { dialect: 'postgres' }),
+        // The same prefix as in your app
+        tablePrefix: 'sqlane_',
+    });
 }
+
+module.exports = { sqlaneOf };
+```
+
+```js
+// migrations/20261120000000-sqlane.cjs
+'use strict';
+
+const { sqlaneOf } = require('../db/sqlane_schema.cjs');
 
 module.exports = {
     // Not inside queryInterface.sequelize.transaction(): sqlane runs on a connection of its own
@@ -933,10 +948,14 @@ module.exports = {
 };
 ```
 
-A later file, with the same `sqlaneOf` function:
+A later file pins a later version:
 
 ```js
 // migrations/20270201000000-sqlane-8-2.cjs
+'use strict';
+
+const { sqlaneOf } = require('../db/sqlane_schema.cjs');
+
 module.exports = {
     async up(queryInterface) {
         const sqlane = await sqlaneOf(queryInterface.sequelize);

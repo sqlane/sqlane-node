@@ -356,8 +356,8 @@
  * The connections that `enqueue` accepts (C), and the queue's own pool. Made by `mysql2Adapter()` or `pgAdapter()`.
  * @template C
  * @typedef {object} Adapter
- * @property {Dialect} dialect The database, as the app named it. The first `start()` or `migrate()` of an instance
- *     checks it against the server.
+ * @property {Dialect} dialect The database, as the app named it. The first `start()` or call of `schema.migrate()`,
+ *     `schema.rollback()` or `schema.drop()` of an instance checks it against the server.
  * @property {boolean} [allowUnsupportedDbVersion] A server below the supported minimum (MySQL 8.4, MariaDB 10.11,
  *     PostgreSQL 15) logs a warning instead of a `ConfigError`.
  * @property {boolean} [allowUnsupportedDbConfiguration] MySQL and MariaDB: a `sql_mode` that lacks a required flag,

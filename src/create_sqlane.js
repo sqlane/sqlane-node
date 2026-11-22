@@ -4,7 +4,6 @@ import { createHintChannel } from './hint_channel.js';
 import { ClosedError, ConfigError } from './errors.js';
 import { dropTables, rollbackMigrations, runMigrations } from './migrations.js';
 import { findSchemaProblems, getMigrationStatus } from './schema_status.js';
-import { installedVersion } from './version.js';
 import { DEFAULT_MAX_PAYLOAD_BYTES } from './payload.js';
 import { createRegistry } from './registry.js';
 import { createRunner } from './runner.js';
@@ -159,9 +158,7 @@ export function createSqlane(options) {
     // Undocumented, for the tests of sqlane
     const testTimings = /** @type {{ timings?: object }} */ (options).timings;
     // Undocumented, for the tests of sqlane: in place of the version of package.json
-    const testInstalledVersion = /** @type {{ installedVersion?: string }} */ (options).installedVersion;
-    /** @returns {string} The installed version, read only when needed */
-    const installedOrTest = () => testInstalledVersion ?? installedVersion();
+    const { installedVersion } = /** @type {{ installedVersion?: string }} */ (options);
     const store = createStore(adapter, tablePrefix, options.logger);
     const runner = createRunner({
         store,
@@ -431,7 +428,7 @@ export function createSqlane(options) {
                 return {
                     applied: await runMigrations(adapter, tablePrefix, migrateOptions, {
                         checkServer: () => checkServerOnce('schema.migrate()'),
-                        installedVersion: testInstalledVersion,
+                        installedVersion,
                     }),
                 };
             },
@@ -441,7 +438,7 @@ export function createSqlane(options) {
                 return {
                     reverted: await rollbackMigrations(adapter, tablePrefix, rollbackOptions, {
                         checkServer: () => checkServerOnce('schema.rollback()'),
-                        installedVersion: testInstalledVersion,
+                        installedVersion,
                     }),
                 };
             },
@@ -449,13 +446,13 @@ export function createSqlane(options) {
                 checkSchemaChange('schema.drop()');
 
                 return {
-                    dropped: await dropTables(adapter, tablePrefix, dropOptions, () => checkServerOnce(
-                        'schema.drop()',
-                    )),
+                    dropped: await dropTables(adapter, tablePrefix, dropOptions, {
+                        checkServer: () => checkServerOnce('schema.drop()'),
+                    }),
                 };
             },
-            getMigrationStatus: () => getMigrationStatus(adapter, tablePrefix, installedOrTest()),
-            findSchemaProblems: () => findSchemaProblems(adapter, tablePrefix, installedOrTest()),
+            getMigrationStatus: () => getMigrationStatus(adapter, tablePrefix, { installedVersion }),
+            findSchemaProblems: () => findSchemaProblems(adapter, tablePrefix, { installedVersion }),
         },
         getStats: () => store.getStats(),
         jobs: createJobsApi(store, createBulk({

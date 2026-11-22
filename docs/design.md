@@ -253,10 +253,11 @@ commits, so a run can stop between two statements.
 - Each down statement is safe to run again: `IF EXISTS`, or a check of the catalog where the dialect has none (MySQL
   has no `DROP INDEX IF EXISTS`). So a cut rollback is finished by running it again. Every up migration after
   `0008_job_list` follows the same rule.
-- The older up migrations keep their own rules: not every one of their statements can run again on MySQL. On MariaDB,
-  they use `IF NOT EXISTS`. On MySQL, `0005_concurrency_limits` and `0008_job_list` are each one `ALTER TABLE`, which
-  is atomic, but a crash after it and before the record makes the next `schema.migrate()` fail, as does the
-  `ADD COLUMN` of `0007_rate_limits`: record the id by hand (see `0008_job_list` below).
+- The older up migrations keep their own rules: not every one of their statements can run again. On MariaDB, they use
+  `IF NOT EXISTS`, all but `0005_concurrency_limits`: one `ALTER TABLE` without guards. On MySQL,
+  `0005_concurrency_limits` and `0008_job_list` are each one `ALTER TABLE`, and `0007_rate_limits` ends with an
+  `ADD COLUMN`. Each `ALTER TABLE` is atomic, but a crash after it and before the record makes the next
+  `schema.migrate()` fail: record the id by hand (see `0008_job_list` below).
 
 **The migration ids** are matched, never counted. MySQL and MariaDB have no `0003`. The migrations of 6.0 drop the
 tables of 5.x, `sqlane_job_keys` and `sqlane_mutexes`. The schedules migration has the same id on every dialect. It is
@@ -306,7 +307,9 @@ sqlane follows semantic versioning, and its schema follows these rules.
 - Within a major, migrations only add. The code of a minor runs on the schema of its major's base, `X.0.0`. Only the
   feature that a later migration serves needs it, and that feature fails on its own SQL without it.
 - To upgrade within a major, run `schema.migrate()` before or after the deploy.
-- To upgrade to a new major, stop the processes of the old major, run `schema.migrate()`, then deploy.
+- To upgrade to a new major, stop the processes of the old major, run `schema.migrate()`, then deploy. 8.0 is an
+  exception: it changes no table. Once `schema.migrate()` has run (it adds `0008_job_list` where a 7.0.x database lacks
+  it), 7.x and 8.0 processes can share a prefix during a rolling deploy.
 - Run `schema.rollback()` only when no process of a newer version uses the prefix.
 - One place runs `schema.migrate()` for a prefix. The processes on one prefix run the same major.
 

@@ -3,7 +3,7 @@
 import { migrationsOf, unknownIds } from './migrations.js';
 import { EXPECTED_SCHEMA } from './schema/expected.js';
 import { readColumns, readIndexes, recordedIds } from './store/schema_reads.js';
-import { compareVersions, majorBase } from './version.js';
+import { compareVersions, installedVersion, majorBase } from './version.js';
 
 /**
  * @param {import('./types.js').Dialect} dialect
@@ -23,13 +23,13 @@ function requiredBy(dialect, p, installed) {
  * @template C
  * @param {import('./types.js').Adapter<C>} adapter
  * @param {string} p
- * @param {string} installed The installed version.
+ * @param {import('./migrations.js').SchemaContext} [context]
  * @returns {Promise<import('./types.js').MigrationStatus>}
  */
-export async function getMigrationStatus(adapter, p, installed) {
+export async function getMigrationStatus(adapter, p, context = {}) {
     const known = migrationsOf(adapter.dialect, p);
-    const recorded = await recordedIds(adapter.queue, adapter.dialect, p);
-    const isRequired = requiredBy(adapter.dialect, p, installed);
+    const recorded = await recordedIds(adapter.queue, p, await readColumns(adapter.queue, adapter.dialect, p));
+    const isRequired = requiredBy(adapter.dialect, p, context.installedVersion ?? installedVersion());
     const missing = known.map(({ id }) => id).filter(id => !recorded.has(id));
     const missingRequired = missing.filter(isRequired);
 
@@ -47,12 +47,12 @@ export async function getMigrationStatus(adapter, p, installed) {
  * @template C
  * @param {import('./types.js').Adapter<C>} adapter
  * @param {string} p
- * @param {string} installed The installed version.
+ * @param {import('./migrations.js').SchemaContext} [context]
  * @returns {Promise<import('./types.js').SchemaProblems>}
  */
-export async function findSchemaProblems(adapter, p, installed) {
+export async function findSchemaProblems(adapter, p, context = {}) {
     const { dialect } = adapter;
-    const isRequired = requiredBy(dialect, p, installed);
+    const isRequired = requiredBy(dialect, p, context.installedVersion ?? installedVersion());
     const [columns, indexes] = await Promise.all([
         readColumns(adapter.queue, dialect, p),
         readIndexes(adapter.queue, dialect, p),

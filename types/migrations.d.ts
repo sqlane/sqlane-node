@@ -22,6 +22,17 @@ export type Migration = {
      */
     down?: readonly DownStep[];
 };
+export type SchemaContext = {
+    /**
+     * The check of the server: after the options are checked, before the
+     * lock.
+     */
+    checkServer?: () => Promise<void>;
+    /**
+     * For the tests of sqlane. Default: the version of package.json.
+     */
+    installedVersion?: string;
+};
 /**
  * @param {import('./types.js').Dialect} dialect
  * @param {string} p The table prefix, checked.
@@ -47,16 +58,10 @@ export type MigrationLock = {
  * @param {import('./types.js').Adapter<C>} adapter
  * @param {string} tablePrefix Checked.
  * @param {import('./types.js').MigrateOptions} [options]
- * @param {object} [context]
- * @param {() => Promise<void>} [context.checkServer] Runs after the options are checked, before the migration.
- * @param {string} [context.installedVersion] For the tests of sqlane. Default: the version of package.json, read
- *     only with a `targetVersion`.
+ * @param {SchemaContext} [context] The version of package.json is read only with a `targetVersion`.
  * @returns {Promise<string[]>} The ids of the applied migrations.
  */
-export declare function runMigrations<C>(adapter: import('./types.js').Adapter<C>, tablePrefix: string, options?: import('./types.js').MigrateOptions, context?: {
-    checkServer?: () => Promise<void>;
-    installedVersion?: string;
-}): Promise<string[]>;
+export declare function runMigrations<C>(adapter: import('./types.js').Adapter<C>, tablePrefix: string, options?: import('./types.js').MigrateOptions, context?: SchemaContext): Promise<string[]>;
 /**
  * @param {Set<string>} recorded
  * @param {Migration[]} known
@@ -70,15 +75,10 @@ export declare function unknownIds(recorded: Set<string>, known: Migration[]): s
  * @param {import('./types.js').Adapter<C>} adapter
  * @param {string} tablePrefix Checked.
  * @param {import('./types.js').RollbackOptions} options
- * @param {object} [context]
- * @param {() => Promise<void>} [context.checkServer] Runs after the options are checked, before the rollback.
- * @param {string} [context.installedVersion] For the tests of sqlane. Default: the version of package.json.
+ * @param {SchemaContext} [context]
  * @returns {Promise<string[]>} The ids of the reverted migrations, in the order of their revert.
  */
-export declare function rollbackMigrations<C>(adapter: import('./types.js').Adapter<C>, tablePrefix: string, options: import('./types.js').RollbackOptions, context?: {
-    checkServer?: () => Promise<void>;
-    installedVersion?: string;
-}): Promise<string[]>;
+export declare function rollbackMigrations<C>(adapter: import('./types.js').Adapter<C>, tablePrefix: string, options: import('./types.js').RollbackOptions, context?: SchemaContext): Promise<string[]>;
 /**
  * Drops every table that sqlane created under the prefix, in any version, under the lock of `runMigrations`. Only
  * the tables of sqlane: `<p>jobs` has `enqueue_token` and `lock_token` (every version), or `<p>migrations` records
@@ -87,7 +87,7 @@ export declare function rollbackMigrations<C>(adapter: import('./types.js').Adap
  * @param {import('./types.js').Adapter<C>} adapter
  * @param {string} tablePrefix Checked.
  * @param {import('./types.js').DropOptions} [options]
- * @param {() => Promise<void>} [checkServer] Runs after the options are checked, before the drop.
+ * @param {SchemaContext} [context]
  * @returns {Promise<string[]>} The tables that existed, in the order of the drop: `<p>migrations` last.
  */
-export declare function dropTables<C>(adapter: import('./types.js').Adapter<C>, tablePrefix: string, options?: import('./types.js').DropOptions, checkServer?: () => Promise<void>): Promise<string[]>;
+export declare function dropTables<C>(adapter: import('./types.js').Adapter<C>, tablePrefix: string, options?: import('./types.js').DropOptions, context?: SchemaContext): Promise<string[]>;

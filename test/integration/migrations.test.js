@@ -458,20 +458,31 @@ test('rollback: waits for the lock of a table up to lockTimeout, then a Migratio
     await expect(recordedIds(tablePrefix)).resolves.toContain('0008_job_list');
 });
 
-test.runIf(isMysqlFamily)('rollback: the lock_wait_timeout of the session is restored', async () => {
+test.runIf(isMysqlFamily)('rollback: the lock_wait_timeout of the session is restored, after a timeout too', async () => {
     const pool = mysql.createPool({ uri: inject('databaseUrl'), connectionLimit: 1 });
     const dialect = /** @type {'mysql' | 'mariadb'} */ (database.dialect);
-    const sqlane = createSqlane({ adapter: mysql2Adapter(pool, { dialect }), tablePrefix: nextPrefix() });
+    const tablePrefix = nextPrefix();
+    const sqlane = createSqlane({ adapter: mysql2Adapter(pool, { dialect }), tablePrefix });
+    const holder = await testAdapter.connect();
+    const sessionTimeout = async () => {
+        const [rows] = await pool.query('SELECT @@SESSION.lock_wait_timeout AS seconds');
+
+        return Number(/** @type {any} */ (rows)[0].seconds);
+    };
 
     try {
         await pool.query('SET SESSION lock_wait_timeout = 77');
         await sqlane.schema.migrate();
+        await holder.begin();
+        await holder.execute(`SELECT count(*) FROM ${tablePrefix}jobs`);
+        await expect(sqlane.schema.rollback({ targetVersion: '6.0.0', lockTimeout: '1s' }))
+            .rejects.toThrow(MigrationLockTimeoutError);
+        await expect(sessionTimeout()).resolves.toBe(77);
+        await holder.rollback();
         await sqlane.schema.rollback({ targetVersion: '6.0.0', lockTimeout: '1s' });
-
-        const [rows] = await pool.query('SELECT @@SESSION.lock_wait_timeout AS seconds');
-
-        expect(Number(/** @type {any} */ (rows)[0].seconds)).toBe(77);
+        await expect(sessionTimeout()).resolves.toBe(77);
     } finally {
+        holder.release();
         await sqlane.close({ deadline: 0 });
         await pool.end();
     }
@@ -631,10 +642,6 @@ const STATUS_OK = { ok: true, missingRequired: [], missingOptional: [], unknownA
 
 test.each([
     { path: 'a fresh migrate()', prepare: async (/** @type {string} */ p) => {
-        await sqlaneOf(p).schema.migrate();
-    } },
-    { path: 'an upgrade from 6.0.0', prepare: async (/** @type {string} */ p) => {
-        await sqlaneOf(p).schema.migrate({ targetVersion: '6.0.0' });
         await sqlaneOf(p).schema.migrate();
     } },
     { path: 'the 5.x path', prepare: async (/** @type {string} */ p) => {

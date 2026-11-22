@@ -3,7 +3,7 @@ import { ConfigError, InvalidOptionsError, MigrationLockTimeoutError } from './e
 import { mariadbMigrations, mariadbMigrationsTable } from './schema/mariadb.js';
 import { mysqlMigrations, mysqlMigrationsTable } from './schema/mysql.js';
 import { postgresMigrations, postgresMigrationsTable } from './schema/postgres.js';
-import { columnNames, indexExists, recordedIds, tableExists } from './store/schema_reads.js';
+import { indexExists, readColumns, recordedIds } from './store/schema_reads.js';
 import { isLockTimeoutError } from './transient_error.js';
 import { baseVersion, compareVersions, installedVersion, parseVersion } from './version.js';
 
@@ -28,6 +28,14 @@ import { baseVersion, compareVersions, installedVersion, parseVersion } from './
 const ALL_TABLES = [
     'jobs', 'payloads', 'schedules', 'concurrency_slots', 'rate_limits', 'mutexes', 'job_keys', 'migrations',
 ];
+
+/**
+ * What the instance gives to the methods of `sqlane.schema`.
+ * @typedef {object} SchemaContext
+ * @property {() => Promise<void>} [checkServer] The check of the server: after the options are checked, before the
+ *     lock.
+ * @property {string} [installedVersion] For the tests of sqlane. Default: the version of package.json.
+ */
 
 /** The lowest `targetVersion`: 0005 and 0006 turned the mutex keys of 5.x into slots, with no way back */
 const MIN_TARGET_VERSION = '6.0.0';
@@ -114,17 +122,6 @@ function toSteps(missing, recordSql) {
         ...statements.map(sql => ({ sql, params: [] })),
         { sql: recordSql, params: [id] },
     ]);
-}
-
-/**
- * @param {Executor} executor
- * @param {string} table
- * @returns {Promise<Set<string>>}
- */
-async function readApplied(executor, table) {
-    const rows = await executor.query(`SELECT id FROM ${table}`, []);
-
-    return new Set(rows.map(row => String(row.id)));
 }
 
 /**
@@ -242,10 +239,7 @@ function withMigrationLock(adapter, p, lock, func) {
  * @param {import('./types.js').Adapter<C>} adapter
  * @param {string} tablePrefix Checked.
  * @param {import('./types.js').MigrateOptions} [options]
- * @param {object} [context]
- * @param {() => Promise<void>} [context.checkServer] Runs after the options are checked, before the migration.
- * @param {string} [context.installedVersion] For the tests of sqlane. Default: the version of package.json, read
- *     only with a `targetVersion`.
+ * @param {SchemaContext} [context] The version of package.json is read only with a `targetVersion`.
  * @returns {Promise<string[]>} The ids of the applied migrations.
  */
 export async function runMigrations(adapter, tablePrefix, options = {}, context = {}) {
@@ -265,7 +259,7 @@ export async function runMigrations(adapter, tablePrefix, options = {}, context 
     return withMigrationLock(adapter, tablePrefix, { lockTimeoutMs, where }, async (executor) => {
         await executor.query(MIGRATIONS_TABLES[adapter.dialect](tablePrefix), []);
 
-        const applied = await readApplied(executor, `${tablePrefix}migrations`);
+        const applied = await recordedIds(executor, tablePrefix);
         const missing = migrations.filter(({ id }) => !applied.has(id));
 
         await runInOrder(executor, toSteps(missing, recordSql));
@@ -341,9 +335,7 @@ async function withTableLockError(where, lockTimeoutMs, func) {
  * @param {import('./types.js').Adapter<C>} adapter
  * @param {string} tablePrefix Checked.
  * @param {import('./types.js').RollbackOptions} options
- * @param {object} [context]
- * @param {() => Promise<void>} [context.checkServer] Runs after the options are checked, before the rollback.
- * @param {string} [context.installedVersion] For the tests of sqlane. Default: the version of package.json.
+ * @param {SchemaContext} [context]
  * @returns {Promise<string[]>} The ids of the reverted migrations, in the order of their revert.
  */
 export async function rollbackMigrations(adapter, tablePrefix, options, context = {}) {
@@ -363,7 +355,7 @@ export async function rollbackMigrations(adapter, tablePrefix, options, context 
     return withTableLockError(where, lockTimeoutMs, () => withMigrationLock(adapter, tablePrefix, lock, async (
         executor,
     ) => {
-        const recorded = await recordedIds(executor, dialect, tablePrefix);
+        const recorded = await recordedIds(executor, tablePrefix, await readColumns(executor, dialect, tablePrefix));
         const unknown = unknownIds(recorded, known);
 
         if (unknown.length > 0) {
@@ -402,38 +394,34 @@ export async function rollbackMigrations(adapter, tablePrefix, options, context 
  * @param {import('./types.js').Adapter<C>} adapter
  * @param {string} tablePrefix Checked.
  * @param {import('./types.js').DropOptions} [options]
- * @param {() => Promise<void>} [checkServer] Runs after the options are checked, before the drop.
+ * @param {SchemaContext} [context]
  * @returns {Promise<string[]>} The tables that existed, in the order of the drop: `<p>migrations` last.
  */
-export async function dropTables(adapter, tablePrefix, options = {}, checkServer = async () => {}) {
+export async function dropTables(adapter, tablePrefix, options = {}, context = {}) {
     const where = 'schema.drop()';
     const { dialect } = adapter;
     const lockTimeoutMs = checkLockTimeout(options.lockTimeout, where);
     const known = migrationsOf(dialect, tablePrefix);
     const lock = { lockTimeoutMs, where, boundTableLocks: true };
 
-    await checkServer();
+    await context.checkServer?.();
 
     return withTableLockError(where, lockTimeoutMs, () => withMigrationLock(adapter, tablePrefix, lock, async (
         executor,
     ) => {
-        /** @type {string[]} */
-        const found = [];
-
-        for (const table of ALL_TABLES.map(name => `${tablePrefix}${name}`)) {
-            // oxlint-disable-next-line no-await-in-loop -- a few reads of the catalog
-            if (await tableExists(executor, dialect, table)) {
-                found.push(table);
-            }
-        }
+        const columns = await readColumns(executor, dialect, tablePrefix);
+        const tables = new Set(columns.map(({ table }) => table));
+        const found = ALL_TABLES.map(name => `${tablePrefix}${name}`).filter(table => tables.has(table));
 
         if (found.length === 0) {
             return [];
         }
 
-        const jobsColumns = await columnNames(executor, dialect, `${tablePrefix}jobs`);
-        const recorded = await recordedIds(executor, dialect, tablePrefix);
-        const ofSqlane = (jobsColumns.includes('enqueue_token') && jobsColumns.includes('lock_token'))
+        const jobsColumns = new Set(columns
+            .filter(({ table }) => table === `${tablePrefix}jobs`)
+            .map(({ column }) => column));
+        const recorded = await recordedIds(executor, tablePrefix, columns);
+        const ofSqlane = (jobsColumns.has('enqueue_token') && jobsColumns.has('lock_token'))
             || recorded.has('0001_initial');
 
         if (!ofSqlane) {
