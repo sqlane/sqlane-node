@@ -58,6 +58,12 @@ export declare function runMigrations<C>(adapter: import('./types.js').Adapter<C
     installedVersion?: string;
 }): Promise<string[]>;
 /**
+ * @param {Set<string>} recorded
+ * @param {Migration[]} known
+ * @returns {string[]} The recorded ids unknown to this version, sorted: a newer version applied them.
+ */
+export declare function unknownIds(recorded: Set<string>, known: Migration[]): string[];
+/**
  * Reverts the recorded migrations tagged above `targetVersion`, newest first: the down of each, then the delete of its
  * record. Under the lock of `runMigrations`; PostgreSQL: in its one transaction.
  * @template C

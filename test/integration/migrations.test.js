@@ -584,6 +584,183 @@ test('drop: waits for the lock of a table up to lockTimeout, then a MigrationLoc
     await expect(listTables(tablePrefix)).resolves.toHaveLength(ALL_TABLES.length);
 });
 
+/** @type {Record<'mysql' | 'postgres', (p: string) => string[]>} A column dropped, a type, a collation, a NOT NULL */
+const BROKEN_COLUMNS_SQL = {
+    mysql: p => [
+        `ALTER TABLE ${p}jobs DROP COLUMN rate_limits`,
+        `ALTER TABLE ${p}jobs MODIFY finished_at DATETIME NULL`,
+        `ALTER TABLE ${p}jobs MODIFY failure_job VARCHAR(128) CHARACTER SET utf8mb4 NULL`,
+        `ALTER TABLE ${p}jobs MODIFY updated_at DATETIME(3) NULL`,
+    ],
+    postgres: p => [
+        `ALTER TABLE ${p}jobs DROP COLUMN rate_limits`,
+        `ALTER TABLE ${p}jobs ALTER COLUMN finished_at TYPE timestamptz`,
+        `ALTER TABLE ${p}jobs ALTER COLUMN failure_job TYPE varchar(128) COLLATE "default"`,
+        `ALTER TABLE ${p}jobs ALTER COLUMN updated_at DROP NOT NULL`,
+    ],
+};
+
+/** @type {Record<'mysql' | 'postgres', { finishedAt: string[], failureJob: RegExp }>} Expected and found */
+const BROKEN_TYPES = {
+    mysql: { finishedAt: ['datetime(3)', 'datetime'], failureJob: /^varchar\(128\) collate utf8mb4_/u },
+    postgres: {
+        finishedAt: ['timestamp(3) with time zone', 'timestamp with time zone'],
+        failureJob: /^character varying\(128\) collate default$/u,
+    },
+};
+
+/** @type {Record<'mysql' | 'postgres', (p: string, columns: string) => string>} jobs_list again, on other columns */
+const JOBS_LIST_ON_SQL = {
+    mysql: (p, columns) => `ALTER TABLE ${p}jobs ADD KEY ${p}jobs_list (${columns})`,
+    postgres: (p, columns) => `CREATE INDEX ${p}jobs_list ON ${p}jobs (${columns})`,
+};
+
+/**
+ * @param {string} tablePrefix
+ * @param {string[]} statements
+ */
+async function runAll(tablePrefix, statements) {
+    for (const sql of statements) {
+        // oxlint-disable-next-line no-await-in-loop -- in order
+        await database.query(sql);
+    }
+}
+
+const NO_PROBLEM = { ok: true, problems: [] };
+const STATUS_OK = { ok: true, missingRequired: [], missingOptional: [], unknownApplied: [] };
+
+test.each([
+    { path: 'a fresh migrate()', prepare: async (/** @type {string} */ p) => {
+        await sqlaneOf(p).schema.migrate();
+    } },
+    { path: 'an upgrade from 6.0.0', prepare: async (/** @type {string} */ p) => {
+        await sqlaneOf(p).schema.migrate({ targetVersion: '6.0.0' });
+        await sqlaneOf(p).schema.migrate();
+    } },
+    { path: 'the 5.x path', prepare: async (/** @type {string} */ p) => {
+        await migrateAllBut(p, SIX.length + RATE_LIMITS.length + JOB_LIST.length, FIVE_X_ROWS_SQL[database.family](p));
+        await sqlaneOf(p).schema.migrate();
+    } },
+])('status and problems: none after $path', async ({ prepare }) => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix, '7.1.0');
+
+    await prepare(tablePrefix);
+
+    await expect(sqlane.schema.findSchemaProblems()).resolves.toStrictEqual(NO_PROBLEM);
+    await expect(sqlane.schema.getMigrationStatus()).resolves.toStrictEqual(STATUS_OK);
+});
+
+test('problems: a column dropped, a type, a collation and a nullability changed', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix, '7.1.0');
+    const table = `${tablePrefix}jobs`;
+    const { finishedAt, failureJob } = BROKEN_TYPES[database.family];
+
+    await sqlane.schema.migrate();
+    await runAll(tablePrefix, BROKEN_COLUMNS_SQL[database.family](tablePrefix));
+
+    await expect(sqlane.schema.findSchemaProblems()).resolves.toStrictEqual({ ok: false, problems: [
+        { table, column: 'failure_job', issue: 'wrong_type', expected: expect.any(String),
+            found: expect.stringMatching(failureJob), required: true },
+        { table, column: 'finished_at', issue: 'wrong_type', expected: finishedAt[0], found: finishedAt[1],
+            required: true },
+        { table, column: 'updated_at', issue: 'wrong_nullability', expected: 'not null', found: 'null', required: true },
+        { table, column: 'rate_limits', issue: 'missing_column', required: true },
+    ] });
+});
+
+test('problems: jobs_list missing, required from the major that its tag belongs to (8.0.0)', async () => {
+    const tablePrefix = nextPrefix();
+    const problem = { table: `${tablePrefix}jobs`, index: `${tablePrefix}jobs_list`, issue: 'missing_index' };
+
+    await sqlaneOf(tablePrefix).schema.migrate();
+    await database.query(DROP_JOBS_LIST_SQL[database.family](tablePrefix));
+
+    await expect(sqlaneOf(tablePrefix, '7.1.0').schema.findSchemaProblems())
+        .resolves.toStrictEqual({ ok: true, problems: [{ ...problem, required: false }] });
+    await expect(sqlaneOf(tablePrefix, '8.0.0-rc.1').schema.findSchemaProblems())
+        .resolves.toStrictEqual({ ok: false, problems: [{ ...problem, required: true }] });
+});
+
+test('problems: an index on its columns in another order', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix, '7.1.0');
+
+    await sqlane.schema.migrate();
+    await database.query(DROP_JOBS_LIST_SQL[database.family](tablePrefix));
+    await database.query(JOBS_LIST_ON_SQL[database.family](tablePrefix, 'created_at, job_name, id'));
+
+    await expect(sqlane.schema.findSchemaProblems()).resolves.toStrictEqual({ ok: true, problems: [{
+        table: `${tablePrefix}jobs`,
+        index: `${tablePrefix}jobs_list`,
+        issue: 'wrong_index',
+        expected: '(job_name, created_at, id)',
+        found: '(created_at, job_name, id)',
+        required: false,
+    }] });
+});
+
+test.runIf(!isMysqlFamily)('problems: an invalid index (a failed concurrent build)', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix, '7.1.0');
+
+    await sqlane.schema.migrate();
+    await database.query('UPDATE pg_index SET indisvalid = false WHERE indexrelid = to_regclass($1)', [
+        `${tablePrefix}jobs_list`,
+    ]);
+
+    await expect(sqlane.schema.findSchemaProblems()).resolves.toMatchObject({ problems: [{
+        issue: 'wrong_index', found: '(job_name, created_at, id) invalid',
+    }] });
+});
+
+test('problems: an extra column and an extra index are ignored', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix, '7.1.0');
+
+    await sqlane.schema.migrate();
+    await database.query(`ALTER TABLE ${tablePrefix}jobs ADD COLUMN extra int NULL`);
+    await database.query(`CREATE INDEX ${tablePrefix}jobs_extra ON ${tablePrefix}jobs (extra)`);
+
+    await expect(sqlane.schema.findSchemaProblems()).resolves.toStrictEqual(NO_PROBLEM);
+});
+
+test('an empty prefix: every table missing, every migration missing; no throw', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix, '7.1.0');
+
+    await expect(sqlane.schema.findSchemaProblems()).resolves.toStrictEqual({
+        ok: false,
+        problems: ['jobs', 'payloads', 'schedules', 'concurrency_slots', 'rate_limits']
+            .map(table => ({ table: `${tablePrefix}${table}`, issue: 'missing_table', required: true })),
+    });
+    await expect(sqlane.schema.getMigrationStatus()).resolves.toStrictEqual({
+        ok: false,
+        missingRequired: ALL_MIGRATIONS.slice(0, -JOB_LIST.length),
+        missingOptional: JOB_LIST,
+        unknownApplied: [],
+    });
+    await expect(listTables(tablePrefix)).resolves.toStrictEqual([]);
+});
+
+test('status: a record deleted, and a migration unknown to this version', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix, '7.1.0');
+
+    await sqlane.schema.migrate();
+    await database.query(`DELETE FROM ${tablePrefix}migrations WHERE id IN ('0004_schedules', '0008_job_list')`);
+    await database.query(`INSERT INTO ${tablePrefix}migrations (id, applied_at) VALUES ('0099_future', `
+        + `${TIME_SQL[database.family].now})`);
+
+    await expect(sqlane.schema.getMigrationStatus()).resolves.toStrictEqual({
+        ok: false,
+        missingRequired: ['0004_schedules'],
+        missingOptional: JOB_LIST,
+        unknownApplied: ['0099_future'],
+    });
+});
+
 test('the check of the server: the version of the database, through the adapter', async () => {
     const [{ version }] = await testAdapter.adapter.queue.query(SERVER_VERSION_SQL, []);
     const server = parseServerVersion(String(version));

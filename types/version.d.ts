@@ -20,3 +20,9 @@ export declare function compareVersions(a: string, b: string): number;
  * @returns {string}
  */
 export declare function baseVersion(version: string): string;
+/**
+ * The schema that every release of a major runs on: `X.0.0`.
+ * @param {string} version A pre-release counts as its base version.
+ * @returns {string}
+ */
+export declare function majorBase(version: string): string;

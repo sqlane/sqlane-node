@@ -454,6 +454,40 @@
  */
 
 /**
+ * What `schema.migrate()` would do, by the records of the migrations.
+ * @typedef {object} MigrationStatus
+ * @property {boolean} ok `missingRequired` is empty.
+ * @property {string[]} missingRequired Not recorded, tagged up to the base of the installed major (`X.0.0`): the
+ *     queries of this version need them.
+ * @property {string[]} missingOptional Not recorded, tagged above `X.0.0`: only the features that they serve need
+ *     them.
+ * @property {string[]} unknownApplied Recorded, unknown to this version: a newer version migrated.
+ */
+
+/**
+ * @typedef {'missing_table' | 'missing_column' | 'wrong_type' | 'wrong_nullability' | 'missing_index' | 'wrong_index'}
+ *     SchemaIssue
+ */
+
+/**
+ * @typedef {object} SchemaProblem
+ * @property {string} table With its prefix.
+ * @property {string} [column] The column of a column issue.
+ * @property {string} [index] The index of an index issue, with its prefix (MySQL's primary key: `PRIMARY`).
+ * @property {SchemaIssue} issue What is wrong.
+ * @property {string} [expected] For a wrong type, nullability or index: what this version expects.
+ * @property {string} [found] For a wrong type, nullability or index: what the catalog has.
+ * @property {boolean} required False: from a migration tagged above the base of the installed major (`X.0.0`).
+ */
+
+/**
+ * Whether the queries of this version find what they need, by the catalog.
+ * @typedef {object} SchemaProblems
+ * @property {boolean} ok No problem with `required: true`.
+ * @property {SchemaProblem[]} problems Every problem, required or not.
+ */
+
+/**
  * @typedef {object} DropOptions
  * @property {Duration} [lockTimeout] For the migration lock, and for the locks of the tables. Default: `'10m'`.
  */

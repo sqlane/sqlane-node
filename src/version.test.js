@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
-import { baseVersion, compareVersions, installedVersion, parseVersion } from './version.js';
+import { baseVersion, compareVersions, installedVersion, majorBase, parseVersion } from './version.js';
 
 test.each(['0.0.0', '7.1.0', '10.20.30'])('parses %o', (text) => {
     expect(parseVersion(text)).toStrictEqual(text.split('.').map(Number));
@@ -31,4 +31,12 @@ test('the installed version: the version of package.json', () => {
     const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
     expect(installedVersion()).toBe(version);
+});
+
+test.each([
+    ['7.1.0', '7.0.0'],
+    ['8.0.0', '8.0.0'],
+    ['8.2.1-rc.1', '8.0.0'],
+])('the major base of %s: %s', (version, base) => {
+    expect(majorBase(version)).toBe(base);
 });

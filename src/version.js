@@ -46,3 +46,12 @@ export function compareVersions(a, b) {
 export function baseVersion(version) {
     return version.replace(/-.*$/su, '');
 }
+
+/**
+ * The schema that every release of a major runs on: `X.0.0`.
+ * @param {string} version A pre-release counts as its base version.
+ * @returns {string}
+ */
+export function majorBase(version) {
+    return `${baseVersion(version).split('.')[0]}.0.0`;
+}

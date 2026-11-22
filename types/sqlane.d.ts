@@ -1,4 +1,4 @@
-import type { BulkOptions, BulkResult, CloseOptions, DrainOptions, DrainResult, DropOptions, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, Handler, HandlerPayload, JobDefinition, JobFilter, JobPage, JobRecord, JobSelector, KeyStatsOptions, KeyStatsPage, JobStats, ListJobsOptions, MigrateOptions, RetryOptions, RollbackOptions, ScheduleBaseOptions, ScheduleInfo, SchedulePayload, ScheduleTiming } from './types.js';
+import type { BulkOptions, BulkResult, CloseOptions, DrainOptions, DrainResult, DropOptions, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, Handler, HandlerPayload, JobDefinition, JobFilter, JobPage, JobRecord, JobSelector, KeyStatsOptions, KeyStatsPage, JobStats, ListJobsOptions, MigrateOptions, MigrationStatus, RetryOptions, RollbackOptions, ScheduleBaseOptions, ScheduleInfo, SchedulePayload, ScheduleTiming, SchemaProblems } from './types.js';
 /**
  * The tables of sqlane: `sqlane.schema`. Each migration is tagged with the lowest version of sqlane that ships it.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate | schema}
@@ -45,6 +45,22 @@ export interface SqlaneSchema {
     drop(options?: DropOptions): Promise<{
         dropped: string[];
     }>;
+    /**
+     * What `migrate()` would do, by the records of the migrations: a read, for a readiness probe. It never throws on a
+     * mismatch.
+     * @returns `ok` when no migration that the installed major needs is missing; the missing ids, required (tagged up
+     *     to `X.0.0` of the installed major) or optional; the recorded ids unknown to this version.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemagetmigrationstatus}
+     */
+    getMigrationStatus(): Promise<MigrationStatus>;
+    /**
+     * Whether the queries of this version find what they need, by the catalog: the tables, columns (type, nullability,
+     * collation) and indexes that its migrations create, by name. Anything extra is ignored. A read, for a readiness
+     * probe: it never throws on a mismatch.
+     * @returns `ok` when no problem is required, and the problems.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemafindschemaproblems}
+     */
+    findSchemaProblems(): Promise<SchemaProblems>;
 }
 /**
  * The jobs in the database: `sqlane.jobs`. Read them; retry, cancel or remove them in bulk; see the keys of the global
@@ -210,7 +226,7 @@ export interface Sqlane<C> {
     getStats(): Promise<JobStats[]>;
     /** The jobs in the database: read them; retry, cancel or remove them in bulk. */
     readonly jobs: SqlaneJobs<C>;
-    /** The `sqlane_*` tables: create, update, roll back or drop them. */
+    /** The `sqlane_*` tables: create, update, roll back or drop them; check them. */
     readonly schema: SqlaneSchema;
     /**
      * Low level: makes this process check for due jobs now, instead of at the next poll. Most apps don't need it:

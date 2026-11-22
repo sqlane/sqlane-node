@@ -125,6 +125,7 @@ jobs:
         run: |
           for db in mysql postgres; do
             node "$db.js" | tee "$RUNNER_TEMP/$db.txt"
+            grep --quiet --fixed-strings 'schema ok: true' "$RUNNER_TEMP/$db.txt"
             grep --quiet --fixed-strings 'order 2: 0 rows in orders, 0 jobs' "$RUNNER_TEMP/$db.txt"
             grep --quiet --fixed-strings 'order 1: at most 1 sync at a time; order 3 ran alongside: yes' "$RUNNER_TEMP/$db.txt"
           done

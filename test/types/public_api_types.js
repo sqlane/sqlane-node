@@ -74,6 +74,10 @@ export async function publicApiTypes() {
         .toEqualTypeOf(/** @type {{ reverted: string[] }} */ ({ reverted: [] }));
     expectTypeOf(await sqlane.schema.drop({ lockTimeout: '10s' }))
         .toEqualTypeOf(/** @type {{ dropped: string[] }} */ ({ dropped: [] }));
+    expectTypeOf((await sqlane.schema.getMigrationStatus()).missingRequired)
+        .toEqualTypeOf(/** @type {string[]} */ ([]));
+    expectTypeOf((await sqlane.schema.findSchemaProblems()).problems)
+        .toEqualTypeOf(/** @type {import('@sqlane/core').SchemaProblem[]} */ ([]));
     // @ts-expect-error rollback needs a target
     await sqlane.schema.rollback({});
     // @ts-expect-error migrate() is now schema.migrate()

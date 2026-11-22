@@ -3,6 +3,8 @@ import { createEnqueuer } from './enqueue.js';
 import { createHintChannel } from './hint_channel.js';
 import { ClosedError, ConfigError } from './errors.js';
 import { dropTables, rollbackMigrations, runMigrations } from './migrations.js';
+import { findSchemaProblems, getMigrationStatus } from './schema_status.js';
+import { installedVersion } from './version.js';
 import { DEFAULT_MAX_PAYLOAD_BYTES } from './payload.js';
 import { createRegistry } from './registry.js';
 import { createRunner } from './runner.js';
@@ -158,6 +160,8 @@ export function createSqlane(options) {
     const testTimings = /** @type {{ timings?: object }} */ (options).timings;
     // Undocumented, for the tests of sqlane: in place of the version of package.json
     const testInstalledVersion = /** @type {{ installedVersion?: string }} */ (options).installedVersion;
+    /** @returns {string} The installed version, read only when needed */
+    const installedOrTest = () => testInstalledVersion ?? installedVersion();
     const store = createStore(adapter, tablePrefix, options.logger);
     const runner = createRunner({
         store,
@@ -445,9 +449,13 @@ export function createSqlane(options) {
                 checkSchemaChange('schema.drop()');
 
                 return {
-                    dropped: await dropTables(adapter, tablePrefix, dropOptions, () => checkServerOnce('schema.drop()')),
+                    dropped: await dropTables(adapter, tablePrefix, dropOptions, () => checkServerOnce(
+                        'schema.drop()',
+                    )),
                 };
             },
+            getMigrationStatus: () => getMigrationStatus(adapter, tablePrefix, installedOrTest()),
+            findSchemaProblems: () => findSchemaProblems(adapter, tablePrefix, installedOrTest()),
         },
         getStats: () => store.getStats(),
         jobs: createJobsApi(store, createBulk({

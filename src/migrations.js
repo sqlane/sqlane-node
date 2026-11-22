@@ -308,7 +308,7 @@ async function runDownStep(executor, step) {
  * @param {Migration[]} known
  * @returns {string[]} The recorded ids unknown to this version, sorted: a newer version applied them.
  */
-function unknownIds(recorded, known) {
+export function unknownIds(recorded, known) {
     return [...recorded].filter(id => !known.some(migration => migration.id === id)).toSorted();
 }
 

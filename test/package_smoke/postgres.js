@@ -32,6 +32,7 @@ const sqlane = createSqlane({
 });
 
 await sqlane.schema.migrate(); // creates the sqlane_* tables
+console.log(`schema ok: ${(await sqlane.schema.getMigrationStatus()).ok}`);
 await appPool.query('DROP TABLE IF EXISTS orders');
 await appPool.query('CREATE TABLE orders (id INT PRIMARY KEY)');
 
