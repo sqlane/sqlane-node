@@ -40,15 +40,33 @@ export async function indexExists(executor, table, index) {
 /**
  * @param {import('../types.js').Executor} executor
  * @param {import('../types.js').Dialect} dialect
+ * @param {string} table
+ * @returns {Promise<string[]>} Its columns. None: no such table.
+ */
+export async function columnNames(executor, dialect, table) {
+    const rows = dialect === 'postgres'
+        ? await executor.query(`SELECT attname AS name FROM pg_attribute
+            WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped`, [table])
+        : await executor.query(`SELECT column_name AS name FROM information_schema.columns
+            WHERE table_schema = DATABASE() AND table_name = ?`, [table]);
+
+    return rows.map(row => String(row.name));
+}
+
+/**
+ * @param {import('../types.js').Executor} executor
+ * @param {import('../types.js').Dialect} dialect
  * @param {string} p The table prefix.
- * @returns {Promise<Set<string>>} The ids in `<p>migrations`. None: no such table.
+ * @returns {Promise<Set<string>>} The ids in `<p>migrations`, as text: a table of the app under the prefix may have
+ *     other ids. None: no such table, or no `id` column.
  */
 export async function recordedIds(executor, dialect, p) {
-    if (!await tableExists(executor, dialect, `${p}migrations`)) {
+    if (!(await columnNames(executor, dialect, `${p}migrations`)).includes('id')) {
         return new Set();
     }
 
-    const rows = await executor.query(`SELECT id FROM ${p}migrations`, []);
+    const id = dialect === 'postgres' ? 'id::text' : 'CAST(id AS CHAR)';
+    const rows = await executor.query(`SELECT ${id} AS id FROM ${p}migrations`, []);
 
     return new Set(rows.map(row => String(row.id)));
 }

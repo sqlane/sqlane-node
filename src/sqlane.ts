@@ -7,6 +7,7 @@ import type {
     CloseOptions,
     DrainOptions,
     DrainResult,
+    DropOptions,
     EnqueueManyItem,
     EnqueueOptions,
     EnqueuePayload,
@@ -61,6 +62,18 @@ export interface SqlaneSchema {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemarollback | schema.rollback}
      */
     rollback(options: RollbackOptions): Promise<{ reverted: string[] }>;
+
+    /**
+     * Drops every table that sqlane created under the prefix, in any version, with their data: `<p>migrations` last.
+     * Stop the other processes on the prefix first. It drops only the tables of sqlane: when `<p>jobs` is not a table
+     * of sqlane and `<p>migrations` does not record `0001_initial`, it rejects with a `ConfigError` and drops nothing.
+     * Also a `ConfigError` when a recorded migration is unknown to this version, or on a started or draining instance.
+     * @param options `lockTimeout`: how long to wait for the migration lock, and for the locks of the tables; default
+     *     `'10m'`.
+     * @returns The tables that existed.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemadrop | schema.drop}
+     */
+    drop(options?: DropOptions): Promise<{ dropped: string[] }>;
 }
 
 /**
@@ -258,7 +271,7 @@ export interface Sqlane<C> {
     /** The jobs in the database: read them; retry, cancel or remove them in bulk. */
     readonly jobs: SqlaneJobs<C>;
 
-    /** The `sqlane_*` tables: create, update or roll them back. */
+    /** The `sqlane_*` tables: create, update, roll back or drop them. */
     readonly schema: SqlaneSchema;
 
     /**

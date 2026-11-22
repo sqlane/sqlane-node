@@ -8,7 +8,7 @@ import { poolTransactionIsolation, readCommitted } from './helpers/isolation.js'
 import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
 import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
-import { checkSchemaChanges } from './helpers/schema_checks.js';
+import { checkSchemaChanges, SCHEMA_CHANGES } from './helpers/schema_checks.js';
 import { checkStartTimes } from './helpers/start_time_checks.js';
 
 /** @typedef {import('../../src/adapters/postgres_js.js').PostgresJsConnection} PostgresJsConnection */
@@ -122,11 +122,10 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
         await expect(checkJobsRead(sqlane, sql)).resolves.toHaveLength(3);
     });
 
-    test('the schema through the adapter: rollback(), then migrate() again', async () => {
-        const { sqlane } = await freshSqlane();
+    test('the schema through the adapter: rollback(), migrate() again, drop()', async () => {
+        const { sqlane, p } = await freshSqlane();
 
-        await expect(checkSchemaChanges(sqlane))
-            .resolves.toStrictEqual({ reverted: ['0008_job_list'], applied: ['0008_job_list'] });
+        await expect(checkSchemaChanges(sqlane, p)).resolves.toStrictEqual(SCHEMA_CHANGES);
     });
 
     test('the start time of a run: the event, JobInfo, JobRecord and its slots agree', async () => {

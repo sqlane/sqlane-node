@@ -477,6 +477,113 @@ test.runIf(isMysqlFamily)('rollback: the lock_wait_timeout of the session is res
     }
 });
 
+/** The tables of a full migrate, in the order that drop() names them: migrations last */
+const ALL_TABLES = ['jobs', 'payloads', 'schedules', 'concurrency_slots', 'rate_limits', 'migrations'];
+
+test('drop: every table of the prefix, migrations last; migrate() works again', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+
+    await sqlane.schema.migrate();
+    await expect(sqlane.schema.drop()).resolves.toStrictEqual({ dropped: ALL_TABLES.map(t => `${tablePrefix}${t}`) });
+    await expect(listTables(tablePrefix)).resolves.toStrictEqual([]);
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
+});
+
+test('drop: a prefix pinned at 6.0.0, dropped whole', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+
+    await sqlane.schema.migrate({ targetVersion: '6.0.0' });
+    await expect(sqlane.schema.drop()).resolves.toStrictEqual({ dropped: ALL_TABLES.map(t => `${tablePrefix}${t}`) });
+    await expect(listTables(tablePrefix)).resolves.toStrictEqual([]);
+});
+
+test('drop: a prefix of 5.x, with its mutexes and job_keys, dropped whole', async () => {
+    const tablePrefix = nextPrefix();
+
+    await migrateAllBut(
+        tablePrefix,
+        SIX.length + RATE_LIMITS.length + JOB_LIST.length,
+        FIVE_X_ROWS_SQL[database.family](tablePrefix),
+    );
+
+    await expect(sqlaneOf(tablePrefix).schema.drop()).resolves.toStrictEqual({
+        dropped: ['jobs', 'payloads', 'schedules', 'mutexes', 'job_keys', 'migrations'].map(t => `${tablePrefix}${t}`),
+    });
+    await expect(listTables(tablePrefix)).resolves.toStrictEqual([]);
+});
+
+test('drop: an empty prefix: nothing dropped', async () => {
+    await expect(sqlaneOf(nextPrefix()).schema.drop()).resolves.toStrictEqual({ dropped: [] });
+});
+
+test.each([
+    { tables: 'a jobs table of the app', sql: [
+        (/** @type {string} */ p) => `CREATE TABLE ${p}jobs (id int PRIMARY KEY)`,
+    ] },
+    { tables: 'a migrations table of the app, with integer ids', sql: [
+        (/** @type {string} */ p) => `CREATE TABLE ${p}migrations (id int PRIMARY KEY, name varchar(100))`,
+        (/** @type {string} */ p) => `INSERT INTO ${p}migrations (id, name) VALUES (1, 'users')`,
+    ] },
+    { tables: 'a migrations table of the app, with its own ids', sql: [
+        (/** @type {string} */ p) => `CREATE TABLE ${p}migrations (id varchar(64) PRIMARY KEY)`,
+        (/** @type {string} */ p) => `INSERT INTO ${p}migrations (id) VALUES ('20260101_users')`,
+    ] },
+])('drop: $tables under the prefix: a ConfigError, nothing dropped', async ({ sql }) => {
+    const tablePrefix = nextPrefix();
+
+    for (const statement of sql) {
+        // oxlint-disable-next-line no-await-in-loop -- in order
+        await database.query(statement(tablePrefix));
+    }
+
+    const tables = await listTables(tablePrefix);
+
+    await expect(sqlaneOf(tablePrefix).schema.drop()).rejects.toThrow(new ConfigError(
+        `schema.drop(): ${tables.join(', ')} not created by sqlane: ${tablePrefix}jobs has no enqueue_token and `
+        + `lock_token, and ${tablePrefix}migrations does not record 0001_initial. Nothing dropped`,
+    ));
+    await expect(listTables(tablePrefix)).resolves.toStrictEqual(tables);
+});
+
+test('drop: a migration recorded but unknown to this version: a ConfigError, nothing dropped', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+
+    await sqlane.schema.migrate();
+    await database.query(`INSERT INTO ${tablePrefix}migrations (id, applied_at) VALUES ('0099_future', `
+        + `${TIME_SQL[database.family].now})`);
+
+    await expect(sqlane.schema.drop()).rejects.toThrow(new ConfigError(
+        'schema.drop(): migrations unknown to this version are recorded (0099_future): a newer version of sqlane '
+        + 'applied them, and its tables would be left behind',
+    ));
+    await expect(listTables(tablePrefix)).resolves.toHaveLength(ALL_TABLES.length);
+});
+
+test('drop: waits for the lock of a table up to lockTimeout, then a MigrationLockTimeoutError', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix);
+    const holder = await testAdapter.connect();
+
+    await sqlane.schema.migrate();
+    await holder.begin();
+    await holder.execute(`SELECT count(*) FROM ${tablePrefix}jobs`);
+
+    try {
+        const startedAt = Date.now();
+
+        await expect(sqlane.schema.drop({ lockTimeout: '1s' })).rejects.toThrow(MigrationLockTimeoutError);
+        expect(Date.now() - startedAt).toBeLessThan(5000);
+    } finally {
+        await holder.rollback();
+        holder.release();
+    }
+
+    await expect(listTables(tablePrefix)).resolves.toHaveLength(ALL_TABLES.length);
+});
+
 test('the check of the server: the version of the database, through the adapter', async () => {
     const [{ version }] = await testAdapter.adapter.queue.query(SERVER_VERSION_SQL, []);
     const server = parseServerVersion(String(version));

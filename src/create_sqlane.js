@@ -2,7 +2,7 @@ import { resolveDefaults } from './defaults.js';
 import { createEnqueuer } from './enqueue.js';
 import { createHintChannel } from './hint_channel.js';
 import { ClosedError, ConfigError } from './errors.js';
-import { rollbackMigrations, runMigrations } from './migrations.js';
+import { dropTables, rollbackMigrations, runMigrations } from './migrations.js';
 import { DEFAULT_MAX_PAYLOAD_BYTES } from './payload.js';
 import { createRegistry } from './registry.js';
 import { createRunner } from './runner.js';
@@ -262,6 +262,21 @@ export function createSqlane(options) {
     }
 
     /**
+     * `schema.rollback()` and `schema.drop()`: on an instance that is not started, closed or draining. Their DDL would
+     * wait behind the queries of this instance.
+     * @param {string} where The caller, for the errors.
+     */
+    function checkSchemaChange(where) {
+        if (runner.isClosed()) {
+            throw new ClosedError(`${where} after close()`);
+        }
+
+        if (!runner.isIdle() || startPromise) {
+            throw new ConfigError(`${where} while started or draining: run it on an instance that is not started`);
+        }
+    }
+
+    /**
      * Registers the schedules, then starts the runner and the scheduler. Nothing runs before the runner starts: a
      * rejected start leaves no half-started instance.
      * @returns {Promise<void>}
@@ -417,22 +432,20 @@ export function createSqlane(options) {
                 };
             },
             rollback: async (rollbackOptions) => {
-                if (runner.isClosed()) {
-                    throw new ClosedError('schema.rollback() after close()');
-                }
-
-                // Its DDL would wait behind the queries of this instance
-                if (!runner.isIdle() || startPromise) {
-                    throw new ConfigError(
-                        'schema.rollback() while started or draining: run it on an instance that is not started',
-                    );
-                }
+                checkSchemaChange('schema.rollback()');
 
                 return {
                     reverted: await rollbackMigrations(adapter, tablePrefix, rollbackOptions, {
                         checkServer: () => checkServerOnce('schema.rollback()'),
                         installedVersion: testInstalledVersion,
                     }),
+                };
+            },
+            drop: async (dropOptions) => {
+                checkSchemaChange('schema.drop()');
+
+                return {
+                    dropped: await dropTables(adapter, tablePrefix, dropOptions, () => checkServerOnce('schema.drop()')),
                 };
             },
         },

@@ -227,6 +227,7 @@ describe('close()', () => {
         await expect(sqlane.schema.migrate()).rejects.toThrow(new ClosedError('schema.migrate() after close()'));
         await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' }))
             .rejects.toThrow(new ClosedError('schema.rollback() after close()'));
+        await expect(sqlane.schema.drop()).rejects.toThrow(new ClosedError('schema.drop() after close()'));
         await closing;
     });
 
@@ -538,19 +539,24 @@ describe('schema.rollback()', () => {
         await expect(sqlane.schema.rollback(/** @type {any} */ (options))).rejects.toThrow(InvalidOptionsError);
         expect(versionQueries()).toBe(0);
     });
+});
 
+describe.each([
+    { method: 'rollback', call: (/** @type {any} */ sqlane) => sqlane.schema.rollback({ targetVersion: '6.0.0' }) },
+    { method: 'drop', call: (/** @type {any} */ sqlane) => sqlane.schema.drop() },
+])('schema.$method()', ({ method, call }) => {
     test('while started, starting or draining: a ConfigError', async () => {
         const job = defineJob({ name: 'a' });
         const sqlane = createSqlane({ adapter: fakeAdapter().adapter, jobs: [job] });
-        const message = 'schema.rollback() while started or draining: run it on an instance that is not started';
+        const message = `schema.${method}() while started or draining: run it on an instance that is not started`;
 
         sqlane.handle(job, async () => {});
 
         const starting = sqlane.start();
 
-        await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).rejects.toThrow(new ConfigError(message));
+        await expect(call(sqlane)).rejects.toThrow(new ConfigError(message));
         await starting;
-        await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).rejects.toThrow(new ConfigError(message));
+        await expect(call(sqlane)).rejects.toThrow(new ConfigError(message));
         await sqlane.close({ deadline: 0 });
 
         const drained = createSqlane({ adapter: fakeAdapter().adapter, jobs: [job] });
@@ -559,8 +565,17 @@ describe('schema.rollback()', () => {
 
         const draining = drained.drain();
 
-        await expect(drained.schema.rollback({ targetVersion: '6.0.0' })).rejects.toThrow(new ConfigError(message));
+        await expect(call(drained)).rejects.toThrow(new ConfigError(message));
         await draining;
         await drained.close({ deadline: 0 });
     });
+});
+
+test('schema.drop(): a bad lockTimeout, an InvalidOptionsError before any statement', async () => {
+    const { adapter, versionQueries } = fakeAdapter();
+    const sqlane = createSqlane({ adapter });
+
+    await expect(sqlane.schema.drop({ lockTimeout: 'soon' }))
+        .rejects.toThrow(new InvalidOptionsError('schema.drop(): "lockTimeout" must be a duration'));
+    expect(versionQueries()).toBe(0);
 });

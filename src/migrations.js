@@ -3,7 +3,7 @@ import { ConfigError, InvalidOptionsError, MigrationLockTimeoutError } from './e
 import { mariadbMigrations, mariadbMigrationsTable } from './schema/mariadb.js';
 import { mysqlMigrations, mysqlMigrationsTable } from './schema/mysql.js';
 import { postgresMigrations, postgresMigrationsTable } from './schema/postgres.js';
-import { indexExists, recordedIds } from './store/schema_reads.js';
+import { columnNames, indexExists, recordedIds, tableExists } from './store/schema_reads.js';
 import { isLockTimeoutError } from './transient_error.js';
 import { baseVersion, compareVersions, installedVersion, parseVersion } from './version.js';
 
@@ -23,6 +23,11 @@ import { baseVersion, compareVersions, installedVersion, parseVersion } from './
  * @property {readonly string[]} statements Its SQL, in order.
  * @property {readonly DownStep[]} [down] Reverts it: every migration tagged above 6.0.0 has one.
  */
+
+/** Every table that sqlane created in any version: `drop()` drops those that exist, in this order */
+const ALL_TABLES = [
+    'jobs', 'payloads', 'schedules', 'concurrency_slots', 'rate_limits', 'mutexes', 'job_keys', 'migrations',
+];
 
 /** The lowest `targetVersion`: 0005 and 0006 turned the mutex keys of 5.x into slots, with no way back */
 const MIN_TARGET_VERSION = '6.0.0';
@@ -299,6 +304,37 @@ async function runDownStep(executor, step) {
 }
 
 /**
+ * @param {Set<string>} recorded
+ * @param {Migration[]} known
+ * @returns {string[]} The recorded ids unknown to this version, sorted: a newer version applied them.
+ */
+function unknownIds(recorded, known) {
+    return [...recorded].filter(id => !known.some(migration => migration.id === id)).toSorted();
+}
+
+/**
+ * A DDL that waited longer than `lockTimeout` for its table lock: a `MigrationLockTimeoutError`.
+ * @template T
+ * @param {string} where
+ * @param {number} lockTimeoutMs
+ * @param {() => Promise<T>} func
+ * @returns {Promise<T>}
+ */
+async function withTableLockError(where, lockTimeoutMs, func) {
+    try {
+        return await func();
+    } catch (error) {
+        if (isLockTimeoutError(error) && !(error instanceof MigrationLockTimeoutError)) {
+            throw new MigrationLockTimeoutError(`${where}: a table lock was not free in ${lockTimeoutMs} ms`, {
+                cause: error,
+            });
+        }
+
+        throw error;
+    }
+}
+
+/**
  * Reverts the recorded migrations tagged above `targetVersion`, newest first: the down of each, then the delete of its
  * record. Under the lock of `runMigrations`; PostgreSQL: in its one transaction.
  * @template C
@@ -322,47 +358,106 @@ export async function rollbackMigrations(adapter, tablePrefix, options, context 
 
     await context.checkServer?.();
 
-    try {
-        return await withMigrationLock(adapter, tablePrefix, { lockTimeoutMs, where, boundTableLocks: true }, async (
-            executor,
-        ) => {
-            const recorded = await recordedIds(executor, dialect, tablePrefix);
-            const unknown = [...recorded].filter(id => !known.some(migration => migration.id === id)).toSorted();
+    const lock = { lockTimeoutMs, where, boundTableLocks: true };
 
-            if (unknown.length > 0) {
-                throw new ConfigError(`${where}: migrations unknown to this version are recorded `
-                    + `(${unknown.join(', ')}): a newer version of sqlane applied them, and their down statements `
-                    + 'are not in this code');
-            }
+    return withTableLockError(where, lockTimeoutMs, () => withMigrationLock(adapter, tablePrefix, lock, async (
+        executor,
+    ) => {
+        const recorded = await recordedIds(executor, dialect, tablePrefix);
+        const unknown = unknownIds(recorded, known);
 
-            const reverted = known
-                .filter(({ id, version }) => recorded.has(id) && compareVersions(version, target) > 0)
-                .toReversed();
-            const restore = dialect === 'postgres' ? null : await boundMysqlTableLocks(executor, lockTimeoutMs);
-
-            try {
-                for (const { id, down = [] } of reverted) {
-                    for (const step of down) {
-                        // oxlint-disable-next-line no-await-in-loop -- DDL in order
-                        await runDownStep(executor, step);
-                    }
-
-                    // oxlint-disable-next-line no-await-in-loop -- after its down
-                    await executor.query(deleteSql, [id]);
-                }
-            } finally {
-                await restore?.();
-            }
-
-            return reverted.map(({ id }) => id);
-        });
-    } catch (error) {
-        if (isLockTimeoutError(error) && !(error instanceof MigrationLockTimeoutError)) {
-            throw new MigrationLockTimeoutError(`${where}: a table lock was not free in ${lockTimeoutMs} ms`, {
-                cause: error,
-            });
+        if (unknown.length > 0) {
+            throw new ConfigError(`${where}: migrations unknown to this version are recorded (${unknown.join(', ')}): `
+                + 'a newer version of sqlane applied them, and their down statements are not in this code');
         }
 
-        throw error;
-    }
+        const reverted = known
+            .filter(({ id, version }) => recorded.has(id) && compareVersions(version, target) > 0)
+            .toReversed();
+        const restore = dialect === 'postgres' ? null : await boundMysqlTableLocks(executor, lockTimeoutMs);
+
+        try {
+            for (const { id, down = [] } of reverted) {
+                for (const step of down) {
+                    // oxlint-disable-next-line no-await-in-loop -- DDL in order
+                    await runDownStep(executor, step);
+                }
+
+                // oxlint-disable-next-line no-await-in-loop -- after its down
+                await executor.query(deleteSql, [id]);
+            }
+        } finally {
+            await restore?.();
+        }
+
+        return reverted.map(({ id }) => id);
+    }));
+}
+
+/**
+ * Drops every table that sqlane created under the prefix, in any version, under the lock of `runMigrations`. Only
+ * the tables of sqlane: `<p>jobs` has `enqueue_token` and `lock_token` (every version), or `<p>migrations` records
+ * `0001_initial`.
+ * @template C
+ * @param {import('./types.js').Adapter<C>} adapter
+ * @param {string} tablePrefix Checked.
+ * @param {import('./types.js').DropOptions} [options]
+ * @param {() => Promise<void>} [checkServer] Runs after the options are checked, before the drop.
+ * @returns {Promise<string[]>} The tables that existed, in the order of the drop: `<p>migrations` last.
+ */
+export async function dropTables(adapter, tablePrefix, options = {}, checkServer = async () => {}) {
+    const where = 'schema.drop()';
+    const { dialect } = adapter;
+    const lockTimeoutMs = checkLockTimeout(options.lockTimeout, where);
+    const known = migrationsOf(dialect, tablePrefix);
+    const lock = { lockTimeoutMs, where, boundTableLocks: true };
+
+    await checkServer();
+
+    return withTableLockError(where, lockTimeoutMs, () => withMigrationLock(adapter, tablePrefix, lock, async (
+        executor,
+    ) => {
+        /** @type {string[]} */
+        const found = [];
+
+        for (const table of ALL_TABLES.map(name => `${tablePrefix}${name}`)) {
+            // oxlint-disable-next-line no-await-in-loop -- a few reads of the catalog
+            if (await tableExists(executor, dialect, table)) {
+                found.push(table);
+            }
+        }
+
+        if (found.length === 0) {
+            return [];
+        }
+
+        const jobsColumns = await columnNames(executor, dialect, `${tablePrefix}jobs`);
+        const recorded = await recordedIds(executor, dialect, tablePrefix);
+        const ofSqlane = (jobsColumns.includes('enqueue_token') && jobsColumns.includes('lock_token'))
+            || recorded.has('0001_initial');
+
+        if (!ofSqlane) {
+            throw new ConfigError(`${where}: ${found.join(', ')} not created by sqlane: ${tablePrefix}jobs has no `
+                + `enqueue_token and lock_token, and ${tablePrefix}migrations does not record 0001_initial. `
+                + 'Nothing dropped');
+        }
+
+        const unknown = unknownIds(recorded, known);
+
+        if (unknown.length > 0) {
+            throw new ConfigError(`${where}: migrations unknown to this version are recorded (${unknown.join(', ')}): `
+                + 'a newer version of sqlane applied them, and its tables would be left behind');
+        }
+
+        const restore = dialect === 'postgres' ? null : await boundMysqlTableLocks(executor, lockTimeoutMs);
+
+        try {
+            // One statement: MySQL 8.4 drops them atomically
+            await executor.query(`DROP TABLE IF EXISTS ${found.join(', ')}`, []);
+        } finally {
+            await restore?.();
+        }
+
+        return found;
+    }));
 }

@@ -454,6 +454,11 @@
  */
 
 /**
+ * @typedef {object} DropOptions
+ * @property {Duration} [lockTimeout] For the migration lock, and for the locks of the tables. Default: `'10m'`.
+ */
+
+/**
  * @typedef {object} JobStats
  * @property {string} name The job name.
  * @property {number} pending The jobs that wait to run, also those not due yet and those blocked on a key.

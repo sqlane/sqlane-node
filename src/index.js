@@ -111,6 +111,7 @@ export {
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').RollbackOptions} RollbackOptions */
+/** @typedef {import('./types.js').DropOptions} DropOptions */
 /** @typedef {import('./types.js').RateLimit} RateLimit */
 /** @typedef {import('./types.js').RateLimitKey} RateLimitKey */
 /** @typedef {import('./types.js').RateLimitOptions} RateLimitOptions */

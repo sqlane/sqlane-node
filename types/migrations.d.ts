@@ -73,3 +73,15 @@ export declare function rollbackMigrations<C>(adapter: import('./types.js').Adap
     checkServer?: () => Promise<void>;
     installedVersion?: string;
 }): Promise<string[]>;
+/**
+ * Drops every table that sqlane created under the prefix, in any version, under the lock of `runMigrations`. Only
+ * the tables of sqlane: `<p>jobs` has `enqueue_token` and `lock_token` (every version), or `<p>migrations` records
+ * `0001_initial`.
+ * @template C
+ * @param {import('./types.js').Adapter<C>} adapter
+ * @param {string} tablePrefix Checked.
+ * @param {import('./types.js').DropOptions} [options]
+ * @param {() => Promise<void>} [checkServer] Runs after the options are checked, before the drop.
+ * @returns {Promise<string[]>} The tables that existed, in the order of the drop: `<p>migrations` last.
+ */
+export declare function dropTables<C>(adapter: import('./types.js').Adapter<C>, tablePrefix: string, options?: import('./types.js').DropOptions, checkServer?: () => Promise<void>): Promise<string[]>;
