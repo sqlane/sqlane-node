@@ -1,20 +1,20 @@
-export type JobDefinition = import('./types.js').JobDefinition;
+export type LaneDefinition = import('./types.js').LaneDefinition;
 export type RateState = import('./local_rates.js').RateState;
 export type LimitState = {
     limit: import('./types.js').ConcurrencyLimit;
     running: number;
     /**
-     * Its handled names.
+     * Its added lanes.
      */
-    names: string[];
+    lanes: string[];
 };
 export type HandlerEntry = {
     name: string;
     /**
-     * Its position in the order of the handle() calls: the order of the ties.
+     * Its position in the order of the lanes.add() calls: the order of the ties.
      */
     index: number;
-    definition: JobDefinition | null;
+    definition: LaneDefinition | null;
     handler: import('./types.js').Handler;
     /**
      * Its fairShareWeight.
@@ -38,44 +38,44 @@ export type HandlerEntry = {
     timeoutMs: number | null;
 };
 export type Registry = {
-    handle: (job: JobDefinition | string, handler: import('./types.js').Handler, options?: unknown) => void;
-    getEntry: (name: string) => HandlerEntry | undefined;
+    add: (lane: LaneDefinition | string, handler: import('./types.js').Handler, options?: unknown) => void;
+    getEntry: (lane: string) => HandlerEntry | undefined;
     /**
-     * In the order of the handle() calls.
+     * In the order of the lanes.add() calls.
      */
     entries: () => HandlerEntry[];
     /**
-     * In `jobs`, else handled.
+     * In `lanes`, else added.
      */
-    findDefinition: (name: string) => JobDefinition | null;
+    findDefinition: (lane: string) => LaneDefinition | null;
     /**
-     * The handled names whose definition has global limits, of
-     * concurrency or of rate.
+     * The added lanes whose definition has global limits, of concurrency or
+     * of rate.
      */
-    namesWithLimits: () => string[];
+    lanesWithLimits: () => string[];
     /**
-     * The handled names whose definition has global rate limits.
+     * The added lanes whose definition has global rate limits.
      */
-    namesWithRateLimits: () => string[];
+    lanesWithRateLimits: () => string[];
     /**
-     * Checks the handlers together: each failure job resolves and has none of its own.
+     * Checks the lanes together: each failure lane resolves and has none of its own.
      */
     validate: () => void;
 };
-/** @typedef {import('./types.js').JobDefinition} JobDefinition */
+/** @typedef {import('./types.js').LaneDefinition} LaneDefinition */
 /** @typedef {import('./local_rates.js').RateState} RateState */
 /**
  * A local concurrency limit in this instance: its handlers that run.
  * @typedef {object} LimitState
  * @property {import('./types.js').ConcurrencyLimit} limit
  * @property {number} running
- * @property {string[]} names Its handled names.
+ * @property {string[]} lanes Its added lanes.
  */
 /**
  * @typedef {object} HandlerEntry
  * @property {string} name
- * @property {number} index Its position in the order of the handle() calls: the order of the ties.
- * @property {JobDefinition | null} definition
+ * @property {number} index Its position in the order of the lanes.add() calls: the order of the ties.
+ * @property {LaneDefinition | null} definition
  * @property {import('./types.js').Handler} handler
  * @property {number} weight Its fairShareWeight.
  * @property {number} running Its jobs that run in this instance.
@@ -85,22 +85,22 @@ export type Registry = {
  */
 /**
  * @typedef {object} Registry
- * @property {(job: JobDefinition | string, handler: import('./types.js').Handler, options?: unknown) => void} handle
- * @property {(name: string) => HandlerEntry | undefined} getEntry
- * @property {() => HandlerEntry[]} entries In the order of the handle() calls.
- * @property {(name: string) => JobDefinition | null} findDefinition In `jobs`, else handled.
- * @property {() => string[]} namesWithLimits The handled names whose definition has global limits, of
- *     concurrency or of rate.
- * @property {() => string[]} namesWithRateLimits The handled names whose definition has global rate limits.
- * @property {() => void} validate Checks the handlers together: each failure job resolves and has none of its own.
+ * @property {(lane: LaneDefinition | string, handler: import('./types.js').Handler, options?: unknown) => void} add
+ * @property {(lane: string) => HandlerEntry | undefined} getEntry
+ * @property {() => HandlerEntry[]} entries In the order of the lanes.add() calls.
+ * @property {(lane: string) => LaneDefinition | null} findDefinition In `lanes`, else added.
+ * @property {() => string[]} lanesWithLimits The added lanes whose definition has global limits, of concurrency or
+ *     of rate.
+ * @property {() => string[]} lanesWithRateLimits The added lanes whose definition has global rate limits.
+ * @property {() => void} validate Checks the lanes together: each failure lane resolves and has none of its own.
  */
 /**
  * @param {object} params
- * @param {Map<string, JobDefinition>} params.jobsByName
+ * @param {Map<string, LaneDefinition>} params.lanesByName
  * @param {number | null} params.defaultTimeoutMs
  * @returns {Registry}
  */
-export declare function createRegistry({ jobsByName, defaultTimeoutMs }: {
-    jobsByName: Map<string, JobDefinition>;
+export declare function createRegistry({ lanesByName, defaultTimeoutMs }: {
+    lanesByName: Map<string, LaneDefinition>;
     defaultTimeoutMs: number | null;
 }): Registry;

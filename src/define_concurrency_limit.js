@@ -1,10 +1,10 @@
 import { ConfigError, InvalidConcurrencyLimitError } from './errors.js';
-import { checkObject, JOB_NAME_REGEXP } from './validate.js';
+import { checkObject, NAME_REGEXP } from './validate.js';
 
 export const MAX_LIMIT = 1000;
 
 /**
- * Defines a concurrency limit: the most jobs that hold it at once. A job definition lists it in
+ * Defines a concurrency limit: the most jobs that hold it at once. A lane definition lists it in
  * `localConcurrencyLimits`, where each instance counts its own jobs, or returns it, or one of its keys, from
  * `globalConcurrencyLimits`, where the whole cluster counts the jobs of each key.
  * @param {import('./types.js').ConcurrencyLimitOptions} options
@@ -16,8 +16,8 @@ export function defineConcurrencyLimit(options) {
 
     checkObject(options, ['name', 'max'], 'options', { where, ErrorClass: ConfigError });
 
-    if (!JOB_NAME_REGEXP.test(name)) {
-        throw new ConfigError(`${where}: "name" must match ${JOB_NAME_REGEXP}`);
+    if (!NAME_REGEXP.test(name)) {
+        throw new ConfigError(`${where}: "name" must match ${NAME_REGEXP}`);
     }
 
     if (!isMax(options.max)) {
@@ -62,7 +62,7 @@ export function isConcurrencyLimit(value) {
 
     const { name, max, key, ...rest } = /** @type {Record<string, unknown>} */ (value);
 
-    return typeof name === 'string' && JOB_NAME_REGEXP.test(name) && isMax(max) && typeof key === 'function'
+    return typeof name === 'string' && NAME_REGEXP.test(name) && isMax(max) && typeof key === 'function'
         && Object.keys(rest).length === 0;
 }
 

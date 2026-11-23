@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import {
     createSqlane,
     defineConcurrencyLimit,
-    defineJob,
+    defineLane,
     defineRateLimit,
     FatalJobError,
     RateLimitedError,
@@ -214,8 +214,8 @@ describe('the first run, on each claim path', () => {
         const a = recording(sqlane);
         const b = recording(sqlane);
 
-        sqlane.handle('only_a', a.handler);
-        sqlane.handle('only_b', b.handler);
+        sqlane.lanes.add('only_a', a.handler);
+        sqlane.lanes.add('only_b', b.handler);
 
         const first = await sqlane.enqueue(testAdapter.pool, 'only_a', {});
         const second = await sqlane.enqueue(testAdapter.pool, 'only_b', {});
@@ -237,10 +237,10 @@ describe('the first run, on each claim path', () => {
     test('a name with a global concurrency limit: the job takes a slot', async () => {
         const { sqlane, events } = await fresh();
         const order = defineConcurrencyLimit({ name: 'order', max: 2 });
-        const sync = defineJob({ name: 'sync', timeout: '10s', globalConcurrencyLimits: () => [order.key(1)] });
+        const sync = defineLane({ name: 'sync', timeout: '10s', globalConcurrencyLimits: () => [order.key(1)] });
         const run = recording(sqlane);
 
-        sqlane.handle(sync, run.handler);
+        sqlane.lanes.add(sync, run.handler);
         await sqlane.start();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, sync, {});
@@ -253,10 +253,10 @@ describe('the first run, on each claim path', () => {
     test('a name with a global rate limit: the job takes its quota', async () => {
         const { sqlane, events } = await fresh();
         const api = defineRateLimit({ name: 'api', max: 10, per: '1s' });
-        const call = defineJob({ name: 'call', globalRateLimits: () => [api.key('t1')] });
+        const call = defineLane({ name: 'call', globalRateLimits: () => [api.key('t1')] });
         const run = recording(sqlane);
 
-        sqlane.handle(call, run.handler);
+        sqlane.lanes.add(call, run.handler);
         await sqlane.start();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, call, {});
@@ -272,7 +272,7 @@ test('runAt given with the runAt option is the due time of the run', async () =>
     const run = recording(sqlane);
     const runAt = new Date(Date.now() + 300);
 
-    sqlane.handle('later', run.handler);
+    sqlane.lanes.add('later', run.handler);
     await sqlane.start();
 
     const { id } = await sqlane.enqueue(testAdapter.pool, 'later', {}, { runAt });
@@ -284,10 +284,10 @@ test('runAt given with the runAt option is the due time of the run', async () =>
 
 test('after a retry: the due time of the backoff', async () => {
     const { sqlane, events } = await fresh();
-    const flaky = defineJob({ name: 'flaky', backoff: { type: 'fixed', delay: 200, jitter: 0 } });
+    const flaky = defineLane({ name: 'flaky', backoff: { type: 'fixed', delay: 200, jitter: 0 } });
     const run = recording(sqlane, throwFirst(new Error('boom')));
 
-    sqlane.handle(flaky, run.handler);
+    sqlane.lanes.add(flaky, run.handler);
     await sqlane.start();
 
     const { id } = await sqlane.enqueue(testAdapter.pool, flaky, {});
@@ -307,7 +307,7 @@ test('after a release on close: the due time of the release', async () => {
     const { sqlane: first, events: firstEvents } = sqlaneOn(p);
 
     await first.schema.migrate();
-    first.handle('long', ({ signal }) => new Promise((resolve) => {
+    first.lanes.add('long', ({ signal }) => new Promise((resolve) => {
         signal.addEventListener('abort', resolve);
     }));
     await first.start();
@@ -330,7 +330,7 @@ test('after a release on close: the due time of the release', async () => {
     const { sqlane: second, events } = sqlaneOn(p);
     const run = recording(second);
 
-    second.handle('long', run.handler);
+    second.lanes.add('long', run.handler);
     await second.start();
     await waitFor(() => run.runs.length === 1);
     expect(claimedOf(events, id)[0].runAt).toStrictEqual(due?.runAt);
@@ -343,7 +343,7 @@ test('after a stall: the due time that stall recovery stored', async () => {
     const { sqlane: first, events: firstEvents } = sqlaneOn(p, /** @type {any} */ ({ timings }));
 
     await first.schema.migrate();
-    first.handle('stuck', () => sleep(60_000));
+    first.lanes.add('stuck', () => sleep(60_000));
     await first.start();
 
     const { id } = await first.enqueue(testAdapter.pool, 'stuck', {});
@@ -367,7 +367,7 @@ test('after a stall: the due time that stall recovery stored', async () => {
     const { sqlane: second, events } = sqlaneOn(p);
     const run = recording(second);
 
-    second.handle('stuck', run.handler);
+    second.lanes.add('stuck', run.handler);
     await second.start();
     await waitFor(() => run.runs.length === 1);
     expect(claimedOf(events, id)[0].runAt).toStrictEqual(due?.runAt);
@@ -379,7 +379,7 @@ test('after jobs.retry(): the due time of the retry', async () => {
     const { sqlane: first } = sqlaneOn(p);
 
     await first.schema.migrate();
-    first.handle('broken', () => {
+    first.lanes.add('broken', () => {
         throw new FatalJobError('boom');
     });
 
@@ -398,7 +398,7 @@ test('after jobs.retry(): the due time of the retry', async () => {
     const { sqlane: second, events } = sqlaneOn(p);
     const run = recording(second);
 
-    second.handle('broken', run.handler);
+    second.lanes.add('broken', run.handler);
     await second.start();
     await waitFor(() => run.runs.length === 1);
     expect(claimedOf(events, id)[0].runAt).toStrictEqual(retried?.runAt);
@@ -408,11 +408,11 @@ test('after jobs.retry(): the due time of the retry', async () => {
 test('after an unblock: the job keeps its due time; its start delay includes its wait on the key', async () => {
     const { sqlane, events } = await fresh();
     const order = defineConcurrencyLimit({ name: 'order', max: 1 });
-    const sync = defineJob({ name: 'sync', timeout: '10s', globalConcurrencyLimits: () => [order.key(1)] });
+    const sync = defineLane({ name: 'sync', timeout: '10s', globalConcurrencyLimits: () => [order.key(1)] });
     const { body, release } = holdFirst();
     const run = recording(sqlane, body);
 
-    sqlane.handle(sync, run.handler);
+    sqlane.lanes.add(sync, run.handler);
     await sqlane.start();
 
     const holder = await sqlane.enqueue(testAdapter.pool, sync, {});
@@ -440,10 +440,10 @@ test('after an unblock: the job keeps its due time; its start delay includes its
 test('after a RateLimitedError on a global rate key: the rerun keeps the due time of the rate-limited run', async () => {
     const { sqlane, events } = await fresh();
     const api = defineRateLimit({ name: 'api', max: 100, per: '1s' });
-    const call = defineJob({ name: 'call', globalRateLimits: () => [api.key('t1')] });
+    const call = defineLane({ name: 'call', globalRateLimits: () => [api.key('t1')] });
     const run = recording(sqlane, throwFirst(new RateLimitedError({ limit: api.key('t1'), retryAfter: '300ms' })));
 
-    sqlane.handle(call, run.handler);
+    sqlane.lanes.add(call, run.handler);
     await sqlane.start();
 
     const { id } = await sqlane.enqueue(testAdapter.pool, call, {});
@@ -461,7 +461,7 @@ test('drain({ includeDelayed }): the delayed job is due at the drain', async () 
     const { sqlane, events } = await fresh();
     const run = recording(sqlane);
 
-    sqlane.handle('delayed', run.handler);
+    sqlane.lanes.add('delayed', run.handler);
 
     const { id } = await sqlane.enqueue(testAdapter.pool, 'delayed', {}, { delay: '1h' });
 
@@ -476,7 +476,7 @@ test('drain({ includeDelayed }): the delayed job is due at the drain', async () 
 test('the slot of a run is taken at its start time', async () => {
     const { sqlane, p } = await fresh();
     const order = defineConcurrencyLimit({ name: 'order', max: 3 });
-    const sync = defineJob({ name: 'sync', timeout: '10s', globalConcurrencyLimits: ({ payload }) => [order.key(payload.n), order] });
+    const sync = defineLane({ name: 'sync', timeout: '10s', globalConcurrencyLimits: ({ payload }) => [order.key(payload.n), order] });
     /** @type {unknown[]} */
     const pairs = [];
     const run = recording(sqlane, async (info) => {
@@ -486,7 +486,7 @@ test('the slot of a run is taken at its start time', async () => {
         pairs.push(...rows.map(row => [Number(row.slot_ms), Number(row.started_ms), Number(info.startedAt)]));
     });
 
-    sqlane.handle(sync, run.handler);
+    sqlane.lanes.add(sync, run.handler);
     await sqlane.start();
     await sqlane.enqueueMany(testAdapter.pool, sync, [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
     // Two keys per job, two jobs: the reads of both handlers are done

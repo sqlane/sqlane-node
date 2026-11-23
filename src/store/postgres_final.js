@@ -207,11 +207,11 @@ async function addFailureJob(executor, p, row, { error, buildFailureJob }) {
     try {
         newJob = buildFailureJob({
             id: String(row.id),
-            name: String(row.lane),
+            lane: String(row.lane),
             payload: row.payload === null ? null : JSON.parse(String(row.payload)),
             attempt: Number(row.attempts) + 1,
             maxAttempts: Number(row.max_attempts),
-            failureJob: String(row.failure_lane),
+            failureLane: String(row.failure_lane),
             error,
         });
     } catch (buildError) {
@@ -259,13 +259,13 @@ async function lockJob(executor, p, where, params) {
  * @param {string} p
  * @param {OwnedJob} job
  * @param {{ error: import('../error_json.js').ErrorJson, buildFailureJob: FailureJobBuilder }} params
- * @returns {Promise<{ changed: boolean, failureJob: FailureJobResult | null }>}
+ * @returns {Promise<{ changed: boolean, failureResult: FailureJobResult | null }>}
  */
 export async function failJob(executor, p, job, { error, buildFailureJob }) {
     const row = await lockJob(executor, p, 'j.id = $1 AND j.lock_token = $2', [job.id, job.lockToken]);
 
     if (!row) {
-        return { changed: false, failureJob: null };
+        return { changed: false, failureResult: null };
     }
 
     await executor.run(`
@@ -279,7 +279,7 @@ export async function failJob(executor, p, job, { error, buildFailureJob }) {
 
     return {
         changed: true,
-        failureJob: row.failure_lane === null
+        failureResult: row.failure_lane === null
             ? null
             : await addFailureJob(executor, p, row, { error, buildFailureJob }),
     };
@@ -413,7 +413,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
     const row = await lockJob(executor, p, `j.id = $1 AND j.status = 'running' AND j.locked_until < ${NOW}`, [id]);
 
     if (!row) {
-        return { result: null, failureJob: null };
+        return { result: null, failureResult: null };
     }
 
     const error = { name: 'StalledError', message: 'The lease of the job ended: its process stopped or blocked' };
@@ -428,7 +428,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
              WHERE id = $1
         `, [id, JSON.stringify(error)]);
 
-        return { result: 'released', failureJob: null, ...stalledRun(row) };
+        return { result: 'released', failureResult: null, ...stalledRun(row) };
     }
 
     await executor.run(`
@@ -441,7 +441,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
 
     return {
         result: 'failed',
-        failureJob: row.failure_lane === null
+        failureResult: row.failure_lane === null
             ? null
             : await addFailureJob(executor, p, row, { error, buildFailureJob }),
         ...stalledRun(row),
@@ -454,7 +454,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
- * @returns {Promise<string[]>} The names of the jobs that it made pending.
+ * @returns {Promise<string[]>} The lanes of the jobs that it made pending.
  */
 export async function unblock(executor, p, keys) {
     const rows = await executor.query(`
@@ -515,7 +515,7 @@ export async function unblock(executor, p, keys) {
  * @param {string} p
  * @param {string[]} keys
  * @param {RateUnblockOptions} [options]
- * @returns {Promise<{ names: string[], waits: RateUnblock[] }>} The names of the jobs that it made pending; the keys
+ * @returns {Promise<{ lanes: string[], waits: RateUnblock[] }>} The lanes of the jobs that it made pending; the keys
  *     on which it found blocked jobs.
  */
 export async function unblockRates(executor, p, keys, { floors = new Map() } = {}) {
@@ -598,7 +598,7 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
         counts AS (
             SELECT limit_key, count(*) AS unblocked FROM unblocked GROUP BY limit_key
         )
-        SELECT (SELECT json_agg(DISTINCT lane) FROM unblocked)::text AS names,
+        SELECT (SELECT json_agg(DISTINCT lane) FROM unblocked)::text AS lanes,
                (
                    SELECT json_agg(json_build_object(
                        'key', w.limit_key, 'waitUs', w.wait_us, 'left', w.left_over,
@@ -612,7 +612,7 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
     const waits = (row?.waits ?? null) === null ? [] : JSON.parse(String(row?.waits));
 
     return {
-        names: (row?.names ?? null) === null ? [] : JSON.parse(String(row?.names)),
+        lanes: (row?.lanes ?? null) === null ? [] : JSON.parse(String(row?.lanes)),
         waits: waits.map(wait => ({
             key: wait.key,
             delayMs: nextUnblockMs(Number(wait.waitUs), wait.left),
@@ -692,7 +692,7 @@ export async function sweepSlots(executor, p, limit, parts) {
             // oxlint-disable-next-line no-await-in-loop -- batches one after the other
             const rates = await unblockRates(executor, p, rateKeys);
 
-            unblocked += rates.names.length;
+            unblocked += rates.lanes.length;
             // A key whose due jobs were still blocked lost its timer: its next unblock is here (`nextUnblockMs`)
             rateWaits.push(...rates.waits.filter(wait => wait.unblocked > 0)
                 .map(({ key, delayMs }) => ({ key, delayMs })));
@@ -750,24 +750,24 @@ export async function deleteExpiredJobs(executor, p, limit) {
 }
 
 /**
- * For drain({ includeDelayed }): the pending jobs of the names are due now.
+ * For drain({ includeDelayed }): the pending jobs of the lanes are due now.
  * @param {Executor} executor
  * @param {string} p
- * @param {string[]} names
+ * @param {string[]} lanes
  * @returns {Promise<void>}
  */
-export async function makeDue(executor, p, names) {
+export async function makeDue(executor, p, lanes) {
     await executor.run(`
         UPDATE ${p}jobs SET run_at = ${runAt('interval \'0\'')}
          WHERE status = 'pending' AND lane = ANY(${arrayParam(1, 'text')}) AND run_at > ${NOW}
-    `, [names]);
+    `, [lanes]);
 }
 
 /**
- * The counts per job name, for alerts such as "queue stuck". It reads every row kept, of every status.
+ * The counts per lane, for alerts such as "queue stuck". It reads every row kept, of every status.
  * @param {Executor} executor
  * @param {string} p
- * @returns {Promise<import('../types.js').JobStats[]>}
+ * @returns {Promise<import('../types.js').LaneStats[]>}
  */
 export async function getStats(executor, p) {
     const rows = await executor.query(`

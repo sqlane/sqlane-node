@@ -47,7 +47,7 @@ test('the input of a job: its rate limits as a JSON array, null without', () => 
     const job = {
         id: 'a',
         hasJobId: false,
-        name: 'a',
+        lane: 'a',
         payloadJson: '{}',
         limits: [],
         rateLimits: [{ key: '@api', max: 10, per_us: 1_000_000, burst: 2, cost: 1 }],
@@ -55,7 +55,7 @@ test('the input of a job: its rate limits as a JSON array, null without', () => 
         maxStalls: 0,
         completedRetentionMs: 0,
         failedRetentionMs: 0,
-        failureJob: null,
+        failureLane: null,
         delayMs: 0,
         runAt: null,
     };

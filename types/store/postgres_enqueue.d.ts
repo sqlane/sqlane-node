@@ -5,11 +5,11 @@
  */
 export declare function toJobInput(job: import('../new_job.js').NewJob): Record<string, unknown>;
 /**
- * Inserts the jobs and their payloads. With a notify channel, a NOTIFY of the job name when it created a job, in the
+ * Inserts the jobs and their payloads. With a notify channel, a NOTIFY of the lane when it created a job, in the
  * same statement.
  * @param {import('../types.js').Executor} executor
  * @param {string} p The table prefix.
- * @param {import('../new_job.js').NewJob[]} jobs Their ids are distinct, of one name.
+ * @param {import('../new_job.js').NewJob[]} jobs Their ids are distinct, of one lane.
  * @param {{ enqueueToken: string, notifyChannel?: string | null }} options
  * @returns {Promise<Set<string>>} The ids that this call created.
  */

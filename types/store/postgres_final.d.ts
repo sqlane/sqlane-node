@@ -49,14 +49,14 @@ export declare function retryJob(executor: Executor, p: string, job: OwnedJob, {
  * @param {string} p
  * @param {OwnedJob} job
  * @param {{ error: import('../error_json.js').ErrorJson, buildFailureJob: FailureJobBuilder }} params
- * @returns {Promise<{ changed: boolean, failureJob: FailureJobResult | null }>}
+ * @returns {Promise<{ changed: boolean, failureResult: FailureJobResult | null }>}
  */
 export declare function failJob(executor: Executor, p: string, job: OwnedJob, { error, buildFailureJob }: {
     error: import('../error_json.js').ErrorJson;
     buildFailureJob: FailureJobBuilder;
 }): Promise<{
     changed: boolean;
-    failureJob: FailureJobResult | null;
+    failureResult: FailureJobResult | null;
 }>;
 /**
  * The job is released, without an attempt used: pending again after the delay.
@@ -118,7 +118,7 @@ export declare function recoverStaleJob(executor: Executor, p: string, id: strin
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
- * @returns {Promise<string[]>} The names of the jobs that it made pending.
+ * @returns {Promise<string[]>} The lanes of the jobs that it made pending.
  */
 export declare function unblock(executor: Executor, p: string, keys: string[]): Promise<string[]>;
 export type RateUnblock = import('../gcra.js').RateWait & {
@@ -159,11 +159,11 @@ export type RateUnblockOptions = {
  * @param {string} p
  * @param {string[]} keys
  * @param {RateUnblockOptions} [options]
- * @returns {Promise<{ names: string[], waits: RateUnblock[] }>} The names of the jobs that it made pending; the keys
+ * @returns {Promise<{ lanes: string[], waits: RateUnblock[] }>} The lanes of the jobs that it made pending; the keys
  *     on which it found blocked jobs.
  */
 export declare function unblockRates(executor: Executor, p: string, keys: string[], { floors }?: RateUnblockOptions): Promise<{
-    names: string[];
+    lanes: string[];
     waits: RateUnblock[];
 }>;
 /**
@@ -197,17 +197,17 @@ export declare function deleteIdleRateKeys(executor: Executor, p: string, limit:
  */
 export declare function deleteExpiredJobs(executor: Executor, p: string, limit: number): Promise<number>;
 /**
- * For drain({ includeDelayed }): the pending jobs of the names are due now.
+ * For drain({ includeDelayed }): the pending jobs of the lanes are due now.
  * @param {Executor} executor
  * @param {string} p
- * @param {string[]} names
+ * @param {string[]} lanes
  * @returns {Promise<void>}
  */
-export declare function makeDue(executor: Executor, p: string, names: string[]): Promise<void>;
+export declare function makeDue(executor: Executor, p: string, lanes: string[]): Promise<void>;
 /**
- * The counts per job name, for alerts such as "queue stuck". It reads every row kept, of every status.
+ * The counts per lane, for alerts such as "queue stuck". It reads every row kept, of every status.
  * @param {Executor} executor
  * @param {string} p
- * @returns {Promise<import('../types.js').JobStats[]>}
+ * @returns {Promise<import('../types.js').LaneStats[]>}
  */
-export declare function getStats(executor: Executor, p: string): Promise<import('../types.js').JobStats[]>;
+export declare function getStats(executor: Executor, p: string): Promise<import('../types.js').LaneStats[]>;

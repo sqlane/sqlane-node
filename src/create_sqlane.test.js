@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { ClosedError, ConfigError, InvalidOptionsError } from './errors.js';
 import { createSqlane } from './create_sqlane.js';
 import { defineConcurrencyLimit } from './define_concurrency_limit.js';
-import { defineJob } from './define_job.js';
+import { defineLane } from './define_lane.js';
 
 test('createSqlane needs an adapter', () => {
     expect(() => createSqlane(/** @type {any} */ ({}))).toThrow(ConfigError);
@@ -101,9 +101,9 @@ describe('schedule() and start()', () => {
     });
 
     test.each([
-        ['a payload that is not JSON', { jobs: [] }, () => ({ every: '1m', payload: { at: 1n } })],
+        ['a payload that is not JSON', { lanes: [] }, () => ({ every: '1m', payload: { at: 1n } })],
         ['a payload above maxPayloadBytes', { maxPayloadBytes: 10 }, () => ({ every: '1m', payload: { text: 'x'.repeat(20) } })],
-        ['an unknown name with unknownJobs reject', { unknownJobs: /** @type {const} */ ('reject') }, () => ({ every: '1m' })],
+        ['an unknown name with unknownLanes reject', { unknownLanes: /** @type {const} */ ('reject') }, () => ({ every: '1m' })],
     ])('start() throws a ConfigError for %s, before any statement', async (_, options, scheduleOptions) => {
         const { adapter, statements } = fakeAdapter();
         const sqlane = createSqlane({ adapter, ...options });
@@ -117,7 +117,7 @@ describe('schedule() and start()', () => {
 
     test('start() checks the global limits of the definition', async () => {
         const bad = defineConcurrencyLimit({ name: 'bad', max: 1 });
-        const job = defineJob({ name: 'keyed', timeout: '1m', globalConcurrencyLimits: () => [bad.key(' bad')] });
+        const job = defineLane({ name: 'keyed', timeout: '1m', globalConcurrencyLimits: () => [bad.key(' bad')] });
         const sqlane = createSqlane({ adapter: fakeAdapter().adapter });
 
         sqlane.schedule(job, { every: '1m' });
@@ -139,7 +139,7 @@ describe('schedule() and start()', () => {
     });
 
     test('start() on a closed instance throws a ClosedError first', async () => {
-        const sqlane = createSqlane({ adapter: fakeAdapter().adapter, unknownJobs: 'reject' });
+        const sqlane = createSqlane({ adapter: fakeAdapter().adapter, unknownLanes: 'reject' });
 
         sqlane.schedule('tick', { every: '1m' });
         await sqlane.close({ deadline: 0 });
@@ -194,7 +194,7 @@ describe('schedule() and start()', () => {
         await expect(sqlane.schedules.list()).resolves.toStrictEqual([]);
         sqlane.schedule('tick', { every: '1m', key: 'a' });
         await expect(sqlane.schedules.list()).resolves.toMatchObject([
-            { id: 'tick:a', name: 'tick', spec: 'every 60000', registered: true, lastSlotAt: null, lastJobId: null },
+            { id: 'tick:a', lane: 'tick', spec: 'every 60000', registered: true, lastSlotAt: null, lastJobId: null },
         ]);
     });
 });
@@ -218,11 +218,11 @@ function holdRegistration(adapter) {
 }
 
 describe('close()', () => {
-    test('closes at once: handle(), schedule(), start() and schema.migrate() then throw a ClosedError', async () => {
+    test('closes at once: lanes.add(), schedule(), start() and schema.migrate() then throw a ClosedError', async () => {
         const sqlane = createSqlane({ adapter: fakeAdapter().adapter });
         const closing = sqlane.close({ deadline: 0 });
 
-        expect(() => sqlane.handle('tick', () => {})).toThrow(ClosedError);
+        expect(() => sqlane.lanes.add('tick', () => {})).toThrow(ClosedError);
         expect(() => sqlane.schedule('tick', { every: '1m' })).toThrow(ClosedError);
         await expect(sqlane.start()).rejects.toThrow(ClosedError);
         await expect(sqlane.schema.migrate()).rejects.toThrow(new ClosedError('schema.migrate() after close()'));
@@ -295,10 +295,10 @@ function workerStartedWhileDown(options, sqlaneOptions = {}) {
 
     /** @type {import('./types.js').SqlaneEvent[]} */
     const events = [];
-    const job = defineJob({ name: 'a' });
-    const sqlane = createSqlane({ adapter, jobs: [job], onEvent: event => events.push(event), ...sqlaneOptions });
+    const job = defineLane({ name: 'a' });
+    const sqlane = createSqlane({ adapter, lanes: [job], onEvent: event => events.push(event), ...sqlaneOptions });
 
-    sqlane.handle(job, async () => {});
+    sqlane.lanes.add(job, async () => {});
 
     return { sqlane, down, state, statements, events };
 }
@@ -641,11 +641,11 @@ describe.each([
     { method: 'drop', call: (/** @type {any} */ sqlane) => sqlane.schema.drop() },
 ])('schema.$method()', ({ method, call }) => {
     test('while started, starting or draining: a ConfigError', async () => {
-        const job = defineJob({ name: 'a' });
-        const sqlane = createSqlane({ adapter: fakeAdapter().adapter, jobs: [job] });
+        const job = defineLane({ name: 'a' });
+        const sqlane = createSqlane({ adapter: fakeAdapter().adapter, lanes: [job] });
         const message = `schema.${method}() while started or draining: run it on an instance that is not started`;
 
-        sqlane.handle(job, async () => {});
+        sqlane.lanes.add(job, async () => {});
 
         const starting = sqlane.start();
 
@@ -654,9 +654,9 @@ describe.each([
         await expect(call(sqlane)).rejects.toThrow(new ConfigError(message));
         await sqlane.close({ deadline: 0 });
 
-        const drained = createSqlane({ adapter: fakeAdapter().adapter, jobs: [job] });
+        const drained = createSqlane({ adapter: fakeAdapter().adapter, lanes: [job] });
 
-        drained.handle(job, async () => {});
+        drained.lanes.add(job, async () => {});
 
         const draining = drained.drain();
 

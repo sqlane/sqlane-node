@@ -12,7 +12,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from '
 import { connectTestDatabase } from '../support/test_database.js';
 import { dialectOptions } from './helpers/test_adapter.js';
 import { drizzleAdapter } from '../../src/adapters/drizzle.js';
-import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineLane } from '../../src/index.js';
 import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
@@ -225,28 +225,28 @@ describe.each([
 
     test('drain: retries, global limits and a failure job', async () => {
         const reportLimit = defineConcurrencyLimit({ name: 'r', max: 1 });
-        const report = defineJob({
+        const report = defineLane({
             name: 'report',
             globalConcurrencyLimits: ({ payload }) => [reportLimit.key(payload.id)],
             timeout: '5s',
         });
-        const reportFailed = defineJob({ name: 'report_failed' });
-        const failing = defineJob({
+        const reportFailed = defineLane({ name: 'report_failed' });
+        const failing = defineLane({
             name: 'failing',
             maxAttempts: 2,
             backoff: { type: 'fixed', delay: 10, jitter: 0 },
-            failureJob: reportFailed,
+            failureLane: reportFailed,
         });
-        const { sqlane, p } = await freshSqlane({ jobs: [report, reportFailed, failing] });
+        const { sqlane, p } = await freshSqlane({ lanes: [report, reportFailed, failing] });
         /** @type {unknown[]} */
         const failures = [];
 
-        sqlane.handle(report, () => {});
-        sqlane.handle(failing, () => {
+        sqlane.lanes.add(report, () => {});
+        sqlane.lanes.add(failing, () => {
             throw new Error('always');
         });
-        sqlane.handle(reportFailed, ({ payload }) => {
-            failures.push(payload.job.name);
+        sqlane.lanes.add(reportFailed, ({ payload }) => {
+            failures.push(payload.job.lane);
         });
         await sqlane.enqueueMany(db, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
         await sqlane.enqueue(db, failing, {});
@@ -264,7 +264,7 @@ describe.each([
             pollInterval: '10s',
         }, p);
 
-        worker.handle('ping', () => {});
+        worker.lanes.add('ping', () => {});
         await worker.start();
         await sleep(200);
         await db.transaction(async (tx) => {

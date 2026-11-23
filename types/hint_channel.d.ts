@@ -1,11 +1,11 @@
-/** The message of a wake of all names: every process probes all its names */
-export declare const ANY_NAME = "*";
+/** The message of a wake of all lanes: every process probes all its lanes */
+export declare const ANY_LANE = "*";
 export type HintChannel = {
     /**
      * Fire-and-forget: never throws, never waits.
      */
-    publish: (name: string) => void;
-    listen: (onMessage: (name: string) => void) => Promise<void>;
+    publish: (lane: string) => void;
+    listen: (onMessage: (lane: string) => void) => Promise<void>;
     /**
      * Stops listening; drops the pending messages.
      */
@@ -13,8 +13,8 @@ export type HintChannel = {
 };
 /**
  * @typedef {object} HintChannel
- * @property {(name: string) => void} publish Fire-and-forget: never throws, never waits.
- * @property {(onMessage: (name: string) => void) => Promise<void>} listen
+ * @property {(lane: string) => void} publish Fire-and-forget: never throws, never waits.
+ * @property {(onMessage: (lane: string) => void) => Promise<void>} listen
  * @property {() => Promise<void>} stop Stops listening; drops the pending messages.
  */
 /**

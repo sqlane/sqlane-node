@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { defineConcurrencyLimit } from './define_concurrency_limit.js';
-import { defineJob } from './define_job.js';
+import { defineLane } from './define_lane.js';
 import { defineRateLimit } from './define_rate_limit.js';
 import { ConfigError } from './errors.js';
 
@@ -14,13 +14,13 @@ test('gives a frozen copy of the options', () => {
         retention: { completed: 0, failed: '30d' },
         timeout: '5m',
         globalConcurrencyLimits: () => [],
-        failureJob: 'report_failed',
+        failureLane: 'report_failed',
         fairShareWeight: 3,
         localConcurrencyLimits: [defineConcurrencyLimit({ name: 'heavy', max: 2 })],
         globalRateLimits: () => [],
         localRateLimits: [defineRateLimit({ name: 'disk_io', max: 50, per: '1s' })],
     };
-    const definition = defineJob(options);
+    const definition = defineLane(options);
 
     expect(definition).toStrictEqual(options);
     expect(definition).not.toBe(options);
@@ -34,9 +34,9 @@ test('gives a frozen copy of the options', () => {
 });
 
 test('accepts a definition as the failure job', () => {
-    const reportFailed = defineJob({ name: 'report_failed' });
+    const reportFailed = defineLane({ name: 'report_failed' });
 
-    expect(defineJob({ name: 'build_report', failureJob: reportFailed }).failureJob).toBe(reportFailed);
+    expect(defineLane({ name: 'build_report', failureLane: reportFailed }).failureLane).toBe(reportFailed);
 });
 
 test.each([
@@ -61,10 +61,9 @@ test.each([
     ['a zero timeout', { name: 'a', timeout: 0 }],
     ['a bad timeout', { name: 'a', timeout: 'later' }],
     ['a timeout with trailing text', { name: 'a', timeout: '1s typo' }],
-    ['the mutexKeys of 5.x', { name: 'a', mutexKeys: () => ['a'] }],
     ['globalConcurrencyLimits as an array', { name: 'a', globalConcurrencyLimits: [] }],
-    ['a bad failure job name', { name: 'a', failureJob: 'Fail' }],
-    ['the job as its own failure job', { name: 'a', failureJob: 'a' }],
+    ['a bad failure lane name', { name: 'a', failureLane: 'Fail' }],
+    ['the job as its own failure job', { name: 'a', failureLane: 'a' }],
     ['fairShareWeight 0', { name: 'a', fairShareWeight: 0 }],
     ['fairShareWeight 1001', { name: 'a', fairShareWeight: 1001 }],
     ['fairShareWeight 1.5', { name: 'a', fairShareWeight: 1.5 }],
@@ -88,5 +87,5 @@ test.each([
         localRateLimits: [defineRateLimit({ name: 'b', max: 1, per: '1s' }), defineRateLimit({ name: 'b', max: 2, per: '1s' })],
     }],
 ])('rejects %s', (_, options) => {
-    expect(() => defineJob(/** @type {any} */ (options))).toThrow(ConfigError);
+    expect(() => defineLane(/** @type {any} */ (options))).toThrow(ConfigError);
 });

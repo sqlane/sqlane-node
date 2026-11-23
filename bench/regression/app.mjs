@@ -70,9 +70,11 @@ const limitKeyCount = Number(args['limit-keys']);
 const rateLimitKeyCount = Number(args['rate-limit-keys']);
 // The drivers of this checkout, sqlane of the source tree
 const require = createRequire(join(src, 'package.json'));
-const {
-    createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit, RateLimitedError, RetryJobError,
-} = await import(join(src, 'src/index.js'));
+const lib = await import(join(src, 'src/index.js'));
+const { createSqlane, defineConcurrencyLimit, defineRateLimit, RateLimitedError, RetryJobError } = lib;
+// The names of the version of `--src`: lanes from 9.0, job definitions before
+const defineLane = lib.defineLane ?? lib.defineJob;
+const definitionsOption = lib.defineLane ? 'lanes' : 'jobs';
 const names = Array.from({ length: Number(args.names) }, (_, index) => `job_${String(index).padStart(4, '0')}`);
 const trace = args.trace
     ? generateTrace({ profile: args.trace, seed: Number(args.seed), seconds: Number(args['trace-seconds']) })
@@ -172,7 +174,7 @@ let definitions;
 if (trace) {
     definitions = traceDefinitions(trace);
 } else {
-    definitions = names.map(name => defineJob({
+    definitions = names.map(name => defineLane({
         name,
         ...limitKeyCount > 0 && { ...limits, timeout: '1m' },
         ...rateLimitKeyCount > 0 && { ...rateLimits, timeout: '1m' },
@@ -211,7 +213,7 @@ function traceDefinitions(traced) {
     const rate = traced.limits.rate.map(({ name, max, perMs, burst }) => defineRateLimit({
         name, max, per: perMs, burst,
     }));
-    return traced.names.map(({ name, concurrency: concurrencyOf, rate: rateOf }) => defineJob({
+    return traced.names.map(({ name, concurrency: concurrencyOf, rate: rateOf }) => defineLane({
         name,
         timeout: '1m',
         backoff: { type: 'fixed', delay: RETRY_DELAY_MS, jitter: 0 },
@@ -251,7 +253,7 @@ function createInstance(options) {
 const sqlane = createInstance({
     adapter,
     hint,
-    jobs: definitions,
+    [definitionsOption]: definitions,
     onEvent: (/** @type {{ type: string }} */ event) => {
         if (event.type === 'completed') {
             counts.completed++;
@@ -496,7 +498,8 @@ if (role === 'setup') {
     await sqlane.schema.migrate();
 } else if (role === 'worker') {
     for (const definition of definitions) {
-        sqlane.handle(definition, trace ? runTraceJob : async () => {});
+        // `lanes.add` from 9.0, `handle` before
+        (sqlane.lanes?.add ?? sqlane.handle)(definition, trace ? runTraceJob : async () => {});
     }
 
     await sqlane.start();

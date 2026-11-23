@@ -5,7 +5,7 @@ import { createPool } from 'mysql2/promise';
 import { Pool } from 'pg';
 import { mysql2Adapter } from '../../../src/adapters/mysql2.js';
 import { pgAdapter } from '../../../src/adapters/pg.js';
-import { createSqlane, defineConcurrencyLimit, defineJob } from '../../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineLane } from '../../../src/index.js';
 import { queryRows, scheduleKeys, UnsupportedError } from './common.mjs';
 
 /**
@@ -53,7 +53,7 @@ export const adapter = {
     version,
     transactional: true,
     databases: ['postgres', 'mysql', 'mariadb'],
-    // The id of a slot's job: `<name>:schedule:<key>:<ISO>`
+    // The id of a slot's job: `<lane>:schedule:<key>:<ISO>`
     scheduledJobs: async url => ({
         jobs: (await queryRows(url, 'SELECT id FROM sqlane_jobs WHERE id LIKE \'%:schedule:%\''))
             .map(row => /** @type {RegExpExecArray} */ (/^[^:]*:schedule:([^:]*):(.*)$/u.exec(row.id)))
@@ -88,13 +88,13 @@ export const adapter = {
 
         await sqlane.schema.migrate();
 
-        /** @type {Map<string, import('../../../src/types.js').JobDefinition>} */
+        /** @type {Map<string, import('../../../src/types.js').LaneDefinition>} */
         const definitions = new Map();
-        // The exclusion checks: one job at a time per resource, in the whole cluster, across job names
+        // The exclusion checks: one job at a time per resource, in the whole cluster, across lanes
         const resource = defineConcurrencyLimit({ name: 'resource', max: 1 });
 
         for (const [name, spec] of Object.entries(names)) {
-            const definition = defineJob({
+            const definition = defineLane({
                 name,
                 maxAttempts: spec.maxAttempts ?? 1,
                 ...spec.backoffMs !== undefined && {
@@ -109,8 +109,8 @@ export const adapter = {
             });
 
             definitions.set(name, definition);
-            sqlane.handle(definition, ({ job, payload, signal }) => (
-                handler(job.name, payload, signal, job.scheduledAt?.getTime())
+            sqlane.lanes.add(definition, ({ job, payload, signal }) => (
+                handler(job.lane, payload, signal, job.scheduledAt?.getTime())
             ));
         }
 
@@ -140,7 +140,7 @@ export const adapter = {
             },
             // One INSERT of all the jobs
             enqueueMany: async (name, payloads) => {
-                await sqlane.enqueueMany(pool, /** @type {import('../../../src/types.js').JobDefinition} */ (
+                await sqlane.enqueueMany(pool, /** @type {import('../../../src/types.js').LaneDefinition} */ (
                     definitions.get(name)
                 ), payloads.map(payload => ({ payload })));
             },

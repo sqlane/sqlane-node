@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from '
 import {
     createSqlane,
     defineConcurrencyLimit,
-    defineJob,
+    defineLane,
     FatalJobError,
     IgnoredJobsError,
     InvalidOptionsError,
@@ -157,7 +157,7 @@ async function waitFor(condition, timeoutMs = 5000) {
 async function failedJobs(p, name, payloads, options = {}) {
     const { sqlane } = sqlaneOn(p);
 
-    sqlane.handle(name, () => {
+    sqlane.lanes.add(name, () => {
         throw new FatalJobError('boom');
     });
 
@@ -243,12 +243,12 @@ describe('jobs.retry()', () => {
         const { sqlane } = sqlaneOn(p);
         /** @type {unknown[]} */
         const failures = [];
-        const flaky = defineJob({ name: 'flaky', maxAttempts: 1, failureJob: 'flaky_failed' });
+        const flaky = defineLane({ name: 'flaky', maxAttempts: 1, failureLane: 'flaky_failed' });
 
-        sqlane.handle(flaky, () => {
+        sqlane.lanes.add(flaky, () => {
             throw new Error('again');
         });
-        sqlane.handle('flaky_failed', ({ payload }) => {
+        sqlane.lanes.add('flaky_failed', ({ payload }) => {
             failures.push(payload.job.attempt);
         });
         await sqlane.schema.migrate();
@@ -312,7 +312,7 @@ describe('jobs.retry()', () => {
                 ],
             });
         await raw(`UPDATE ${p}jobs SET status = 'failed' WHERE id = ?`, [failed]);
-        await expect(sqlane.jobs.retry({ jobName: 'ping' })).resolves
+        await expect(sqlane.jobs.retry({ lane: 'ping' })).resolves
             .toStrictEqual({ affectedCount: 1, ignoredJobs: [] });
         await expect(sqlane.jobs.get(noPayload)).resolves.toMatchObject({ status: 'failed' });
     });
@@ -320,7 +320,7 @@ describe('jobs.retry()', () => {
     test('a completed id is ignored by its status; completed in a filter rejects', async () => {
         const { sqlane } = await fresh();
 
-        sqlane.handle('ping', () => {});
+        sqlane.lanes.add('ping', () => {});
 
         const { id } = await sqlane.enqueue(testAdapter.pool, 'ping', {});
 
@@ -329,14 +329,14 @@ describe('jobs.retry()', () => {
             affectedCount: 0,
             ignoredJobs: [{ jobId: id, reason: 'status', status: 'completed' }],
         });
-        await expect(sqlane.jobs.retry({ jobName: 'ping', status: 'completed' })).rejects
+        await expect(sqlane.jobs.retry({ lane: 'ping', status: 'completed' })).rejects
             .toBeInstanceOf(InvalidOptionsError);
     });
 
-    test('a job of a name that no process handles, with unknownJobs reject: retried', async () => {
+    test('a job of a name that no process handles, with unknownLanes reject: retried', async () => {
         const { sqlane, p } = await fresh();
         const [id] = await failedJobs(p, 'elsewhere', [{}]);
-        const { sqlane: strictOne } = sqlaneOn(p, { unknownJobs: 'reject' });
+        const { sqlane: strictOne } = sqlaneOn(p, { unknownLanes: 'reject' });
 
         await expect(strictOne.jobs.retry({ jobIds: [id] })).resolves.toMatchObject({ affectedCount: 1 });
         await expect(sqlane.jobs.get(id)).resolves.toMatchObject({ status: 'pending' });
@@ -354,7 +354,7 @@ describe('jobs.retry()', () => {
             const [id] = await failedJobs(p, 'ping', [{}]);
             const ran = /** @type {string[]} */ ([]);
 
-            worker.handle('ping', ({ job }) => {
+            worker.lanes.add('ping', ({ job }) => {
                 ran.push(job.id);
             });
             await worker.start();
@@ -370,10 +370,10 @@ describe('jobs.retry()', () => {
         const p = nextPrefix();
         const { sqlane } = sqlaneOn(p);
         const order = defineConcurrencyLimit({ name: 'order', max: 1 });
-        const sync = defineJob({ name: 'sync', timeout: '1m', globalConcurrencyLimits: () => [order] });
+        const sync = defineLane({ name: 'sync', timeout: '1m', globalConcurrencyLimits: () => [order] });
         const { promise: never } = Promise.withResolvers();
 
-        sqlane.handle(sync, () => never);
+        sqlane.lanes.add(sync, () => never);
         await sqlane.schema.migrate();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, sync, {});
@@ -402,9 +402,9 @@ describe('jobs.cancel()', () => {
         async () => {
             const p = nextPrefix();
             const { sqlane, events } = sqlaneOn(p);
-            const withFailure = defineJob({ name: 'report', failureJob: 'report_failed' });
+            const withFailure = defineLane({ name: 'report', failureLane: 'report_failed' });
 
-            sqlane.handle('report_failed', () => {});
+            sqlane.lanes.add('report_failed', () => {});
             await sqlane.schema.migrate();
 
             const { id } = await sqlane.enqueue(testAdapter.pool, withFailure, { n: 1 }, { delay: '1h' });
@@ -414,7 +414,7 @@ describe('jobs.cancel()', () => {
 
             const before = await sqlane.jobs.get(id);
 
-            await expect(sqlane.jobs.cancel({ jobName: withFailure })).resolves
+            await expect(sqlane.jobs.cancel({ lane: withFailure })).resolves
                 .toStrictEqual({ affectedCount: 2, ignoredJobs: [] });
 
             const job = await sqlane.jobs.get(id);
@@ -434,7 +434,7 @@ describe('jobs.cancel()', () => {
             await expect(sqlane.drain()).resolves.toStrictEqual({ completed: 0, retried: 0, failed: 0 });
             expect(events.filter(event => event.type === 'cancelled').map(event => /** @type {any} */ (event).jobId)
                 .toSorted()).toStrictEqual([id, blocked].toSorted());
-            expect(events.find(event => event.type === 'cancelled')).toMatchObject({ jobName: 'report', attempt: 1 });
+            expect(events.find(event => event.type === 'cancelled')).toMatchObject({ lane: 'report', attempt: 1 });
         });
 
     test('a running job is not changed: its id is ignored; running in a filter rejects', async () => {
@@ -446,7 +446,7 @@ describe('jobs.cancel()', () => {
             affectedCount: 0,
             ignoredJobs: [{ jobId: id, reason: 'status', status: 'running' }],
         });
-        await expect(sqlane.jobs.cancel({ jobName: 'ping', status: 'running' })).rejects
+        await expect(sqlane.jobs.cancel({ lane: 'ping', status: 'running' })).rejects
             .toBeInstanceOf(InvalidOptionsError);
         await expect(sqlane.jobs.get(id)).resolves.toMatchObject({ status: 'running' });
     });
@@ -518,8 +518,8 @@ describe('jobs.remove()', () => {
         async () => {
             const p = nextPrefix();
             const order = defineConcurrencyLimit({ name: 'order', max: 1 });
-            const a = defineJob({ name: 'job_a', timeout: '1m', globalConcurrencyLimits: () => [order] });
-            const b = defineJob({ name: 'job_b', timeout: '1m', globalConcurrencyLimits: () => [order] });
+            const a = defineLane({ name: 'job_a', timeout: '1m', globalConcurrencyLimits: () => [order] });
+            const b = defineLane({ name: 'job_b', timeout: '1m', globalConcurrencyLimits: () => [order] });
             const { sqlane: worker } = sqlaneOn(p);
             const { sqlane: other } = sqlaneOn(p);
             /** @type {string[]} */
@@ -527,8 +527,8 @@ describe('jobs.remove()', () => {
             const { handler, release } = holdingFirst(ran);
 
             await worker.schema.migrate();
-            worker.handle(a, handler);
-            other.handle(b, () => {});
+            worker.lanes.add(a, handler);
+            other.lanes.add(b, () => {});
 
             const { id: a1 } = await worker.enqueue(testAdapter.pool, a, {});
 
@@ -671,7 +671,7 @@ describe('selectors, results and strict', () => {
             `UPDATE ${p}jobs SET status = 'pending', blocked_on = NULL WHERE id = ?`,
             [blocked],
         ));
-        await expect(sqlane.jobs.cancel({ jobName: 'ping', status: 'blocked' }, options)).resolves
+        await expect(sqlane.jobs.cancel({ lane: 'ping', status: 'blocked' }, options)).resolves
             .toStrictEqual({ affectedCount: 0, affectedJobIds: [], ignoredJobs: [] });
         await expect(sqlane.jobs.get(blocked)).resolves.toMatchObject({ status: 'pending' });
 
@@ -679,7 +679,7 @@ describe('selectors, results and strict', () => {
         const [failed] = await failedJobs(p, 'flop', [{}]);
 
         hooks.afterStatement(read, () => raw(`UPDATE ${p}jobs SET status = 'pending' WHERE id = ?`, [failed]));
-        await expect(sqlane.jobs.remove({ jobName: 'flop', status: 'failed' }, options)).resolves
+        await expect(sqlane.jobs.remove({ lane: 'flop', status: 'failed' }, options)).resolves
             .toStrictEqual({ affectedCount: 0, affectedJobIds: [], ignoredJobs: [] });
         await expect(sqlane.jobs.get(failed)).resolves.toMatchObject({ status: 'pending' });
         expect(events.filter(event => event.type === 'cancelled')).toStrictEqual([]);
@@ -704,7 +704,7 @@ describe('selectors, results and strict', () => {
         const connection = await testAdapter.connect();
 
         try {
-            await expect(sqlane.jobs.cancel({ jobName: 'ping', status: 'blocked' }, { connection: connection.raw }))
+            await expect(sqlane.jobs.cancel({ lane: 'ping', status: 'blocked' }, { connection: connection.raw }))
                 .resolves.toMatchObject({ affectedCount: 0 });
         } finally {
             connection.release();
@@ -828,7 +828,7 @@ describe('transactions', () => {
         const ran = [];
 
         await sqlane.schema.migrate();
-        worker.handle('ping', ({ job }) => {
+        worker.lanes.add('ping', ({ job }) => {
             ran.push(job.id);
         });
 
@@ -871,7 +871,7 @@ describe('batches', () => {
         hooks.afterStatement(/SET status = 'failed', finished_at/, async () => {
             late.push((await sqlane.enqueue(testAdapter.pool, 'ping', {}, { delay: '1h' })).id);
         });
-        await expect(sqlane.jobs.cancel({ jobName: 'ping' }, { mode: 'batches' })).resolves
+        await expect(sqlane.jobs.cancel({ lane: 'ping' }, { mode: 'batches' })).resolves
             .toStrictEqual({ affectedCount: 2500, ignoredJobs: [] });
         expect(late).toHaveLength(1);
         await expect(sqlane.jobs.get(late[0])).resolves.toMatchObject({ status: 'pending' });
@@ -892,7 +892,7 @@ describe('batches', () => {
             ));
         });
 
-        await expect(sqlane.jobs.retry({ jobName: 'flaky' }, { mode: 'batches' })).resolves
+        await expect(sqlane.jobs.retry({ lane: 'flaky' }, { mode: 'batches' })).resolves
             .toStrictEqual({ affectedCount: 1500, ignoredJobs: [] });
     });
 });
@@ -972,7 +972,7 @@ describe('wakes, hints and the work after the commit', () => {
         /** @type {string[]} */
         const ran = [];
 
-        sqlane.handle('ping', ({ job }) => {
+        sqlane.lanes.add('ping', ({ job }) => {
             ran.push(job.id);
         });
         await sqlane.start();
@@ -992,7 +992,7 @@ describe('wakes, hints and the work after the commit', () => {
         /** @type {string[]} */
         const ran = [];
 
-        sqlane.handle('ping', ({ job }) => {
+        sqlane.lanes.add('ping', ({ job }) => {
             ran.push(job.id);
         });
         await sqlane.start();
@@ -1017,8 +1017,8 @@ describe('wakes, hints and the work after the commit', () => {
     test('a cancel in a caller\'s transaction unblocks the key of the pending job it cancelled', async () => {
         const p = nextPrefix();
         const order = defineConcurrencyLimit({ name: 'order', max: 1 });
-        const a = defineJob({ name: 'job_a', timeout: '1m', globalConcurrencyLimits: () => [order] });
-        const b = defineJob({ name: 'job_b', timeout: '1m', globalConcurrencyLimits: () => [order] });
+        const a = defineLane({ name: 'job_a', timeout: '1m', globalConcurrencyLimits: () => [order] });
+        const b = defineLane({ name: 'job_b', timeout: '1m', globalConcurrencyLimits: () => [order] });
         const { sqlane: worker } = sqlaneOn(p);
         const { sqlane: other } = sqlaneOn(p);
         /** @type {string[]} */
@@ -1026,8 +1026,8 @@ describe('wakes, hints and the work after the commit', () => {
         const { handler, release } = holdingFirst(ran);
 
         await worker.schema.migrate();
-        worker.handle(a, handler);
-        other.handle(b, () => {});
+        worker.lanes.add(a, handler);
+        other.lanes.add(b, () => {});
 
         const { id: a1 } = await worker.enqueue(testAdapter.pool, a, {});
 
@@ -1130,8 +1130,8 @@ describe('wakes, hints and the work after the commit', () => {
     test('cancelling a pending job that an unblock made due lets the next blocked job of its key start', async () => {
         const p = nextPrefix();
         const order = defineConcurrencyLimit({ name: 'order', max: 1 });
-        const a = defineJob({ name: 'job_a', timeout: '1m', globalConcurrencyLimits: () => [order] });
-        const b = defineJob({ name: 'job_b', timeout: '1m', globalConcurrencyLimits: () => [order] });
+        const a = defineLane({ name: 'job_a', timeout: '1m', globalConcurrencyLimits: () => [order] });
+        const b = defineLane({ name: 'job_b', timeout: '1m', globalConcurrencyLimits: () => [order] });
         const { sqlane: worker } = sqlaneOn(p);
         const { sqlane: other } = sqlaneOn(p);
         /** @type {string[]} */
@@ -1139,8 +1139,8 @@ describe('wakes, hints and the work after the commit', () => {
         const { handler, release } = holdingFirst(ran);
 
         await worker.schema.migrate();
-        worker.handle(a, handler);
-        other.handle(b, () => {});
+        worker.lanes.add(a, handler);
+        other.lanes.add(b, () => {});
 
         const { id: a1 } = await worker.enqueue(testAdapter.pool, a, {});
 
@@ -1196,7 +1196,7 @@ describe('retry, further', () => {
         const [id] = await failedJobs(p, 'flaky', [{}], { maxAttempts: 1 });
         let runs = 0;
 
-        sqlane.handle('flaky', () => {
+        sqlane.lanes.add('flaky', () => {
             runs++;
             throw new Error('again');
         });
@@ -1226,9 +1226,9 @@ describe('retry, further', () => {
         const outcomes = [() => {
             throw new JobCancelledError('not a cancel');
         }, () => {}];
-        const quits = defineJob({ name: 'quits', maxAttempts: 2, backoff: { type: 'fixed', delay: 0, jitter: 0 } });
+        const quits = defineLane({ name: 'quits', maxAttempts: 2, backoff: { type: 'fixed', delay: 0, jitter: 0 } });
 
-        sqlane.handle(quits, () => /** @type {() => void} */ (outcomes.shift())());
+        sqlane.lanes.add(quits, () => /** @type {() => void} */ (outcomes.shift())());
 
         const { id } = await sqlane.enqueue(testAdapter.pool, 'quits', {});
 
@@ -1257,9 +1257,9 @@ describe('lifecycle', () => {
         for (const call of [
             () => sqlane.jobs.cancel(/** @type {any} */ ({})),
             () => sqlane.jobs.cancel({ jobIds: ['a'] }, /** @type {any} */ ({ mode: 'batches' })),
-            () => sqlane.jobs.cancel({ jobName: 'ping' }, { strict: true }),
-            () => sqlane.jobs.cancel({ jobName: 'ping' }, /** @type {any} */ ({ budget: 'reset' })),
-            () => sqlane.jobs.remove({ jobName: 'ping', status: /** @type {any} */ ('running') }),
+            () => sqlane.jobs.cancel({ lane: 'ping' }, { strict: true }),
+            () => sqlane.jobs.cancel({ lane: 'ping' }, /** @type {any} */ ({ budget: 'reset' })),
+            () => sqlane.jobs.remove({ lane: 'ping', status: /** @type {any} */ ('running') }),
         ]) {
             // oxlint-disable-next-line no-await-in-loop -- one call after the other
             await expect(call()).rejects.toBeInstanceOf(InvalidOptionsError);

@@ -16,7 +16,7 @@ const NOW_MS = 'floor(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint';
 function toScheduleRow(row) {
     return {
         id: String(row.id),
-        jobName: String(row.lane),
+        lane: String(row.lane),
         spec: String(row.spec),
         lastSlotMs: Number(row.last_slot_ms),
         lastJobId: row.last_job_id === null ? null : String(row.last_job_id),
@@ -24,7 +24,7 @@ function toScheduleRow(row) {
 }
 
 /**
- * Inserts the jobs of slots of several names, in one statement, with one NOTIFY per name that got a job. The CTE of
+ * Inserts the jobs of slots of several lanes, in one statement, with one NOTIFY per lane that got a job. The CTE of
  * `insertJobsPostgres` with another NOTIFY step: the enqueue statement stays as it is.
  * @param {Executor} executor
  * @param {string} p The table prefix.
@@ -60,7 +60,7 @@ export async function insertScheduledJobsPostgres(executor, p, jobs, { enqueueTo
             SELECT input.id, input.payload::jsonb FROM input JOIN inserted ON inserted.id = input.id
             ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload
         ),
-        -- One NOTIFY per name that got a job: PostgreSQL drops only a repeat of the same channel and message
+        -- One NOTIFY per lane that got a job: PostgreSQL drops only a repeat of the same channel and message
         notified AS (
             SELECT pg_notify($3, d.lane)
               FROM (SELECT DISTINCT lane FROM inserted) AS d
@@ -81,7 +81,7 @@ const STATEMENTS = {
             SELECT i.id, i.lane, i.spec, 'epoch'::timestamptz, clock_timestamp(), clock_timestamp()
               FROM jsonb_to_recordset($1::text::jsonb) AS i(id text, lane text, spec text) ORDER BY i.id
             ON CONFLICT (id) DO NOTHING
-        `, [JSON.stringify(candidates.map(({ id, name, spec }) => ({ id, lane: name, spec })))]);
+        `, [JSON.stringify(candidates.map(({ id, lane, spec }) => ({ id, lane, spec })))]);
     },
     lockRows: async (executor, p, ids) => {
         const rows = await executor.query(`
@@ -112,7 +112,7 @@ const STATEMENTS = {
             id: winner.id,
             slot_at: new Date(winner.slot).toISOString(),
             spec: winner.spec,
-            lane: winner.name,
+            lane: winner.lane,
             job_id: winner.jobId,
         })))]);
     },
@@ -147,7 +147,7 @@ export async function readSchedules(executor, p, ids, now) {
  * Inserts the missing rows of the schedules, with the database time as their cursor, then reads them all.
  * @param {Executor} executor
  * @param {string} p
- * @param {{ id: string, name: string, spec: string }[]} schedules
+ * @param {{ id: string, lane: string, spec: string }[]} schedules
  * @param {() => number} now
  * @returns {Promise<{ clock: import('./fire_slots.js').ClockSample, rows: ScheduleRow[] }>}
  */
@@ -167,7 +167,7 @@ export async function registerSchedules(executor, p, schedules, now) {
                    clock_timestamp()
               FROM jsonb_to_recordset($1::text::jsonb) AS i(id text, lane text, spec text) ORDER BY i.id
             ON CONFLICT (id) DO NOTHING
-        `, [JSON.stringify(chunk.map(({ id, name, spec }) => ({ id, lane: name, spec })))]);
+        `, [JSON.stringify(chunk.map(({ id, lane, spec }) => ({ id, lane, spec })))]);
 
         // oxlint-disable-next-line no-await-in-loop -- one chunk after the other
         const read = await readSchedules(executor, p, chunk.map(({ id }) => id), now);

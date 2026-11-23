@@ -5,7 +5,7 @@ import { expectTypeOf } from 'vitest';
 import {
     createSqlane,
     defineConcurrencyLimit,
-    defineJob,
+    defineLane,
     defineRateLimit,
     IgnoredJobsError,
     JobCancelledError,
@@ -31,13 +31,20 @@ async function anyMethod() {
     return null;
 }
 
+/**
+ * @returns {any} A value of any type.
+ */
+function anyValue() {
+    return null;
+}
+
 /** The type tests: never called. */
 export async function publicApiTypes() {
     const mysqlPool = mysql.createPool({});
     const connection = await mysqlPool.getConnection();
     const pgPool = new Pool();
     const heavy = defineConcurrencyLimit({ name: 'heavy', max: 2 });
-    const job = defineJob({
+    const job = defineLane({
         name: 'build_report',
         globalConcurrencyLimits: ({ payload }) => [heavy.key(payload.reportId)],
         timeout: '1m',
@@ -232,36 +239,27 @@ export async function publicApiTypes() {
     await sqlane.enqueue(connection, job, {}, { delay: '1s', runAt: new Date() });
     // @ts-expect-error dedupeKey is a string
     await sqlane.enqueue(connection, job, {}, { dedupeKey: 42 });
-    // @ts-expect-error jobId was renamed dedupeKey in 8.0
-    await sqlane.enqueue(connection, job, {}, { jobId: 'r1' });
-    // Not a literal, with another option: neither the excess-property check nor the weak-type check applies
-    const oldOptions = { jobId: 'r1', delay: '1s' };
 
-    // @ts-expect-error jobId was renamed dedupeKey in 8.0, also in options that are not a literal
-    await sqlane.enqueue(connection, job, {}, oldOptions);
-    // @ts-expect-error jobId was renamed dedupeKey in 8.0, in enqueueMany too
-    await sqlane.enqueueMany(connection, job, [{ payload: {}, options: { jobId: 'r1' } }]);
-
-    // handle: no options; local limits and weights are in the definition
-    sqlane.handle(job, () => {});
-    sqlane.handle('build_report', async () => {});
-    // @ts-expect-error the options of 5.x moved to defineJob()
-    sqlane.handle(job, () => {}, { maxConcurrency: 1 });
+    // lanes.add: no options; local limits and weights are in the definition
+    sqlane.lanes.add(job, () => {});
+    sqlane.lanes.add('build_report', async () => {});
+    // @ts-expect-error lanes.add() takes no options
+    sqlane.lanes.add(job, () => {}, { maxConcurrency: 1 });
     // @ts-expect-error a local limit is an object from defineConcurrencyLimit()
-    defineJob({ name: 'a', localConcurrencyLimits: ['heavy'] });
-    // @ts-expect-error lanes were removed in 5.0
+    defineLane({ name: 'a', localConcurrencyLimits: ['heavy'] });
+    // @ts-expect-error lanes is an array of definitions
     createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), lanes: { heavy: { concurrency: 2 } } });
-    // @ts-expect-error maxConcurrency is now localMaxConcurrency
+    // @ts-expect-error maxConcurrency is not an option: localMaxConcurrency
     createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), maxConcurrency: 2 });
     expectTypeOf(heavy.max).toBeNumber();
 
     /** @type {import('@sqlane/core').Sqlane<import('@sqlane/core/adapter-mysql2').Mysql2Connection>} */
     const typedSqlane = sqlane;
 
-    typedSqlane.handle('typed', () => {});
+    typedSqlane.lanes.add('typed', () => {});
 
-    // handle: the context
-    sqlane.handle(job, ({ payload: jobPayload, job: info, signal }) => {
+    // lanes.add: the context
+    sqlane.lanes.add(job, ({ payload: jobPayload, job: info, signal }) => {
         expectTypeOf(jobPayload).toBeAny();
         expectTypeOf(info.attempt).toBeNumber();
         expectTypeOf(info.enqueuedAt).toEqualTypeOf(new Date());
@@ -270,9 +268,9 @@ export async function publicApiTypes() {
         expectTypeOf(signal).toEqualTypeOf(new AbortController().signal);
     });
 
-    // A declared payload: defineJob<P>(…) in TypeScript; in JSDoc, the type of the definition
-    /** @type {import('@sqlane/core').JobDefinition<{ orderId: number, note?: string }>} */
-    const syncOrder = defineJob({
+    // A declared payload: defineLane<P>(…) in TypeScript; in JSDoc, the type of the definition
+    /** @type {import('@sqlane/core').LaneDefinition<{ orderId: number, note?: string }>} */
+    const syncOrder = defineLane({
         name: 'sync_order',
         globalConcurrencyLimits: ({ payload: order }) => {
             expectTypeOf(order).toEqualTypeOf(/** @type {{ orderId: number, note?: string }} */ ({ orderId: 1 }));
@@ -293,39 +291,44 @@ export async function publicApiTypes() {
     await sqlane.enqueueMany(connection, syncOrder, [{ payload: { orderId: 1 } }, { payload: { orderId: 2 } }]);
     // @ts-expect-error orderId is a number, in enqueueMany too
     await sqlane.enqueueMany(connection, syncOrder, [{ payload: { orderId: '1' } }]);
-    sqlane.handle(syncOrder, ({ payload: order }) => {
+    sqlane.lanes.add(syncOrder, ({ payload: order }) => {
         expectTypeOf(order.orderId).toBeNumber();
         expectTypeOf(order.note).toEqualTypeOf(/** @type {string | undefined} */ (undefined));
     });
     // By name: the payload is not known
     await sqlane.enqueue(connection, 'sync_order', { anything: true });
-    sqlane.handle('sync_order', ({ payload: anything }) => {
+    sqlane.lanes.add('sync_order', ({ payload: anything }) => {
         expectTypeOf(anything).toBeAny();
     });
 
     // A declared payload must be JSON
-    /** @type {import('@sqlane/core').JobDefinition<{ at: Date }>} */
-    const dated = defineJob({ name: 'dated' });
+    /** @type {import('@sqlane/core').LaneDefinition<{ at: Date }>} */
+    const dated = defineLane({ name: 'dated' });
 
     // @ts-expect-error a Date is not JSON: the handler would get a string
     await sqlane.enqueue(connection, dated, { at: new Date() });
 
-    // A declared payload with defineJob<P>: a type argument, also in JSDoc
-    const typed = defineJob(/** @type {import('@sqlane/core').JobOptions<{ id: string }>} */ ({ name: 'typed' }));
+    // A declared payload with defineLane<P>: a type argument, also in JSDoc
+    const typed = defineLane(/** @type {import('@sqlane/core').LaneOptions<{ id: string }>} */ ({ name: 'typed' }));
 
+    // LaneDefinition is Readonly<LaneOptions>
+    /** @type {Readonly<import('@sqlane/core').LaneOptions<{ id: string }>>} */
+    const readonlyOptions = anyValue();
+
+    expectTypeOf(typed).toEqualTypeOf(readonlyOptions);
     await sqlane.enqueue(connection, typed, { id: 'a' });
     // @ts-expect-error id is a string
     await sqlane.enqueue(connection, typed, { id: 1 });
 
-    // defineJob
+    // defineLane
     // @ts-expect-error the name is required
-    defineJob({ maxAttempts: 3 });
+    defineLane({ maxAttempts: 3 });
     // @ts-expect-error an unknown backoff type
-    defineJob({ name: 'a', backoff: { type: 'linear', delay: '1s' } });
+    defineLane({ name: 'a', backoff: { type: 'linear', delay: '1s' } });
     // @ts-expect-error globalConcurrencyLimits returns limits and their keys
-    defineJob({ name: 'a', globalConcurrencyLimits: () => ['a'] });
-    // @ts-expect-error mutexKeys was removed in 6.0
-    defineJob({ name: 'a', mutexKeys: () => ['a'] });
+    defineLane({ name: 'a', globalConcurrencyLimits: () => ['a'] });
+    // @ts-expect-error an unknown option
+    defineLane({ name: 'a', unknownOption: true });
 
     // Rate limits: global per key, at a cost; local keyless
     const github = defineRateLimit({ name: 'github', max: 5000, per: '1h' });
@@ -335,7 +338,7 @@ export async function publicApiTypes() {
     expectTypeOf(github.burst).toBeNumber();
     expectTypeOf(github.key('t1', { cost: 1 })).toEqualTypeOf(sms.cost(2));
     expectTypeOf(sms.cost(2).key).toEqualTypeOf(/** @type {string | null} */ (null));
-    defineJob({
+    defineLane({
         name: 'sync_repo',
         globalRateLimits: ({ payload: repo }) => [sms, sms.cost(2), github.key(repo.tokenId)],
         localRateLimits: [sms],
@@ -345,9 +348,9 @@ export async function publicApiTypes() {
     // @ts-expect-error per is required
     defineRateLimit({ name: 'a', max: 1 });
     // @ts-expect-error a local rate limit is keyless
-    defineJob({ name: 'a', localRateLimits: [github.key('t1')] });
+    defineLane({ name: 'a', localRateLimits: [github.key('t1')] });
     // @ts-expect-error globalRateLimits returns rate limits and their keys
-    defineJob({ name: 'a', globalRateLimits: () => [heavy] });
+    defineLane({ name: 'a', globalRateLimits: () => [heavy] });
     // @ts-expect-error a cost is a number
     github.key('t1', { cost: '1' });
     await sqlane.enqueue(connection, job, {}, { globalRateLimits: [github.key('t1'), sms] });
@@ -358,7 +361,8 @@ export async function publicApiTypes() {
     void new RateLimitedError({ retryAfter: 30_000, cause: new Error('429') });
     // @ts-expect-error retryAfter is required
     void new RateLimitedError({ limit: github });
-    expectTypeOf(job.name).toBeString();
+    // A definition is a lane: its `name`
+    expectTypeOf(defineLane({ name: 'x' }).name).toBeString();
 
     // errors
     // @ts-expect-error RetryJobError needs a delay
@@ -369,8 +373,8 @@ export async function publicApiTypes() {
     // createSqlane: the options
     // @ts-expect-error the adapter is required
     createSqlane({});
-    // @ts-expect-error an unknown unknownJobs value
-    createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), unknownJobs: 'warn' });
+    // @ts-expect-error an unknown unknownLanes value
+    createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), unknownLanes: 'warn' });
     createSqlane({
         adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }),
         onEvent: (event) => {
@@ -395,11 +399,11 @@ export async function publicApiTypes() {
 
     // A failure job: the error of the failed job, with its string `code` if it had one
     /** @type {import('@sqlane/core').FailedJobPayload} */
-    const failure = { job: { id: 'a', name: 'a', payload: null, attempt: 3, maxAttempts: 3 }, error: { name: 'E', message: 'm' } };
+    const failure = { job: { id: 'a', lane: 'a', payload: null, attempt: 3, maxAttempts: 3 }, error: { name: 'E', message: 'm' } };
 
     expectTypeOf(failure.error.code).toEqualTypeOf(/** @type {string | undefined} */ (undefined));
 
-    // wake: no name, it probes all the handled names
+    // wake: no name, it probes all the added lanes
     sqlane.wake();
     // @ts-expect-error wake() takes no name
     sqlane.wake('build_report');
@@ -460,9 +464,14 @@ export async function publicApiTypes() {
     expectTypeOf(read).toEqualTypeOf(/** @type {import('@sqlane/core').JobRecord<any> | null} */ (null));
     /** @typedef {import('@sqlane/core').JobRecord['blockedOn']} BlockedOn */
     expectTypeOf(read?.blockedOn).toEqualTypeOf(/** @type {BlockedOn | undefined} */ (undefined));
+    // A record refers to its lane: `lane`, not `name`
+    expectTypeOf(read?.lane).toEqualTypeOf(/** @type {string | undefined} */ (undefined));
+    expectTypeOf(read?.failureLane).toEqualTypeOf(/** @type {string | null | undefined} */ (undefined));
+    // @ts-expect-error JobRecord has no name: its lane is `lane`
+    void read?.name;
 
     /** @type {import('@sqlane/core').JobFilter} */
-    const filter = { jobName: job, status: ['pending', 'blocked'] };
+    const filter = { lane: job, status: ['pending', 'blocked'] };
     /** @type {import('@sqlane/core').ListJobsOptions} */
     const listOptions = { limit: 10, cursor: null, includePayload: undefined };
     /** @type {import('@sqlane/core').JobPage} */
@@ -478,9 +487,9 @@ export async function publicApiTypes() {
     expectTypeOf(page.jobs[0].lastError).toEqualTypeOf(/** @type {import('@sqlane/core').JobError | null} */ (null));
     expectTypeOf(/** @type {import('@sqlane/core').FailedJobPayload['error']} */ ({ name: '', message: '' }))
         .toEqualTypeOf(/** @type {import('@sqlane/core').JobError} */ ({ name: '', message: '' }));
-    await sqlane.jobs.list({ jobName: 'build_report', status: undefined }, { cursor: undefined });
+    await sqlane.jobs.list({ lane: 'build_report', status: undefined }, { cursor: undefined });
     // @ts-expect-error not a status
-    await sqlane.jobs.list({ jobName: 'build_report', status: 'done' });
+    await sqlane.jobs.list({ lane: 'build_report', status: 'done' });
     // @ts-expect-error a list has the jobs of one name
     await sqlane.jobs.list({ status: 'failed' });
 
@@ -495,8 +504,8 @@ export async function publicApiTypes() {
     expectTypeOf(retried.affectedJobIds).toEqualTypeOf(/** @type {string[] | undefined} */ (undefined));
     expectTypeOf(retried.ignoredJobs[0].reason)
         .toEqualTypeOf(/** @type {'not_found' | 'status' | 'no_payload'} */ ('status'));
-    await sqlane.jobs.cancel({ jobName: job, status: 'blocked' }, { mode: 'batches' });
-    await sqlane.jobs.remove({ jobName: 'build_report' }, { connection: mysqlPool, strict: false });
+    await sqlane.jobs.cancel({ lane: job, status: 'blocked' }, { mode: 'batches' });
+    await sqlane.jobs.remove({ lane: 'build_report' }, { connection: mysqlPool, strict: false });
 
     // keyStats: a page of keys, by type
     const keyPage = await sqlane.jobs.keyStats({ limit: 10, type: 'concurrency', orderBy: 'held' });
@@ -540,20 +549,22 @@ export async function publicApiTypes() {
          * }} */ (/** @type {any} */ (null)),
     );
 
-    // stats: blocked apart from pending, and completed
-    const [stats] = await sqlane.jobs.stats();
+    // lanes.stats: blocked apart from pending, and completed; an entry is a lane: its `name`
+    const [stats] = await sqlane.lanes.stats();
+
+    expectTypeOf(stats.name).toBeString();
 
     expectTypeOf(stats.blocked).toBeNumber();
     expectTypeOf(stats.completed).toBeNumber();
     expectTypeOf(stats.oldestDueAgeMs).toEqualTypeOf(/** @type {number | null} */ (null));
-    // @ts-expect-error getStats() is now jobs.stats()
-    void sqlane.getStats;
+    // @ts-expect-error stats() is lanes.stats()
+    void sqlane.jobs.stats;
 
-    // A mock of SqlaneJobs needs keyStats and stats
+    // A mock of SqlaneJobs needs keyStats; one of SqlaneLanes, add and stats
     /** @type {import('@sqlane/core').SqlaneJobs} */
     // @ts-expect-error keyStats is missing
     const mockWithoutKeyStats = {
-        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod, stats: anyMethod,
+        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod,
     };
     /** @type {import('@sqlane/core').SqlaneJobs} */
     const mock = {
@@ -563,11 +574,13 @@ export async function publicApiTypes() {
         cancel: anyMethod,
         remove: anyMethod,
         keyStats: anyMethod,
-        stats: anyMethod,
     };
+    /** @type {import('@sqlane/core').SqlaneLanes} */
+    const lanesMock = { add: anyMethod, stats: anyMethod };
 
     void mockWithoutKeyStats;
     void mock;
+    void lanesMock;
     /** @type {import('@sqlane/core').JobSelector} */
     const selector = { jobIds: ['a'] };
     /** @type {import('@sqlane/core').BulkOptions} */
@@ -581,7 +594,7 @@ export async function publicApiTypes() {
     // @ts-expect-error a pg client is not a connection of the mysql2 adapter
     await sqlane.jobs.cancel({ jobIds: ['a'] }, { connection: pgPool });
     // @ts-expect-error ids or a filter, not both
-    await sqlane.jobs.cancel({ jobIds: ['a'], jobName: 'build_report' });
+    await sqlane.jobs.cancel({ jobIds: ['a'], lane: 'build_report' });
     // @ts-expect-error a selector needs ids or a filter
     await sqlane.jobs.cancel({});
     // @ts-expect-error status is for a filter
@@ -596,28 +609,28 @@ export async function publicApiTypes() {
     );
 
     // The slot of a job of a schedule
-    sqlane.handle(job, ({ job: info }) => {
+    sqlane.lanes.add(job, ({ job: info }) => {
         expectTypeOf(info.scheduledAt).toEqualTypeOf(/** @type {Date | null} */ (null));
     });
     /** @type {import('@sqlane/core').JobInfo} */
     // @ts-expect-error scheduledAt is required in a context built by hand
     const builtByHand = {
-        id: 'a', name: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
+        id: 'a', lane: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
         runAt: new Date(), startedAt: new Date(),
     };
     /** @type {import('@sqlane/core').JobInfo} */
     // @ts-expect-error runAt is required in a context built by hand
     const withoutRunAt = {
-        id: 'a', name: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
+        id: 'a', lane: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
         scheduledAt: null, startedAt: new Date(),
     };
     /** @type {import('@sqlane/core').JobInfo} */
     // @ts-expect-error startedAt is required in a context built by hand
     const withoutStartedAt = {
-        id: 'a', name: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
+        id: 'a', lane: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
         scheduledAt: null, runAt: new Date(),
     };
-    const claimedBase = { type: /** @type {const} */ ('claimed'), jobId: 'a', jobName: 'a', attempt: 1 };
+    const claimedBase = { type: /** @type {const} */ ('claimed'), jobId: 'a', lane: 'a', attempt: 1 };
     /** @type {import('@sqlane/core').SqlaneEvent} */
     // @ts-expect-error a claimed event built by hand needs runAt
     const claimedWithoutRunAt = { ...claimedBase, enqueuedAt: new Date(), startedAt: new Date() };
@@ -631,7 +644,7 @@ export async function publicApiTypes() {
     const claimedEvent = { ...claimedBase, runAt: new Date(), enqueuedAt: new Date(), startedAt: new Date() };
     /** @type {import('@sqlane/core').JobInfo} */
     const complete = {
-        id: 'a', name: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
+        id: 'a', lane: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
         scheduledAt: null, runAt: new Date(), startedAt: new Date(),
     };
 
@@ -643,7 +656,7 @@ export async function publicApiTypes() {
     void claimedWithoutEnqueuedAt;
     void claimedWithoutStartedAt;
     void claimedEvent;
-    sqlane.handle(job, ({ job: info }) => {
+    sqlane.lanes.add(job, ({ job: info }) => {
         expectTypeOf(info.runAt).toEqualTypeOf(new Date());
         expectTypeOf(info.startedAt).toEqualTypeOf(new Date());
     });

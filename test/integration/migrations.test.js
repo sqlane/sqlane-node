@@ -284,8 +284,8 @@ test('a database of 7.x: 0008 adds the index of the lists; jobs.list pages throu
     await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [...JOB_LIST, ...LANES] });
 
     const added = await sqlane.enqueueMany(testAdapter.pool, 'ping', [{ payload: {} }, { payload: {} }, { payload: {} }]);
-    const page1 = await sqlane.jobs.list({ jobName: 'ping' }, { limit: 2 });
-    const page2 = await sqlane.jobs.list({ jobName: 'ping' }, { limit: 2, cursor: page1.nextCursor });
+    const page1 = await sqlane.jobs.list({ lane: 'ping' }, { limit: 2 });
+    const page2 = await sqlane.jobs.list({ lane: 'ping' }, { limit: 2, cursor: page1.nextCursor });
 
     expect([page1.jobs.length, page2.jobs.length, page2.nextCursor]).toStrictEqual([2, 1, null]);
     expect([...page1.jobs, ...page2.jobs].map(job => job.id).toSorted())

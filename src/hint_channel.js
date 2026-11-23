@@ -1,15 +1,15 @@
-// Hints between processes: "jobs of this name are ready". Only an optimization: a lost hint delays a job until the
+// Hints between processes: "jobs of this lane are ready". Only an optimization: a lost hint delays a job until the
 // next poll, it never loses one.
 
-/** At most one message per name in this window; the messages in it make one more at its end */
+/** At most one message per lane in this window; the messages in it make one more at its end */
 const THROTTLE_MS = 100;
-/** The message of a wake of all names: every process probes all its names */
-export const ANY_NAME = '*';
+/** The message of a wake of all lanes: every process probes all its lanes */
+export const ANY_LANE = '*';
 
 /**
  * @typedef {object} HintChannel
- * @property {(name: string) => void} publish Fire-and-forget: never throws, never waits.
- * @property {(onMessage: (name: string) => void) => Promise<void>} listen
+ * @property {(lane: string) => void} publish Fire-and-forget: never throws, never waits.
+ * @property {(onMessage: (lane: string) => void) => Promise<void>} listen
  * @property {() => Promise<void>} stop Stops listening; drops the pending messages.
  */
 
@@ -27,8 +27,8 @@ export function createHintChannel({ hint, channel, reportError }) {
     let unsubscribe = null;
     let stopped = false;
 
-    /** @param {string} name */
-    function send(name) {
+    /** @param {string} lane */
+    function send(lane) {
         if (!hint || stopped) {
             return;
         }
@@ -38,33 +38,33 @@ export function createHintChannel({ hint, channel, reportError }) {
         // Not awaited: the enqueue does not wait for the hint
         (async () => {
             try {
-                await publish(channel, name);
+                await publish(channel, lane);
             } catch (error) {
                 reportError('hint_publish', error);
             }
         })();
     }
 
-    /** @param {string} name */
-    function openWindow(name) {
+    /** @param {string} lane */
+    function openWindow(lane) {
         const timer = setTimeout(() => {
-            const window = windows.get(name);
+            const window = windows.get(lane);
 
-            windows.delete(name);
+            windows.delete(lane);
 
             if (window?.again) {
-                send(name);
-                openWindow(name);
+                send(lane);
+                openWindow(lane);
             }
         }, THROTTLE_MS);
 
         timer.unref();
-        windows.set(name, { timer, again: false });
+        windows.set(lane, { timer, again: false });
     }
 
     return {
-        publish: (name) => {
-            const window = windows.get(name);
+        publish: (lane) => {
+            const window = windows.get(lane);
 
             if (window) {
                 window.again = true;
@@ -72,8 +72,8 @@ export function createHintChannel({ hint, channel, reportError }) {
                 return;
             }
 
-            send(name);
-            openWindow(name);
+            send(lane);
+            openWindow(lane);
         },
         listen: async (onMessage) => {
             if (!hint) {

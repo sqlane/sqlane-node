@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import {
     createSqlane,
     defineConcurrencyLimit,
-    defineJob,
+    defineLane,
     defineRateLimit,
     InvalidOptionsError,
 } from '../../src/index.js';
@@ -231,12 +231,12 @@ describe('keyStats', () => {
     test('a concurrency key with a running holder and two blocked jobs', async () => {
         const { sqlane } = await fresh();
         const one = defineConcurrencyLimit({ name: 'one', max: 1 });
-        const sync = defineJob({ name: 'sync', timeout: '10s', globalConcurrencyLimits: () => [one.key('a')] });
+        const sync = defineLane({ name: 'sync', timeout: '10s', globalConcurrencyLimits: () => [one.key('a')] });
         const { promise, resolve } = Promise.withResolvers();
         /** @type {Date[]} */
         const started = [];
 
-        sqlane.handle(sync, ({ job }) => {
+        sqlane.lanes.add(sync, ({ job }) => {
             started.push(job.startedAt);
 
             return promise;
@@ -247,7 +247,7 @@ describe('keyStats', () => {
 
         const blocked = await enqueued(sqlane, 'sync', 2, {});
 
-        await waitFor(async () => (await sqlane.jobs.list({ jobName: 'sync', status: 'blocked' })).jobs.length === 2);
+        await waitFor(async () => (await sqlane.jobs.list({ lane: 'sync', status: 'blocked' })).jobs.length === 2);
 
         const before = await dbNow();
         const { keys, truncated } = /** @type {{ keys: any[], truncated: boolean }} */ (await sqlane.jobs.keyStats());
@@ -301,15 +301,15 @@ describe('keyStats', () => {
     test('a lingering slot after a release on close', async () => {
         const p = nextPrefix();
         const first = sqlaneOn(p);
-        const sync = defineJob({ name: 'sync', timeout: '10s', globalConcurrencyLimits: () => [ORDER.key('a')] });
+        const sync = defineLane({ name: 'sync', timeout: '10s', globalConcurrencyLimits: () => [ORDER.key('a')] });
 
         await first.schema.migrate();
-        first.handle(sync, ({ signal }) => new Promise((resolve) => {
+        first.lanes.add(sync, ({ signal }) => new Promise((resolve) => {
             signal.addEventListener('abort', resolve);
         }));
         await first.start();
         await first.enqueue(testAdapter.pool, sync, {});
-        await waitFor(async () => (await first.jobs.list({ jobName: 'sync', status: 'running' })).jobs.length === 1);
+        await waitFor(async () => (await first.jobs.list({ lane: 'sync', status: 'running' })).jobs.length === 1);
         await first.close({ deadline: '50ms', exitsBy: '5s' });
 
         await expect(first.jobs.keyStats()).resolves.toMatchObject({

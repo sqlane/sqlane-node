@@ -34,7 +34,7 @@ const CHUNK_SIZE = 500;
  * @property {JobStatus} status
  * @property {number} attempts
  * @property {string[]} keys The keys of its global limits, as stored.
- * @property {string} name
+ * @property {string} lane
  * @property {boolean} found Its payload exists.
  */
 
@@ -128,36 +128,36 @@ export async function readByIds({ executor, family, p }, ids) {
 }
 
 /**
- * The jobs of a name in the statuses, and whether their payload exists. No lock.
+ * The jobs of a lane in the statuses, and whether their payload exists. No lock.
  * @param {Db} db
- * @param {{ jobName: string, statuses: readonly JobStatus[] }} filter
+ * @param {{ lane: string, statuses: readonly JobStatus[] }} filter
  * @returns {Promise<{ id: string, found: boolean }[]>}
  */
-export async function readByFilter({ executor, family, p }, { jobName, statuses }) {
+export async function readByFilter({ executor, family, p }, { lane, statuses }) {
     const select = `SELECT j.id AS id, pl.id IS NOT NULL AS found FROM ${p}jobs j LEFT JOIN ${
         p}payloads pl ON pl.id = j.id`;
     const rows = family === 'postgres'
         ? await executor.query(
                 `${select} WHERE j.lane = $1 AND j.status = ANY(${arrayParam(2, 'text')})`,
-                [jobName, statuses],
+                [lane, statuses],
             )
         : await executor.query(
                 `${select} WHERE j.lane = ? AND j.status IN (${marks(statuses.length)})`,
-                [jobName, ...statuses],
+                [lane, ...statuses],
             );
 
     return rows.map(row => ({ id: String(row.id), found: foundOf(row) }));
 }
 
 /**
- * The next batch of the jobs of a name in the statuses, in the order of `jobs.list`: after `after`, newest first. No
+ * The next batch of the jobs of a lane in the statuses, in the order of `jobs.list`: after `after`, newest first. No
  * lock. It seeks in the index of 0008_job_list, as `jobs.list`.
  * @param {Db} db
- * @param {{ jobName: string, statuses: readonly JobStatus[], after: { ms: number, id: string } | null, limit: number }}
+ * @param {{ lane: string, statuses: readonly JobStatus[], after: { ms: number, id: string } | null, limit: number }}
  *     params
  * @returns {Promise<{ id: string, ms: number }[]>}
  */
-export async function readBatch({ executor, family, p }, { jobName, statuses, after, limit }) {
+export async function readBatch({ executor, family, p }, { lane, statuses, after, limit }) {
     if (family === 'postgres') {
         const keyset = after ? ' AND (j.created_at, j.id) < ($4::timestamptz, $5)' : '';
         const rows = await executor.query(`
@@ -166,7 +166,7 @@ export async function readBatch({ executor, family, p }, { jobName, statuses, af
              WHERE j.lane = $1 AND j.status = ANY(${arrayParam(2, 'text')})${keyset}
              ORDER BY j.created_at DESC, j.id DESC
              LIMIT $3
-        `, after ? [jobName, statuses, limit, new Date(after.ms).toISOString(), after.id] : [jobName, statuses, limit]);
+        `, after ? [lane, statuses, limit, new Date(after.ms).toISOString(), after.id] : [lane, statuses, limit]);
 
         return rows.map(row => ({ id: String(row.id), ms: Number(row.ms) }));
     }
@@ -179,7 +179,7 @@ export async function readBatch({ executor, family, p }, { jobName, statuses, af
          WHERE j.lane = ? AND j.status IN (${marks(statuses.length)})${keyset}
          ORDER BY j.created_at DESC, j.id DESC
          LIMIT ?
-    `, [jobName, ...statuses, ...(after ? [time, time, after.id] : []), limit]);
+    `, [lane, ...statuses, ...(after ? [time, time, after.id] : []), limit]);
 
     return rows.map(row => ({ id: String(row.id), ms: Number(row.ms) }));
 }
@@ -209,7 +209,7 @@ export async function lockJobs({ executor, family, p }, { ids, statuses }) {
         status: /** @type {JobStatus} */ (row.status),
         attempts: Number(row.attempts),
         keys: row.limits === null || row.limits === undefined ? [] : JSON.parse(String(row.limits)),
-        name: String(row.lane),
+        lane: String(row.lane),
         found: foundOf(row),
     }));
 }
@@ -337,15 +337,15 @@ export async function removeJobs({ executor, family, p }, { ids, statuses }) {
 }
 
 /**
- * PostgreSQL with the `notify` option: the hint of the retried names, in the transaction (sent at its commit).
+ * PostgreSQL with the `notify` option: the hint of the retried lanes, in the transaction (sent at its commit).
  * @param {Executor} executor
  * @param {string} channel
- * @param {readonly string[]} names
+ * @param {readonly string[]} lanes
  * @returns {Promise<void>}
  */
-export async function notifyNames(executor, channel, names) {
+export async function notifyLanes(executor, channel, lanes) {
     await executor.query(
         `SELECT 1 AS ok FROM (SELECT pg_notify($1, n) FROM unnest(${arrayParam(2, 'text')}) AS n) s`,
-        [channel, names],
+        [channel, lanes],
     );
 }

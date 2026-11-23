@@ -1,12 +1,12 @@
-/** A job name: no `:` (the job id is `<name>:<dedupeKey>`), lowercase. */
-export declare const JOB_NAME_REGEXP: RegExp;
+/** A name of a lane or of a limit: no `:` (the job id is `<lane>:<dedupeKey>`), lowercase. */
+export declare const NAME_REGEXP: RegExp;
 /** A table prefix: the longest table name, `<prefix>migrations`, stays within the 63 characters of PostgreSQL. */
 export declare const TABLE_PREFIX_REGEXP: RegExp;
 /** Printable ASCII, no space at the ends: MySQL `ascii_bin` ignores trailing spaces in comparisons. */
 export declare const PRINTABLE_ID_REGEXP: RegExp;
 export type Scope = {
     /**
-     * E.g. `defineJob("build_report")`.
+     * E.g. `defineLane("build_report")`.
      */
     where: string;
     ErrorClass: new (message: string) => Error;
@@ -14,7 +14,7 @@ export type Scope = {
 /**
  * Where a check runs: for the error message and its class.
  * @typedef {object} Scope
- * @property {string} where E.g. `defineJob("build_report")`.
+ * @property {string} where E.g. `defineLane("build_report")`.
  * @property {new (message: string) => Error} ErrorClass
  */
 /**
@@ -61,14 +61,14 @@ export declare function checkRetention(value: unknown, scope: Scope): void;
  * @param {Record<string, unknown>} options
  * @param {Scope} scope
  */
-export declare function checkJobFields(options: Record<string, unknown>, scope: Scope): void;
+export declare function checkOptionFields(options: Record<string, unknown>, scope: Scope): void;
 /**
  * @param {unknown} value A name, or a definition.
- * @param {string} jobName The job that names it.
+ * @param {string} lane The lane that names it.
  * @param {Scope} scope
- * @returns {string} The name of the failure job.
+ * @returns {string} The failure lane.
  */
-export declare function checkFailureJob(value: unknown, jobName: string, { where, ErrorClass }: Scope): string;
+export declare function checkFailureLane(value: unknown, lane: string, { where, ErrorClass }: Scope): string;
 /**
  * @param {unknown} tablePrefix
  * @param {Scope} scope

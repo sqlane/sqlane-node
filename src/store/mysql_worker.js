@@ -8,7 +8,7 @@ import { incrementsOf, splitByRate } from '../gcra.js';
 /** @typedef {import('./store.js').ClaimedJob} ClaimedJob */
 /** @typedef {{ key: string, slot: number, id: string }} SlotHold A slot of a key, taken for a job */
 
-/** The due jobs of each name with global limits that a search of candidates reads */
+/** The due jobs of each lane with global limits that a search of candidates reads */
 export const LIMIT_WINDOW_SIZE = 500;
 
 const NOW = 'UTC_TIMESTAMP(3)';
@@ -62,37 +62,37 @@ function limitsOf(row) {
  * The SQL of the probe. `GROUP BY status, lane`: the whole index prefix, else MySQL does not use a loose index
  * scan.
  * @param {string} p
- * @param {number} [nameCount] The names of the probe, as parameters; none: all names.
+ * @param {number} [laneCount] The lanes of the probe, as parameters; none: all lanes.
  * @returns {string}
  */
-export function probeSql(p, nameCount = 0) {
-    const names = nameCount ? ` AND lane IN (${Array.from({ length: nameCount }, () => '?').join(', ')})` : '';
+export function probeSql(p, laneCount = 0) {
+    const lanes = laneCount ? ` AND lane IN (${Array.from({ length: laneCount }, () => '?').join(', ')})` : '';
 
     return `
         SELECT lane, TIMESTAMPDIFF(MICROSECOND, ${NOW}, MIN(run_at)) DIV 1000 AS delay_ms
           FROM ${p}jobs FORCE INDEX (${p}jobs_status_lane_run_at)
-         WHERE status = 'pending'${names}
+         WHERE status = 'pending'${lanes}
          GROUP BY status, lane
     `;
 }
 
-/** Above it, the probe reads all names: a long list of names makes a slow range plan */
-const MAX_PROBE_NAMES = 100;
+/** Above it, the probe reads all lanes: a long list of lanes makes a slow range plan */
+const MAX_PROBE_LANES = 100;
 
 /**
- * The next due time of each given job name with pending jobs; null, or many names: of each job name. One index dive
- * per name (loose index scan).
+ * The next due time of each given lane with pending jobs; null, or many lanes: of each lane. One index dive
+ * per lane (loose index scan).
  * @param {Executor} executor
  * @param {string} p
- * @param {string[] | null} names
+ * @param {string[] | null} lanes
  * @returns {Promise<ProbeRow[]>}
  */
-export async function probe(executor, p, names) {
-    if (names && !names.length) {
+export async function probe(executor, p, lanes) {
+    if (lanes && !lanes.length) {
         return [];
     }
 
-    const some = names && names.length <= MAX_PROBE_NAMES ? names : [];
+    const some = lanes && lanes.length <= MAX_PROBE_LANES ? lanes : [];
     const rows = await executor.query(probeSql(p, some.length), some);
 
     return rows.map(row => ({ name: String(row.lane), delayMs: Number(row.delay_ms) }));
@@ -100,13 +100,13 @@ export async function probe(executor, p, names) {
 
 /**
  * @param {string} p
- * @param {string[]} names
+ * @param {string[]} lanes
  * @param {(index: number) => string} limitSql
  * @param {boolean} withRates With the rate keys of the jobs; without, a column `rated`: the job has rate keys.
- * @returns {string} The oldest due jobs of each name, one index range per name.
+ * @returns {string} The oldest due jobs of each lane, one index range per lane.
  */
-function dueJobsSql(p, names, limitSql, withRates) {
-    return names.map((_, index) => `(
+function dueJobsSql(p, lanes, limitSql, withRates) {
+    return lanes.map((_, index) => `(
         SELECT id, lane, run_at, limit_keys, limit_maxes,
                ${withRates ? 'rate_limits' : 'rate_limits IS NOT NULL AS rated'} FROM ${p}jobs
           FORCE INDEX (${p}jobs_status_lane_run_at)
@@ -116,24 +116,24 @@ function dueJobsSql(p, names, limitSql, withRates) {
 }
 
 /**
- * The due jobs of names with global limits, oldest first: at most `limit` of each name whose keys have room, and those
+ * The due jobs of lanes with global limits, oldest first: at most `limit` of each lane whose keys have room, and those
  * with a full key, which the claim blocks. A key is full when its held slots reach the max of the job, or a rate key
  * has no quota left for it after the older jobs of the search. Without `withRates`, the search leaves out the rate
- * keys, and returns its jobs that have some too, past the max of their name: they tell their names (store.js).
+ * keys, and returns its jobs that have some too, past the max of their lane: they tell their lanes (store.js).
  * @param {Executor} executor
  * @param {string} p
- * @param {Map<string, number>} limitsByName
+ * @param {Map<string, number>} limitsByLane
  * @param {boolean} withRates
  * @returns {Promise<import('./store.js').FoundCandidatesOf>}
  */
-export async function findCandidates(executor, p, limitsByName, withRates) {
-    const names = [...limitsByName.keys()];
+export async function findCandidates(executor, p, limitsByLane, withRates) {
+    const lanes = [...limitsByLane.keys()];
 
-    if (!names.length) {
-        return { startable: [], full: [], ratedNames: [] };
+    if (!lanes.length) {
+        return { startable: [], full: [], ratedLanes: [] };
     }
 
-    const conditions = names.map(() => '(lane = ? AND name_rank <= ?)').join(' OR ');
+    const conditions = lanes.map(() => '(lane = ? AND lane_rank <= ?)').join(' OR ');
     /**
      * @param {string} column
      * @returns {string} Of the oldest job blocked on the key. Ordered by the whole prefix of `jobs_blocked`: else
@@ -171,7 +171,7 @@ export async function findCandidates(executor, p, limitsByName, withRates) {
                 OR (rate.head_run_at = x.run_at AND rate.head_id < x.id)
         ),`;
     const rows = await executor.query(`
-        WITH w AS (${dueJobsSql(p, names, () => String(LIMIT_WINDOW_SIZE), withRates)}),
+        WITH w AS (${dueJobsSql(p, lanes, () => String(LIMIT_WINDOW_SIZE), withRates)}),
         wk AS (
             SELECT w.id, k.limit_key,
                    CAST(JSON_EXTRACT(w.limit_maxes, CONCAT('$[', k.position - 1, ']')) AS UNSIGNED) AS max_slots
@@ -194,24 +194,24 @@ export async function findCandidates(executor, p, limitsByName, withRates) {
               FROM w
         ),
         ranked AS (
-            SELECT marked.*, ROW_NUMBER() OVER (PARTITION BY lane, is_full ORDER BY run_at, id) AS name_rank
+            SELECT marked.*, ROW_NUMBER() OVER (PARTITION BY lane, is_full ORDER BY run_at, id) AS lane_rank
               FROM marked
         )
         SELECT id, lane, ${epochMs('run_at')} AS run_at_ms, is_full${withRates ? '' : ', rated'}
           FROM ranked WHERE is_full OR ${conditions}${withRates ? '' : ' OR rated'}
          ORDER BY run_at, id
-    `, [...names, ...names.flatMap(name => [name, limitsByName.get(name)])]);
+    `, [...lanes, ...lanes.flatMap(lane => [lane, limitsByLane.get(lane)])]);
     const candidates = rows.map(row => ({
         id: String(row.id),
-        name: String(row.lane),
+        lane: String(row.lane),
         runAtMs: Number(row.run_at_ms),
         full: Boolean(Number(row.is_full)),
     }));
 
     return {
-        startable: candidates.filter(row => !row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
-        full: candidates.filter(row => row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
-        ratedNames: [...new Set(rows.filter(row => Number(row.rated)).map(row => String(row.lane)))],
+        startable: candidates.filter(row => !row.full).map(({ id, lane, runAtMs }) => ({ id, lane, runAtMs })),
+        full: candidates.filter(row => row.full).map(({ id, lane, runAtMs }) => ({ id, lane, runAtMs })),
+        ratedLanes: [...new Set(rows.filter(row => Number(row.rated)).map(row => String(row.lane)))],
     };
 }
 
@@ -392,7 +392,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     const ids = [...candidateIds, ...fullIds];
 
     if (!ids.length) {
-        return { jobs: [], blockedKeys: [], blockedNames: [], rateWaits: [] };
+        return { jobs: [], blockedKeys: [], blockedLanes: [], rateWaits: [] };
     }
 
     const lockedRows = await executor.query(`
@@ -412,14 +412,14 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
         /** @type {ClaimedJob} */
         job: {
             id: String(row.id),
-            name: String(row.lane),
+            lane: String(row.lane),
             limits: limitsOf(row),
             rateLimits: (row.rate_limits ?? null) === null ? [] : JSON.parse(String(row.rate_limits)),
             attempts: Number(row.attempts),
             maxAttempts: Number(row.max_attempts),
             stalls: Number(row.stalls),
             maxStalls: Number(row.max_stalls),
-            failureJob: row.failure_lane === null ? null : String(row.failure_lane),
+            failureLane: row.failure_lane === null ? null : String(row.failure_lane),
             enqueuedAt: new Date(Number(row.created_at_ms)),
             runAt: new Date(Number(row.run_at_ms)),
             // Set by the write of the claim
@@ -448,7 +448,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     }
 
     const held = new Map([...heldSlots].map(([key, slots]) => [key, slots.size]));
-    /** @type {{ id: string, name: string, key: string }[]} */
+    /** @type {{ id: string, lane: string, key: string }[]} */
     const blocked = [];
     /** @type {{ job: ClaimedJob, runAtMs: number }[]} */
     const withRoom = [];
@@ -458,7 +458,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
         const fullLimit = row.job.limits.find(({ key, max }) => (held.get(key) ?? 0) >= max);
 
         if (fullLimit) {
-            blocked.push({ id: row.job.id, name: row.job.name, key: fullLimit.key });
+            blocked.push({ id: row.job.id, lane: row.job.lane, key: fullLimit.key });
         } else {
             withRoom.push(row);
         }
@@ -520,14 +520,14 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     return {
         jobs: claimed,
         blockedKeys: [...new Set(blocked.map(job => job.key))],
-        blockedNames: [...new Set(blocked.map(job => job.name))],
+        blockedLanes: [...new Set(blocked.map(job => job.lane))],
         rateWaits: waits,
     };
 }
 
 /**
- * Finds, claims and reads the due jobs of names without global limits. Call it in a queue transaction. One statement
- * locks the oldest due jobs of each name that no other claim holds (SKIP LOCKED), with their payloads; the ones that
+ * Finds, claims and reads the due jobs of lanes without global limits. Call it in a queue transaction. One statement
+ * locks the oldest due jobs of each lane that no other claim holds (SKIP LOCKED), with their payloads; the ones that
  * the choice by share takes (`choose`) are claimed. A second read gets the payloads that the statement did not see.
  * @param {Executor} executor
  * @param {string} p
@@ -556,14 +556,14 @@ export async function claimDue(executor, p, { requests, free, lockToken, lockedB
             /** @type {import('./store.js').StartableJob} */
             job: {
                 id: String(row.id),
-                name: String(row.lane),
+                lane: String(row.lane),
                 limits: [],
                 rateLimits: [],
                 attempts: Number(row.attempts),
                 maxAttempts: Number(row.max_attempts),
                 stalls: Number(row.stalls),
                 maxStalls: Number(row.max_stalls),
-                failureJob: row.failure_lane === null ? null : String(row.failure_lane),
+                failureLane: row.failure_lane === null ? null : String(row.failure_lane),
                 enqueuedAt: new Date(Number(row.created_at_ms)),
                 runAt: new Date(Number(row.run_at_ms)),
                 // The time of the lock read: nothing waits after it (SKIP LOCKED; then a plain read of payloads)
@@ -576,8 +576,8 @@ export async function claimDue(executor, p, { requests, free, lockToken, lockedB
             },
         }))
         .toSorted((a, b) => a.runAtMs - b.runAtMs || (a.job.id < b.job.id ? -1 : 1));
-    // The rows with global limits (from their enqueue options) are left to the claim of names with limits
-    const limited = [...new Set(locked.filter(row => row.hasLimits).map(row => row.job.name))];
+    // The rows with global limits (from their enqueue options) are left to the claim of lanes with limits
+    const limited = [...new Set(locked.filter(row => row.hasLimits).map(row => row.job.lane))];
     // The choice by share, among the locked rows
     const picked = choose(locked.filter(row => !row.hasLimits).map(({ job }) => job));
     // `OF j` leaves the payloads to a consistent read, from the read view of the statement's first one: a job whose

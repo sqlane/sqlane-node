@@ -4,7 +4,7 @@ import { FatalJobError, RateLimitedError, RetryJobError } from '@sqlane/core';
 import { buildReport, mailApi, reportFailed, sendEmail, syncOrder } from './jobs.js';
 import { sqlane } from './sqlane.js';
 
-sqlane.handle(buildReport, async ({ payload, job, signal }) => {
+sqlane.lanes.add(buildReport, async ({ payload, job, signal }) => {
     const response = await fetch(`https://reports.example.com/${payload.reportId}`, { signal });
 
     if (response.status === 404) {
@@ -18,7 +18,7 @@ sqlane.handle(buildReport, async ({ payload, job, signal }) => {
     void job.attempt;
 });
 
-sqlane.handle(reportFailed, ({ payload }) => {
+sqlane.lanes.add(reportFailed, ({ payload }) => {
     /** @type {import('@sqlane/core').FailedJobPayload} */
     const failure = payload;
 
@@ -26,11 +26,11 @@ sqlane.handle(reportFailed, ({ payload }) => {
     void failure.error.message;
 });
 
-sqlane.handle(syncOrder, async ({ payload, signal }) => {
+sqlane.lanes.add(syncOrder, async ({ payload, signal }) => {
     await fetch(`https://erp.example.com/orders/${payload.orderId}`, { method: 'PUT', signal });
 });
 
-sqlane.handle(sendEmail, async ({ payload }) => {
+sqlane.lanes.add(sendEmail, async ({ payload }) => {
     const response = await fetch('https://mail.example.com/send', { method: 'POST', body: JSON.stringify(payload) });
 
     if (response.status === 429) {

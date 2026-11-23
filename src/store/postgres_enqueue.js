@@ -8,7 +8,7 @@
 export function toJobInput(job) {
     return {
         id: job.id,
-        lane: job.name,
+        lane: job.lane,
         // As text: a JSON null in a jsonb column of the recordset would be SQL NULL
         payload: job.payloadJson,
         limit_keys: job.limits.length ? job.limits.map(limit => limit.key) : null,
@@ -18,18 +18,18 @@ export function toJobInput(job) {
         max_stalls: job.maxStalls,
         completed_retention_ms: job.completedRetentionMs,
         failed_retention_ms: job.failedRetentionMs,
-        failure_lane: job.failureJob,
+        failure_lane: job.failureLane,
         delay_ms: job.delayMs,
         run_at: job.runAt?.toISOString() ?? null,
     };
 }
 
 /**
- * Inserts the jobs and their payloads. With a notify channel, a NOTIFY of the job name when it created a job, in the
+ * Inserts the jobs and their payloads. With a notify channel, a NOTIFY of the lane when it created a job, in the
  * same statement.
  * @param {import('../types.js').Executor} executor
  * @param {string} p The table prefix.
- * @param {import('../new_job.js').NewJob[]} jobs Their ids are distinct, of one name.
+ * @param {import('../new_job.js').NewJob[]} jobs Their ids are distinct, of one lane.
  * @param {{ enqueueToken: string, notifyChannel?: string | null }} options
  * @returns {Promise<Set<string>>} The ids that this call created.
  */
@@ -68,7 +68,7 @@ export async function insertJobsPostgres(executor, p, jobs, { enqueueToken, noti
         )
         -- The NOTIFY runs once, at the first created row
         SELECT id FROM inserted WHERE (SELECT count(*) FROM notified) >= 0
-    `, [JSON.stringify(input), enqueueToken, notifyChannel, jobs[0]?.name ?? null]);
+    `, [JSON.stringify(input), enqueueToken, notifyChannel, jobs[0]?.lane ?? null]);
 
     return new Set(rows.map(row => String(row.id)));
 }

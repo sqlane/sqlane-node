@@ -17,13 +17,13 @@ export declare function readSchedules(executor: Executor, p: string, ids: string
  * Inserts the missing rows of the schedules, with the database time as their cursor, then reads them all.
  * @param {Executor} executor
  * @param {string} p
- * @param {{ id: string, name: string, spec: string }[]} schedules
+ * @param {{ id: string, lane: string, spec: string }[]} schedules
  * @param {() => number} now
  * @returns {Promise<{ clock: import('./fire_slots.js').ClockSample, rows: ScheduleRow[] }>}
  */
 export declare function registerSchedules(executor: Executor, p: string, schedules: {
     id: string;
-    name: string;
+    lane: string;
     spec: string;
 }[], now: () => number): Promise<{
     clock: import('./fire_slots.js').ClockSample;

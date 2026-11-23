@@ -156,7 +156,7 @@ const SCENARIOS = [
     },
     {
         name: 'run',
-        unit: 'job enqueued, run and completed (20/s, 1000 handled names)',
+        unit: 'job enqueued, run and completed (20/s, 1000 added lanes)',
         op: 'job',
         processes: [{ role: 'worker' }, { role: 'producer', args: ['--op', 'enqueue', '--rate', '20'] }],
         per: 'completed',

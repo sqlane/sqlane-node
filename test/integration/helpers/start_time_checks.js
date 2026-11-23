@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expect } from 'vitest';
-import { defineConcurrencyLimit, defineJob } from '../../../src/index.js';
+import { defineConcurrencyLimit, defineLane } from '../../../src/index.js';
 
 /**
  * The start time of a run through an adapter: its claim writes one time to the job and to its new slots (on MySQL and
@@ -19,11 +19,11 @@ export async function checkStartTimes(sqlane, connection, { p, database, events 
         ? (/** @type {string} */ column) => `(EXTRACT(EPOCH FROM ${column}) * 1000)::bigint`
         : (/** @type {string} */ column) => `TIMESTAMPDIFF(MICROSECOND, '1970-01-01', ${column}) DIV 1000`;
     const order = defineConcurrencyLimit({ name: 'order', max: 2 });
-    const sync = defineJob({ name: 'start_check', timeout: '10s', globalConcurrencyLimits: () => [order.key(1), order] });
+    const sync = defineLane({ name: 'start_check', timeout: '10s', globalConcurrencyLimits: () => [order.key(1), order] });
     /** @type {{ info: import('../../../src/types.js').JobInfo, record: any, slots: number[] }[]} */
     const runs = [];
 
-    sqlane.handle(sync, async ({ job }) => {
+    sqlane.lanes.add(sync, async ({ job }) => {
         const record = await sqlane.jobs.get(job.id);
         const rows = await database.query(
             `SELECT ${epochMs('created_at')} AS ms FROM ${p}concurrency_slots WHERE job_id = ${

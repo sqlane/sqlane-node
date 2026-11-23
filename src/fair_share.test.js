@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { chooseRows, fill, rankNames, replayTie, shareNamesOfRequests } from './fair_share.js';
+import { chooseRows, fill, rankLanes, replayTie, shareLanesOfRequests } from './fair_share.js';
 
-/** @typedef {import('./fair_share.js').ShareName} ShareName */
+/** @typedef {import('./fair_share.js').ShareLane} ShareLane */
 
 /**
  * @typedef {object} Spec
@@ -16,7 +16,7 @@ import { chooseRows, fill, rankNames, replayTie, shareNamesOfRequests } from './
 /**
  * @param {Spec[]} specs
  * @param {Record<string, number>} [groupRooms]
- * @returns {ShareName[]} Their indexes in the given order; one room object per shared limit.
+ * @returns {ShareLane[]} Their indexes in the given order; one room object per shared limit.
  */
 function shareNames(specs, groupRooms = {}) {
     const groups = new Map(Object.entries(groupRooms).map(([name, room]) => [name, { room }]));
@@ -36,14 +36,14 @@ function shareNames(specs, groupRooms = {}) {
 
 /**
  * A fill whose units are the names, and its pointer moved as the runner moves it.
- * @param {ShareName[]} names
+ * @param {ShareLane[]} names
  * @param {number} free
  * @param {{ pointer: number }} state
  * @returns {string[]}
  */
 function fillNames(names, free, state) {
     const { chosen, lastTieWinner } = fill({
-        names,
+        lanes: names,
         free,
         base: state.pointer,
         size: names.length,
@@ -59,7 +59,7 @@ function fillNames(names, free, state) {
 
 /**
  * The linear-scan reference of the design (scratchpad sim.mjs): the same rule, without a heap.
- * @param {ShareName[]} names
+ * @param {ShareLane[]} names
  * @param {number} free
  * @param {{ pointer: number }} state
  * @returns {string[]}
@@ -250,7 +250,7 @@ function compareWithReference(random) {
 function checkPrefix(random) {
     const { specs, free } = randomInput(random);
     const plain = specs.map(spec => ({ name: spec.name, weight: spec.weight, running: spec.running }));
-    const ranked = rankNames(shareNames(plain), 0, plain.length).map(name => name.name);
+    const ranked = rankLanes(shareNames(plain), 0, plain.length).map(name => name.name);
     const served = new Set(fillNames(shareNames(plain), free, { pointer: 0 }));
 
     return ranked.slice(0, served.size).every(name => served.has(name)) ? [] : [{ ranked, served: [...served] }];
@@ -306,7 +306,7 @@ describe('fill: properties', () => {
         expect(Array.from({ length: 10_000 }, () => compareWithReference(random)).flat()).toStrictEqual([]);
     });
 
-    test('the served names are a prefix of rankNames(), among the names with units', () => {
+    test('the served names are a prefix of rankLanes(), among the names with units', () => {
         const random = seeded(13);
 
         expect(Array.from({ length: 5000 }, () => checkPrefix(random)).flat()).toStrictEqual([]);
@@ -354,7 +354,7 @@ describe('fill: properties', () => {
  */
 function simulate({ free, specs, groupCaps = {}, until }) {
     const state = { pointer: 0 };
-    /** @type {{ name: string, end: number }[]} */
+    /** @type {{ lane: string, end: number }[]} */
     let running = [];
     const slotTime = Object.fromEntries(specs.map(spec => [spec.name, 0]));
     const specOf = new Map(specs.map(spec => [spec.name, spec]));
@@ -365,9 +365,9 @@ function simulate({ free, specs, groupCaps = {}, until }) {
         const groupRooms = { ...groupCaps };
 
         for (const job of running) {
-            const { groups } = /** @type {{ groups?: string[] }} */ (specOf.get(job.name));
+            const { groups } = /** @type {{ groups?: string[] }} */ (specOf.get(job.lane));
 
-            counts.set(job.name, /** @type {number} */ (counts.get(job.name)) + 1);
+            counts.set(job.lane, /** @type {number} */ (counts.get(job.lane)) + 1);
             for (const group of groups ?? []) {
                 groupRooms[group] -= 1;
             }
@@ -382,14 +382,14 @@ function simulate({ free, specs, groupCaps = {}, until }) {
         })), groupRooms);
         const startedAt = now;
 
-        for (const name of fillNames(names, free - running.length, state)) {
-            running.push({ name, end: startedAt + /** @type {{ duration: number }} */ (specOf.get(name)).duration });
+        for (const lane of fillNames(names, free - running.length, state)) {
+            running.push({ lane, end: startedAt + /** @type {{ duration: number }} */ (specOf.get(lane)).duration });
         }
 
         const next = Math.min(until, ...running.map(job => job.end));
 
         for (const job of running) {
-            slotTime[job.name] += next - now;
+            slotTime[job.lane] += next - now;
         }
 
         running = running.filter(job => job.end > next);
@@ -451,11 +451,11 @@ describe('fill: convergence of the slot time', () => {
 describe('chooseRows', () => {
     test('the rows of each name in FIFO order, by share', () => {
         const rows = [
-            { id: 'a1', name: 'a' }, { id: 'b1', name: 'b' }, { id: 'a2', name: 'a' }, { id: 'a3', name: 'a' },
-            { id: 'b2', name: 'b' }, { id: 'c1', name: 'c' },
+            { id: 'a1', lane: 'a' }, { id: 'b1', lane: 'b' }, { id: 'a2', lane: 'a' }, { id: 'a3', lane: 'a' },
+            { id: 'b2', lane: 'b' }, { id: 'c1', lane: 'c' },
         ];
         const names = shareNames([{ name: 'a', running: 2 }, { name: 'b' }, { name: 'c', room: 0 }]);
-        const { chosen, lastTieWinner } = chooseRows({ rows, names, free: 4, base: 0, size: 3 });
+        const { chosen, lastTieWinner } = chooseRows({ rows, lanes: names, free: 4, base: 0, size: 3 });
 
         expect(chosen.map(row => row.id)).toStrictEqual(['b1', 'b2', 'a1', 'a2']);
         // b has no row left when a takes its rows: no tie
@@ -464,7 +464,7 @@ describe('chooseRows', () => {
 });
 
 /**
- * A random claim: 2–9 requested names of up to 10 handled ones, 0–3 limits, weights 1–1000, running counts, and locked
+ * A random claim: 2–9 requested names of up to 10 added ones, 0–3 limits, weights 1–1000, running counts, and locked
  * rows up to each maxJobs. The claim takes what `chooseRows()` takes over all the locked rows; `replayTie()`, from the
  * claimed rows and the names with rows left only, must give its last tie.
  * @param {() => number} random
@@ -475,7 +475,7 @@ function checkReplay(random) {
     const size = 2 + int(8);
     const indexes = Array.from({ length: size }, (_, index) => index);
 
-    // A random subset of the handled names, in a random order
+    // A random subset of the added lanes, in a random order
     for (let at = size - 1; at > 0; at--) {
         const other = int(at);
 
@@ -497,11 +497,11 @@ function checkReplay(random) {
     }));
     const rows = requests.flatMap(request => Array.from({ length: int(request.maxJobs) }, (_, k) => ({
         id: `${request.name}.${k}`,
-        name: request.name,
+        lane: request.name,
     })));
     const full = chooseRows({
         rows,
-        names: shareNamesOfRequests(entries, requests, limitRooms),
+        lanes: shareLanesOfRequests(entries, requests, limitRooms),
         free,
         base,
         size,
@@ -512,7 +512,7 @@ function checkReplay(random) {
     }
 
     const chosenIds = new Set(full.chosen.map(row => row.id));
-    const unpicked = [...new Set(rows.filter(row => !chosenIds.has(row.id)).map(row => row.name))];
+    const unpicked = [...new Set(rows.filter(row => !chosenIds.has(row.id)).map(row => row.lane))];
     const replayed = replayTie({ entries, requests, limitRooms, jobs: full.chosen, unpicked, base, size });
 
     return {

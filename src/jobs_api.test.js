@@ -10,7 +10,7 @@ function cursorOf(parts) {
     return Buffer.from(JSON.stringify(parts)).toString('base64url');
 }
 
-const CURSOR = { jobName: 'build_report', statuses: /** @type {const} */ (['pending', 'failed']), enqueuedAtMs: 1_763_500_000_123, id: 'build_report:r1' };
+const CURSOR = { lane: 'build_report', statuses: /** @type {const} */ (['pending', 'failed']), enqueuedAtMs: 1_763_500_000_123, id: 'build_report:r1' };
 
 /**
  * A cursor that decodes to the bytes of a valid one, but that encodeCursor never writes.
@@ -54,7 +54,7 @@ describe('cursors', () => {
         ['another version', cursorOf([2, 'build_report', null, 0, 'build_report:r1'])],
         ['fewer fields', cursorOf([1, 'build_report', null, 0])],
         ['more fields', cursorOf([1, 'build_report', null, 0, 'build_report:r1', 'extra'])],
-        ['a bad job name', cursorOf([1, 'Bad Name', null, 0, 'build_report:r1'])],
+        ['a bad lane name', cursorOf([1, 'Bad Name', null, 0, 'build_report:r1'])],
         ['an unknown status', cursorOf([1, 'build_report', ['done'], 0, 'build_report:r1'])],
         ['statuses out of order', cursorOf([1, 'build_report', ['failed', 'pending'], 0, 'build_report:r1'])],
         ['an empty set of statuses', cursorOf([1, 'build_report', [], 0, 'build_report:r1'])],
@@ -82,8 +82,8 @@ describe('cursors', () => {
 
 describe('list: unknown fields', () => {
     test.each([
-        ['in the filter', { jobName: 'build_report', sort: undefined }, undefined],
-        ['in the options', { jobName: 'build_report' }, { order: undefined }],
+        ['in the filter', { lane: 'build_report', sort: undefined }, undefined],
+        ['in the options', { lane: 'build_report' }, { order: undefined }],
     ])('an unknown field set to undefined rejects %s', async (_, filter, options) => {
         const jobs = createJobsApi(/** @type {any} */ ({}), /** @type {any} */ (null));
 
@@ -99,9 +99,9 @@ describe('list: arguments whose message cannot be JSON', () => {
     circular.push(circular);
 
     test.each([
-        ['a BigInt limit', { jobName: 'build_report' }, { limit: 10n }],
-        ['a BigInt status', { jobName: 'build_report', status: 1n }, {}],
-        ['a circular list of statuses', { jobName: 'build_report', status: circular }, {}],
+        ['a BigInt limit', { lane: 'build_report' }, { limit: 10n }],
+        ['a BigInt status', { lane: 'build_report', status: 1n }, {}],
+        ['a circular list of statuses', { lane: 'build_report', status: circular }, {}],
     ])('%s rejects with an InvalidOptionsError', async (_, filter, options) => {
         const jobs = createJobsApi(/** @type {any} */ ({}), /** @type {any} */ (null));
 

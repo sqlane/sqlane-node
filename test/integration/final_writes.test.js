@@ -2,7 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, inject, test, vi } from 'vitest';
 import { resolveDefaults } from '../../src/defaults.js';
 import { toErrorJson } from '../../src/error_json.js';
-import { createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit, RateLimitedError } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineLane, defineRateLimit, RateLimitedError } from '../../src/index.js';
 import { buildNewJob } from '../../src/new_job.js';
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
@@ -86,11 +86,11 @@ const NO_RECOVERY_WORK = { stale: [], lingers: false, orphans: false, blocked: f
 const LEASE_MS = 240_000;
 const defaults = resolveDefaults();
 const order = defineConcurrencyLimit({ name: 'order', max: 1 });
-const withKeys = defineJob({
+const withKeys = defineLane({
     name: 'sync_order',
     globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
     timeout: '1m',
-    failureJob: 'sync_failed',
+    failureLane: 'sync_failed',
 });
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
@@ -215,7 +215,7 @@ function recordPostgresQueries(pool) {
 /** @type {import('../../src/store/store.js').FailureJobBuilder} */
 function buildFailureJob(failed) {
     return buildNewJob({
-        name: failed.failureJob,
+        lane: failed.failureLane,
         definition: null,
         defaults,
         payload: { job: failed, error: failed.error },
@@ -353,7 +353,7 @@ test('a write with another lock token changes nothing', async () => {
     await expect(tables.store.retryJob(other, { delayMs: 0, error: toErrorJson('x') })).resolves.toBe(false);
     await expect(tables.store.releaseJob(other, { delayMs: 0, lingerMs: 0 })).resolves.toBe(false);
     await expect(tables.store.failJob(other, { error: toErrorJson('x'), buildFailureJob }))
-        .resolves.toStrictEqual({ changed: false, failureJob: null });
+        .resolves.toStrictEqual({ changed: false, failureResult: null });
     await expect(readJob(tables.p, job.id)).resolves.toMatchObject({ status: 'running', lock_token: job.lockToken });
     await expect(readHolds(tables.p)).resolves.toMatchObject([{ limit_key: 'order:1', job_id: job.id }]);
 });
@@ -478,7 +478,7 @@ describe('failJob', () => {
         const job = await claimedJob(tables, { dedupeKey: 'o1' });
         const result = await tables.store.failJob(job, { error: toErrorJson(new Error('gone')), buildFailureJob });
 
-        expect(result).toMatchObject({ changed: true, failureJob: { added: { name: 'sync_failed' } } });
+        expect(result).toMatchObject({ changed: true, failureResult: { added: { lane: 'sync_failed' } } });
         await expect(readJob(tables.p, job.id)).resolves.toMatchObject({
             status: 'failed',
             attempts: 1,
@@ -486,13 +486,13 @@ describe('failJob', () => {
             last_error: { name: 'Error', message: 'gone' },
         });
 
-        const failureId = /** @type {{ added: { id: string } }} */ (result.failureJob).added.id;
+        const failureId = /** @type {{ added: { id: string } }} */ (result.failureResult).added.id;
 
         await expect(readJob(tables.p, failureId)).resolves.toMatchObject({
             status: 'pending',
             failure_lane: null,
             payload: {
-                job: { id: 'sync_order:o1', name: 'sync_order', payload: { orderId: 1 }, attempt: 1, maxAttempts: 3 },
+                job: { id: 'sync_order:o1', lane: 'sync_order', payload: { orderId: 1 }, attempt: 1, maxAttempts: 3 },
                 error: { name: 'Error', message: 'gone' },
             },
         });
@@ -504,11 +504,11 @@ describe('failJob', () => {
         const job = await claimedJob(tables);
         const result = await tables.store.failJob(job, {
             error: toErrorJson('gone'),
-            buildFailureJob: failed => ({ ...buildFailureJob(failed), name: 'x'.repeat(200) }),
+            buildFailureJob: failed => ({ ...buildFailureJob(failed), lane: 'x'.repeat(200) }),
         });
 
         expect(result.changed).toBe(true);
-        expect(result.failureJob).toHaveProperty('notAdded');
+        expect(result.failureResult).toHaveProperty('notAdded');
         await expect(readJob(tables.p, job.id)).resolves.toMatchObject({ status: 'failed' });
 
         const [{ count }] = await database.query(`SELECT COUNT(*) AS count FROM ${tables.p}jobs`);
@@ -525,7 +525,7 @@ describe('failJob', () => {
             buildFailureJob: failed => ({ ...buildFailureJob(failed), payloadJson: '{not json' }),
         });
 
-        expect(result.failureJob).toHaveProperty('notAdded');
+        expect(result.failureResult).toHaveProperty('notAdded');
         await expect(readJob(tables.p, job.id)).resolves.toMatchObject({ status: 'failed' });
 
         const [{ count }] = await database.query(`SELECT COUNT(*) AS count FROM ${tables.p}jobs`);
@@ -543,7 +543,7 @@ describe('failJob', () => {
             },
         });
 
-        expect(result).toMatchObject({ changed: true, failureJob: { notAdded: { message: 'bad options' } } });
+        expect(result).toMatchObject({ changed: true, failureResult: { notAdded: { message: 'bad options' } } });
     });
 });
 
@@ -582,12 +582,12 @@ describe('stall recovery', () => {
 
         await sleep(20);
         await expect(tables.store.findRecoveryWork(10)).resolves.toMatchObject({
-            stale: [{ id: job.id, name: 'sync_order' }],
+            stale: [{ id: job.id, lane: 'sync_order' }],
         });
         const recovered = await tables.store.recoverStaleJob(job.id, { leaseMs: 60_000, buildFailureJob });
 
         // The run that stalled: the first attempt, started more than 20 ms ago
-        expect(recovered).toStrictEqual({ result: 'released', failureJob: null, attempt: 1, runMs: expect.any(Number) });
+        expect(recovered).toStrictEqual({ result: 'released', failureResult: null, attempt: 1, runMs: expect.any(Number) });
         expect(/** @type {{ runMs: number }} */ (recovered).runMs).toBeGreaterThanOrEqual(15);
 
         const row = await readJob(tables.p, job.id);
@@ -596,7 +596,7 @@ describe('stall recovery', () => {
         expect(row?.run_in_ms).toBeGreaterThan(28_000);
         expect((await readHolds(tables.p))[0].held_in_ms).toBeGreaterThan(55_000);
         await expect(tables.store.recoverStaleJob(job.id, { leaseMs: 60_000, buildFailureJob }))
-            .resolves.toStrictEqual({ result: null, failureJob: null });
+            .resolves.toStrictEqual({ result: null, failureResult: null });
     });
 
     test('after maxStalls: fails for good, with its failure job', async () => {
@@ -607,7 +607,7 @@ describe('stall recovery', () => {
 
         const recovered = await tables.store.recoverStaleJob(job.id, { leaseMs: 60_000, buildFailureJob });
 
-        expect(recovered).toMatchObject({ result: 'failed', failureJob: { added: { name: 'sync_failed' } }, attempt: 1 });
+        expect(recovered).toMatchObject({ result: 'failed', failureResult: { added: { lane: 'sync_failed' } }, attempt: 1 });
         await expect(readJob(tables.p, job.id)).resolves.toMatchObject({ status: 'failed', stalls: 1 });
     });
 
@@ -637,7 +637,7 @@ describe('stall recovery', () => {
         await sleep(20);
         await expect(tables.store.findRecoveryWork(10)).resolves.toStrictEqual({
             ...NO_RECOVERY_WORK,
-            stale: [{ id: first.id, name: 'sync_order' }, { id: second.id, name: 'sync_order' }],
+            stale: [{ id: first.id, lane: 'sync_order' }, { id: second.id, lane: 'sync_order' }],
         });
         await expect(tables.store.findRecoveryWork(1)).resolves.toMatchObject({ stale: [{ id: first.id }] });
 

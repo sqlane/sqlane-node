@@ -8,7 +8,7 @@ const RATE_UNBLOCK_RETRY_MS = 1000;
 /**
  * @typedef {object} KeyUnblocks
  * @property {(keys: readonly string[]) => Promise<void>} unblockKeys Makes the jobs blocked on the concurrency keys
- *     pending again, as far as the keys have room, and wakes their names here and in the other processes. It runs after
+ *     pending again, as far as the keys have room, and wakes their lanes here and in the other processes. It runs after
  *     the commit of a release, and after the commit of a claim that blocked jobs: the later of the two sees both, so a
  *     job is not left blocked on a key with room. Never rejects: an error is reported.
  * @property {(key: string, delayMs: number) => void} armRateWake Arms the timer of a rate key on which this process
@@ -29,7 +29,7 @@ const RATE_UNBLOCK_RETRY_MS = 1000;
  * @param {() => import('./runner.js').RunnerState} params.state
  * @param {(func: () => void, delayMs: number) => NodeJS.Timeout} params.setTimer An unref'd timer.
  * @param {(timer: NodeJS.Timeout) => void} params.clearTimer
- * @param {(names: string[]) => void} params.wake A wake of the names of this process: their jobs are due.
+ * @param {(lanes: string[]) => void} params.wake A wake of the lanes of this process: their jobs are due.
  * @param {import('./hint_channel.js').HintChannel} params.hintChannel
  * @param {(operation: string, error: unknown) => void} params.reportError
  * @returns {KeyUnblocks}
@@ -93,13 +93,13 @@ export function createKeyUnblocks({ store, state, setTimer, clearTimer, wake, hi
         }
     }
 
-    /** @param {string[]} names The names of the jobs that an unblock made pending. */
-    function wakeUnblocked(names) {
-        if (names.length) {
-            wake(names);
+    /** @param {string[]} lanes The lanes of the jobs that an unblock made pending. */
+    function wakeUnblocked(lanes) {
+        if (lanes.length) {
+            wake(lanes);
 
-            for (const name of names) {
-                hintChannel.publish(name);
+            for (const lane of lanes) {
+                hintChannel.publish(lane);
             }
         }
     }
@@ -114,7 +114,7 @@ export function createKeyUnblocks({ store, state, setTimer, clearTimer, wake, hi
     }
 
     /**
-     * Makes the jobs blocked on the rate keys pending again, as far as their quota allows now, and wakes their names
+     * Makes the jobs blocked on the rate keys pending again, as far as their quota allows now, and wakes their lanes
      * here and in the other processes. The timer of the keys calls it; the keys with blocked jobs left get their next
      * time. The jobs that the last unblock of a key made pending count, as if they started then (`rateFloors`): without
      * them, an unblock right after another one (a full batch) would make the same quota pending again.
@@ -141,7 +141,7 @@ export function createKeyUnblocks({ store, state, setTimer, clearTimer, wake, hi
         rateUnblocks++;
 
         try {
-            const { names, waits } = await store.unblockRates(keys, floorsOf(keys));
+            const { lanes, waits } = await store.unblockRates(keys, floorsOf(keys));
             const atMs = Date.now();
             const withWaits = new Set(waits.map(wait => wait.key));
 
@@ -158,7 +158,7 @@ export function createKeyUnblocks({ store, state, setTimer, clearTimer, wake, hi
                 armRateWake(key, delayMs, left ? rateWakes : rateRechecks);
             }
 
-            wakeUnblocked(names);
+            wakeUnblocked(lanes);
         } catch (error) {
             reportError('unblock', error);
 

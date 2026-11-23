@@ -27,13 +27,13 @@ export async function checkJobsRead(sqlane, connection) {
         payload: false,
     });
 
-    const page1 = await sqlane.jobs.list({ jobName: 'read_check', status: 'pending' }, { limit: 2 });
+    const page1 = await sqlane.jobs.list({ lane: 'read_check', status: 'pending' }, { limit: 2 });
     const page2 = await sqlane.jobs.list(
-        { jobName: 'read_check', status: 'pending' },
+        { lane: 'read_check', status: 'pending' },
         { limit: 2, cursor: page1.nextCursor, includePayload: true },
     );
     const ids = [...page1.jobs, ...page2.jobs].map(job => job.id);
-    const single = await sqlane.jobs.list({ jobName: 'read_check', status: 'pending' }, { limit: 1000 });
+    const single = await sqlane.jobs.list({ lane: 'read_check', status: 'pending' }, { limit: 1000 });
 
     expect(page1.jobs).toHaveLength(2);
     expect(page1.nextCursor).not.toBeNull();

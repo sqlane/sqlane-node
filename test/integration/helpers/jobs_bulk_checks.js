@@ -25,7 +25,7 @@ export async function checkJobsBulk(sqlane, pool, inTransaction) {
     await expect(sqlane.jobs.get(second)).resolves.toMatchObject({ status: 'pending' });
     await inTransaction(async (transaction) => {
         const result = await sqlane.jobs.cancel(
-            { jobName: 'bulk_check' },
+            { lane: 'bulk_check' },
             { connection: transaction, includeAffectedJobIds: true },
         );
 
@@ -44,9 +44,9 @@ export async function checkJobsBulk(sqlane, pool, inTransaction) {
     await expect(sqlane.jobs.get(first)).resolves.toMatchObject({ status: 'failed' });
 
     // A filter read with its payload flag, on the pool
-    await expect(sqlane.jobs.retry({ jobName: 'bulk_check' }, { connection: pool })).resolves
+    await expect(sqlane.jobs.retry({ lane: 'bulk_check' }, { connection: pool })).resolves
         .toStrictEqual({ affectedCount: 2, ignoredJobs: [] });
     await expect(sqlane.jobs.get(first)).resolves.toMatchObject({ status: 'pending', attempts: 0, payload: { n: 1 } });
-    await expect(sqlane.jobs.remove({ jobName: 'bulk_check' })).resolves
+    await expect(sqlane.jobs.remove({ lane: 'bulk_check' })).resolves
         .toStrictEqual({ affectedCount: 3, ignoredJobs: [] });
 }

@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import {
     createSqlane,
     defineConcurrencyLimit,
-    defineJob,
+    defineLane,
     defineRateLimit,
     FatalJobError,
     InvalidOptionsError,
@@ -142,7 +142,7 @@ async function enqueueUntilTie(sqlane) {
         await sleep(5);
 
         // oxlint-disable-next-line no-await-in-loop -- one group after the other
-        const { jobs } = await sqlane.jobs.list({ jobName: 'ping' }, { limit: 1000 });
+        const { jobs } = await sqlane.jobs.list({ lane: 'ping' }, { limit: 1000 });
         const tie = tieOf(jobs);
 
         if (tie) {
@@ -183,12 +183,12 @@ describe('jobs.get()', () => {
             dedupeKey: 'r1',
             runAt,
             maxAttempts: 5,
-            failureJob: 'report_failed',
+            failureLane: 'report_failed',
         });
 
         await expect(sqlane.jobs.get(id)).resolves.toStrictEqual({
             id: 'build_report:r1',
-            name: 'build_report',
+            lane: 'build_report',
             status: 'pending',
             attempts: 0,
             maxAttempts: 5,
@@ -206,7 +206,7 @@ describe('jobs.get()', () => {
             globalConcurrencyLimits: [],
             globalRateLimits: [],
             blockedOn: null,
-            failureJob: 'report_failed',
+            failureLane: 'report_failed',
             payload: { reportId: 'r1' },
         });
     });
@@ -214,8 +214,8 @@ describe('jobs.get()', () => {
     test('a completed job: its times, no payload; a failed job: its error with its code, its payload kept', async () => {
         const sqlane = await freshSqlane();
 
-        sqlane.handle('ok', () => {});
-        sqlane.handle('broken', () => {
+        sqlane.lanes.add('ok', () => {});
+        sqlane.lanes.add('broken', () => {
             throw new FatalJobError('no such report');
         });
 
@@ -245,7 +245,7 @@ describe('jobs.get()', () => {
     test('a running job past its timeout is stuck; a job behind it is blocked on its concurrency key', async () => {
         const sqlane = await freshSqlane({ pollInterval: '50ms' });
         const order = defineConcurrencyLimit({ name: 'order', max: 1 });
-        const sync = defineJob({
+        const sync = defineLane({
             name: 'sync_order',
             timeout: '50ms',
             globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
@@ -253,7 +253,7 @@ describe('jobs.get()', () => {
         const { promise: settled, resolve: finish } = Promise.withResolvers();
 
         // Ignores its signal: runs on after its timeout
-        sqlane.handle(sync, () => settled);
+        sqlane.lanes.add(sync, () => settled);
         await sqlane.start();
 
         const first = await sqlane.enqueue(testAdapter.pool, sync, { orderId: 7 });
@@ -281,9 +281,9 @@ describe('jobs.get()', () => {
     test('a job blocked on a rate key after a RateLimitedError: the tagged key and its error', async () => {
         const sqlane = await freshSqlane();
         const api = defineRateLimit({ name: 'api', max: 10, per: '1s' });
-        const call = defineJob({ name: 'call_api', globalRateLimits: ({ payload }) => [api.key(payload.token)] });
+        const call = defineLane({ name: 'call_api', globalRateLimits: ({ payload }) => [api.key(payload.token)] });
 
-        sqlane.handle(call, ({ payload }) => {
+        sqlane.lanes.add(call, ({ payload }) => {
             throw new RateLimitedError({ limit: api.key(payload.token), retryAfter: '1h' });
         });
 
@@ -331,7 +331,7 @@ describe('jobs.get()', () => {
             const error = new FatalJobError('a\u0000b\uD800c');
 
             error.stack = `${'x'.repeat(MAX_STACK_LENGTH - 1)}\u{1F600}`;
-            sqlane.handle('broken_text', () => {
+            sqlane.lanes.add('broken_text', () => {
                 throw error;
             });
 
@@ -348,7 +348,7 @@ describe('jobs.get()', () => {
         async () => {
             const sqlane = await freshSqlane();
 
-            sqlane.handle(defineJob({ name: 'flaky', backoff: fixedBackoff }), failingOnce('first try'));
+            sqlane.lanes.add(defineLane({ name: 'flaky', backoff: fixedBackoff }), failingOnce('first try'));
 
             const flaky = await sqlane.enqueue(testAdapter.pool, 'flaky', {});
             const empty = await sqlane.enqueue(testAdapter.pool, 'empty', false, { delay: '1h' });
@@ -366,7 +366,7 @@ describe('jobs.get()', () => {
         const sqlane = await freshSqlane();
         const { id } = await sqlane.enqueue(testAdapter.pool, 'empty', null, { delay: '1h' });
         const job = await sqlane.jobs.get(id);
-        const { jobs: [listed] } = await sqlane.jobs.list({ jobName: 'empty' }, { includePayload: true });
+        const { jobs: [listed] } = await sqlane.jobs.list({ lane: 'empty' }, { includePayload: true });
 
         expect(job).toHaveProperty('payload', null);
         expect(listed).toHaveProperty('payload', null);
@@ -404,9 +404,9 @@ function listOrder(a, b) {
 describe('jobs.list()', () => {
     test('the jobs of a name, newest first, of a status or of several; payloads on request; a definition', async () => {
         const sqlane = await freshSqlane();
-        const ok = defineJob({ name: 'ok' });
+        const ok = defineLane({ name: 'ok' });
 
-        sqlane.handle(ok, () => {});
+        sqlane.lanes.add(ok, () => {});
 
         const done = await sqlane.enqueue(testAdapter.pool, ok, { n: 1 });
 
@@ -421,27 +421,27 @@ describe('jobs.list()', () => {
 
         await sqlane.enqueue(testAdapter.pool, 'other', {});
 
-        const all = await sqlane.jobs.list({ jobName: 'ok' });
+        const all = await sqlane.jobs.list({ lane: 'ok' });
 
         expect(all.jobs.map(job => job.id)).toStrictEqual([second.id, first.id, done.id]);
         expect(all.nextCursor).toBeNull();
         expect(all.jobs.map(job => 'payload' in job)).toStrictEqual([false, false, false]);
 
-        const pending = await sqlane.jobs.list({ jobName: ok, status: 'pending' }, { includePayload: true });
+        const pending = await sqlane.jobs.list({ lane: ok, status: 'pending' }, { includePayload: true });
 
         expect(pending.jobs.map(job => job.payload)).toStrictEqual([{ n: 3 }, { n: 2 }]);
-        await expect(sqlane.jobs.list({ jobName: 'ok', status: ['failed', 'completed'] }))
+        await expect(sqlane.jobs.list({ lane: 'ok', status: ['failed', 'completed'] }))
             .resolves.toMatchObject({ jobs: [{ id: done.id, status: 'completed' }], nextCursor: null });
-        await expect(sqlane.jobs.list({ jobName: 'none' })).resolves.toStrictEqual({ jobs: [], nextCursor: null });
+        await expect(sqlane.jobs.list({ lane: 'none' })).resolves.toStrictEqual({ jobs: [], nextCursor: null });
 
         // undefined counts as absent; a null cursor is the first page
         const absent = await sqlane.jobs.list(
-            { jobName: 'ok', status: undefined },
+            { lane: 'ok', status: undefined },
             { limit: undefined, cursor: undefined, includePayload: undefined },
         );
 
         expect(absent.jobs.map(job => job.id)).toStrictEqual([second.id, first.id, done.id]);
-        await expect(sqlane.jobs.list({ jobName: 'ok' }, { cursor: null, limit: 1 }))
+        await expect(sqlane.jobs.list({ lane: 'ok' }, { cursor: null, limit: 1 }))
             .resolves.toMatchObject({ jobs: [{ id: second.id }] });
     });
 
@@ -453,7 +453,7 @@ describe('jobs.list()', () => {
 
         // A page ends after the first job of the group: the next page starts inside it
         const limit = all.findIndex(job => job.id === tie[0].id) + 1;
-        const page1 = await sqlane.jobs.list({ jobName: 'ping' }, { limit });
+        const page1 = await sqlane.jobs.list({ lane: 'ping' }, { limit });
 
         // A newer job, enqueued between the pages: before the cursor, not in the next pages
         await sqlane.enqueue(testAdapter.pool, 'ping', {}, { dedupeKey: 'late' });
@@ -462,7 +462,7 @@ describe('jobs.list()', () => {
 
         const paged = [
             ...page1.jobs.map(job => job.id),
-            ...await idsFrom(sqlane, { jobName: 'ping' }, { limit }, page1.nextCursor),
+            ...await idsFrom(sqlane, { lane: 'ping' }, { limit }, page1.nextCursor),
         ];
 
         expect(paged).toStrictEqual(all.map(job => job.id));
@@ -470,9 +470,9 @@ describe('jobs.list()', () => {
 
     test('a status filter across pages; a job that changes status between pages; an empty last page', async () => {
         const sqlane = await freshSqlane();
-        const flip = defineJob({ name: 'flip', maxAttempts: 1 });
+        const flip = defineLane({ name: 'flip', maxAttempts: 1 });
 
-        sqlane.handle(flip, () => {
+        sqlane.lanes.add(flip, () => {
             throw new Error('fails');
         });
 
@@ -486,7 +486,7 @@ describe('jobs.list()', () => {
             await sqlane.enqueue(testAdapter.pool, flip, {}, { delay: '1h' });
         }
 
-        const page1 = await sqlane.jobs.list({ jobName: flip, status: 'pending' }, { limit: 4 });
+        const page1 = await sqlane.jobs.list({ lane: flip, status: 'pending' }, { limit: 4 });
 
         expect(page1.jobs).toHaveLength(4);
         expect(page1.nextCursor).not.toBeNull();
@@ -495,17 +495,17 @@ describe('jobs.list()', () => {
         await expect(sqlane.jobs.get(target.id)).resolves.toMatchObject({ status: 'failed' });
 
         // The target left the filter: the last page is empty
-        await expect(sqlane.jobs.list({ jobName: flip, status: 'pending' }, { limit: 4, cursor: page1.nextCursor }))
+        await expect(sqlane.jobs.list({ lane: flip, status: 'pending' }, { limit: 4, cursor: page1.nextCursor }))
             .resolves.toStrictEqual({ jobs: [], nextCursor: null });
-        await expect(sqlane.jobs.list({ jobName: flip, status: 'failed' }))
+        await expect(sqlane.jobs.list({ lane: flip, status: 'failed' }))
             .resolves.toMatchObject({ jobs: [{ id: target.id }] });
     });
 
     test('a job that enters the filter between pages is listed by the page that reaches it', async () => {
         const sqlane = await freshSqlane();
-        const flip = defineJob({ name: 'flip', maxAttempts: 1 });
+        const flip = defineLane({ name: 'flip', maxAttempts: 1 });
 
-        sqlane.handle(flip, () => {
+        sqlane.lanes.add(flip, () => {
             throw new Error('fails');
         });
 
@@ -521,13 +521,13 @@ describe('jobs.list()', () => {
 
         await sqlane.drain();
 
-        const page1 = await sqlane.jobs.list({ jobName: flip, status: 'failed' }, { limit: 3 });
+        const page1 = await sqlane.jobs.list({ lane: flip, status: 'failed' }, { limit: 3 });
 
         expect(page1.jobs).toHaveLength(3);
 
         await sqlane.drain({ includeDelayed: true });
 
-        const page2 = await sqlane.jobs.list({ jobName: flip, status: 'failed' }, { limit: 3, cursor: page1.nextCursor });
+        const page2 = await sqlane.jobs.list({ lane: flip, status: 'failed' }, { limit: 3, cursor: page1.nextCursor });
 
         expect(page2.jobs).toHaveLength(2);
         expect(page2.jobs.at(-1)?.id).toBe(target.id);
@@ -539,10 +539,10 @@ describe('jobs.list()', () => {
 
         await sqlane.enqueueMany(testAdapter.pool, 'ping', Array.from({ length: 101 }, () => ({ payload: {} })));
 
-        const page1 = await sqlane.jobs.list({ jobName: 'ping' });
+        const page1 = await sqlane.jobs.list({ lane: 'ping' });
 
         expect(page1.jobs).toHaveLength(100);
-        await expect(sqlane.jobs.list({ jobName: 'ping' }, { cursor: page1.nextCursor }))
+        await expect(sqlane.jobs.list({ lane: 'ping' }, { cursor: page1.nextCursor }))
             .resolves.toMatchObject({ jobs: [{}], nextCursor: null });
     });
 
@@ -553,10 +553,10 @@ describe('jobs.list()', () => {
         instances.push(other);
         await sqlane.enqueueMany(testAdapter.pool, 'ping', [{ payload: {} }, { payload: {} }, { payload: {} }]);
 
-        const page1 = await sqlane.jobs.list({ jobName: 'ping' }, { limit: 2 });
-        const all = await sqlane.jobs.list({ jobName: 'ping' });
+        const page1 = await sqlane.jobs.list({ lane: 'ping' }, { limit: 2 });
+        const all = await sqlane.jobs.list({ lane: 'ping' });
 
-        await expect(other.jobs.list({ jobName: 'ping' }, { limit: 2, cursor: page1.nextCursor }))
+        await expect(other.jobs.list({ lane: 'ping' }, { limit: 2, cursor: page1.nextCursor }))
             .resolves.toMatchObject({ jobs: [{ id: all.jobs[2].id }], nextCursor: null });
     });
 
@@ -576,11 +576,11 @@ describe('jobs.list()', () => {
             await sleep(5);
             await sqlane.enqueueMany(testAdapter.pool, 'late', [{ payload: {} }, { payload: {} }]);
 
-            const page1 = await sqlane.jobs.list({ jobName: 'late' }, { limit: 2 });
+            const page1 = await sqlane.jobs.list({ lane: 'late' }, { limit: 2 });
 
             expect(page1.nextCursor).not.toBeNull();
             await connection.commit();
-            await expect(sqlane.jobs.list({ jobName: 'late' }, { limit: 2, cursor: page1.nextCursor }))
+            await expect(sqlane.jobs.list({ lane: 'late' }, { limit: 2, cursor: page1.nextCursor }))
                 .resolves.toMatchObject({ jobs: [{ id: late.id }, { id: older.id }], nextCursor: null });
         } finally {
             connection.release();
@@ -593,29 +593,29 @@ describe('jobs.list()', () => {
         await sqlane.enqueueMany(testAdapter.pool, 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } },
             { payload: { n: 3 } }]);
 
-        const pending = await sqlane.jobs.list({ jobName: 'ping', status: 'pending' }, { limit: 1 });
+        const pending = await sqlane.jobs.list({ lane: 'ping', status: 'pending' }, { limit: 1 });
         const cursor = pending.nextCursor;
 
         // One status, or the list of it, or the list in another order: the same filter
-        await expect(sqlane.jobs.list({ jobName: 'ping', status: ['pending'] }, { limit: 1, cursor }))
+        await expect(sqlane.jobs.list({ lane: 'ping', status: ['pending'] }, { limit: 1, cursor }))
             .resolves.toMatchObject({ jobs: [{}] });
 
-        const two = await sqlane.jobs.list({ jobName: 'ping', status: ['pending', 'failed'] }, { limit: 1 });
+        const two = await sqlane.jobs.list({ lane: 'ping', status: ['pending', 'failed'] }, { limit: 1 });
 
         await expect(sqlane.jobs.list(
-            { jobName: 'ping', status: ['failed', 'pending'] },
+            { lane: 'ping', status: ['failed', 'pending'] },
             { limit: 2, cursor: two.nextCursor, includePayload: true },
         )).resolves.toMatchObject({ jobs: [{ payload: {} }, { payload: {} }], nextCursor: null });
 
         // Another filter: another name, other statuses, every status against the list of all five
-        const absent = await sqlane.jobs.list({ jobName: 'ping' }, { limit: 1 });
+        const absent = await sqlane.jobs.list({ lane: 'ping' }, { limit: 1 });
         const allFive = /** @type {const} */ (['pending', 'blocked', 'running', 'completed', 'failed']);
 
         for (const call of [
-            () => sqlane.jobs.list({ jobName: 'pong', status: 'pending' }, { cursor }),
-            () => sqlane.jobs.list({ jobName: 'ping', status: 'failed' }, { cursor }),
-            () => sqlane.jobs.list({ jobName: 'ping' }, { cursor }),
-            () => sqlane.jobs.list({ jobName: 'ping', status: allFive }, { cursor: absent.nextCursor }),
+            () => sqlane.jobs.list({ lane: 'pong', status: 'pending' }, { cursor }),
+            () => sqlane.jobs.list({ lane: 'ping', status: 'failed' }, { cursor }),
+            () => sqlane.jobs.list({ lane: 'ping' }, { cursor }),
+            () => sqlane.jobs.list({ lane: 'ping', status: allFive }, { cursor: absent.nextCursor }),
         ]) {
             // oxlint-disable-next-line no-await-in-loop -- one after the other
             await expect(call()).rejects.toBeInstanceOf(InvalidOptionsError);
@@ -626,36 +626,36 @@ describe('jobs.list()', () => {
         const sqlane = await freshSqlane();
         const good = [1, 'ping', null, Date.now(), 'ping:x'];
 
-        await expect(sqlane.jobs.list({ jobName: 'ping' }, { cursor: cursorOf(good) }))
+        await expect(sqlane.jobs.list({ lane: 'ping' }, { cursor: cursorOf(good) }))
             .resolves.toStrictEqual({ jobs: [], nextCursor: null });
 
         for (const [filter, options] of /** @type {[any, any][]} */ ([
             [null, undefined],
             [{}, undefined],
-            [{ jobName: 'ping', sort: 'asc' }, undefined],
+            [{ lane: 'ping', sort: 'asc' }, undefined],
             // An unknown field rejects, also set to undefined
-            [{ jobName: 'ping', sort: undefined }, undefined],
-            [{ jobName: 'ping' }, { order: undefined }],
-            [{ jobName: 'Bad Name' }, undefined],
-            [{ jobName: { name: 'Bad Name' } }, undefined],
-            [{ jobName: 'ping', status: 'done' }, undefined],
-            [{ jobName: 'ping', status: [] }, undefined],
-            [{ jobName: 'ping', status: ['failed', 'failed'] }, undefined],
-            [{ jobName: 'ping' }, null],
-            [{ jobName: 'ping' }, { order: 'asc' }],
-            [{ jobName: 'ping' }, { limit: 0 }],
-            [{ jobName: 'ping' }, { limit: 1001 }],
-            [{ jobName: 'ping' }, { limit: 1.5 }],
-            [{ jobName: 'ping' }, { includePayload: 'yes' }],
-            [{ jobName: 'ping' }, { cursor: 'nonsense' }],
-            [{ jobName: 'ping' }, { cursor: 42 }],
-            [{ jobName: 'ping' }, { cursor: cursorOf([2, ...good.slice(1)]) }],
-            [{ jobName: 'ping' }, { cursor: cursorOf(good.slice(0, 4)) }],
-            [{ jobName: 'ping' }, { cursor: cursorOf([...good, 'extra']) }],
-            [{ jobName: 'ping' }, { cursor: cursorOf([1, 'ping', null, -1, 'ping:x']) }],
-            [{ jobName: 'ping' }, { cursor: cursorOf([1, 'ping', null, 8.64e15, 'ping:x']) }],
-            [{ jobName: 'ping' }, { cursor: cursorOf([1, 'ping', null, Date.now(), 'ping:é']) }],
-            [{ jobName: 'ping' }, { cursor: cursorOf([1, 'ping', ['failed', 'pending'], Date.now(), 'ping:x']) }],
+            [{ lane: 'ping', sort: undefined }, undefined],
+            [{ lane: 'ping' }, { order: undefined }],
+            [{ lane: 'Bad Name' }, undefined],
+            [{ lane: { name: 'Bad Name' } }, undefined],
+            [{ lane: 'ping', status: 'done' }, undefined],
+            [{ lane: 'ping', status: [] }, undefined],
+            [{ lane: 'ping', status: ['failed', 'failed'] }, undefined],
+            [{ lane: 'ping' }, null],
+            [{ lane: 'ping' }, { order: 'asc' }],
+            [{ lane: 'ping' }, { limit: 0 }],
+            [{ lane: 'ping' }, { limit: 1001 }],
+            [{ lane: 'ping' }, { limit: 1.5 }],
+            [{ lane: 'ping' }, { includePayload: 'yes' }],
+            [{ lane: 'ping' }, { cursor: 'nonsense' }],
+            [{ lane: 'ping' }, { cursor: 42 }],
+            [{ lane: 'ping' }, { cursor: cursorOf([2, ...good.slice(1)]) }],
+            [{ lane: 'ping' }, { cursor: cursorOf(good.slice(0, 4)) }],
+            [{ lane: 'ping' }, { cursor: cursorOf([...good, 'extra']) }],
+            [{ lane: 'ping' }, { cursor: cursorOf([1, 'ping', null, -1, 'ping:x']) }],
+            [{ lane: 'ping' }, { cursor: cursorOf([1, 'ping', null, 8.64e15, 'ping:x']) }],
+            [{ lane: 'ping' }, { cursor: cursorOf([1, 'ping', null, Date.now(), 'ping:é']) }],
+            [{ lane: 'ping' }, { cursor: cursorOf([1, 'ping', ['failed', 'pending'], Date.now(), 'ping:x']) }],
         ])) {
             // oxlint-disable-next-line no-await-in-loop -- one after the other
             await expect(sqlane.jobs.list(filter, options)).rejects.toBeInstanceOf(InvalidOptionsError);
@@ -664,18 +664,18 @@ describe('jobs.list()', () => {
 });
 
 describe('sqlane.jobs', () => {
-    test('reads before start() and after the close() of a started instance, with unknownJobs: reject; a frozen object',
+    test('reads before start() and after the close() of a started instance, with unknownLanes: reject; a frozen object',
         async () => {
-            const sqlane = await freshSqlane({ unknownJobs: 'reject', jobs: [defineJob({ name: 'known' })] });
+            const sqlane = await freshSqlane({ unknownLanes: 'reject', lanes: [defineLane({ name: 'known' })] });
 
             const { id } = await sqlane.enqueue(testAdapter.pool, 'known', {}, { dedupeKey: 'k1' });
 
-            await expect(sqlane.jobs.list({ jobName: 'unknown' })).resolves.toStrictEqual({ jobs: [], nextCursor: null });
+            await expect(sqlane.jobs.list({ lane: 'unknown' })).resolves.toStrictEqual({ jobs: [], nextCursor: null });
             await expect(sqlane.jobs.get('unknown:x')).resolves.toBeNull();
             await sqlane.start();
             await sqlane.close();
             await expect(sqlane.jobs.get(id)).resolves.toMatchObject({ id });
-            await expect(sqlane.jobs.list({ jobName: 'known' })).resolves.toMatchObject({ jobs: [{ id }] });
+            await expect(sqlane.jobs.list({ lane: 'known' })).resolves.toMatchObject({ jobs: [{ id }] });
             expect(Object.isFrozen(sqlane.jobs)).toBe(true);
         });
 
@@ -683,7 +683,7 @@ describe('sqlane.jobs', () => {
         const sqlane = await freshSqlane({}, { migrate: false });
 
         await expect(sqlane.jobs.get('ping:x')).rejects.toThrow(/exist/);
-        await expect(sqlane.jobs.list({ jobName: 'ping' })).rejects.toThrow(/exist/);
+        await expect(sqlane.jobs.list({ lane: 'ping' })).rejects.toThrow(/exist/);
         // A string that cannot be an id: null, without a query, so without the tables too
         await expect(sqlane.jobs.get('')).resolves.toBeNull();
     });

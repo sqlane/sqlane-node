@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, inject, test } from 'vitest';
 import { chooseRows } from '../../src/fair_share.js';
 import { pgExecutor } from '../../src/adapters/executors.js';
 import { incrementUs, waitUs } from '../../src/gcra.js';
-import { createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineLane, defineRateLimit } from '../../src/index.js';
 import * as mariadbWorker from '../../src/store/mariadb_worker.js';
 import * as mysqlWorker from '../../src/store/mysql_worker.js';
 import * as postgresWorker from '../../src/store/postgres_worker.js';
@@ -293,19 +293,19 @@ describe('findCandidates', () => {
 describe('claim', () => {
     test('locks the jobs, sets them running with a lease, reads their payloads', async () => {
         const { p, sqlane, store } = await freshTables();
-        const job = defineJob({ name: 'build', maxAttempts: 4, failureJob: 'build_failed' });
+        const job = defineLane({ name: 'build', maxAttempts: 4, failureLane: 'build_failed' });
         const { id } = await sqlane.enqueue(testAdapter.pool, job, { reportId: 'r1' }, { runAt: ago(5) });
         const [claimed] = await claimAll(store, [id], 'TOKEN1');
 
         expect(claimed).toMatchObject({
             id,
-            name: 'build',
+            lane: 'build',
             limits: [],
             attempts: 0,
             maxAttempts: 4,
             stalls: 0,
             maxStalls: 2,
-            failureJob: 'build_failed',
+            failureLane: 'build_failed',
             lockToken: 'TOKEN1',
         });
         expect(claimed.waitedMs).toBeGreaterThanOrEqual(4000);
@@ -363,7 +363,7 @@ function claimDueWithNext(store, params) {
         // MySQL and MariaDB: the choice of the runner, by share
         choose: locked => chooseRows({
             rows: locked,
-            names: shareNamesOf(requests, limitRooms),
+            lanes: shareLanesOf(requests, limitRooms),
             free,
             base: 0,
             size: Math.max(requests.length, 1),
@@ -376,9 +376,9 @@ function claimDueWithNext(store, params) {
  * The names of a claim as the runner makes them: the tie order is the index.
  * @param {import('../../src/store/store.js').DueRequest[]} requests
  * @param {number[]} limitRooms
- * @returns {import('../../src/fair_share.js').ShareName[]}
+ * @returns {import('../../src/fair_share.js').ShareLane[]}
  */
-function shareNamesOf(requests, limitRooms) {
+function shareLanesOf(requests, limitRooms) {
     const rooms = limitRooms.map(room => ({ room }));
 
     return requests.map(due => ({
@@ -459,7 +459,7 @@ function seeded(seed) {
 async function compareChoice(sqlane, store, random, round) {
     const int = (/** @type {number} */ max) => Math.floor(random() * (max + 1));
     const count = 2 + int(4);
-    /** @type {{ id: string, name: string }[]} */
+    /** @type {{ id: string, lane: string }[]} */
     const rows = [];
     const requests = [];
 
@@ -473,7 +473,7 @@ async function compareChoice(sqlane, store, random, round) {
         })));
         const maxJobs = 1 + int(4);
 
-        rows.push(...results.slice(0, maxJobs).map(result => ({ id: result.id, name })));
+        rows.push(...results.slice(0, maxJobs).map(result => ({ id: result.id, lane: name })));
         requests.push(request(name, maxJobs, index, {
             running: int(6),
             weight: [1, 1, 2, 3, 7, 1000][int(5)],
@@ -486,7 +486,7 @@ async function compareChoice(sqlane, store, random, round) {
     // The rows of the names in FIFO order; the jobs of a name were enqueued oldest first
     const expected = chooseRows({
         rows,
-        names: shareNamesOf(requests, limitRooms),
+        lanes: shareLanesOf(requests, limitRooms),
         free,
         base: 0,
         size: count,
@@ -502,7 +502,7 @@ async function compareChoice(sqlane, store, random, round) {
 describe('claimDue', () => {
     test('claims the oldest due jobs of each name, with their payloads, in one go', async () => {
         const { p, sqlane, store } = await freshTables();
-        const job = defineJob({ name: 'a', maxAttempts: 4, failureJob: 'a_failed' });
+        const job = defineLane({ name: 'a', maxAttempts: 4, failureLane: 'a_failed' });
         const a1 = await sqlane.enqueue(testAdapter.pool, job, { n: 1 }, { runAt: ago(30) });
         const b1 = await sqlane.enqueue(testAdapter.pool, 'b', { n: 2 }, { runAt: ago(20) });
         const a2 = await sqlane.enqueue(testAdapter.pool, job, { n: 3 }, { runAt: ago(10) });
@@ -521,11 +521,11 @@ describe('claimDue', () => {
             [a2.id, { found: true, payload: { n: 3 } }],
         ]);
         expect(claimed[0]).toMatchObject({
-            name: 'a',
+            lane: 'a',
             limits: [],
             attempts: 0,
             maxAttempts: 4,
-            failureJob: 'a_failed',
+            failureLane: 'a_failed',
             lockToken: 'TOKEN1',
         });
         expect(claimed[0].waitedMs).toBeGreaterThanOrEqual(29_000);
@@ -549,7 +549,7 @@ describe('claimDue', () => {
             requests: [request('a', 1, 0), request('b', 1, 1)],
         });
 
-        expect(first.jobs.map(job => job.name)).toStrictEqual(['a', 'b']);
+        expect(first.jobs.map(job => job.lane)).toStrictEqual(['a', 'b']);
         // a: one due job left; b: none left; c: not requested
         expect(Object.keys(delaysByName(first.next)).filter(name => name !== 'c')).toStrictEqual(['a']);
         expect(delaysByName(first.next).a).toBeLessThanOrEqual(-19_000);
@@ -780,12 +780,12 @@ function slotsOf(p) {
 describe('global concurrency limits', () => {
     const order = defineConcurrencyLimit({ name: 'order', max: 1 });
     const client = defineConcurrencyLimit({ name: 'client', max: 2 });
-    const syncOrder = defineJob({
+    const syncOrder = defineLane({
         name: 'sync_order',
         globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
         timeout: '1m',
     });
-    const send = defineJob({
+    const send = defineLane({
         name: 'send',
         globalConcurrencyLimits: ({ payload }) => [client.key(payload.clientId)],
         timeout: '1m',
@@ -806,7 +806,7 @@ describe('global concurrency limits', () => {
         await expect(claimWithBlocks(store, [free.id], 'T2', [waiting.id])).resolves.toMatchObject({
             jobs: [{ id: free.id, limits: [{ key: 'order:2', max: 1 }] }],
             blockedKeys: ['order:1'],
-            blockedNames: ['sync_order'],
+            blockedLanes: ['sync_order'],
         });
         await expect(statuses(p)).resolves.toStrictEqual([
             { id: first.id, status: 'running', blocked_on: null },
@@ -935,7 +935,7 @@ describe('global concurrency limits', () => {
                 async () => {
                     const { p, sqlane } = await freshTables();
                     const many = defineConcurrencyLimit({ name: 'many', max: 10 });
-                    const keyed = defineJob({ name: 'keyed', timeout: '1m', globalConcurrencyLimits: () => [many] });
+                    const keyed = defineLane({ name: 'keyed', timeout: '1m', globalConcurrencyLimits: () => [many] });
                     const { id } = await sqlane.enqueue(testAdapter.pool, keyed, {}, { runAt: ago(1) });
                     const pool = /** @type {import('mysql2/promise').Pool} */ (testAdapter.pool);
 
@@ -990,7 +990,7 @@ describe('global concurrency limits', () => {
             test('a wait on the row of a rate key: the job starts after the wait', async () => {
                 const { p, sqlane } = await freshTables();
                 const api = defineRateLimit({ name: 'api', max: 100, per: '1s' });
-                const call = defineJob({ name: 'call', globalRateLimits: () => [api.key('t1')] });
+                const call = defineLane({ name: 'call', globalRateLimits: () => [api.key('t1')] });
                 const { id } = await sqlane.enqueue(testAdapter.pool, call, {}, { runAt: ago(1) });
                 const pool = /** @type {import('mysql2/promise').Pool} */ (testAdapter.pool);
 
@@ -1043,7 +1043,7 @@ describe('global concurrency limits', () => {
             test('a slot lost after a lock wait: the job without keys starts after the wait, not before it', async () => {
                 const { p, sqlane } = await freshTables();
                 const one = defineConcurrencyLimit({ name: 'one', max: 1 });
-                const keyed = defineJob({ name: 'keyed', timeout: '1m', globalConcurrencyLimits: () => [one] });
+                const keyed = defineLane({ name: 'keyed', timeout: '1m', globalConcurrencyLimits: () => [one] });
                 const withKey = await sqlane.enqueue(testAdapter.pool, keyed, {}, { runAt: ago(2) });
                 const plain = await sqlane.enqueue(testAdapter.pool, 'plain', {}, { runAt: ago(1) });
                 const pool = /** @type {import('mysql2/promise').Pool} */ (testAdapter.pool);
@@ -1099,8 +1099,8 @@ describe('global concurrency limits', () => {
     describe.runIf(inject('databaseDialect') === 'postgres')('postgres: the start time is the time of the slots', () => {
         const a = defineConcurrencyLimit({ name: 'a', max: 10 });
         const b = defineConcurrencyLimit({ name: 'b', max: 10 });
-        const onA = defineJob({ name: 'on_a', timeout: '1m', globalConcurrencyLimits: () => [a] });
-        const onB = defineJob({ name: 'on_b', timeout: '1m', globalConcurrencyLimits: () => [b] });
+        const onA = defineLane({ name: 'on_a', timeout: '1m', globalConcurrencyLimits: () => [a] });
+        const onB = defineLane({ name: 'on_b', timeout: '1m', globalConcurrencyLimits: () => [b] });
 
         test('a wait after the slots are taken: started_at is still their time, not that of the job update', async () => {
             const { p, sqlane } = await freshTables();
@@ -1150,7 +1150,7 @@ describe('global concurrency limits', () => {
             let released = false;
             let releaseMs = 0;
 
-            sqlane.handle(onA, async ({ job }) => {
+            sqlane.lanes.add(onA, async ({ job }) => {
                 const record = await sqlane.jobs.get(job.id);
                 const [slot] = await database.query(
                     `SELECT (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS ms FROM ${p}concurrency_slots
@@ -1160,7 +1160,7 @@ describe('global concurrency limits', () => {
 
                 runs.push({ info: job, record, slotMs: Number(slot.ms), released });
             });
-            sqlane.handle(onB, async () => {});
+            sqlane.lanes.add(onB, async () => {});
 
             const x = await sqlane.enqueue(pool, onA, {}, { runAt: ago(2) });
 
@@ -1235,7 +1235,7 @@ describe('global concurrency limits', () => {
     test('two sweeps that run with claims, releases with a short linger and completions of the same keys: no error',
         async () => {
             const { sqlane, store } = await freshTables();
-            const both = defineJob({
+            const both = defineLane({
                 name: 'both',
                 globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId), client.key(payload.clientId)],
                 timeout: '1m',
@@ -1306,7 +1306,7 @@ describe('global concurrency limits', () => {
         expect(both.limited.toSorted()).toStrictEqual(['other', 'plain']);
     });
 
-    test('jobs.stats counts the blocked jobs apart from the pending ones', async () => {
+    test('lanes.stats counts the blocked jobs apart from the pending ones', async () => {
         const { sqlane, store } = await freshTables();
         const first = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(20) });
         const waiting = await sqlane.enqueue(testAdapter.pool, syncOrder, { orderId: 1 }, { runAt: ago(10) });
@@ -1314,7 +1314,7 @@ describe('global concurrency limits', () => {
         await claimAll(store, [first.id], 'T1');
         await claimWithBlocks(store, [], 'T2', [waiting.id]);
 
-        await expect(sqlane.jobs.stats()).resolves.toMatchObject([
+        await expect(sqlane.lanes.stats()).resolves.toMatchObject([
             { name: 'sync_order', pending: 0, blocked: 1, due: 0, running: 1 },
         ]);
     });
@@ -1340,12 +1340,12 @@ async function aheadMs(p) {
 
 /**
  * @param {import('../../src/store/store.js').Store} store
- * @param {Map<string, number>} limitsByName
+ * @param {Map<string, number>} limitsByLane
  * @param {string} lockToken
  * @returns {Promise<import('../../src/store/store.js').ClaimResult>} The claim of the candidates of the names.
  */
-async function claimCandidates(store, limitsByName, lockToken) {
-    const found = await store.findCandidates(limitsByName);
+async function claimCandidates(store, limitsByLane, lockToken) {
+    const found = await store.findCandidates(limitsByLane);
 
     return claimWithBlocks(store, found.startable.map(job => job.id), lockToken, found.full.map(job => job.id));
 }
@@ -1353,7 +1353,7 @@ async function claimCandidates(store, limitsByName, lockToken) {
 describe('global rate limits', () => {
     // 4 per 400 ms, bursts of 4: one each 100 ms
     const api = defineRateLimit({ name: 'api', max: 4, per: '400ms', burst: 4 });
-    const callApi = defineJob({
+    const callApi = defineLane({
         name: 'call_api',
         globalRateLimits: ({ payload }) => [api.key(payload.account, { cost: payload.cost ?? 1 })],
     });
@@ -1387,10 +1387,10 @@ describe('global rate limits', () => {
         expect(found.full.map(job => job.id)).toStrictEqual(ids.slice(4));
 
         // A name not known with rate keys: the same result; the name is known from then on
-        const ratedNames = new Set(['other']);
+        const ratedLanes = new Set(['other']);
 
-        await expect(store.findCandidates(new Map([['call_api', 10]]), ratedNames)).resolves.toStrictEqual(found);
-        expect([...ratedNames]).toStrictEqual(['other', 'call_api']);
+        await expect(store.findCandidates(new Map([['call_api', 10]]), ratedLanes)).resolves.toStrictEqual(found);
+        expect([...ratedLanes]).toStrictEqual(['other', 'call_api']);
 
         const result = await claimWithBlocks(store, ids.slice(0, 4), 'T1', ids.slice(4));
 
@@ -1398,7 +1398,7 @@ describe('global rate limits', () => {
         expect(result.jobs[0].rateLimits).toStrictEqual([
             { key: '@api:a1', max: 4, per_us: 400_000, burst: 4, cost: 1 },
         ]);
-        expect(result).toMatchObject({ blockedKeys: ['@api:a1'], blockedNames: ['call_api'] });
+        expect(result).toMatchObject({ blockedKeys: ['@api:a1'], blockedLanes: ['call_api'] });
         expect(result.rateWaits).toHaveLength(1);
         expect(result.rateWaits[0].key).toBe('@api:a1');
         expect(result.rateWaits[0].delayMs).toBeGreaterThan(50);
@@ -1414,14 +1414,14 @@ describe('global rate limits', () => {
         // No quota yet: nothing unblocked, the time of the oldest
         const early = await store.unblockRates(['@api:a1']);
 
-        expect(early.names).toStrictEqual([]);
+        expect(early.lanes).toStrictEqual([]);
         expect(early.waits).toMatchObject([{ key: '@api:a1' }]);
         await sleep(early.waits[0].delayMs + 5);
 
         // One more start: the oldest blocked job only
         const unblocked = await store.unblockRates(['@api:a1']);
 
-        expect(unblocked.names).toStrictEqual(['call_api']);
+        expect(unblocked.lanes).toStrictEqual(['call_api']);
         expect(unblocked.waits).toHaveLength(1);
         expect(unblocked.waits[0].delayMs).toBeGreaterThan(50);
         expect(unblocked.waits[0].delayMs).toBeLessThanOrEqual(100);
@@ -1480,7 +1480,7 @@ describe('global rate limits', () => {
         expect(first.rateWaits[0].delayMs).toBeGreaterThan(100);
         expect(first.rateWaits[0].delayMs).toBeLessThanOrEqual(143);
         await sleep(first.rateWaits[0].delayMs + 5);
-        await expect(store.unblockRates(['@seventh'])).resolves.toMatchObject({ names: ['tick'] });
+        await expect(store.unblockRates(['@seventh'])).resolves.toMatchObject({ lanes: ['tick'] });
     });
 
     test('cost: a job takes cost × per / max of the quota', async () => {
@@ -1537,7 +1537,7 @@ describe('global rate limits', () => {
             // Behind an older blocked job: that job's timer
             rateWaits: [],
         });
-        await expect(store.unblockRates(['@api:a1'])).resolves.toMatchObject({ names: ['call_api'] });
+        await expect(store.unblockRates(['@api:a1'])).resolves.toMatchObject({ lanes: ['call_api'] });
         await expect(statuses(p).then(rows => rows.slice(4).map(row => [row.id, row.status]))).resolves.toStrictEqual([
             [ids[4], 'pending'],
             [newer, 'blocked'],
@@ -1658,10 +1658,10 @@ describe('global rate limits', () => {
 
         const unblocked = await store.unblockRates(['@smooth']);
 
-        expect(unblocked.names).toStrictEqual(['tick']);
+        expect(unblocked.lanes).toStrictEqual(['tick']);
         expect(unblocked.waits).toMatchObject([{ key: '@smooth', delayMs: 1000 }]);
         // Then nothing left: no more
-        await expect(store.unblockRates(['@smooth'])).resolves.toStrictEqual({ names: [], waits: [] });
+        await expect(store.unblockRates(['@smooth'])).resolves.toStrictEqual({ lanes: [], waits: [] });
     });
 
     test('an unblock counts the jobs that the previous one made pending, by their debt: not again', async () => {
@@ -1684,7 +1684,7 @@ describe('global rate limits', () => {
 
         const first = await store.unblockRates(['@quota']);
 
-        expect(first.names).toStrictEqual(['call']);
+        expect(first.lanes).toStrictEqual(['call']);
         expect(first.waits).toMatchObject([{ key: '@quota', debtUs: expect.any(Number) }]);
         // 3 starts of debt after the two: the next one in 20 min
         expect(first.waits[0].debtUs).toBeGreaterThan(3600e6 - 5e6);
@@ -1695,11 +1695,11 @@ describe('global rate limits', () => {
         // Before their claims: given the debt, no more; without it, the stored tat lets two more go
         const again = await store.unblockRates(['@quota'], new Map([['@quota', Number(first.waits[0].debtUs)]]));
 
-        expect(again.names).toStrictEqual([]);
+        expect(again.lanes).toStrictEqual([]);
         expect(again.waits[0].delayMs).toBeGreaterThan((20 * 60_000) - 5000);
         await expect(statuses(p).then(rows => rows.slice(3).map(row => row.status)))
             .resolves.toStrictEqual(['pending', 'pending', 'blocked', 'blocked']);
-        await expect(store.unblockRates(['@quota'])).resolves.toMatchObject({ names: ['call'] });
+        await expect(store.unblockRates(['@quota'])).resolves.toMatchObject({ lanes: ['call'] });
         await expect(statuses(p).then(rows => rows.slice(3).map(row => row.status)))
             .resolves.toStrictEqual(['pending', 'pending', 'pending', 'pending']);
     });
@@ -1726,7 +1726,7 @@ describe('global rate limits', () => {
         const first = await store.unblockRates(['@quota']);
 
         expect(first).toMatchObject({
-            names: ['call'],
+            lanes: ['call'],
             waits: [{ key: '@quota', delayMs: 0, left: true }],
         });
         await expect(statuses(p).then(rows => rows.slice(1).map(row => row.status)))
@@ -1735,7 +1735,7 @@ describe('global rate limits', () => {
         // With the debt of the first: the job of cost 1, then the next one in 20 min
         const second = await store.unblockRates(['@quota'], new Map([['@quota', Number(first.waits[0].debtUs)]]));
 
-        expect(second).toMatchObject({ names: ['call'], waits: [{ key: '@quota', left: true }] });
+        expect(second).toMatchObject({ lanes: ['call'], waits: [{ key: '@quota', left: true }] });
         expect(second.waits[0].delayMs).toBeGreaterThan((20 * 60_000) - 5000);
         await expect(statuses(p).then(rows => rows.slice(1).map(row => row.status)))
             .resolves.toStrictEqual(['pending', 'pending', 'blocked']);
@@ -1764,7 +1764,7 @@ describe('global rate limits', () => {
             await other.begin();
             await other.execute(`SELECT id FROM ${p}jobs WHERE status = 'blocked' FOR UPDATE`);
             await expect(store.unblockRates(['@once'])).resolves.toStrictEqual({
-                names: [],
+                lanes: [],
                 waits: [{ key: '@once', delayMs: 1000, debtUs: null, left: false }],
             });
         } finally {
@@ -1802,7 +1802,7 @@ describe('global rate limits', () => {
             const unblocked = await store.unblockRates(['@quota']);
 
             // Its wait: one more start of debt, 20 min
-            expect(unblocked).toMatchObject({ names: [], waits: [{ key: '@quota', debtUs: null, left: true }] });
+            expect(unblocked).toMatchObject({ lanes: [], waits: [{ key: '@quota', debtUs: null, left: true }] });
             expect(unblocked.waits[0].delayMs).toBeGreaterThan((20 * 60_000) - 5000);
         } finally {
             await other.commit();
@@ -1902,19 +1902,19 @@ describe('global rate limits', () => {
         expect(found.startable.map(job => job.id)).toStrictEqual(ids.slice(0, 2));
         expect(found.full.map(job => job.id)).toStrictEqual(ids.slice(3));
 
-        const ratedNames = new Set();
+        const ratedLanes = new Set();
 
-        await expect(store.findCandidates(limits, ratedNames)).resolves.toStrictEqual(found);
-        expect([...ratedNames]).toStrictEqual(['mixed']);
+        await expect(store.findCandidates(limits, ratedLanes)).resolves.toStrictEqual(found);
+        expect([...ratedLanes]).toStrictEqual(['mixed']);
     });
 
-    test('jobs.stats counts the jobs blocked on a rate key apart from the pending ones', async () => {
+    test('lanes.stats counts the jobs blocked on a rate key apart from the pending ones', async () => {
         const { sqlane, store } = await freshTables();
 
         await enqueueCalls(sqlane, 6, { account: 'a1' });
         await claimCandidates(store, new Map([['call_api', 10]]), 'T1');
 
-        await expect(sqlane.jobs.stats()).resolves.toMatchObject([
+        await expect(sqlane.lanes.stats()).resolves.toMatchObject([
             { name: 'call_api', pending: 0, blocked: 2, due: 0, running: 4 },
         ]);
     });

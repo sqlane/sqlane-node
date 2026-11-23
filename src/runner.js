@@ -6,8 +6,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { createDispatcher } from './dispatcher.js';
 import { parseDuration } from './duration.js';
 import { ClosedError, ConfigError, DrainTimeoutError, InvalidOptionsError, ShutdownError } from './errors.js';
-import { createFailureJobs } from './failure_jobs.js';
-import { ANY_NAME } from './hint_channel.js';
+import { createFailureLanes } from './failure_lanes.js';
+import { ANY_LANE } from './hint_channel.js';
 import { createJobRuns, waitAtMost } from './job_runs.js';
 import { createKeyUnblocks } from './key_unblocks.js';
 import { createLeases } from './leases.js';
@@ -71,15 +71,15 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
  * @property {() => void} wake
- * @property {(names: string[]) => void} onEnqueued An enqueue: its commit is to come.
- * @property {(names: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.
+ * @property {(lanes: string[]) => void} onEnqueued An enqueue: its commit is to come.
+ * @property {(lanes: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.
  * @property {() => boolean} isClosed
  * @property {() => boolean} isStarted
  * @property {() => boolean} isIdle Neither started, draining nor closed.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
  * @property {(keys: string[]) => Promise<void>} unblockKeys Makes due the jobs blocked on keys with room, wakes and
  *     hints them. Never rejects: a failure is an `error` event (operation `unblock`).
- * @property {(name: string) => boolean} canStartNow This process handles the name and has a free slot for it.
+ * @property {(lane: string) => boolean} canStartNow The lane is added in this process and has a free slot.
  */
 
 /**
@@ -170,16 +170,16 @@ export function createRunner({
     const { wakeAfterRates, clear: clearLocalRateWakes } = createLocalRateWakes({
         setTimer,
         clearTimer,
-        wake: names => wakeUp(names, { speculative: true }),
+        wake: lanes => wakeUp(lanes, { speculative: true }),
     });
-    const failureJobs = createFailureJobs({
+    const failureLanes = createFailureLanes({
         registry,
         defaults,
         emit,
         reportError,
-        onAdded: (name) => {
-            onEnqueued([name]);
-            hintChannel.publish(name);
+        onAdded: (lane) => {
+            onEnqueued([lane]);
+            hintChannel.publish(lane);
         },
     });
     const { keepRenewing: keepRenewingLeases } = createLeases({
@@ -201,7 +201,7 @@ export function createRunner({
         emit,
         reportError,
         counts,
-        failureJobs,
+        failureLanes,
         armRateWake,
         wake: wakeUp,
         hintChannel,
@@ -215,7 +215,7 @@ export function createRunner({
         counts,
         timings: t,
         state: () => state,
-        failureJobs,
+        failureLanes,
         armRateWake,
         wakeAfterRates,
         hintChannel,
@@ -225,7 +225,7 @@ export function createRunner({
         state: () => state,
         setTimer,
         clearTimer,
-        wake: names => wakeUp(names, { speculative: true }),
+        wake: lanes => wakeUp(lanes, { speculative: true }),
     });
     const dispatcher = createDispatcher({
         store,
@@ -244,13 +244,13 @@ export function createRunner({
     });
 
     /**
-     * Ends the sleep of the dispatcher. The next turn looks at the given names, or at all names.
-     * @param {readonly string[]} [names] The names that may have ready jobs. None, or `*`: all names.
+     * Ends the sleep of the dispatcher. The next turn looks at the given lanes, or at all lanes.
+     * @param {readonly string[]} [lanes] The lanes that may have ready jobs. None, or `*`: all lanes.
      * @param {{ speculative?: boolean }} [options] speculative: the jobs may not be visible yet, or there may be none
      *     (a claim on MySQL is a transaction of several statements): a probe first. Else the turn claims at once.
      */
-    function wakeUp(names, options) {
-        dispatcher.wake(names, options);
+    function wakeUp(lanes, options) {
+        dispatcher.wake(lanes, options);
     }
 
     /**
@@ -268,7 +268,7 @@ export function createRunner({
             return;
         }
 
-        const entry = /** @type {HandlerEntry} */ (registry.getEntry(claimed.name));
+        const entry = /** @type {HandlerEntry} */ (registry.getEntry(claimed.lane));
         /** @type {RunningJob} */
         const job = {
             key,
@@ -305,7 +305,7 @@ export function createRunner({
         emit({
             type: 'claimed',
             jobId: claimed.id,
-            jobName: claimed.name,
+            lane: claimed.lane,
             attempt: claimed.attempts + 1,
             runAt: claimed.runAt,
             enqueuedAt: claimed.enqueuedAt,
@@ -327,7 +327,7 @@ export function createRunner({
                 // already scheduled pending jobs. Claims in flight may have captured an older slot count.
                 const mustWake = state !== 'started' || dispatcher.claiming() || !job.completionConfirmed
                     || job.released || job.leaseLost || dispatcher.freeSlots(entry) === 0;
-                // Its full limits: their other names were left out of the turns, and may have due jobs
+                // Its full limits: their other lanes were left out of the turns, and may have due jobs
                 const fullLimits = entry.limits.filter(limit => limitRoom(limit) <= 0);
 
                 entry.running--;
@@ -340,8 +340,8 @@ export function createRunner({
                 finishedCount++;
 
                 if (mustWake) {
-                    // Its own name (with the names of its limits that were full), and the backlog
-                    wakeUp([...new Set([claimed.name, ...fullLimits.flatMap(limit => limit.names)])], {
+                    // Its own lane (with the lanes of its limits that were full), and the backlog
+                    wakeUp([...new Set([claimed.lane, ...fullLimits.flatMap(limit => limit.lanes)])], {
                         speculative: true,
                     });
                 }
@@ -353,38 +353,38 @@ export function createRunner({
 
     /**
      * The commit of an enqueue: the job is visible. The re-probes cover a commit event that comes before it is.
-     * @param {string[]} names
+     * @param {string[]} lanes
      */
-    function onCommitted(names) {
-        if (state !== 'started' || !handlesAny(names)) {
+    function onCommitted(lanes) {
+        if (state !== 'started' || !anyAdded(lanes)) {
             return;
         }
 
-        wakeUp(names);
-        onEnqueued(names);
+        wakeUp(lanes);
+        onEnqueued(lanes);
     }
 
     /**
-     * @param {string[]} names
+     * @param {string[]} lanes
      */
-    function onEnqueued(names) {
+    function onEnqueued(lanes) {
         if (state !== 'started') {
             return;
         }
 
-        if (!handlesAny(names)) {
+        if (!anyAdded(lanes)) {
             return;
         }
 
-        reprobes.follow(names);
+        reprobes.follow(lanes);
     }
 
     /**
-     * @param {string[]} names
-     * @returns {boolean} This process handles one of the names, or one is `*`.
+     * @param {string[]} lanes
+     * @returns {boolean} One of the lanes is added in this process, or one is `*`.
      */
-    function handlesAny(names) {
-        return names.some(name => name === ANY_NAME || registry.getEntry(name));
+    function anyAdded(lanes) {
+        return lanes.some(lane => lane === ANY_LANE || registry.getEntry(lane));
     }
 
     /**
@@ -422,11 +422,11 @@ export function createRunner({
         try {
             // NOTIFY comes after the commit: the job is visible. Another hint is sent before the commit of its enqueue:
             // re-probe until the job is visible.
-            await hintChannel.listen((name) => {
+            await hintChannel.listen((lane) => {
                 if (!hintsAfterCommit) {
-                    onEnqueued([name]);
-                } else if (state === 'started' && handlesAny([name])) {
-                    wakeUp([name]);
+                    onEnqueued([lane]);
+                } else if (state === 'started' && anyAdded([lane])) {
+                    wakeUp([lane]);
                 }
             });
         } catch (error) {
@@ -460,7 +460,7 @@ export function createRunner({
 
         const before = { ...counts };
         const deadline = Date.now() + timeoutMs;
-        const names = registry.entries().map(entry => entry.name);
+        const lanes = registry.entries().map(entry => entry.name);
 
         let quietRounds = 0;
 
@@ -477,12 +477,12 @@ export function createRunner({
                 try {
                     if (options.includeDelayed) {
                         // oxlint-disable-next-line no-await-in-loop -- one round after the other
-                        await store.makeDue(names);
+                        await store.makeDue(lanes);
                     }
 
-                    // One probe per round: only the due names compete for the free slots
+                    // One probe per round: only the due lanes compete for the free slots
                     // oxlint-disable-next-line no-await-in-loop -- one round after the other
-                    due = (await store.probe(names)).filter(row => row.delayMs <= 0).map(row => row.name);
+                    due = (await store.probe(lanes)).filter(row => row.delayMs <= 0).map(row => row.name);
 
                     // oxlint-disable-next-line no-await-in-loop -- one round after the other
                     ({ claimed } = due.length ? await dispatcher.claimAndStart(due) : { claimed: 0 });
@@ -616,7 +616,7 @@ export function createRunner({
                     emit({
                         type: 'released',
                         jobId: job.claimed.id,
-                        jobName: job.claimed.name,
+                        lane: job.claimed.lane,
                         attempt: job.claimed.attempts + 1,
                     });
                 } catch (error) {
@@ -656,8 +656,8 @@ export function createRunner({
         isIdle: () => state === 'idle',
         emit,
         unblockKeys,
-        canStartNow: (name) => {
-            const entry = registry.getEntry(name);
+        canStartNow: (lane) => {
+            const entry = registry.getEntry(lane);
 
             return state === 'started' && Boolean(entry) && dispatcher.freeSlots(/** @type {HandlerEntry} */ (entry)) > 0;
         },

@@ -6,10 +6,10 @@ export type EnqueuerOptions<C> = {
     tablePrefix: string;
     /**
      * The known definition of
-     * a name.
+     * a lane.
      */
-    findDefinition: (name: string) => import('./types.js').JobDefinition | null;
-    unknownJobs: 'allow' | 'reject';
+    findDefinition: (lane: string) => import('./types.js').LaneDefinition | null;
+    unknownLanes: 'allow' | 'reject';
     defaults: import('./defaults.js').ResolvedDefaults;
     maxPayloadBytes: number;
     /**
@@ -27,9 +27,9 @@ export type Enqueuer<C> = {
  * @typedef {object} EnqueuerOptions
  * @property {import('./types.js').Adapter<C>} adapter
  * @property {string} tablePrefix Checked.
- * @property {(name: string) => import('./types.js').JobDefinition | null} findDefinition The known definition of
- *     a name.
- * @property {'allow' | 'reject'} unknownJobs
+ * @property {(lane: string) => import('./types.js').LaneDefinition | null} findDefinition The known definition of
+ *     a lane.
+ * @property {'allow' | 'reject'} unknownLanes
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {number} maxPayloadBytes
  * @property {string | null} notifyChannel PostgreSQL NOTIFY: `pg_notify` in the enqueue transaction, delivered on
@@ -47,4 +47,4 @@ export type Enqueuer<C> = {
  * @param {EnqueuerOptions<C>} options
  * @returns {Enqueuer<C>}
  */
-export declare function createEnqueuer<C>({ adapter, tablePrefix, findDefinition, unknownJobs, defaults, maxPayloadBytes, notifyChannel, }: EnqueuerOptions<C>): Enqueuer<C>;
+export declare function createEnqueuer<C>({ adapter, tablePrefix, findDefinition, unknownLanes, defaults, maxPayloadBytes, notifyChannel, }: EnqueuerOptions<C>): Enqueuer<C>;

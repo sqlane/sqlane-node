@@ -1,10 +1,10 @@
-// The handlers of an instance, their weights, local concurrency and rate limits, and the known definitions.
+// The lanes of an instance, their handlers, weights, local concurrency and rate limits, and the known definitions.
 import { parseDuration } from './duration.js';
 import { ConfigError } from './errors.js';
 import { createRateState } from './local_rates.js';
-import { isPlainObject, JOB_NAME_REGEXP } from './validate.js';
+import { isPlainObject, NAME_REGEXP } from './validate.js';
 
-/** @typedef {import('./types.js').JobDefinition} JobDefinition */
+/** @typedef {import('./types.js').LaneDefinition} LaneDefinition */
 /** @typedef {import('./local_rates.js').RateState} RateState */
 
 /**
@@ -12,14 +12,14 @@ import { isPlainObject, JOB_NAME_REGEXP } from './validate.js';
  * @typedef {object} LimitState
  * @property {import('./types.js').ConcurrencyLimit} limit
  * @property {number} running
- * @property {string[]} names Its handled names.
+ * @property {string[]} lanes Its added lanes.
  */
 
 /**
  * @typedef {object} HandlerEntry
  * @property {string} name
- * @property {number} index Its position in the order of the handle() calls: the order of the ties.
- * @property {JobDefinition | null} definition
+ * @property {number} index Its position in the order of the lanes.add() calls: the order of the ties.
+ * @property {LaneDefinition | null} definition
  * @property {import('./types.js').Handler} handler
  * @property {number} weight Its fairShareWeight.
  * @property {number} running Its jobs that run in this instance.
@@ -30,23 +30,23 @@ import { isPlainObject, JOB_NAME_REGEXP } from './validate.js';
 
 /**
  * @typedef {object} Registry
- * @property {(job: JobDefinition | string, handler: import('./types.js').Handler, options?: unknown) => void} handle
- * @property {(name: string) => HandlerEntry | undefined} getEntry
- * @property {() => HandlerEntry[]} entries In the order of the handle() calls.
- * @property {(name: string) => JobDefinition | null} findDefinition In `jobs`, else handled.
- * @property {() => string[]} namesWithLimits The handled names whose definition has global limits, of
- *     concurrency or of rate.
- * @property {() => string[]} namesWithRateLimits The handled names whose definition has global rate limits.
- * @property {() => void} validate Checks the handlers together: each failure job resolves and has none of its own.
+ * @property {(lane: LaneDefinition | string, handler: import('./types.js').Handler, options?: unknown) => void} add
+ * @property {(lane: string) => HandlerEntry | undefined} getEntry
+ * @property {() => HandlerEntry[]} entries In the order of the lanes.add() calls.
+ * @property {(lane: string) => LaneDefinition | null} findDefinition In `lanes`, else added.
+ * @property {() => string[]} lanesWithLimits The added lanes whose definition has global limits, of concurrency or
+ *     of rate.
+ * @property {() => string[]} lanesWithRateLimits The added lanes whose definition has global rate limits.
+ * @property {() => void} validate Checks the lanes together: each failure lane resolves and has none of its own.
  */
 
 /**
  * @param {object} params
- * @param {Map<string, JobDefinition>} params.jobsByName
+ * @param {Map<string, LaneDefinition>} params.lanesByName
  * @param {number | null} params.defaultTimeoutMs
  * @returns {Registry}
  */
-export function createRegistry({ jobsByName, defaultTimeoutMs }) {
+export function createRegistry({ lanesByName, defaultTimeoutMs }) {
     /** @type {Map<string, HandlerEntry>} */
     const entriesByName = new Map();
     /** @type {Map<string, LimitState>} */
@@ -56,7 +56,7 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
 
     /** @type {Registry['findDefinition']} */
     function findDefinition(name) {
-        return jobsByName.get(name) ?? entriesByName.get(name)?.definition ?? null;
+        return lanesByName.get(name) ?? entriesByName.get(name)?.definition ?? null;
     }
 
     /**
@@ -73,7 +73,7 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
                     + `${limit.max} here and ${known.limit.max} in another definition`);
             }
 
-            const state = known ?? { limit, running: 0, names: [] };
+            const state = known ?? { limit, running: 0, lanes: [] };
 
             limitStates.set(limit.name, state);
 
@@ -103,41 +103,39 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
         });
     }
 
-    /** @type {Registry['handle']} */
-    function handle(job, handler, options) {
-        const name = isPlainObject(job) ? job.name : job;
-        const where = `handle(${JSON.stringify(name)})`;
+    /** @type {Registry['add']} */
+    function add(lane, handler, options) {
+        const name = isPlainObject(lane) ? lane.name : lane;
+        const where = `lanes.add(${JSON.stringify(name)})`;
 
-        if (typeof name !== 'string' || !JOB_NAME_REGEXP.test(name)) {
-            throw new ConfigError(`${where}: the job must be a job definition or a job name`);
+        if (typeof name !== 'string' || !NAME_REGEXP.test(name)) {
+            throw new ConfigError(`${where}: the lane must be a lane definition or a lane name`);
         }
 
         if (typeof handler !== 'function') {
             throw new ConfigError(`${where}: the handler must be a function`);
         }
 
-        // The options of 5.x: an error that names where they went
         if (options !== undefined) {
-            throw new ConfigError(`${where}: handle() takes no options since 6.0: set "timeout" and "fairShareWeight" `
-                + 'in defineJob(), and replace "maxConcurrency" and "concurrencyGroup" with "localConcurrencyLimits"');
+            throw new ConfigError(`${where}: lanes.add() takes no options`);
         }
 
         if (entriesByName.has(name)) {
-            throw new ConfigError(`${where}: the job is handled already`);
+            throw new ConfigError(`${where}: the lane is added already`);
         }
 
-        const known = jobsByName.get(name);
-        const definition = isPlainObject(job) ? /** @type {JobDefinition} */ (job) : known ?? null;
+        const known = lanesByName.get(name);
+        const definition = isPlainObject(lane) ? /** @type {LaneDefinition} */ (lane) : known ?? null;
 
         if (known && definition !== known) {
-            throw new ConfigError(`${where}: another definition of "${name}" is in "jobs"`);
+            throw new ConfigError(`${where}: another definition of "${name}" is in "lanes"`);
         }
 
         const timeoutMs = parseDuration(definition?.timeout) ?? defaultTimeoutMs;
 
         if (definition?.globalConcurrencyLimits && timeoutMs === null) {
             throw new ConfigError(
-                `${where}: a job with global concurrency limits needs a timeout (in the definition or "defaults")`,
+                `${where}: a lane with global concurrency limits needs a timeout (in the definition or "defaults")`,
             );
         }
 
@@ -145,7 +143,7 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
         const rates = rateStatesOf(definition?.localRateLimits ?? [], where);
 
         for (const limit of [...limits, ...rates]) {
-            limit.names.push(name);
+            limit.lanes.push(name);
         }
 
         entriesByName.set(name, {
@@ -164,39 +162,39 @@ export function createRegistry({ jobsByName, defaultTimeoutMs }) {
     /** @type {Registry['validate']} */
     function validate() {
         for (const entry of entriesByName.values()) {
-            const failureJob = entry.definition?.failureJob;
+            const failureLane = entry.definition?.failureLane;
 
-            if (failureJob === undefined) {
+            if (failureLane === undefined) {
                 continue;
             }
 
-            const handleWhere = `handle(${JSON.stringify(entry.name)})`;
-            const known = typeof failureJob !== 'string' || jobsByName.has(failureJob) || entriesByName.has(failureJob);
+            const addWhere = `lanes.add(${JSON.stringify(entry.name)})`;
+            const known = typeof failureLane !== 'string' || lanesByName.has(failureLane) || entriesByName.has(failureLane);
 
             if (!known) {
-                throw new ConfigError(`${handleWhere}: the failure job "${failureJob}" is not in "jobs" and not handled`);
+                throw new ConfigError(`${addWhere}: the failure lane "${failureLane}" is not in "lanes" and not added`);
             }
 
-            // Handled by name only: no definition, so no failure job of its own
-            const failureDefinition = typeof failureJob === 'string' ? findDefinition(failureJob) : failureJob;
+            // Added by name only: no definition, so no failure lane of its own
+            const failureDefinition = typeof failureLane === 'string' ? findDefinition(failureLane) : failureLane;
 
-            if (failureDefinition?.failureJob !== undefined) {
+            if (failureDefinition?.failureLane !== undefined) {
                 throw new ConfigError(
-                    `${handleWhere}: the failure job "${failureDefinition?.name}" has a failure job of its own`,
+                    `${addWhere}: the failure lane "${failureDefinition?.name}" has a failure lane of its own`,
                 );
             }
         }
     }
 
     return {
-        handle,
+        add,
         getEntry: name => entriesByName.get(name),
         entries: () => [...entriesByName.values()],
         findDefinition,
-        namesWithLimits: () => [...entriesByName.values()]
+        lanesWithLimits: () => [...entriesByName.values()]
             .filter(entry => entry.definition?.globalConcurrencyLimits || entry.definition?.globalRateLimits)
             .map(entry => entry.name),
-        namesWithRateLimits: () => [...entriesByName.values()]
+        lanesWithRateLimits: () => [...entriesByName.values()]
             .filter(entry => entry.definition?.globalRateLimits)
             .map(entry => entry.name),
         validate,

@@ -1,6 +1,6 @@
 export declare const MAX_LIMIT = 1000;
 /**
- * Defines a concurrency limit: the most jobs that hold it at once. A job definition lists it in
+ * Defines a concurrency limit: the most jobs that hold it at once. A lane definition lists it in
  * `localConcurrencyLimits`, where each instance counts its own jobs, or returns it, or one of its keys, from
  * `globalConcurrencyLimits`, where the whole cluster counts the jobs of each key.
  * @param {import('./types.js').ConcurrencyLimitOptions} options

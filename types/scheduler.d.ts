@@ -88,13 +88,13 @@ export type SchedulerParams = {
     store: import('./store/store.js').Store;
     defaults: import('./defaults.js').ResolvedDefaults;
     maxPayloadBytes: number;
-    findDefinition: (name: string) => import('./types.js').JobDefinition | null;
-    unknownJobs: 'allow' | 'reject';
+    findDefinition: (lane: string) => import('./types.js').LaneDefinition | null;
+    unknownLanes: 'allow' | 'reject';
     notifyChannel: string | null;
     /**
-     * After the commit of a fire: once per name that got a job.
+     * After the commit of a fire: once per lane that got a job.
      */
-    onCreated: (name: string) => void;
+    onCreated: (lane: string) => void;
     emit: (event: import('./types.js').SqlaneEvent) => void;
     logger: import('./types.js').Logger | undefined;
     /**
@@ -163,10 +163,10 @@ export type FireOutcome = {
  * @property {import('./store/store.js').Store} store
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {number} maxPayloadBytes
- * @property {(name: string) => import('./types.js').JobDefinition | null} findDefinition
- * @property {'allow' | 'reject'} unknownJobs
+ * @property {(lane: string) => import('./types.js').LaneDefinition | null} findDefinition
+ * @property {'allow' | 'reject'} unknownLanes
  * @property {string | null} notifyChannel
- * @property {(name: string) => void} onCreated After the commit of a fire: once per name that got a job.
+ * @property {(lane: string) => void} onCreated After the commit of a fire: once per lane that got a job.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit
  * @property {import('./types.js').Logger | undefined} logger
  * @property {Partial<SchedulerTimings>} [timings] For tests.
@@ -205,4 +205,4 @@ export type FireOutcome = {
  * @param {SchedulerParams} params
  * @returns {Scheduler}
  */
-export declare function createScheduler({ store, defaults, maxPayloadBytes, findDefinition, unknownJobs, notifyChannel, onCreated, emit, logger, timings, }: SchedulerParams): Scheduler;
+export declare function createScheduler({ store, defaults, maxPayloadBytes, findDefinition, unknownLanes, notifyChannel, onCreated, emit, logger, timings, }: SchedulerParams): Scheduler;

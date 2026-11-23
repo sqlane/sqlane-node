@@ -1,7 +1,7 @@
 // sqlane.jobs: the checks of the arguments and the cursors of the lists. The SQL is in store/job_reads.js.
 import { inspect } from 'node:util';
 import { InvalidOptionsError } from './errors.js';
-import { checkObject, isPlainObject, JOB_NAME_REGEXP, PRINTABLE_ID_REGEXP } from './validate.js';
+import { checkObject, isPlainObject, NAME_REGEXP, PRINTABLE_ID_REGEXP } from './validate.js';
 
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 
@@ -25,7 +25,7 @@ const MAX_TIME_MS = Date.UTC(9999, 11, 31, 23, 59, 59, 999);
 
 /**
  * @typedef {object} ListCursor The filter of a list and the last job of its page: the next page starts after it.
- * @property {string} jobName
+ * @property {string} lane
  * @property {readonly JobStatus[] | null} statuses Sorted; null: every status.
  * @property {number} enqueuedAtMs
  * @property {string} id
@@ -45,8 +45,8 @@ export function isPossibleJobId(id) {
  * @returns {string} Opaque: base64url of a JSON array. A later field of the filter goes at its end, only when it is
  *     not its default, so that older versions of the major read the cursors of the default filters.
  */
-export function encodeCursor({ jobName, statuses, enqueuedAtMs, id }) {
-    return Buffer.from(JSON.stringify([CURSOR_VERSION, jobName, statuses, enqueuedAtMs, id])).toString('base64url');
+export function encodeCursor({ lane, statuses, enqueuedAtMs, id }) {
+    return Buffer.from(JSON.stringify([CURSOR_VERSION, lane, statuses, enqueuedAtMs, id])).toString('base64url');
 }
 
 /**
@@ -72,14 +72,14 @@ export function decodeCursor(value) {
     }
 
     if (!Array.isArray(parts) || parts.length !== 5 || parts[0] !== CURSOR_VERSION
-        || typeof parts[1] !== 'string' || !JOB_NAME_REGEXP.test(parts[1])
+        || typeof parts[1] !== 'string' || !NAME_REGEXP.test(parts[1])
         || !(parts[2] === null || isStatusSet(parts[2]))
         || !Number.isSafeInteger(parts[3]) || parts[3] < 0 || parts[3] > MAX_TIME_MS
         || !isPossibleJobId(parts[4])) {
         throw new InvalidOptionsError('jobs.list: "cursor" must be the nextCursor of a list');
     }
 
-    return { jobName: parts[1], statuses: parts[2], enqueuedAtMs: parts[3], id: parts[4] };
+    return { lane: parts[1], statuses: parts[2], enqueuedAtMs: parts[3], id: parts[4] };
 }
 
 /**
@@ -146,18 +146,18 @@ export function createJobsApi(store, bulk) {
             /** @type {import('./types.js').JobFilter} */ filter,
             /** @type {import('./types.js').ListJobsOptions | undefined} */ options = {},
         ) => {
-            const { jobName: job, status } = checkObject(filter, ['jobName', 'status'], 'filter', scope);
+            const { lane: given, status } = checkObject(filter, ['lane', 'status'], 'filter', scope);
             const { limit = DEFAULT_LIMIT, cursor, includePayload = false } = checkObject(
                 options,
                 ['limit', 'cursor', 'includePayload'],
                 'options',
                 scope,
             );
-            const jobName = isPlainObject(job) ? job.name : job;
+            const lane = isPlainObject(given) ? given.name : given;
 
-            if (typeof jobName !== 'string' || !JOB_NAME_REGEXP.test(jobName)) {
-                throw new InvalidOptionsError(`jobs.list: "jobName" must be a job definition or a name matching ${
-                    JOB_NAME_REGEXP}`);
+            if (typeof lane !== 'string' || !NAME_REGEXP.test(lane)) {
+                throw new InvalidOptionsError(`jobs.list: "lane" must be a lane definition or a name matching ${
+                    NAME_REGEXP}`);
             }
 
             const statuses = statusesOf(status, 'jobs.list');
@@ -175,12 +175,12 @@ export function createJobsApi(store, bulk) {
 
             const after = cursor === undefined || cursor === null ? null : decodeCursor(cursor);
 
-            if (after && (after.jobName !== jobName || JSON.stringify(after.statuses) !== JSON.stringify(statuses))) {
+            if (after && (after.lane !== lane || JSON.stringify(after.statuses) !== JSON.stringify(statuses))) {
                 throw new InvalidOptionsError('jobs.list: "cursor" is the cursor of a list with another filter');
             }
 
             const { jobs, last } = await store.listJobs({
-                jobName,
+                lane,
                 statuses,
                 limit: /** @type {number} */ (limit),
                 after: after && { enqueuedAtMs: after.enqueuedAtMs, id: after.id },
@@ -189,7 +189,7 @@ export function createJobsApi(store, bulk) {
 
             return {
                 jobs: /** @type {any[]} */ (jobs),
-                nextCursor: last && encodeCursor({ jobName, statuses, ...last }),
+                nextCursor: last && encodeCursor({ lane, statuses, ...last }),
             };
         },
         keyStats: async (/** @type {import('./types.js').KeyStatsOptions | undefined} */ options = {}) => {
@@ -221,7 +221,6 @@ export function createJobsApi(store, bulk) {
 
             return store.keyStats({ limit: /** @type {number} */ (limit), type: type ?? null, orderBy });
         },
-        stats: () => store.getStats(),
         retry: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('retry', selector, options),
         cancel: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('cancel', selector, options),
         remove: (/** @type {unknown} */ selector, /** @type {unknown} */ options) => bulk('remove', selector, options),

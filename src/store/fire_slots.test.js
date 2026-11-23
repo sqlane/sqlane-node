@@ -14,7 +14,7 @@ const NOW = 1_000_000_000;
 function candidate(fields = {}) {
     return {
         id: 'report',
-        name: 'report',
+        lane: 'report',
         spec: 'every 60000',
         slot: NOW - 1000,
         missed: 'once',
@@ -30,7 +30,7 @@ function candidate(fields = {}) {
  * @returns {ScheduleRow}
  */
 function row(fields = {}) {
-    return { id: 'report', jobName: 'report', spec: 'every 60000', lastSlotMs: 0, lastJobId: null, ...fields };
+    return { id: 'report', lane: 'report', spec: 'every 60000', lastSlotMs: 0, lastJobId: null, ...fields };
 }
 
 describe('decideSlot', () => {
@@ -109,7 +109,7 @@ function stubStatements(rows, unfinished = []) {
 function fire(statements, candidates) {
     return runFire(/** @type {any} */ ({}), 'q_', statements, {
         candidates,
-        buildJob: (slot, late) => /** @type {any} */ ({ id: `${slot.name}:${slot.id}:${late ? 'late' : 'on_time'}` }),
+        buildJob: (slot, late) => /** @type {any} */ ({ id: `${slot.lane}:${slot.id}:${late ? 'late' : 'on_time'}` }),
         notifyChannel: null,
         now: () => 0,
         ...LIMITS,
@@ -119,28 +119,28 @@ function fire(statements, candidates) {
 describe('runFire', () => {
     test('one lock pass, one insert of all the names, one update; losers write nothing', async () => {
         const { statements, calls } = stubStatements([
-            row({ id: 'a', jobName: 'a' }),
-            row({ id: 'b', jobName: 'b', lastSlotMs: NOW }),
-            row({ id: 'c', jobName: 'c', spec: 'other' }),
+            row({ id: 'a', lane: 'a' }),
+            row({ id: 'b', lane: 'b', lastSlotMs: NOW }),
+            row({ id: 'c', lane: 'c', spec: 'other' }),
         ]);
         const result = await fire(statements, [
-            candidate({ id: 'a', name: 'a' }),
-            candidate({ id: 'b', name: 'b' }),
-            candidate({ id: 'c', name: 'c', slot: NOW - 120_000 }),
-            candidate({ id: 'd', name: 'd' }),
+            candidate({ id: 'a', lane: 'a' }),
+            candidate({ id: 'b', lane: 'b' }),
+            candidate({ id: 'c', lane: 'c', slot: NOW - 120_000 }),
+            candidate({ id: 'd', lane: 'd' }),
         ]);
 
         expect(calls.lockRows).toStrictEqual([['a', 'b', 'c', 'd']]);
         expect(calls.insertJobs).toStrictEqual([['a:a:on_time']]);
         expect(calls.updateCursors).toStrictEqual([[
-            { id: 'a', name: 'a', spec: 'every 60000', slot: NOW - 1000, jobId: 'a:a:on_time' },
+            { id: 'a', lane: 'a', spec: 'every 60000', slot: NOW - 1000, jobId: 'a:a:on_time' },
         ]]);
         expect(result).toStrictEqual({
             clock: { dbNowMs: NOW, sentAt: 0, receivedAt: 0 },
             decided: [
-                { id: 'b', name: 'b', slot: NOW - 1000, late: false, outcome: 'lost', jobId: null, created: false },
-                { id: 'c', name: 'c', slot: NOW - 120_000, late: true, outcome: 'dropped', jobId: null, created: false },
-                { id: 'a', name: 'a', slot: NOW - 1000, late: false, outcome: 'enqueued', jobId: 'a:a:on_time', created: true },
+                { id: 'b', lane: 'b', slot: NOW - 1000, late: false, outcome: 'lost', jobId: null, created: false },
+                { id: 'c', lane: 'c', slot: NOW - 120_000, late: true, outcome: 'dropped', jobId: null, created: false },
+                { id: 'a', lane: 'a', slot: NOW - 1000, late: false, outcome: 'enqueued', jobId: 'a:a:on_time', created: true },
             ],
             busy: ['d'],
             deferred: [],
@@ -164,8 +164,8 @@ describe('runFire', () => {
             { id: 'b', outcome: 'enqueued', jobId: 'report:b:on_time' },
         ]);
         expect(calls.updateCursors).toStrictEqual([[
-            { id: 'a', name: 'report', spec: 'every 60000', slot: NOW - 1000, jobId: null },
-            { id: 'b', name: 'report', spec: 'every 60000', slot: NOW - 1000, jobId: 'report:b:on_time' },
+            { id: 'a', lane: 'report', spec: 'every 60000', slot: NOW - 1000, jobId: null },
+            { id: 'b', lane: 'report', spec: 'every 60000', slot: NOW - 1000, jobId: 'report:b:on_time' },
         ]]);
     });
 

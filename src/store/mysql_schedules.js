@@ -33,7 +33,7 @@ const placeholders = values => values.map(() => '?').join(', ');
 function toScheduleRow(row) {
     return {
         id: String(row.id),
-        jobName: String(row.lane),
+        lane: String(row.lane),
         spec: String(row.spec),
         lastSlotMs: Number(row.last_slot_ms),
         lastJobId: row.last_job_id === null ? null : String(row.last_job_id),
@@ -47,7 +47,7 @@ const STATEMENTS = {
             INSERT INTO ${p}schedules (id, lane, spec, last_slot_at, created_at, updated_at)
             VALUES ${candidates.map(() => `(?, ?, ?, ${EPOCH}, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))`).join(', ')}
             ON DUPLICATE KEY UPDATE id = id
-        `, candidates.flatMap(({ id, name, spec }) => [id, name, spec]));
+        `, candidates.flatMap(({ id, lane, spec }) => [id, lane, spec]));
     },
     lockRows: async (executor, p, ids) => {
         // FORCE INDEX: a locking read has no semi-consistent read, a scan would lock other rows
@@ -86,7 +86,7 @@ const STATEMENTS = {
         `, [
             ...params(winner => toUtcDatetime(winner.slot)),
             ...params(winner => winner.spec),
-            ...params(winner => winner.name),
+            ...params(winner => winner.lane),
             ...withJob.flatMap(winner => [winner.id, winner.jobId]),
             ...winners.map(winner => winner.id),
         ]);
@@ -121,7 +121,7 @@ export async function readSchedules(executor, p, ids, now) {
  * Inserts the missing rows of the schedules, with the database time as their cursor, then reads them all.
  * @param {Executor} executor
  * @param {string} p
- * @param {{ id: string, name: string, spec: string }[]} schedules
+ * @param {{ id: string, lane: string, spec: string }[]} schedules
  * @param {() => number} now
  * @returns {Promise<{ clock: import('./fire_slots.js').ClockSample, rows: ScheduleRow[] }>}
  */
@@ -139,7 +139,7 @@ export async function registerSchedules(executor, p, schedules, now) {
             INSERT INTO ${p}schedules (id, lane, spec, last_slot_at, created_at, updated_at)
             VALUES ${chunk.map(() => '(?, ?, ?, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))').join(', ')}
             ON DUPLICATE KEY UPDATE id = id
-        `, chunk.flatMap(({ id, name, spec }) => [id, name, spec]));
+        `, chunk.flatMap(({ id, lane, spec }) => [id, lane, spec]));
 
         // oxlint-disable-next-line no-await-in-loop -- one chunk after the other
         const read = await readSchedules(executor, p, chunk.map(({ id }) => id), now);

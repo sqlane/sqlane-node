@@ -15,7 +15,7 @@ describe('checkApiDocs', () => {
 
     test('a documented method passes; brackets in its docs and types do not confuse the reader', () => {
         const source = file(`    /**
-     * Runs \`{ payload }\` with \`defineJob<{ id: number }>(…)\`.
+     * Runs \`{ payload }\` with \`defineLane<{ id: number }>(…)\`.
      * @param job The job.
      * @param handler Gets \`{ payload, signal }\`.
      * @returns The result.

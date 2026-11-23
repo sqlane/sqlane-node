@@ -2,7 +2,7 @@
 // MySQL 8.4 sorts the whole key for `ORDER BY run_at, id LIMIT 1` in a correlated subquery of `jobs_blocked`, and reads
 // every blocked job for `SELECT DISTINCT blocked_on`; the full index prefix (`status, blocked_on, …`) avoids both.
 import { afterAll, beforeAll, expect, inject, test } from 'vitest';
-import { createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineLane, defineRateLimit } from '../../src/index.js';
 import * as mariadbFinal from '../../src/store/mariadb_final.js';
 import * as mariadbWorker from '../../src/store/mariadb_worker.js';
 import * as mysqlFinal from '../../src/store/mysql_final.js';
@@ -19,8 +19,8 @@ const FEW = 50;
 
 const api = defineRateLimit({ name: 'api', max: 1, per: '1h' });
 const one = defineConcurrencyLimit({ name: 'one', max: 1 });
-const rated = defineJob({ name: 'rated', globalRateLimits: () => [api.key('x')] });
-const limited = defineJob({ name: 'limited', timeout: '1m', globalConcurrencyLimits: () => [one.key('x')] });
+const rated = defineLane({ name: 'rated', globalRateLimits: () => [api.key('x')] });
+const limited = defineLane({ name: 'limited', timeout: '1m', globalConcurrencyLimits: () => [one.key('x')] });
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
@@ -38,7 +38,7 @@ beforeAll(async () => {
     testAdapter = createTestAdapter();
     p = `${database.tablePrefix}br_`;
 
-    const sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: p, jobs: [rated, limited] });
+    const sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: p, lanes: [rated, limited] });
     const items = Array.from({ length: BLOCKED }, () => ({ payload: {} }));
 
     await sqlane.schema.migrate();

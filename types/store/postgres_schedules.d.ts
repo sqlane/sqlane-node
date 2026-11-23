@@ -1,7 +1,7 @@
 export type Executor = import('../types.js').Executor;
 export type ScheduleRow = import('./fire_slots.js').ScheduleRow;
 /**
- * Inserts the jobs of slots of several names, in one statement, with one NOTIFY per name that got a job. The CTE of
+ * Inserts the jobs of slots of several lanes, in one statement, with one NOTIFY per lane that got a job. The CTE of
  * `insertJobsPostgres` with another NOTIFY step: the enqueue statement stays as it is.
  * @param {Executor} executor
  * @param {string} p The table prefix.
@@ -29,13 +29,13 @@ export declare function readSchedules(executor: Executor, p: string, ids: string
  * Inserts the missing rows of the schedules, with the database time as their cursor, then reads them all.
  * @param {Executor} executor
  * @param {string} p
- * @param {{ id: string, name: string, spec: string }[]} schedules
+ * @param {{ id: string, lane: string, spec: string }[]} schedules
  * @param {() => number} now
  * @returns {Promise<{ clock: import('./fire_slots.js').ClockSample, rows: ScheduleRow[] }>}
  */
 export declare function registerSchedules(executor: Executor, p: string, schedules: {
     id: string;
-    name: string;
+    lane: string;
     spec: string;
 }[], now: () => number): Promise<{
     clock: import('./fire_slots.js').ClockSample;

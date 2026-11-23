@@ -1,40 +1,34 @@
 import { isConcurrencyLimit } from './define_concurrency_limit.js';
 import { isRateLimit } from './define_rate_limit.js';
 import { ConfigError } from './errors.js';
-import { checkFailureJob, checkJobFields, checkObject, JOB_NAME_REGEXP } from './validate.js';
+import { checkFailureLane, checkOptionFields, checkObject, NAME_REGEXP } from './validate.js';
 
-const JOB_OPTION_NAMES = [
-    'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'failureJob', 'fairShareWeight',
+const LANE_OPTION_NAMES = [
+    'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'failureLane', 'fairShareWeight',
     'localConcurrencyLimits', 'globalConcurrencyLimits', 'localRateLimits', 'globalRateLimits',
 ];
 export const MAX_WEIGHT = 1000;
 
 /**
- * Defines a job name and its options. Producers and workers import the definition. `defineJob<{ reportId: string }>(…)`
- * declares the payload: `enqueue`, `handle`, `globalConcurrencyLimits` and `globalRateLimits` then check it.
+ * Defines a lane and its options. Producers and workers import the definition. `defineLane<{ reportId: string }>(…)`
+ * declares the payload: `enqueue`, `lanes.add`, `globalConcurrencyLimits` and `globalRateLimits` then check it.
  * @template [P=any]
- * @param {import('./types.js').JobOptions<P>} options
- * @returns {import('./types.js').JobDefinition<P>} Frozen.
+ * @param {import('./types.js').LaneOptions<P>} options
+ * @returns {import('./types.js').LaneDefinition<P>} Frozen.
  */
-export function defineJob(options) {
+export function defineLane(options) {
     const name = typeof options?.name === 'string' ? options.name : '';
-    const where = `defineJob(${JSON.stringify(name)})`;
+    const where = `defineLane(${JSON.stringify(name)})`;
 
     const scope = { where, ErrorClass: ConfigError };
 
-    // The option of 5.x: an error that names the new one
-    if (/** @type {Record<string, unknown>} */ (options)?.mutexKeys !== undefined) {
-        throw new ConfigError(`${where}: "mutexKeys" was removed in 6.0: return a limit with max 1, or its keys, from `
-            + '"globalConcurrencyLimits"');
+    checkObject(options, LANE_OPTION_NAMES, 'options', scope);
+
+    if (!NAME_REGEXP.test(name)) {
+        throw new ConfigError(`${where}: "name" must match ${NAME_REGEXP}`);
     }
 
-    checkObject(options, JOB_OPTION_NAMES, 'options', scope);
-
-    if (!JOB_NAME_REGEXP.test(name)) {
-        throw new ConfigError(`${where}: "name" must match ${JOB_NAME_REGEXP}`);
-    }
-
-    checkJobFields(options, scope);
+    checkOptionFields(options, scope);
 
     if (options.globalConcurrencyLimits !== undefined && typeof options.globalConcurrencyLimits !== 'function') {
         throw new ConfigError(`${where}: "globalConcurrencyLimits" must be a function of the context, ({ payload })`);
@@ -44,8 +38,8 @@ export function defineJob(options) {
         throw new ConfigError(`${where}: "globalRateLimits" must be a function of the context, ({ payload })`);
     }
 
-    if (options.failureJob !== undefined) {
-        checkFailureJob(options.failureJob, name, scope);
+    if (options.failureLane !== undefined) {
+        checkFailureLane(options.failureLane, name, scope);
     }
 
     const weight = options.fairShareWeight;

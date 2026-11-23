@@ -26,41 +26,41 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
 
 /**
  * @typedef {object} ProbeRow
- * @property {string} name A job name with pending jobs.
+ * @property {string} name A lane with pending jobs.
  * @property {number} delayMs Until its oldest pending job is due: 0 or less means due now.
  */
 
 /**
  * @typedef {object} Candidate
  * @property {string} id
- * @property {string} name
+ * @property {string} lane
  * @property {number} runAtMs
  */
 
 /**
- * The due jobs of names with global limits: those whose keys have room, at most the asked number per name, and those
+ * The due jobs of lanes with global limits: those whose keys have room, at most the asked number per lane, and those
  * with a full key, which a claim blocks. A rate key is full for the jobs that its quota does not allow, after the older
  * jobs of the search, and for the jobs behind an older job blocked on it.
  * @typedef {{ startable: Candidate[], full: Candidate[] }} FoundCandidates
  */
 
 /**
- * The candidates of a search, with the names of the returned jobs that have rate keys when it left them out.
- * @typedef {FoundCandidates & { ratedNames: string[] }} FoundCandidatesOf
+ * The candidates of a search, with the lanes of the returned jobs that have rate keys when it left them out.
+ * @typedef {FoundCandidates & { ratedLanes: string[] }} FoundCandidatesOf
  */
 
 /**
  * A job that a claim locked, and then claimed: it runs.
  * @typedef {object} ClaimedJob
  * @property {string} id
- * @property {string} name
+ * @property {string} lane
  * @property {import('../concurrency_keys.js').GlobalLimit[]} limits Its global limits, sorted by key.
  * @property {import('../rate_keys.js').GlobalRateLimit[]} rateLimits Its global rate limits, sorted by key.
  * @property {number} attempts The failed attempts so far.
  * @property {number} maxAttempts
  * @property {number} stalls
  * @property {number} maxStalls
- * @property {string | null} failureJob
+ * @property {string | null} failureLane
  * @property {Date} enqueuedAt
  * @property {Date} runAt Its due time, as stored: its place in line.
  * @property {Date} startedAt The database time of the claim, as stored in `started_at`; also the time of its new slots.
@@ -79,7 +79,7 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  *     The jobs to take among the locked ones whose keys have room (in the order of run_at), given the held slots of
  *     their keys and the debts of their rate keys (µs, gcra.js): the free slots, fewer jobs on each key than its max,
  *     and the quota of each rate key, with the picked ones.
- * @property {boolean} [withRates] The candidates may have rate keys (their names are known to): PostgreSQL locks the
+ * @property {boolean} [withRates] The candidates may have rate keys (their lanes are known to): PostgreSQL locks the
  *     rows of the rate keys in the statement that locks the jobs. Without, a statement of its own, if they have some.
  */
 
@@ -95,12 +95,12 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @typedef {object} ClaimResult
  * @property {ClaimedJob[]} jobs The claimed jobs, in the order of run_at.
  * @property {string[]} blockedKeys The keys on which the claim blocked jobs, of both kinds.
- * @property {string[]} blockedNames The names of the blocked jobs.
+ * @property {string[]} blockedLanes The lanes of the blocked jobs.
  * @property {RateWait[]} rateWaits The rate keys on which the claim blocked the first jobs: when the oldest may start.
  */
 
 /**
- * One request of a claim of due jobs: a job name without global limits, and what its share needs.
+ * One request of a claim of due jobs: a lane without global limits, and what its share needs.
  * @typedef {object} DueRequest
  * @property {string} name
  * @property {number} maxJobs At most this many of its jobs: the minimum of the rooms of its local limits and the
@@ -131,13 +131,13 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
 /**
  * @typedef {object} ClaimDueResult
  * @property {StartableJob[]} jobs The claimed jobs, in the order of run_at.
- * @property {ProbeRow[] | null} next The next due time of the requested names with pending jobs that the claim did not
- *     take: zero or less, more of their jobs are due. It may give other names too. Null: the claim filled the free
+ * @property {ProbeRow[] | null} next The next due time of the requested lanes with pending jobs that the claim did not
+ *     take: zero or less, more of their jobs are due. It may give other lanes too. Null: the claim filled the free
  *     process slots and did not read them.
- * @property {string[]} [unpicked] PostgreSQL: the requested names with a locked row that the claim did not take, under
+ * @property {string[]} [unpicked] PostgreSQL: the requested lanes with a locked row that the claim did not take, under
  *     any cap. The runner replays the choice with them, to move the tie pointer as the choice did.
- * @property {string[]} limited The requested names with a locked row with global limits (from its enqueue options):
- *     not taken, they need the claim of names with global limits.
+ * @property {string[]} limited The requested lanes with a locked row with global limits (from its enqueue options):
+ *     not taken, they need the claim of lanes with global limits.
  */
 
 /**
@@ -156,16 +156,16 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * The job that fails for good, as the failure job gets it.
  * @typedef {object} FailedJob
  * @property {string} id
- * @property {string} name
+ * @property {string} lane
  * @property {unknown} payload Null: its payload is missing.
  * @property {number} attempt
  * @property {number} maxAttempts
- * @property {string} failureJob The name of its failure job.
+ * @property {string} failureLane Its failure lane.
  * @property {import('../error_json.js').ErrorJson} error
  */
 
 /**
- * Builds the failure job: its options from its definition, else the defaults; no failure job of its own.
+ * Builds the failure job: its options from its definition, else the defaults; no failure lane of its own.
  * @typedef {(failed: FailedJob) => import('../new_job.js').NewJob} FailureJobBuilder
  */
 
@@ -174,28 +174,28 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
 /**
  * The result of the recovery of a stale job. `attempt` and `runMs` describe the run that stalled: its attempt (1 for
  * the first run), and the time since it started.
- * @typedef {{ result: null, failureJob: null }
- *     | { result: 'released' | 'failed', failureJob: FailureJobResult | null, attempt: number, runMs: number }}
+ * @typedef {{ result: null, failureResult: null }
+ *     | { result: 'released' | 'failed', failureResult: FailureJobResult | null, attempt: number, runMs: number }}
  *     StaleJobResult
  */
 
 /**
  * @typedef {object} Store
- * @property {(names: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given name with
- *     pending jobs; null: of each name. It may give other names too.
- * @property {(limitsByName: Map<string, number>, ratedNames?: Set<string>) => Promise<FoundCandidates>} findCandidates
- *     Of names with global limits: their oldest due jobs, at most 500 per name. `ratedNames`: the names that may have
+ * @property {(lanes: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given lane with
+ *     pending jobs; null: of each lane. It may give other lanes too.
+ * @property {(limitsByLane: Map<string, number>, ratedLanes?: Set<string>) => Promise<FoundCandidates>} findCandidates
+ *     Of lanes with global limits: their oldest due jobs, at most 500 per lane. `ratedLanes`: the lanes that may have
  *     jobs with rate keys (`findCandidates` below); none: each search has the rate keys.
  * @property {(params: ClaimParams) => Promise<ClaimResult>} claim In a queue transaction of its own.
  * @property {(params: ClaimDueParams) => Promise<ClaimDueResult>} claimDue Finds, chooses by share, claims and reads
- *     the due jobs of names without global limits, at once: one statement on PostgreSQL. It leaves the rows with
- *     limits. A name requested more than once counts once, by its first request.
+ *     the due jobs of lanes without global limits, at once: one statement on PostgreSQL. It leaves the rows with
+ *     limits. A lane requested more than once counts once, by its first request.
  * @property {(keys: string[]) => Promise<string[]>} unblock Makes the jobs blocked on the concurrency keys pending
- *     again, the oldest first, as many as each key has room for: their names. It leaves the rate keys.
+ *     again, the oldest first, as many as each key has room for: their lanes. It leaves the rate keys.
  * @property {(keys: string[], floors?: Map<string, number>)
- *     => Promise<{ names: string[], waits: RateUnblockWait[] }>} unblockRates Makes the jobs blocked on the rate keys
+ *     => Promise<{ lanes: string[], waits: RateUnblockWait[] }>} unblockRates Makes the jobs blocked on the rate keys
  *     pending again, the oldest first, as many as the quota of each key allows now (at most 500), after the debt of
- *     `floors` at least (µs: the jobs that an earlier unblock made pending, not claimed yet). Their names; and, of each
+ *     `floors` at least (µs: the jobs that an earlier unblock made pending, not claimed yet). Their lanes; and, of each
  *     key with blocked jobs, the time of its next unblock: when the oldest job left may start; with none left, a check
  *     for a job blocked during the unblock (gcra.js, `nextUnblockMs`).
  * @property {(ids: string[]) => Promise<Map<string, unknown>>} readPayloads
@@ -208,7 +208,7 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {(
  *     job: OwnedJob,
  *     params: { error: import('../error_json.js').ErrorJson, buildFailureJob: FailureJobBuilder },
- * ) => Promise<{ changed: boolean, failureJob: FailureJobResult | null }>} failJob
+ * ) => Promise<{ changed: boolean, failureResult: FailureJobResult | null }>} failJob
  * @property {(job: OwnedJob, params: { delayMs: number, lingerMs: number }) => Promise<boolean>} releaseJob
  * @property {(job: OwnedJob, params: RateLimitedParams) => Promise<RateLimitedResult>} rateLimited The handler threw a
  *     RateLimitedError on global rate keys of the job: their next start is `retryAfter` from now at the earliest, the
@@ -224,14 +224,14 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {(limit: number) => Promise<number>} deleteIdleRateKeys Deletes a batch of rows of rate keys whose tat
  *     passed: the same as no row. SKIP LOCKED.
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
- * @property {(names: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
- * @property {() => Promise<import('../types.js').JobStats[]>} getStats
+ * @property {(lanes: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
+ * @property {() => Promise<import('../types.js').LaneStats[]>} getStats
  * @property {(id: string) => Promise<import('../types.js').JobRecord | null>} getJob A plain read, no lock.
  * @property {(params: import('./job_reads.js').ListParams) => Promise<{ jobs: import('../types.js').JobRecord[],
  *     last: { enqueuedAtMs: number, id: string } | null }>} listJobs A plain read, no lock.
  * @property {(params: import('./key_stats.js').KeyStatsParams)
  *     => Promise<import('../types.js').KeyStatsPage>} keyStats One statement on the queue's pool, no lock.
- * @property {(schedules: { id: string, name: string, spec: string }[], now: () => number)
+ * @property {(schedules: { id: string, lane: string, spec: string }[], now: () => number)
  *     => Promise<ScheduleRead>} registerSchedules Inserts the missing rows (2 statements per 500), then reads them.
  * @property {(ids: string[] | null, now: () => number) => Promise<ScheduleRead>} readSchedules A plain read, no
  *     lock; null: every row.
@@ -267,7 +267,7 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
 
 /**
  * The work of a stall recovery, as one read found it.
- * @typedef {SweepParts & { stale: { id: string, name: string }[], idleRateKeys: boolean }} RecoveryWork stale: the
+ * @typedef {SweepParts & { stale: { id: string, lane: string }[], idleRateKeys: boolean }} RecoveryWork stale: the
  *     running jobs whose lease ended, the oldest first. idleRateKeys: rows of rate keys whose tat passed.
  */
 
@@ -275,7 +275,7 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @typedef {object} SweepResult
  * @property {number} lingers
  * @property {number} orphans
- * @property {number} unblocked The names of the jobs that it unblocked.
+ * @property {number} unblocked The lanes of the jobs that it unblocked.
  * @property {RateWait[]} rateWaits The rate keys whose due jobs it unblocked, and that have blocked jobs left: their
  *     timer was lost (a process stopped), so the sweeping process takes it over.
  */
@@ -305,30 +305,30 @@ export function createStore(adapter, tablePrefix, logger) {
     let snapshotIsolationOff = true;
 
     /**
-     * The search of candidates has the rate keys only for a name in `ratedNames`: by its definition, or seen here. The
+     * The search of candidates has the rate keys only for a lane in `ratedLanes`: by its definition, or seen here. The
      * part of the rate keys costs every search: PostgreSQL plans the statement at each call (a custom plan), and the
      * rate CTEs double that planning; MySQL and MariaDB run them on every search. The other search also returns the
-     * jobs of its window that have rate keys (from their enqueue options): their names join `ratedNames`, and the
+     * jobs of its window that have rate keys (from their enqueue options): their lanes join `ratedLanes`, and the
      * search runs again with them. Without such a job its result is the same: a job without rate keys is never full by
      * rate.
      * @param {typeof postgresWorker | typeof mysqlWorker | typeof mariadbWorker} worker
-     * @param {Map<string, number>} limitsByName
-     * @param {Set<string>} [ratedNames] Grows with the names seen with rate keys. None: each search has the rate keys.
+     * @param {Map<string, number>} limitsByLane
+     * @param {Set<string>} [ratedLanes] Grows with the lanes seen with rate keys. None: each search has the rate keys.
      * @returns {Promise<FoundCandidates>}
      */
-    async function findCandidates(worker, limitsByName, ratedNames) {
-        const withRates = !ratedNames || [...limitsByName.keys()].some(name => ratedNames.has(name));
-        const found = await worker.findCandidates(adapter.queue, p, limitsByName, withRates);
+    async function findCandidates(worker, limitsByLane, ratedLanes) {
+        const withRates = !ratedLanes || [...limitsByLane.keys()].some(lane => ratedLanes.has(lane));
+        const found = await worker.findCandidates(adapter.queue, p, limitsByLane, withRates);
 
-        if (withRates || !found.ratedNames.length) {
+        if (withRates || !found.ratedLanes.length) {
             return { startable: found.startable, full: found.full };
         }
 
-        for (const name of found.ratedNames) {
-            ratedNames?.add(name);
+        for (const lane of found.ratedLanes) {
+            ratedLanes?.add(lane);
         }
 
-        const again = await worker.findCandidates(adapter.queue, p, limitsByName, true);
+        const again = await worker.findCandidates(adapter.queue, p, limitsByLane, true);
 
         return { startable: again.startable, full: again.full };
     }
@@ -392,17 +392,17 @@ export function createStore(adapter, tablePrefix, logger) {
         : params => inQueue(executor => sql.claimDue(executor, p, params));
 
     return {
-        probe: names => sql.probe(adapter.queue, tablePrefix, names),
-        findCandidates: (limitsByName, ratedNames) => findCandidates(sql, limitsByName, ratedNames),
+        probe: lanes => sql.probe(adapter.queue, tablePrefix, lanes),
+        findCandidates: (limitsByLane, ratedLanes) => findCandidates(sql, limitsByLane, ratedLanes),
         claim: params => adapter.queueTransaction(executor => sql.claim(executor, tablePrefix, params)),
         claimDue: (params) => {
-            // Each name once: MySQL and MariaDB lock the rows of each request, so a name requested twice would claim
-            // its jobs twice. The first request of a name counts
-            const names = new Set();
+            // Each lane once: MySQL and MariaDB lock the rows of each request, so a lane requested twice would claim
+            // its jobs twice. The first request of a lane counts
+            const lanes = new Set();
             const requests = params.requests.filter((request) => {
-                const first = !names.has(request.name);
+                const first = !lanes.has(request.name);
 
-                names.add(request.name);
+                lanes.add(request.name);
 
                 return first;
             });
@@ -430,7 +430,7 @@ export function createStore(adapter, tablePrefix, logger) {
             return {
                 // No stale job: one row with null ids
                 stale: rows.filter(row => row.id !== null)
-                    .map(row => ({ id: String(row.id), name: String(row.lane) })),
+                    .map(row => ({ id: String(row.id), lane: String(row.lane) })),
                 lingers: Number(parts.lingers) > 0,
                 orphans: Number(parts.orphans) > 0,
                 blocked: Number(parts.blocked) > 0,
@@ -453,20 +453,20 @@ export function createStore(adapter, tablePrefix, logger) {
         },
         unblockRates: async (keys, floors) => {
             if (!keys.length) {
-                return { names: [], waits: [] };
+                return { lanes: [], waits: [] };
             }
 
             // One statement on PostgreSQL; on MySQL and MariaDB, a read, then a transaction only when a job may start
-            const { names, waits } = adapter.dialect === 'postgres'
+            const { lanes, waits } = adapter.dialect === 'postgres'
                 ? await postgresFinal.unblockRates(adapter.queue, p, keys, { floors })
                 : await final.unblockRates(adapter.queue, p, keys, { inTransaction: inQueue, floors });
 
-            return { names, waits: waits.map(({ key, delayMs, debtUs, left }) => ({ key, delayMs, debtUs, left })) };
+            return { lanes, waits: waits.map(({ key, delayMs, debtUs, left }) => ({ key, delayMs, debtUs, left })) };
         },
         sweepSlots: (limit, parts = ALL_SWEEP_PARTS) => sweepSlots(limit, parts),
         deleteIdleRateKeys: limit => inQueue(executor => final.deleteIdleRateKeys(executor, p, limit)),
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
-        makeDue: names => inQueue(executor => final.makeDue(executor, p, names)),
+        makeDue: lanes => inQueue(executor => final.makeDue(executor, p, lanes)),
         getStats: () => final.getStats(adapter.queue, p),
         getJob: id => getJob(adapter.queue, family, p, id),
         listJobs: params => listJobs(adapter.queue, family, p, params),

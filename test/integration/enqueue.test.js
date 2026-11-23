@@ -2,10 +2,10 @@ import { afterAll, beforeAll, expect, test } from 'vitest';
 import {
     createSqlane,
     defineConcurrencyLimit,
-    defineJob,
+    defineLane,
     defineRateLimit,
     InvalidOptionsError,
-    UnknownJobError,
+    UnknownLaneError,
 } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
@@ -34,12 +34,12 @@ const SET_TIME_ZONE_SQL = {
 
 const report = defineConcurrencyLimit({ name: 'report', max: 1 });
 const reports = defineConcurrencyLimit({ name: 'reports', max: 3 });
-const buildReport = defineJob({
+const buildReport = defineLane({
     name: 'build_report',
     maxAttempts: 5,
     retention: { completed: '10m' },
     globalConcurrencyLimits: ({ payload }) => [reports, report.key(payload.reportId)],
-    failureJob: 'report_failed',
+    failureLane: 'report_failed',
 });
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
@@ -52,7 +52,7 @@ let sqlane;
 beforeAll(async () => {
     database = await connectTestDatabase();
     testAdapter = createTestAdapter();
-    sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: database.tablePrefix, jobs: [buildReport] });
+    sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: database.tablePrefix, lanes: [buildReport] });
     await sqlane.schema.migrate();
 });
 
@@ -133,7 +133,7 @@ test('adds the job in the caller\'s transaction, with the values frozen at enque
 
 test('the global rate limits: a JSON array sorted by key, with their settings in µs; the option replaces them', async () => {
     const api = defineRateLimit({ name: 'report_api', max: 100, per: '1m', burst: 5 });
-    const limited = defineJob({
+    const limited = defineLane({
         name: 'limited_report',
         globalRateLimits: ({ payload }) => [api.key(payload.tenant, { cost: 2 }), api],
         globalConcurrencyLimits: () => [reports],
@@ -259,15 +259,15 @@ test('a bad item adds no job of the call', async () => {
     await expect(readJob('build_report:b1')).resolves.toBeUndefined();
 });
 
-test('unknownJobs: reject: an unknown name throws, a name of "jobs" passes', async () => {
+test('unknownLanes: reject: an unknown lane throws, a lane of "lanes" passes', async () => {
     const strict = createSqlane({
         adapter: testAdapter.adapter,
         tablePrefix: database.tablePrefix,
-        jobs: [buildReport],
-        unknownJobs: 'reject',
+        lanes: [buildReport],
+        unknownLanes: 'reject',
     });
 
-    await expect(strict.enqueue(testAdapter.pool, 'not_registered', {})).rejects.toThrow(UnknownJobError);
+    await expect(strict.enqueue(testAdapter.pool, 'not_registered', {})).rejects.toThrow(UnknownLaneError);
     await expect(strict.enqueue(testAdapter.pool, 'build_report', { reportId: 'u1' }))
         .resolves.toMatchObject({ created: true });
 });

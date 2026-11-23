@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { defineConcurrencyLimit } from './define_concurrency_limit.js';
-import { defineJob } from './define_job.js';
+import { defineLane } from './define_lane.js';
 import { defineRateLimit } from './define_rate_limit.js';
 import { resolveDefaults } from './defaults.js';
 import {
@@ -14,13 +14,13 @@ import { buildNewJob } from './new_job.js';
 const defaults = resolveDefaults();
 const report = defineConcurrencyLimit({ name: 'report', max: 1 });
 const reportApi = defineRateLimit({ name: 'report_api', max: 10, per: '1m', burst: 2 });
-const buildReport = defineJob({
+const buildReport = defineLane({
     name: 'build_report',
     maxAttempts: 5,
     retention: { completed: '10m' },
     globalConcurrencyLimits: ({ payload }) => [report.key(payload.reportId)],
     globalRateLimits: ({ payload }) => [reportApi.key(payload.reportId, { cost: 2 })],
-    failureJob: defineJob({ name: 'report_failed' }),
+    failureLane: defineLane({ name: 'report_failed' }),
 });
 
 /**
@@ -29,7 +29,7 @@ const buildReport = defineJob({
  */
 function build(params) {
     return buildNewJob({
-        name: 'build_report',
+        lane: 'build_report',
         definition: buildReport,
         defaults,
         payload: { reportId: 'r1' },
@@ -44,7 +44,7 @@ describe('with a definition', () => {
         expect(build({})).toStrictEqual({
             id: expect.stringMatching(/^[0-9A-HJKMNP-TV-Z]{26}$/),
             hasJobId: false,
-            name: 'build_report',
+            lane: 'build_report',
             payloadJson: '{"reportId":"r1"}',
             limits: [{ key: 'report:r1', max: 1 }],
             rateLimits: [{ key: '@report_api:r1', max: 10, per_us: 60_000_000, burst: 2, cost: 2 }],
@@ -52,7 +52,7 @@ describe('with a definition', () => {
             maxStalls: 2,
             completedRetentionMs: 600_000,
             failedRetentionMs: 2_592_000_000,
-            failureJob: 'report_failed',
+            failureLane: 'report_failed',
             delayMs: 0,
             runAt: null,
         });
@@ -68,7 +68,7 @@ describe('with a definition', () => {
                 maxAttempts: 1,
                 maxStalls: 0,
                 retention: { failed: '1d' },
-                failureJob: 'other_failed',
+                failureLane: 'other_failed',
                 globalConcurrencyLimits: [],
                 globalRateLimits: [],
             },
@@ -81,25 +81,25 @@ describe('with a definition', () => {
             maxStalls: 0,
             completedRetentionMs: 600_000,
             failedRetentionMs: 86_400_000,
-            failureJob: 'other_failed',
+            failureLane: 'other_failed',
             delayMs: 0,
             runAt,
         });
     });
 
     test('the global limits come from the payload as JSON gives it back', () => {
-        const withKeys = defineJob({ name: 'with_keys', globalConcurrencyLimits: ({ payload }) => [report.key(payload.at)] });
+        const withKeys = defineLane({ name: 'with_keys', globalConcurrencyLimits: ({ payload }) => [report.key(payload.at)] });
         const at = new Date('2030-01-01T00:00:00Z');
 
-        expect(build({ name: 'with_keys', definition: withKeys, payload: { at } }).limits)
+        expect(build({ lane: 'with_keys', definition: withKeys, payload: { at } }).limits)
             .toStrictEqual([{ key: 'report:2030-01-01T00:00:00.000Z', max: 1 }]);
     });
 
     test('the global rate limits: from the payload as JSON gives it back; the option replaces them', () => {
-        const withKeys = defineJob({ name: 'with_keys', globalRateLimits: ({ payload }) => [reportApi.key(payload.at)] });
+        const withKeys = defineLane({ name: 'with_keys', globalRateLimits: ({ payload }) => [reportApi.key(payload.at)] });
         const at = new Date('2030-01-01T00:00:00Z');
 
-        expect(build({ name: 'with_keys', definition: withKeys, payload: { at } }).rateLimits)
+        expect(build({ lane: 'with_keys', definition: withKeys, payload: { at } }).rateLimits)
             .toStrictEqual([{ key: '@report_api:2030-01-01T00:00:00.000Z', max: 10, per_us: 60_000_000, burst: 2, cost: 1 }]);
         expect(build({ options: { globalRateLimits: [reportApi] } }).rateLimits)
             .toStrictEqual([{ key: '@report_api', max: 10, per_us: 60_000_000, burst: 2, cost: 1 }]);
@@ -116,16 +116,9 @@ describe('with a definition', () => {
             .toThrow('enqueue("build_report"): at most 10 global keys, concurrency and rate limits together, got 11');
     });
 
-    test('the mutexKeys of 5.x: an error that names the new option', () => {
-        expect(() => build({ options: /** @type {any} */ ({ mutexKeys: ['a'] }) }))
-            .toThrow('enqueue("build_report"): "mutexKeys" was removed in 6.0: use "globalConcurrencyLimits"');
-    });
-
-    test('the jobId of 7.x: an error that names the new option', () => {
+    test('jobId is an unknown option', () => {
         expect(() => build({ options: /** @type {any} */ ({ jobId: 'r1' }) }))
-            .toThrow('enqueue("build_report"): "jobId" was renamed in 8.0: use "dedupeKey"');
-        expect(() => build({ options: /** @type {any} */ ({ jobId: undefined }) }))
-            .toThrow('enqueue("build_report"): "jobId" was renamed in 8.0: use "dedupeKey"');
+            .toThrow('enqueue("build_report"): unknown options: jobId');
     });
 
     test('a delay', () => {
@@ -134,7 +127,7 @@ describe('with a definition', () => {
 });
 
 test('an unknown name takes the defaults', () => {
-    expect(build({ name: 'send_email', definition: null, options: { dedupeKey: 'e1' } })).toMatchObject({
+    expect(build({ lane: 'send_email', definition: null, options: { dedupeKey: 'e1' } })).toMatchObject({
         id: 'send_email:e1',
         limits: [],
         rateLimits: [],
@@ -142,12 +135,12 @@ test('an unknown name takes the defaults', () => {
         maxStalls: 2,
         completedRetentionMs: 3_600_000,
         failedRetentionMs: 2_592_000_000,
-        failureJob: null,
+        failureLane: null,
     });
 });
 
 test.each([
-    ['a bad name', { name: 'Build' }, InvalidOptionsError],
+    ['a bad name', { lane: 'Build' }, InvalidOptionsError],
     ['an unknown option', { options: { attempts: 3 } }, InvalidOptionsError],
     ['delay and runAt', { options: { delay: '1s', runAt: new Date() } }, InvalidOptionsError],
     ['an invalid runAt', { options: { runAt: new Date('nope') } }, InvalidOptionsError],
@@ -156,7 +149,7 @@ test.each([
     ['unordered delay units', { options: { delay: '1ms 1d' } }, InvalidOptionsError],
     ['full retention units', { options: { retention: { completed: '1 days' } } }, InvalidOptionsError],
     ['a bad maxAttempts', { options: { maxAttempts: 0 } }, InvalidOptionsError],
-    ['the job as its own failure job', { options: { failureJob: 'build_report' } }, InvalidOptionsError],
+    ['the lane as its own failure lane', { options: { failureLane: 'build_report' } }, InvalidOptionsError],
     ['a payload that is not JSON', { payload: undefined }, InvalidOptionsError],
     ['a payload above the limit', { maxPayloadBytes: 10 }, PayloadTooLargeError],
     ['a bad key of a limit', { options: { globalConcurrencyLimits: [report.key(' a')] } }, InvalidConcurrencyLimitError],

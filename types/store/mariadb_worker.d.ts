@@ -14,7 +14,7 @@ export type SlotHold = {
 /** @typedef {import('./store.js').ClaimParams} ClaimParams */
 /** @typedef {import('./store.js').ClaimedJob} ClaimedJob */
 /** @typedef {{ key: string, slot: number, id: string }} SlotHold A slot of a key, taken for a job */
-/** The due jobs of each name with global limits that a search of candidates reads */
+/** The due jobs of each lane with global limits that a search of candidates reads */
 export declare const LIMIT_WINDOW_SIZE = 500;
 /**
  * The settings of the rate keys of a JSON array (`rate_limits`), as JSON_TABLE columns.
@@ -26,31 +26,31 @@ export declare const rateLimitsTable: (json: string) => string;
  * The SQL of the probe. `GROUP BY status, lane`: the whole index prefix, else MariaDB does not use a loose index
  * scan.
  * @param {string} p
- * @param {number} [nameCount] The names of the probe, as parameters; none: all names.
+ * @param {number} [laneCount] The lanes of the probe, as parameters; none: all lanes.
  * @returns {string}
  */
-export declare function probeSql(p: string, nameCount?: number): string;
+export declare function probeSql(p: string, laneCount?: number): string;
 /**
- * The next due time of each given job name with pending jobs; null, or many names: of each job name. One index dive
- * per name (loose index scan).
+ * The next due time of each given lane with pending jobs; null, or many lanes: of each lane. One index dive
+ * per lane (loose index scan).
  * @param {Executor} executor
  * @param {string} p
- * @param {string[] | null} names
+ * @param {string[] | null} lanes
  * @returns {Promise<ProbeRow[]>}
  */
-export declare function probe(executor: Executor, p: string, names: string[] | null): Promise<ProbeRow[]>;
+export declare function probe(executor: Executor, p: string, lanes: string[] | null): Promise<ProbeRow[]>;
 /**
- * The due jobs of names with global limits, oldest first: at most `limit` of each name whose keys have room, and those
+ * The due jobs of lanes with global limits, oldest first: at most `limit` of each lane whose keys have room, and those
  * with a full key, which the claim blocks. A key is full when its held slots reach the max of the job, or a rate key
  * has no quota left for it after the older jobs of the search. Without `withRates`, the search leaves out the rate
- * keys, and returns its jobs that have some too, past the max of their name: they tell their names (store.js).
+ * keys, and returns its jobs that have some too, past the max of their lane: they tell their lanes (store.js).
  * @param {Executor} executor
  * @param {string} p
- * @param {Map<string, number>} limitsByName
+ * @param {Map<string, number>} limitsByLane
  * @param {boolean} withRates
  * @returns {Promise<import('./store.js').FoundCandidatesOf>}
  */
-export declare function findCandidates(executor: Executor, p: string, limitsByName: Map<string, number>, withRates: boolean): Promise<import('./store.js').FoundCandidatesOf>;
+export declare function findCandidates(executor: Executor, p: string, limitsByLane: Map<string, number>, withRates: boolean): Promise<import('./store.js').FoundCandidatesOf>;
 /**
  * Claims due jobs among the candidates, and blocks those with a full key. Call it in a queue transaction. The order of
  * the locks: the jobs, the rows of their rate keys, then their slots; the tat of a rate key moves only for the jobs
@@ -71,8 +71,8 @@ export declare function claim(executor: Executor, p: string, { candidateIds, ful
  */
 export declare const SNAPSHOT_ISOLATION_OFF = "/*M!101108 SET STATEMENT innodb_snapshot_isolation = OFF FOR */ ";
 /**
- * Finds, claims and reads the due jobs of names without global limits. Call it in a queue transaction. One statement
- * locks the oldest due jobs of each name that no other claim holds (SKIP LOCKED), with their payloads; the ones that
+ * Finds, claims and reads the due jobs of lanes without global limits. Call it in a queue transaction. One statement
+ * locks the oldest due jobs of each lane that no other claim holds (SKIP LOCKED), with their payloads; the ones that
  * the choice by share takes (`choose`) are claimed. A second read gets the payloads that the statement did not see.
  * @param {Executor} executor
  * @param {string} p

@@ -34,7 +34,7 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
         + 'UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))');
     const params = jobs.flatMap(job => [
         job.id,
-        job.name,
+        job.lane,
         ...runAtSql(job).params,
         job.maxAttempts,
         job.maxStalls,
@@ -44,7 +44,7 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
         enqueueToken,
         job.completedRetentionMs,
         job.failedRetentionMs,
-        job.failureJob,
+        job.failureLane,
     ]);
 
     // A duplicate id keeps its row: its token is not this one.

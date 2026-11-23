@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
-import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineLane } from '../../src/index.js';
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
@@ -40,7 +40,7 @@ function nextPrefix() {
 }
 
 /**
- * An instance whose tie pointer starts at the first handled name.
+ * An instance whose tie pointer starts at the first added lane.
  * @param {string} p
  * @param {Record<string, unknown>} [options]
  * @returns {Sqlane}
@@ -104,7 +104,7 @@ async function waitFor(condition, timeoutMs = 10_000) {
  * }}
  */
 function holdingHandlers() {
-    /** @type {{ name: string, release: () => void }[]} */
+    /** @type {{ lane: string, release: () => void }[]} */
     const held = [];
     /** @type {Record<string, number>} */
     const running = {};
@@ -123,13 +123,13 @@ function holdingHandlers() {
             running[name] = (running[name] ?? 0) + 1;
             started.push(name);
             samples.push({ ...running });
-            held.push({ name, release: () => resolve(undefined) });
+            held.push({ lane: name, release: () => resolve(undefined) });
             await promise;
             running[name]--;
         },
         release: (name, count = 1) => {
             for (let index = 0; index < count; index++) {
-                const at = held.findIndex(job => job.name === name);
+                const at = held.findIndex(job => job.lane === name);
 
                 held.splice(at, 1)[0]?.release();
             }
@@ -193,8 +193,8 @@ describe('the worked examples', () => {
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 8 });
         const jobs = holdingHandlers();
 
-        sqlane.handle(defineJob({ name: 'a', fairShareWeight: 3 }), jobs.handler('a'));
-        sqlane.handle('b', jobs.handler('b'));
+        sqlane.lanes.add(defineLane({ name: 'a', fairShareWeight: 3 }), jobs.handler('a'));
+        sqlane.lanes.add('b', jobs.handler('b'));
         await enqueue(sqlane, 'a', 20);
         await enqueue(sqlane, 'b', 20);
         await sqlane.start();
@@ -214,8 +214,8 @@ describe('the worked examples', () => {
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 4 });
         const jobs = holdingHandlers();
 
-        sqlane.handle('a', jobs.handler('a'));
-        sqlane.handle('b', jobs.handler('b'));
+        sqlane.lanes.add('a', jobs.handler('a'));
+        sqlane.lanes.add('b', jobs.handler('b'));
         await enqueue(sqlane, 'a', 10);
         await sqlane.start();
         await waitFor(() => jobs.started.length === 4);
@@ -262,8 +262,8 @@ describe('the worked examples', () => {
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 4 });
         const jobs = holdingHandlers();
 
-        sqlane.handle('long', jobs.handler('long'));
-        sqlane.handle('short', jobs.handler('short'));
+        sqlane.lanes.add('long', jobs.handler('long'));
+        sqlane.lanes.add('short', jobs.handler('short'));
         await enqueue(sqlane, 'long', 10);
         await enqueue(sqlane, 'short', 20);
         await sqlane.start();
@@ -288,9 +288,9 @@ describe('the worked examples', () => {
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 10 });
         const jobs = holdingHandlers();
 
-        sqlane.handle(defineJob({ name: 't', fairShareWeight: 2, localConcurrencyLimits: [tOnly, heavy] }), jobs.handler('t'));
-        sqlane.handle(defineJob({ name: 'r', localConcurrencyLimits: [heavy] }), jobs.handler('r'));
-        sqlane.handle(defineJob({ name: 'e', fairShareWeight: 3 }), jobs.handler('e'));
+        sqlane.lanes.add(defineLane({ name: 't', fairShareWeight: 2, localConcurrencyLimits: [tOnly, heavy] }), jobs.handler('t'));
+        sqlane.lanes.add(defineLane({ name: 'r', localConcurrencyLimits: [heavy] }), jobs.handler('r'));
+        sqlane.lanes.add(defineLane({ name: 'e', fairShareWeight: 3 }), jobs.handler('e'));
 
         for (const name of ['t', 'r', 'e']) {
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues
@@ -320,7 +320,7 @@ describe('the worked examples', () => {
         const jobs = holdingHandlers();
 
         for (const name of ['a', 'b']) {
-            sqlane.handle(defineJob({ name, localConcurrencyLimits: [one] }), jobs.handler(name));
+            sqlane.lanes.add(defineLane({ name, localConcurrencyLimits: [one] }), jobs.handler(name));
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues
             await enqueue(sqlane, name, 5);
         }
@@ -338,7 +338,7 @@ describe('the worked examples', () => {
 
     test('a local limit with a plain name and a name with global limits: they share it', async () => {
         const pair = defineConcurrencyLimit({ name: 'pair', max: 2 });
-        const keyed = defineJob({
+        const keyed = defineLane({
             name: 'k',
             timeout: '10s',
             globalConcurrencyLimits: ({ payload }) => [defineConcurrencyLimit({ name: 'n', max: 1 }).key(payload.n)],
@@ -347,8 +347,8 @@ describe('the worked examples', () => {
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 10 });
         const jobs = holdingHandlers();
 
-        sqlane.handle(defineJob({ name: 'p', localConcurrencyLimits: [pair] }), jobs.handler('p'));
-        sqlane.handle(keyed, jobs.handler('k'));
+        sqlane.lanes.add(defineLane({ name: 'p', localConcurrencyLimits: [pair] }), jobs.handler('p'));
+        sqlane.lanes.add(keyed, jobs.handler('k'));
         await enqueue(sqlane, 'p', 20);
         await sqlane.enqueueMany(testAdapter.pool, keyed, Array.from({ length: 10 }, (_, n) => ({ payload: { n } })));
         await sqlane.start();
@@ -370,11 +370,11 @@ describe('the worked examples', () => {
 });
 
 /**
- * @param {{ name: string }[]} claimed
- * @returns {{ a: number, b: number }} The claimed jobs of each name.
+ * @param {{ lane: string }[]} claimed
+ * @returns {{ a: number, b: number }} The claimed jobs of each lane.
  */
 function counts(claimed) {
-    return { a: claimed.filter(job => job.name === 'a').length, b: claimed.filter(job => job.name === 'b').length };
+    return { a: claimed.filter(job => job.lane === 'a').length, b: claimed.filter(job => job.lane === 'b').length };
 }
 
 /**
@@ -420,7 +420,7 @@ function countingClaims() {
  * @returns {import('../../src/store/store.js').StartableJob[]}
  */
 function chooseByShare(locked, tieOfA) {
-    const rows = { a: locked.filter(job => job.name === 'a'), b: locked.filter(job => job.name === 'b') };
+    const rows = { a: locked.filter(job => job.lane === 'a'), b: locked.filter(job => job.lane === 'b') };
     const order = tieOfA === 0 ? ['a', 'b'] : ['b', 'a'];
     /** @type {import('../../src/store/store.js').StartableJob[]} */
     const chosen = [];
@@ -442,7 +442,7 @@ describe('ties and processes', () => {
         const started = [];
 
         for (const name of ['a', 'b', 'c']) {
-            sqlane.handle(name, () => {
+            sqlane.lanes.add(name, () => {
                 started.push(name);
             });
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues
@@ -474,7 +474,7 @@ describe('ties and processes', () => {
 
         for (const sqlane of all) {
             for (const name of names) {
-                sqlane.handle(name, () => {
+                sqlane.lanes.add(name, () => {
                     started.push(name);
                 });
             }
@@ -495,17 +495,17 @@ describe('ties and processes', () => {
 
     test('global limits: the slots of a blocked name go to the others; its jobs keep their FIFO per key', async () => {
         const k = defineConcurrencyLimit({ name: 'k', max: 1 });
-        const keyed = defineJob({ name: 'keyed', timeout: '10s', globalConcurrencyLimits: () => [k] });
+        const keyed = defineLane({ name: 'keyed', timeout: '10s', globalConcurrencyLimits: () => [k] });
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 3 });
         const jobs = holdingHandlers();
         /** @type {unknown[]} */
         const keyedOrder = [];
 
-        sqlane.handle(keyed, async (context) => {
+        sqlane.lanes.add(keyed, async (context) => {
             keyedOrder.push(context.payload.n);
             await jobs.handler('keyed')(context);
         });
-        sqlane.handle('plain', jobs.handler('plain'));
+        sqlane.lanes.add('plain', jobs.handler('plain'));
         await sqlane.enqueueMany(testAdapter.pool, keyed, [1, 2, 3].map(n => ({ payload: { n } })));
         await enqueue(sqlane, 'plain', 10);
         await sqlane.start();
@@ -529,11 +529,11 @@ describe('drain(), start()', () => {
         /** @type {string[]} */
         const started = [];
 
-        sqlane.handle(defineJob({ name: 'a', fairShareWeight: 3 }), async () => {
+        sqlane.lanes.add(defineLane({ name: 'a', fairShareWeight: 3 }), async () => {
             started.push('a');
             await sleep(50);
         });
-        sqlane.handle('b', async () => {
+        sqlane.lanes.add('b', async () => {
             started.push('b');
             await sleep(50);
         });
@@ -551,10 +551,10 @@ describe('drain(), start()', () => {
         const jobs = holdingHandlers();
 
         // l and r hold one limit each, b holds both: at most 3 of l + b and 3 of r + b
-        sqlane.handle(defineJob({ name: 'l', localConcurrencyLimits: [left] }), jobs.handler('l'));
-        sqlane.handle(defineJob({ name: 'b', localConcurrencyLimits: [left, right] }), jobs.handler('b'));
-        sqlane.handle(defineJob({ name: 'r', localConcurrencyLimits: [right] }), jobs.handler('r'));
-        sqlane.handle(defineJob({ name: 'x' }), jobs.handler('x'));
+        sqlane.lanes.add(defineLane({ name: 'l', localConcurrencyLimits: [left] }), jobs.handler('l'));
+        sqlane.lanes.add(defineLane({ name: 'b', localConcurrencyLimits: [left, right] }), jobs.handler('b'));
+        sqlane.lanes.add(defineLane({ name: 'r', localConcurrencyLimits: [right] }), jobs.handler('r'));
+        sqlane.lanes.add(defineLane({ name: 'x' }), jobs.handler('x'));
 
         for (const [name, count] of [['l', 10], ['b', 10], ['r', 10], ['x', 20]]) {
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues

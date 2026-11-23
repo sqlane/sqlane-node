@@ -1,5 +1,5 @@
 // The local rate limits of an instance: GCRA in memory (gcra.js), on the monotonic clock of the process. Each start
-// costs 1. The names of a limit share its state, as they share a local concurrency limit.
+// costs 1. The lanes of a limit share its state, as they share a local concurrency limit.
 import { allowanceUs, incrementUs, toleranceUs, waitMsOf, waitUs } from './gcra.js';
 
 /**
@@ -8,7 +8,7 @@ import { allowanceUs, incrementUs, toleranceUs, waitMsOf, waitUs } from './gcra.
  * @property {import('./types.js').RateLimit} limit
  * @property {import('./rate_keys.js').GlobalRateLimit} settings Its settings as gcra.js reads them: a start costs 1.
  * @property {number} tatUs Its theoretical arrival time, in µs of the process clock.
- * @property {string[]} names Its handled names.
+ * @property {string[]} lanes Its added lanes.
  */
 
 /**
@@ -20,7 +20,7 @@ export function createRateState(limit) {
         limit,
         settings: { key: `@${limit.name}`, max: limit.max, per_us: limit.per * 1000, burst: limit.burst, cost: 1 },
         tatUs: 0,
-        names: [],
+        lanes: [],
     };
 }
 

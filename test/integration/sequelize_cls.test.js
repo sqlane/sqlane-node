@@ -131,7 +131,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
     test('the commit of the CLS transaction wakes the worker at once', async () => {
         const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
 
-        sqlane.handle('ping', () => {});
+        sqlane.lanes.add('ping', () => {});
         await sqlane.start();
         await sleep(100);
         await sequelize.transaction(async () => {
@@ -151,7 +151,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         /** @type {unknown[]} */
         const transactions = [];
 
-        sqlane.handle('ping', () => {
+        sqlane.lanes.add('ping', () => {
             transactions.push(namespace.get('transaction'));
         });
         await sqlane.start();

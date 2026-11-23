@@ -179,11 +179,11 @@ async function addFailureJob(executor, p, row, { error, buildFailureJob }) {
     try {
         newJob = buildFailureJob({
             id: String(row.id),
-            name: String(row.lane),
+            lane: String(row.lane),
             payload: row.payload === null ? null : JSON.parse(String(row.payload)),
             attempt: Number(row.attempts) + 1,
             maxAttempts: Number(row.max_attempts),
-            failureJob: String(row.failure_lane),
+            failureLane: String(row.failure_lane),
             error,
         });
     } catch (buildError) {
@@ -237,13 +237,13 @@ async function lockJob(executor, p, where, params) {
  * @param {string} p
  * @param {OwnedJob} job
  * @param {{ error: import('../error_json.js').ErrorJson, buildFailureJob: FailureJobBuilder }} params
- * @returns {Promise<{ changed: boolean, failureJob: FailureJobResult | null }>}
+ * @returns {Promise<{ changed: boolean, failureResult: FailureJobResult | null }>}
  */
 export async function failJob(executor, p, job, { error, buildFailureJob }) {
     const row = await lockJob(executor, p, 'j.id = ? AND j.lock_token = ?', [job.id, job.lockToken]);
 
     if (!row) {
-        return { changed: false, failureJob: null };
+        return { changed: false, failureResult: null };
     }
 
     await executor.run(`
@@ -257,7 +257,7 @@ export async function failJob(executor, p, job, { error, buildFailureJob }) {
 
     return {
         changed: true,
-        failureJob: row.failure_lane === null
+        failureResult: row.failure_lane === null
             ? null
             : await addFailureJob(executor, p, row, { error, buildFailureJob }),
     };
@@ -385,7 +385,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
     const row = await lockJob(executor, p, `j.id = ? AND j.status = 'running' AND j.locked_until < ${NOW}`, [id]);
 
     if (!row) {
-        return { result: null, failureJob: null };
+        return { result: null, failureResult: null };
     }
 
     const owned = { id, lockToken: String(row.lock_token) };
@@ -404,7 +404,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
              WHERE id = ?
         `, [JSON.stringify(error), id]);
 
-        return { result: 'released', failureJob: null, ...stalledRun(row) };
+        return { result: 'released', failureResult: null, ...stalledRun(row) };
     }
 
     await executor.run(`
@@ -417,7 +417,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
 
     return {
         result: 'failed',
-        failureJob: row.failure_lane === null
+        failureResult: row.failure_lane === null
             ? null
             : await addFailureJob(executor, p, row, { error, buildFailureJob }),
         ...stalledRun(row),
@@ -432,7 +432,7 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
  * @param {string[]} keys
  * @param {<T>(func: (executor: Executor) => Promise<T>) => Promise<T>} [inTransaction] Runs the writes. Default: on
  *     `executor`, which is in a transaction already.
- * @returns {Promise<string[]>} The names of the jobs that it made pending.
+ * @returns {Promise<string[]>} The lanes of the jobs that it made pending.
  */
 export async function unblock(executor, p, keys, inTransaction = func => func(executor)) {
     // The oldest blocked job of each key: its keys and maxes; and the held slots of the key
@@ -477,7 +477,7 @@ export async function unblock(executor, p, keys, inTransaction = func => func(ex
  * @param {Executor} executor In a transaction.
  * @param {string} p
  * @param {{ key: string, room: number }[]} rooms
- * @returns {Promise<string[]>} The names of the jobs that it made pending.
+ * @returns {Promise<string[]>} The lanes of the jobs that it made pending.
  */
 async function unblockRooms(executor, p, rooms) {
     const picked = await executor.query(rooms.map(() => `(
@@ -526,7 +526,7 @@ function rateLimitOf(key, row) {
  * @param {string} p
  * @param {string[]} keys
  * @param {import('./postgres_final.js').RateUnblockOptions} [options]
- * @returns {Promise<{ names: string[], waits: import('./postgres_final.js').RateUnblock[] }>} The names of the jobs
+ * @returns {Promise<{ lanes: string[], waits: import('./postgres_final.js').RateUnblock[] }>} The lanes of the jobs
  *     that it made pending; the keys on which it found blocked jobs.
  */
 export async function unblockRates(executor, p, keys, options = {}) {
@@ -550,9 +550,9 @@ export async function unblockRates(executor, p, keys, options = {}) {
         return { key, head, debtUs, most: Math.min(Math.max(fit, 0), RATE_UNBLOCK_BATCH) };
     });
     const open = heads.filter(({ most }) => most > 0);
-    const { names, admissions } = open.length
+    const { lanes, admissions } = open.length
         ? await inTransaction(transaction => admitLocked(transaction, p, open))
-        : { names: [], admissions: new Map() };
+        : { lanes: [], admissions: new Map() };
     /** @type {import('./postgres_final.js').RateUnblock[]} */
     const waits = [];
 
@@ -576,7 +576,7 @@ export async function unblockRates(executor, p, keys, options = {}) {
         });
     }
 
-    return { names, waits };
+    return { lanes, waits };
 }
 
 /**
@@ -584,7 +584,7 @@ export async function unblockRates(executor, p, keys, options = {}) {
  * @param {Executor} executor In a transaction.
  * @param {string} p
  * @param {{ key: string, debtUs: number, most: number }[]} keys
- * @returns {Promise<{ names: string[], admissions: Map<string, import('../gcra.js').RateAdmission> }>} The names of the
+ * @returns {Promise<{ lanes: string[], admissions: Map<string, import('../gcra.js').RateAdmission> }>} The lanes of the
  *     jobs that it made pending; the admission of each key with jobs locked.
  */
 async function admitLocked(executor, p, keys) {
@@ -633,7 +633,7 @@ async function admitLocked(executor, p, keys) {
         `, picked.map(row => String(row.id)));
     }
 
-    return { names: [...new Set(picked.map(row => String(row.lane)))], admissions };
+    return { lanes: [...new Set(picked.map(row => String(row.lane)))], admissions };
 }
 
 /**
@@ -710,7 +710,7 @@ export async function sweepSlots(executor, p, limit, parts) {
             // oxlint-disable-next-line no-await-in-loop -- batches one after the other
             const rates = await unblockRates(executor, p, rateKeys);
 
-            unblocked += rates.names.length;
+            unblocked += rates.lanes.length;
             // A key whose due jobs were still blocked lost its timer: its next unblock is here (`nextUnblockMs`)
             rateWaits.push(...rates.waits.filter(wait => wait.unblocked > 0)
                 .map(({ key, delayMs }) => ({ key, delayMs })));
@@ -773,28 +773,28 @@ export async function deleteExpiredJobs(executor, p, limit) {
 }
 
 /**
- * For drain({ includeDelayed }): the pending jobs of the names are due now.
+ * For drain({ includeDelayed }): the pending jobs of the lanes are due now.
  * @param {Executor} executor
  * @param {string} p
- * @param {string[]} names
+ * @param {string[]} lanes
  * @returns {Promise<void>}
  */
-export async function makeDue(executor, p, names) {
-    if (!names.length) {
+export async function makeDue(executor, p, lanes) {
+    if (!lanes.length) {
         return;
     }
 
     await executor.run(`
         UPDATE ${p}jobs SET run_at = ${NOW}
-         WHERE status = 'pending' AND lane IN (${placeholders(names.length)}) AND run_at > ${NOW}
-    `, names);
+         WHERE status = 'pending' AND lane IN (${placeholders(lanes.length)}) AND run_at > ${NOW}
+    `, lanes);
 }
 
 /**
- * The counts per job name, for alerts such as "queue stuck". It reads every row kept, of every status.
+ * The counts per lane, for alerts such as "queue stuck". It reads every row kept, of every status.
  * @param {Executor} executor
  * @param {string} p
- * @returns {Promise<import('../types.js').JobStats[]>}
+ * @returns {Promise<import('../types.js').LaneStats[]>}
  */
 export async function getStats(executor, p) {
     const rows = await executor.query(`
