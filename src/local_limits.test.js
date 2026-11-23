@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
 import { defineConcurrencyLimit } from './define_concurrency_limit.js';
-import { defineJob } from './define_job.js';
+import { defineLane } from './define_lane.js';
 import { defineRateLimit } from './define_rate_limit.js';
 import {
     createLocalRateWakes,
@@ -8,7 +8,7 @@ import {
     localLimitsOf,
     ratesAdmitBefore,
     roomOf,
-    shareNamesOf,
+    shareLanesOf,
 } from './local_limits.js';
 import { nowUs, takeRate } from './local_rates.js';
 import { createRegistry } from './registry.js';
@@ -18,12 +18,12 @@ const disk = defineRateLimit({ name: 'disk', max: 2, per: '1s', burst: 2 });
 
 /** @returns {import('./registry.js').Registry} plain, two names in `lane`, and one with `disk` */
 function registryOf() {
-    const registry = createRegistry({ jobsByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
 
-    registry.handle('plain', async () => {});
-    registry.handle(defineJob({ name: 'a', localConcurrencyLimits: [lane] }), async () => {});
-    registry.handle(defineJob({ name: 'b', localConcurrencyLimits: [lane], fairShareWeight: 2 }), async () => {});
-    registry.handle(defineJob({ name: 'rated', localRateLimits: [disk] }), async () => {});
+    registry.add('plain', async () => {});
+    registry.add(defineLane({ name: 'a', localConcurrencyLimits: [lane] }), async () => {});
+    registry.add(defineLane({ name: 'b', localConcurrencyLimits: [lane], fairShareWeight: 2 }), async () => {});
+    registry.add(defineLane({ name: 'rated', localRateLimits: [disk] }), async () => {});
 
     return registry;
 }
@@ -67,7 +67,7 @@ test('the share names: the names of one limit share one room, at least 0', () =>
     a.limits[0].running = 4;
     a.running = 4;
 
-    const names = shareNamesOf([plain, a, b]);
+    const names = shareLanesOf([plain, a, b]);
 
     expect(names.map(({ name, index, weight, running, available }) => ({ name, index, weight, running, available })))
         .toStrictEqual([

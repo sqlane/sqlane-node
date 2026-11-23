@@ -13,7 +13,7 @@ database, and to compare sqlane with other job queues for the [performance page]
 ## Regressions
 
 The seven hot paths: `enqueue` in a transaction of its own, `enqueueMany` of 100, a job claimed, run and completed over
-1000 job names, idle with 1000 job names, a schedule firing (1000 schedules), a job with keys of global concurrency
+1000 lanes, idle with 1000 lanes, a schedule firing (1000 schedules), a job with keys of global concurrency
 limits, and a job with a key of a global rate limit (`global_rate_limits`). The rate limit has quota to spare, so no job waits:
 the counts are what each job with a rate key pays, not the timer that unblocks the jobs over the limit.
 
@@ -43,7 +43,7 @@ same work without limits.
 
 | Scenario                  | Workload                                                                 |
 | ------------------------- | ------------------------------------------------------------------------ |
-| `contention`              | The realistic trace, with the limits of its names                        |
+| `contention`              | The realistic trace, with the limits of its lanes                        |
 | `contention_plain`        | The same trace, without limits                                           |
 | `contention_stress`       | The stress trace: every job with 2 to 5 concurrency limits of max 1 to 5 |
 | `contention_stress_plain` | The same trace, without limits                                           |
@@ -51,13 +51,13 @@ same work without limits.
 A trace (`bench/regression/trace.mjs`) is generated ahead from a seed (`--seed`, default 1), the same in every process
 and on both refs: per job, its time, name, payload, duration and outcome. A producer replays it from its start; 2
 workers with `localMaxConcurrency: 10` each run its jobs, each for its duration. The jobs arrive at 100/s (Poisson),
-and at 300/s in a burst of 2 s every 10 s, over 1000 names (Zipf). A job runs for about 20 ms (300 ms for the slow
-names, which get 5% of the jobs; log-normal, σ = 1, at most 2 s: 56 ms on average), so the workers use about 6 of their
+and at 300/s in a burst of 2 s every 10 s, over 1000 lanes (Zipf). A job runs for about 20 ms (300 ms for the slow
+lanes, which get 5% of the jobs; log-normal, σ = 1, at most 2 s: 56 ms on average), so the workers use about 6 of their
 20 slots, and 17 in a burst. 1% of the jobs throw once and run again after 200 ms, and 0.2% of them throw a
 `RateLimitedError` (retryAfter 1 s) once. A payload has a tenant (1000, Zipf), a user of the tenant and an integration,
-which the keys of the limits come from. In the realistic profile, 70% of the names have no limit, 15% one, 10% two or
+which the keys of the limits come from. In the realistic profile, 70% of the lanes have no limit, 15% one, 10% two or
 three, 5% four or five, out of 8: per tenant, per user, per integration (max 1 to 5), and shared (max 5 to 50); 10% of
-the names with a limit also have a rate limit (per tenant 10/s, or shared 50/s). The generator fails, and names the
+the lanes with a limit also have a rate limit (per tenant 10/s, or shared 50/s). The generator fails, and names the
 key, if a key has no steady state: on average, its work must stay under 80% of its max (the busiest key of the
 realistic trace is at 16%, of the stress trace at 35%), and its starts under 80% of its rate (4%). So jobs wait on
 their keys in the bursts, and the queue drains between them.
@@ -121,7 +121,7 @@ from `/proc`.
 - **CPU time**: what you pay for. It depends on everything above, and on the clock.
 
 Instructions and cycles can move apart. In this example, `main` spent most of its work in one tight loop over 1000
-names, at 3.5–5 instructions per cycle. The working tree removed that loop; the work left is a few statements per job,
+lanes, at 3.5–5 instructions per cycle. The working tree removed that loop; the work left is a few statements per job,
 each after an idle gap, on cold caches, with syscalls and wake-ups, at 0.7–1 instruction per cycle. So instructions
 fell 97% and cycles 78%. Report both: instructions for the work removed, cycles or CPU time for the cost.
 

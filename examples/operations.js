@@ -33,7 +33,7 @@ export function redisHint(publisher, subscriber) {
 
 /** @returns {Promise<number>} The jobs that wait the longest, in ms. */
 export async function oldestDueAgeMs() {
-    const stats = await sqlane.jobs.stats();
+    const stats = await sqlane.lanes.stats();
 
     return Math.max(0, ...stats.map(row => row.oldestDueAgeMs ?? 0));
 }

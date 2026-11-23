@@ -1,6 +1,6 @@
 // The shape of a rate limit and of its keys: the ranges and the checks. Apart from define_rate_limit.js, which throws
 // the errors: errors.js checks the limit of a RateLimitedError with these, without an import cycle.
-import { JOB_NAME_REGEXP } from './validate.js';
+import { NAME_REGEXP } from './validate.js';
 
 export const MAX_RATE = 1_000_000;
 /** 7 d */
@@ -43,7 +43,7 @@ export function isRateLimit(value) {
 
     const { name, max, per, burst, key, cost, ...rest } = /** @type {Record<string, unknown>} */ (value);
 
-    return typeof name === 'string' && JOB_NAME_REGEXP.test(name) && isRateMax(max) && isPerMs(per)
+    return typeof name === 'string' && NAME_REGEXP.test(name) && isRateMax(max) && isPerMs(per)
         && max <= per * 1000 && isUpTo(burst, max) && typeof key === 'function' && typeof cost === 'function'
         && Object.keys(rest).length === 0;
 }

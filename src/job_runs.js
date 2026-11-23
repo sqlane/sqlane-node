@@ -74,7 +74,7 @@ function contextOf(job) {
         payload: undefined,
         job: {
             id: claimed.id,
-            name: claimed.name,
+            lane: claimed.lane,
             attempt: claimed.attempts + 1,
             maxAttempts: claimed.maxAttempts,
             enqueuedAt: claimed.enqueuedAt,
@@ -97,10 +97,10 @@ function contextOf(job) {
  * @param {{ completed: number, retried: number, failed: number }} params.counts The results, counted for drain().
  * @param {{ leaseMs: number, maxFinalizingMs: number, missingPayloadGraceMs: number }} params.timings
  * @param {() => import('./runner.js').RunnerState} params.state
- * @param {import('./failure_jobs.js').FailureJobs} params.failureJobs
+ * @param {import('./failure_lanes.js').FailureLanes} params.failureLanes
  * @param {(key: string, delayMs: number) => void} params.armRateWake The timer of a rate key with a job blocked on it.
  * @param {(entry: HandlerEntry) => void} params.wakeAfterRates Its local rate limits that admit no start now: a wake of
- *     their names when one may start.
+ *     their lanes when one may start.
  * @param {import('./hint_channel.js').HintChannel} params.hintChannel
  * @returns {JobRuns}
  */
@@ -113,7 +113,7 @@ export function createJobRuns({
     counts,
     timings: t,
     state,
-    failureJobs,
+    failureLanes,
     armRateWake,
     wakeAfterRates,
     hintChannel,
@@ -206,7 +206,7 @@ export function createJobRuns({
      */
     async function finalize(job, error) {
         const { claimed } = job;
-        const base = { jobId: claimed.id, jobName: claimed.name, attempt: claimed.attempts + 1 };
+        const base = { jobId: claimed.id, lane: claimed.lane, attempt: claimed.attempts + 1 };
         const durationMs = Date.now() - job.startedAt;
 
         if (error === null && !job.timedOut) {
@@ -236,16 +236,16 @@ export function createJobRuns({
             return;
         }
 
-        logger?.error({ error, jobId: claimed.id, jobName: claimed.name }, 'sqlane: job failed');
+        logger?.error({ error, jobId: claimed.id, lane: claimed.lane }, 'sqlane: job failed');
         await writeResult(job, async () => {
-            const { failureJob } = await store.failJob(claimed, {
+            const { failureResult } = await store.failJob(claimed, {
                 error: toErrorJson(error),
-                buildFailureJob: failureJobs.build,
+                buildFailureJob: failureLanes.build,
             });
 
-            failureJobs.report(
-                { id: claimed.id, name: claimed.name, attempt: base.attempt, failureJob: claimed.failureJob },
-                failureJob,
+            failureLanes.report(
+                { id: claimed.id, lane: claimed.lane, attempt: base.attempt, failureLane: claimed.failureLane },
+                failureResult,
             );
         });
         counts.failed++;
@@ -320,13 +320,13 @@ export function createJobRuns({
         } else {
             await writeResult(job, () => store.releaseJob(claimed, { delayMs: 0, lingerMs: 0 }));
             // The other processes may run it now
-            hintChannel.publish(claimed.name);
+            hintChannel.publish(claimed.lane);
         }
 
         emit({
             type: 'rate_limited',
             jobId: claimed.id,
-            jobName: claimed.name,
+            lane: claimed.lane,
             attempt: claimed.attempts + 1,
             ...(globalLimits.length
                 ? { ...parseRateKey(globalLimits[0].key), scope: 'global' }
@@ -413,7 +413,7 @@ export function createJobRuns({
         emit({
             type: 'timed_out',
             jobId: job.claimed.id,
-            jobName: job.claimed.name,
+            lane: job.claimed.lane,
             attempt: job.claimed.attempts + 1,
             durationMs: Date.now() - job.startedAt,
         });

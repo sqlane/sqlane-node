@@ -7,7 +7,7 @@ import { incrementsOf, splitByRate } from '../gcra.js';
 /** @typedef {import('./store.js').ClaimParams} ClaimParams */
 /** @typedef {import('./store.js').ClaimedJob} ClaimedJob */
 
-/** The due jobs of each name with global limits that a search of candidates reads */
+/** The due jobs of each lane with global limits that a search of candidates reads */
 export const LIMIT_WINDOW_SIZE = 500;
 
 /**
@@ -45,98 +45,98 @@ export const rateLimitsOf = json => `(
 ) AS e`;
 
 /**
- * The next due time of each given job name with pending jobs: one index probe per name.
+ * The next due time of each given lane with pending jobs: one index probe per lane.
  * @param {Executor} executor
  * @param {string} p
- * @param {string[]} names
+ * @param {string[]} lanes
  * @returns {Promise<ProbeRow[]>}
  */
-async function probeNames(executor, p, names) {
+async function probeLanes(executor, p, lanes) {
     const rows = await executor.query(`
-        SELECT request.name AS job_name,
+        SELECT request.name AS lane,
                (EXTRACT(EPOCH FROM next.run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
           FROM unnest(${arrayParam(1, 'text')}) AS request(name)
          CROSS JOIN LATERAL (
              SELECT run_at FROM ${p}jobs
-              WHERE status = 'pending' AND job_name = request.name ORDER BY run_at LIMIT 1
+              WHERE status = 'pending' AND lane = request.name ORDER BY run_at LIMIT 1
          ) AS next
-    `, [names]);
+    `, [lanes]);
 
-    return rows.map(row => ({ name: String(row.job_name), delayMs: Number(row.delay_ms) }));
+    return rows.map(row => ({ name: String(row.lane), delayMs: Number(row.delay_ms) }));
 }
 
 /**
- * The next due time of each given job name with pending jobs; null: of each job name. PostgreSQL has no loose index
- * scan: for all names, a recursive CTE skips from one pending name to the next on the partial index, two index probes
- * per pending name.
+ * The next due time of each given lane with pending jobs; null: of each lane. PostgreSQL has no loose index
+ * scan: for all lanes, a recursive CTE skips from one pending lane to the next on the partial index, two index probes
+ * per pending lane.
  * @param {Executor} executor
  * @param {string} p
- * @param {string[] | null} names
+ * @param {string[] | null} lanes
  * @returns {Promise<ProbeRow[]>}
  */
-export async function probe(executor, p, names) {
-    if (names) {
-        return names.length ? probeNames(executor, p, names) : [];
+export async function probe(executor, p, lanes) {
+    if (lanes) {
+        return lanes.length ? probeLanes(executor, p, lanes) : [];
     }
 
     const rows = await executor.query(`
-        WITH RECURSIVE names AS (
-            (SELECT job_name FROM ${p}jobs WHERE status = 'pending' ORDER BY job_name LIMIT 1)
+        WITH RECURSIVE lanes AS (
+            (SELECT lane FROM ${p}jobs WHERE status = 'pending' ORDER BY lane LIMIT 1)
             UNION ALL
             SELECT (
-                SELECT j.job_name FROM ${p}jobs j
-                 WHERE j.status = 'pending' AND j.job_name > names.job_name ORDER BY j.job_name LIMIT 1
-            ) FROM names WHERE names.job_name IS NOT NULL
+                SELECT j.lane FROM ${p}jobs j
+                 WHERE j.status = 'pending' AND j.lane > lanes.lane ORDER BY j.lane LIMIT 1
+            ) FROM lanes WHERE lanes.lane IS NOT NULL
         )
-        SELECT names.job_name,
+        SELECT lanes.lane,
                (EXTRACT(EPOCH FROM (
                    SELECT j.run_at FROM ${p}jobs j
-                    WHERE j.status = 'pending' AND j.job_name = names.job_name ORDER BY j.run_at LIMIT 1
+                    WHERE j.status = 'pending' AND j.lane = lanes.lane ORDER BY j.run_at LIMIT 1
                ) - clock_timestamp()) * 1000)::bigint AS delay_ms
-          FROM names WHERE names.job_name IS NOT NULL
+          FROM lanes WHERE lanes.lane IS NOT NULL
     `, []);
 
-    return rows.map(row => ({ name: String(row.job_name), delayMs: Number(row.delay_ms) }));
+    return rows.map(row => ({ name: String(row.lane), delayMs: Number(row.delay_ms) }));
 }
 
 /**
- * The due jobs of names with global limits, oldest first: at most `limit` of each name whose keys have room, and those
+ * The due jobs of lanes with global limits, oldest first: at most `limit` of each lane whose keys have room, and those
  * with a full key, which the claim blocks. A key is full when its held slots reach the max of the job, or a rate key
  * has no quota left for it after the older jobs of the search. Without `withRates`, the search leaves out the rate
- * keys, and returns its jobs that have some too, past the max of their name: they tell their names (store.js).
+ * keys, and returns its jobs that have some too, past the max of their lane: they tell their lanes (store.js).
  * @param {Executor} executor
  * @param {string} p
- * @param {Map<string, number>} limitsByName
+ * @param {Map<string, number>} limitsByLane
  * @param {boolean} withRates
  * @returns {Promise<import('./store.js').FoundCandidatesOf>}
  */
-export async function findCandidates(executor, p, limitsByName, withRates) {
-    const names = [...limitsByName.keys()];
+export async function findCandidates(executor, p, limitsByLane, withRates) {
+    const lanes = [...limitsByLane.keys()];
 
-    if (!names.length) {
-        return { startable: [], full: [], ratedNames: [] };
+    if (!lanes.length) {
+        return { startable: [], full: [], ratedLanes: [] };
     }
 
-    const rows = await executor.query(candidatesSql(p, withRates), [names, names.map(name => limitsByName.get(name))]);
+    const rows = await executor.query(candidatesSql(p, withRates), [lanes, lanes.map(lane => limitsByLane.get(lane))]);
     const candidates = rows.map(row => ({
         id: String(row.id),
-        name: String(row.job_name),
+        lane: String(row.lane),
         runAtMs: Number(row.run_at_ms),
         full: Boolean(row.is_full),
     }));
 
     return {
-        startable: candidates.filter(row => !row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
-        full: candidates.filter(row => row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
-        ratedNames: [...new Set(rows.filter(row => row.rated).map(row => String(row.job_name)))],
+        startable: candidates.filter(row => !row.full).map(({ id, lane, runAtMs }) => ({ id, lane, runAtMs })),
+        full: candidates.filter(row => row.full).map(({ id, lane, runAtMs }) => ({ id, lane, runAtMs })),
+        ratedLanes: [...new Set(rows.filter(row => row.rated).map(row => String(row.lane)))],
     };
 }
 
 /**
  * @param {string} p
  * @param {boolean} withRates With the rate keys of the jobs. Without: a column `rated`, the job has rate keys, and
- *     the jobs with rate keys are returned too, past the max of their name: they only tell their names.
- * @returns {string} The search of candidates, `$1` the names and `$2` the max jobs of each.
+ *     the jobs with rate keys are returned too, past the max of their lane: they only tell their lanes.
+ * @returns {string} The search of candidates, `$1` the lanes and `$2` the max jobs of each.
  */
 function candidatesSql(p, withRates) {
     const rates = `
@@ -170,9 +170,9 @@ function candidatesSql(p, withRates) {
         w AS (
             SELECT due.*, request.max_jobs FROM request
              CROSS JOIN LATERAL (
-                 SELECT id, job_name, run_at, limit_keys, limit_maxes,
+                 SELECT id, lane, run_at, limit_keys, limit_maxes,
                         ${withRates ? 'rate_limits' : 'rate_limits IS NOT NULL AS rated'} FROM ${p}jobs
-                  WHERE status = 'pending' AND job_name = request.name AND run_at <= clock_timestamp()
+                  WHERE status = 'pending' AND lane = request.name AND run_at <= clock_timestamp()
                   ORDER BY run_at, id LIMIT ${LIMIT_WINDOW_SIZE}
              ) AS due
         ),
@@ -187,17 +187,17 @@ function candidatesSql(p, withRates) {
              GROUP BY k.limit_key
         ),${withRates ? rates : ''}
         marked AS (
-            SELECT w.id, w.job_name, w.run_at, w.max_jobs, ${withRates ? '' : 'w.rated,'}
+            SELECT w.id, w.lane, w.run_at, w.max_jobs, ${withRates ? '' : 'w.rated,'}
                    EXISTS (
                        SELECT 1 FROM wk JOIN held h ON h.limit_key = wk.limit_key WHERE wk.id = w.id AND h.held >= wk.max
                    ) ${withRates ? 'OR w.id IN (SELECT id FROM rate_full)' : ''} AS is_full
               FROM w
         ),
         ranked AS (
-            SELECT *, ROW_NUMBER() OVER (PARTITION BY job_name, is_full ORDER BY run_at, id) AS name_rank FROM marked
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY lane, is_full ORDER BY run_at, id) AS lane_rank FROM marked
         )
-        SELECT id, job_name, ${epochMs('run_at')} AS run_at_ms, is_full${withRates ? '' : ', rated'}
-          FROM ranked WHERE is_full OR name_rank <= max_jobs${withRates ? '' : ' OR rated'}
+        SELECT id, lane, ${epochMs('run_at')} AS run_at_ms, is_full${withRates ? '' : ', rated'}
+          FROM ranked WHERE is_full OR lane_rank <= max_jobs${withRates ? '' : ' OR rated'}
          ORDER BY run_at, id
     `;
 }
@@ -332,12 +332,12 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     const ids = [...candidateIds, ...fullIds];
 
     if (!ids.length) {
-        return { jobs: [], blockedKeys: [], blockedNames: [], rateWaits: [] };
+        return { jobs: [], blockedKeys: [], blockedLanes: [], rateWaits: [] };
     }
 
-    const columns = `id, job_name, array_to_json(limit_keys)::text AS limit_keys,
+    const columns = `id, lane, array_to_json(limit_keys)::text AS limit_keys,
                array_to_json(limit_maxes)::text AS limit_maxes, rate_limits::text AS rate_limits, attempts,
-               max_attempts, stalls, max_stalls, failure_job, ${epochMs('created_at')} AS created_at_ms,
+               max_attempts, stalls, max_stalls, failure_lane, ${epochMs('created_at')} AS created_at_ms,
                ${epochMs('run_at')} AS run_at_ms,
                (EXTRACT(EPOCH FROM clock_timestamp() - run_at) * 1000)::bigint AS waited_ms`;
     const pending = `FROM ${p}jobs
@@ -360,14 +360,14 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
         /** @type {ClaimedJob} */
         job: {
             id: String(row.id),
-            name: String(row.job_name),
+            lane: String(row.lane),
             limits: limitsOf(row),
             rateLimits: row.rate_limits === null ? [] : JSON.parse(String(row.rate_limits)),
             attempts: Number(row.attempts),
             maxAttempts: Number(row.max_attempts),
             stalls: Number(row.stalls),
             maxStalls: Number(row.max_stalls),
-            failureJob: row.failure_job === null ? null : String(row.failure_job),
+            failureLane: row.failure_lane === null ? null : String(row.failure_lane),
             enqueuedAt: new Date(Number(row.created_at_ms)),
             runAt: new Date(Number(row.run_at_ms)),
             // Set by the write of the claim
@@ -394,7 +394,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     }
 
     const held = new Map([...heldSlots].map(([key, slots]) => [key, slots.size]));
-    /** @type {{ id: string, name: string, key: string }[]} */
+    /** @type {{ id: string, lane: string, key: string }[]} */
     const blocked = [];
     /** @type {{ job: ClaimedJob, runAtMs: number }[]} */
     const withRoom = [];
@@ -404,7 +404,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
         const fullLimit = row.job.limits.find(({ key, max }) => (held.get(key) ?? 0) >= max);
 
         if (fullLimit) {
-            blocked.push({ id: row.job.id, name: row.job.name, key: fullLimit.key });
+            blocked.push({ id: row.job.id, lane: row.job.lane, key: fullLimit.key });
         } else {
             withRoom.push(row);
         }
@@ -489,7 +489,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     return {
         jobs: claimed,
         blockedKeys: [...new Set(blocked.map(job => job.key))],
-        blockedNames: [...new Set(blocked.map(job => job.name))],
+        blockedLanes: [...new Set(blocked.map(job => job.lane))],
         rateWaits: waits,
     };
 }
@@ -501,9 +501,9 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
 function claimedJobsJson(p) {
     return `(
         SELECT json_agg(json_build_object(
-                   'id', c.id, 'name', c.job_name, 'attempts', c.attempts,
+                   'id', c.id, 'lane', c.lane, 'attempts', c.attempts,
                    'maxAttempts', c.max_attempts, 'stalls', c.stalls, 'maxStalls', c.max_stalls,
-                   'failureJob', c.failure_job, 'createdAtMs', c.created_at_ms, 'waitedMs', c.waited_ms,
+                   'failureLane', c.failure_lane, 'createdAtMs', c.created_at_ms, 'waitedMs', c.waited_ms,
                    'runAtMs', ${epochMs('c.run_at')}, 'startedAtMs', ${epochMs('c.started_at')},
                    'found', pl.id IS NOT NULL, 'payload', pl.payload
                ) ORDER BY c.run_at, c.id)
@@ -517,21 +517,21 @@ function claimedJobsJson(p) {
  * @returns {import('./store.js').StartableJob[]}
  */
 function parseClaimedJobs(json, lockToken) {
-    /** @type {{ id: string, name: string, attempts: number, maxAttempts: number, stalls: number, maxStalls: number,
-     *     failureJob: string | null, createdAtMs: number, waitedMs: number, runAtMs: number, startedAtMs: number,
+    /** @type {{ id: string, lane: string, attempts: number, maxAttempts: number, stalls: number, maxStalls: number,
+     *     failureLane: string | null, createdAtMs: number, waitedMs: number, runAtMs: number, startedAtMs: number,
      *     found: boolean, payload: unknown }[]} */
     const jobs = (json ?? null) === null ? [] : JSON.parse(String(json));
 
     return jobs.map(job => ({
         id: job.id,
-        name: job.name,
+        lane: job.lane,
         limits: [],
         rateLimits: [],
         attempts: job.attempts,
         maxAttempts: job.maxAttempts,
         stalls: job.stalls,
         maxStalls: job.maxStalls,
-        failureJob: job.failureJob,
+        failureLane: job.failureLane,
         enqueuedAt: new Date(job.createdAtMs),
         runAt: new Date(Number(job.runAtMs)),
         startedAt: new Date(Number(job.startedAtMs)),
@@ -542,11 +542,11 @@ function parseClaimedJobs(json, lockToken) {
 }
 
 /**
- * Finds, chooses, claims and reads the due jobs of names without global limits, in one statement (a transaction of its
- * own). Each name locks its oldest due jobs that no other claim holds (SKIP LOCKED), up to its `maxJobs`. The locked
- * rows are taken in the order of their share, `(running + rank in the name − 1) / weight`, then the tie order, within
+ * Finds, chooses, claims and reads the due jobs of lanes without global limits, in one statement (a transaction of its
+ * own). Each lane locks its oldest due jobs that no other claim holds (SKIP LOCKED), up to its `maxJobs`. The locked
+ * rows are taken in the order of their share, `(running + rank in the lane − 1) / weight`, then the tie order, within
  * the free slots of the local limits and of the instance: the order of `fill()` (fair_share.js), row by row. Then the
- * next due time of each requested name, among its pending jobs that this claim did not take.
+ * next due time of each requested lane, among its pending jobs that this claim did not take.
  * @param {Executor} executor Outside a transaction.
  * @param {string} p
  * @param {import('./store.js').ClaimDueParams} params
@@ -559,8 +559,8 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
 
     if (requests.length === 1) {
         const [{ name, maxJobs }] = requests;
-        // One name: nothing to share
-        const result = await claimDueOfName(executor, p, {
+        // One lane: nothing to share
+        const result = await claimDueOfLane(executor, p, {
             name,
             limit: Math.min(maxJobs, free),
             lockToken,
@@ -602,7 +602,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
         picked AS (
             SELECT id FROM locked ORDER BY share, tie, run_at, id LIMIT $8
         ),`;
-    // One row: the claimed jobs, the next due times and the names of the locked rows left, as JSON texts. Bigints: a
+    // One row: the claimed jobs, the next due times and the lanes of the locked rows left, as JSON texts. Bigints: a
     // localMaxConcurrency may be above 2^31
     const [row] = await executor.query(`
         WITH RECURSIVE limit_rooms AS (
@@ -623,12 +623,12 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
               FROM request
              CROSS JOIN LATERAL (
                  SELECT id, run_at, limit_keys IS NOT NULL OR rate_limits IS NOT NULL AS limited FROM ${p}jobs
-                  WHERE status = 'pending' AND job_name = request.name AND run_at <= clock_timestamp()
+                  WHERE status = 'pending' AND lane = request.name AND run_at <= clock_timestamp()
                   ORDER BY run_at, id LIMIT request.max_jobs
                     FOR UPDATE SKIP LOCKED
              ) AS due
         ),
-        -- The rows with global limits (from their enqueue options) are left to the claim of names with limits
+        -- The rows with global limits (from their enqueue options) are left to the claim of lanes with limits
         locked AS (
             SELECT id, run_at, name, limits, tie,
                    (running + ROW_NUMBER() OVER (PARTITION BY name ORDER BY run_at, id) - 1)::float8 / weight AS share
@@ -642,28 +642,28 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
                    timed_out_at = NULL, updated_at = clock_timestamp()
               FROM picked
              WHERE j.id = picked.id
-            RETURNING j.id, j.job_name, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
-                      j.failure_job,
+            RETURNING j.id, j.lane, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
+                      j.failure_lane,
                       ${epochMs('j.created_at')} AS created_at_ms,
                       (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
         ),
         -- The statement's snapshot: the picked jobs are still pending in it. A full claim does not read them: the next
         -- turn claims again
         next AS (
-            SELECT request.name AS job_name,
+            SELECT request.name AS lane,
                    (EXTRACT(EPOCH FROM n.run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
               FROM unnest(${arrayParam(1, 'text')}) AS request(name)
              CROSS JOIN LATERAL (
                  SELECT run_at FROM ${p}jobs
-                  WHERE status = 'pending' AND job_name = request.name AND id NOT IN (SELECT id FROM picked)
+                  WHERE status = 'pending' AND lane = request.name AND id NOT IN (SELECT id FROM picked)
                   ORDER BY run_at LIMIT 1
              ) AS n
              WHERE (SELECT count(*) FROM picked) < $8
         )
         SELECT ${claimedJobsJson(p)} AS jobs,
                (SELECT count(*) FROM picked) >= $8 AS full,
-               (SELECT json_agg(json_build_object('name', job_name, 'delayMs', delay_ms)) FROM next)::text AS next,
-               -- The names with a locked row left, under any cap: the runner replays the choice for its tie pointer
+               (SELECT json_agg(json_build_object('name', lane, 'delayMs', delay_ms)) FROM next)::text AS next,
+               -- The lanes with a locked row left, under any cap: the runner replays the choice for its tie pointer
                (SELECT json_agg(DISTINCT name) FROM locked WHERE id NOT IN (SELECT id FROM picked))::text AS unpicked,
                (SELECT json_agg(DISTINCT name) FROM locked_all WHERE limited)::text AS limited
     `, [
@@ -695,22 +695,22 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
 }
 
 /**
- * Claims the due jobs of one name, as `claimDue`. Scalar parameters: PostgreSQL caches a generic plan of the prepared
+ * Claims the due jobs of one lane, as `claimDue`. Scalar parameters: PostgreSQL caches a generic plan of the prepared
  * statement, and plans it no more.
  * @param {Executor} executor Outside a transaction.
  * @param {string} p
  * @param {{ name: string, limit: number, lockToken: string, lockedBy: string, leaseMs: number }} params
  * @returns {Promise<import('./store.js').ClaimDueResult>}
  */
-async function claimDueOfName(executor, p, { name, limit, lockToken, lockedBy, leaseMs }) {
+async function claimDueOfLane(executor, p, { name, limit, lockToken, lockedBy, leaseMs }) {
     const [row] = await executor.query(`
         WITH locked AS (
             SELECT id, limit_keys IS NOT NULL OR rate_limits IS NOT NULL AS limited FROM ${p}jobs
-             WHERE status = 'pending' AND job_name = $1 AND run_at <= clock_timestamp()
+             WHERE status = 'pending' AND lane = $1 AND run_at <= clock_timestamp()
              ORDER BY run_at, id LIMIT $2
                FOR UPDATE SKIP LOCKED
         ),
-        -- The rows with global limits (from their enqueue options) are left to the claim of names with limits
+        -- The rows with global limits (from their enqueue options) are left to the claim of lanes with limits
         picked AS (
             SELECT id FROM locked WHERE NOT limited
         ),
@@ -721,8 +721,8 @@ async function claimDueOfName(executor, p, { name, limit, lockToken, lockedBy, l
                    timed_out_at = NULL, updated_at = clock_timestamp()
               FROM picked
              WHERE j.id = picked.id
-            RETURNING j.id, j.job_name, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
-                      j.failure_job,
+            RETURNING j.id, j.lane, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
+                      j.failure_lane,
                       ${epochMs('j.created_at')} AS created_at_ms,
                       (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
         )
@@ -730,7 +730,7 @@ async function claimDueOfName(executor, p, { name, limit, lockToken, lockedBy, l
         SELECT ${claimedJobsJson(p)} AS jobs,
                (
                    SELECT (EXTRACT(EPOCH FROM run_at - clock_timestamp()) * 1000)::bigint FROM ${p}jobs
-                    WHERE status = 'pending' AND job_name = $1 AND id NOT IN (SELECT id FROM picked)
+                    WHERE status = 'pending' AND lane = $1 AND id NOT IN (SELECT id FROM picked)
                     ORDER BY run_at LIMIT 1
                ) AS next_delay_ms,
                (SELECT bool_or(limited) FROM locked) AS limited

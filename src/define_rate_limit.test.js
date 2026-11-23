@@ -2,7 +2,7 @@ import { expect, test } from 'vitest';
 import { defineRateLimit, isRateLimit, isRateLimitKey } from './define_rate_limit.js';
 import { ConfigError, InvalidRateLimitError } from './errors.js';
 
-test('a frozen limit, known to defineJob(): per in milliseconds, burst 1 by default', () => {
+test('a frozen limit, known to defineLane(): per in milliseconds, burst 1 by default', () => {
     const github = defineRateLimit({ name: 'github', max: 5000, per: '1h' });
 
     expect(github).toMatchObject({ name: 'github', max: 5000, per: 3_600_000, burst: 1 });

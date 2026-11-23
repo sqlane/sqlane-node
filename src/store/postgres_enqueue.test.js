@@ -28,7 +28,7 @@ test('the enqueue statement is pinned: its prepared statement does not change by
 
     // Changed on purpose? Measure with `pnpm bench:regression`, then pin the new hash.
     expect(createHash('sha256').update(sql).digest('hex'))
-        .toBe('b5c2279139744448cdbe9ef54ca40f4475749ff33b5f17aee108f5b108442982');
+        .toBe('8c85c3161bd98b9fca2d3302bf268348c7cfdb8d6f4709111454e36e57aa9e5d');
 });
 
 test('the jobs of slots: one NOTIFY per name, run by a reference', async () => {
@@ -37,7 +37,7 @@ test('the jobs of slots: one NOTIFY per name, run by a reference', async () => {
         notifyChannel: 'sqlane_ready',
     }));
 
-    expect(sql).toMatch(/SELECT pg_notify\(\$3, d\.job_name\)\s+FROM \(SELECT DISTINCT job_name FROM inserted\) AS d/);
+    expect(sql).toMatch(/SELECT pg_notify\(\$3, d\.lane\)\s+FROM \(SELECT DISTINCT lane FROM inserted\) AS d/);
     expect(sql).toMatch(/SELECT id FROM inserted WHERE \(SELECT count\(\*\) FROM notified\) >= 0/);
     expect(params).toStrictEqual(['[]', 't', 'sqlane_ready']);
 });
@@ -47,7 +47,7 @@ test('the input of a job: its rate limits as a JSON array, null without', () => 
     const job = {
         id: 'a',
         hasJobId: false,
-        name: 'a',
+        lane: 'a',
         payloadJson: '{}',
         limits: [],
         rateLimits: [{ key: '@api', max: 10, per_us: 1_000_000, burst: 2, cost: 1 }],
@@ -55,7 +55,7 @@ test('the input of a job: its rate limits as a JSON array, null without', () => 
         maxStalls: 0,
         completedRetentionMs: 0,
         failedRetentionMs: 0,
-        failureJob: null,
+        failureLane: null,
         delayMs: 0,
         runAt: null,
     };

@@ -1,7 +1,7 @@
 import { parseDuration } from './duration.js';
 
-/** A job name: no `:` (the job id is `<name>:<dedupeKey>`), lowercase. */
-export const JOB_NAME_REGEXP = /^[a-z][a-z0-9_.-]{0,127}$/;
+/** A name of a lane or of a limit: no `:` (the job id is `<lane>:<dedupeKey>`), lowercase. */
+export const NAME_REGEXP = /^[a-z][a-z0-9_.-]{0,127}$/;
 
 /** A table prefix: the longest table name, `<prefix>migrations`, stays within the 63 characters of PostgreSQL. */
 export const TABLE_PREFIX_REGEXP = /^[a-z][a-z0-9_]{0,31}$/;
@@ -12,7 +12,7 @@ export const PRINTABLE_ID_REGEXP = /^[\x21-\x7E](?:[\x20-\x7E]*[\x21-\x7E])?$/;
 /**
  * Where a check runs: for the error message and its class.
  * @typedef {object} Scope
- * @property {string} where E.g. `defineJob("build_report")`.
+ * @property {string} where E.g. `defineLane("build_report")`.
  * @property {new (message: string) => Error} ErrorClass
  */
 
@@ -128,7 +128,7 @@ export function checkRetention(value, scope) {
  * @param {Record<string, unknown>} options
  * @param {Scope} scope
  */
-export function checkJobFields(options, scope) {
+export function checkOptionFields(options, scope) {
     if (options.maxAttempts !== undefined) {
         checkInteger(options.maxAttempts, '"maxAttempts"', scope);
     }
@@ -152,19 +152,19 @@ export function checkJobFields(options, scope) {
 
 /**
  * @param {unknown} value A name, or a definition.
- * @param {string} jobName The job that names it.
+ * @param {string} lane The lane that names it.
  * @param {Scope} scope
- * @returns {string} The name of the failure job.
+ * @returns {string} The failure lane.
  */
-export function checkFailureJob(value, jobName, { where, ErrorClass }) {
+export function checkFailureLane(value, lane, { where, ErrorClass }) {
     const name = isPlainObject(value) ? value.name : value;
 
-    if (typeof name !== 'string' || !JOB_NAME_REGEXP.test(name)) {
-        throw new ErrorClass(`${where}: "failureJob" must be a job name or a job definition`);
+    if (typeof name !== 'string' || !NAME_REGEXP.test(name)) {
+        throw new ErrorClass(`${where}: "failureLane" must be a lane name or a lane definition`);
     }
 
-    if (name === jobName) {
-        throw new ErrorClass(`${where}: a job cannot be its own failure job`);
+    if (name === lane) {
+        throw new ErrorClass(`${where}: a lane cannot be its own failure lane`);
     }
 
     return name;

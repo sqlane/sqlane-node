@@ -8,7 +8,7 @@ import { isPossibleJobId, shown, statusesOf } from './jobs_api.js';
 import {
     cancelJobs,
     lockJobs,
-    notifyNames,
+    notifyLanes,
     readBatch,
     readByFilter,
     readByIds,
@@ -17,7 +17,7 @@ import {
 } from './store/job_writes.js';
 import { isRateKey } from './rate_keys.js';
 import { isQuickRetryError } from './transient_error.js';
-import { checkObject, isPlainObject, JOB_NAME_REGEXP } from './validate.js';
+import { checkObject, isPlainObject, NAME_REGEXP } from './validate.js';
 
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 /** @typedef {import('./types.js').BulkIgnoredJob} BulkIgnoredJob */
@@ -67,7 +67,7 @@ async function owned(transaction, func) {
  * The arguments of a call, checked.
  * @typedef {object} BulkCall
  * @property {string[] | null} ids The distinct ids, in the order of their first appearance. Null: a filter.
- * @property {{ jobName: string, statuses: readonly JobStatus[] } | null} filter
+ * @property {{ lane: string, statuses: readonly JobStatus[] } | null} filter
  * @property {'atomic' | 'batches'} mode
  * @property {boolean} strict
  * @property {boolean} includeAffectedJobIds
@@ -85,7 +85,7 @@ async function owned(transaction, func) {
 export function checkBulk(operation, selector, options) {
     const where = `jobs.${operation}`;
     const scope = { where, ErrorClass: InvalidOptionsError };
-    const { jobIds, jobName: job, status } = checkObject(selector, ['jobIds', 'jobName', 'status'], 'selector', scope);
+    const { jobIds, lane, status } = checkObject(selector, ['jobIds', 'lane', 'status'], 'selector', scope);
     const optionNames = ['connection', 'mode', 'strict', 'includeAffectedJobIds',
         ...(operation === 'retry' ? ['budget'] : [])];
     const {
@@ -96,8 +96,8 @@ export function checkBulk(operation, selector, options) {
         budget = 'reset',
     } = checkObject(options ?? {}, optionNames, 'options', scope);
 
-    if ((jobIds === undefined) === (job === undefined)) {
-        throw new InvalidOptionsError(`${where}: the selector takes "jobIds", or a filter with "jobName", not both`);
+    if ((jobIds === undefined) === (lane === undefined)) {
+        throw new InvalidOptionsError(`${where}: the selector takes "jobIds", or a filter with "lane", not both`);
     }
 
     if (jobIds !== undefined && status !== undefined) {
@@ -122,7 +122,7 @@ export function checkBulk(operation, selector, options) {
     }
 
     const ids = jobIds === undefined ? null : idsOf(jobIds, where);
-    const filter = job === undefined ? null : filterOf(operation, job, status, where);
+    const filter = lane === undefined ? null : filterOf(operation, lane, status, where);
 
     if (mode === 'batches' && (ids || connection !== undefined || strict)) {
         throw new InvalidOptionsError(`${where}: 'batches' takes a filter, without "connection" and "strict"`);
@@ -163,17 +163,17 @@ function idsOf(jobIds, where) {
 
 /**
  * @param {Operation} operation
- * @param {unknown} job
+ * @param {unknown} given A lane, or its definition.
  * @param {unknown} status
  * @param {string} where
- * @returns {{ jobName: string, statuses: readonly JobStatus[] }}
+ * @returns {{ lane: string, statuses: readonly JobStatus[] }}
  */
-function filterOf(operation, job, status, where) {
-    const jobName = isPlainObject(job) ? job.name : job;
+function filterOf(operation, given, status, where) {
+    const lane = isPlainObject(given) ? given.name : given;
 
-    if (typeof jobName !== 'string' || !JOB_NAME_REGEXP.test(jobName)) {
-        throw new InvalidOptionsError(`${where}: "jobName" must be a job definition or a name matching ${
-            JOB_NAME_REGEXP}`);
+    if (typeof lane !== 'string' || !NAME_REGEXP.test(lane)) {
+        throw new InvalidOptionsError(`${where}: "lane" must be a lane definition or a name matching ${
+            NAME_REGEXP}`);
     }
 
     const accepted = ACCEPTED[operation];
@@ -185,7 +185,7 @@ function filterOf(operation, job, status, where) {
             others.join(', ')} jobs`);
     }
 
-    return { jobName, statuses };
+    return { lane, statuses };
 }
 
 /**
@@ -194,8 +194,8 @@ function filterOf(operation, job, status, where) {
  * @property {number} count
  * @property {string[]} ids The changed ids (on MySQL outside a transaction: the locked ones).
  * @property {BulkIgnoredJob[]} ignored
- * @property {{ id: string, name: string, attempts: number }[]} cancelled
- * @property {string[]} names The names of the retried jobs.
+ * @property {{ id: string, lane: string, attempts: number }[]} cancelled
+ * @property {string[]} lanes The lanes of the retried jobs.
  * @property {string[]} keys The concurrency keys of the pending jobs cancelled or removed.
  */
 
@@ -204,7 +204,7 @@ function filterOf(operation, job, status, where) {
  * @property {import('./store/store.js').Store} store
  * @property {import('./types.js').Adapter<any>} adapter
  * @property {string} tablePrefix
- * @property {(name: string, committed: boolean) => void} wakeFor
+ * @property {(lane: string, committed: boolean) => void} wakeFor
  * @property {(keys: string[]) => Promise<void>} unblockKeys Never rejects.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit
  * @property {(operation: string, error: unknown) => void} reportError
@@ -229,8 +229,8 @@ export function createBulk({ adapter, tablePrefix: p, wakeFor, unblockKeys, emit
         const accepted = ACCEPTED[operation];
 
         if (!call.ids) {
-            const { jobName, statuses } = /** @type {NonNullable<BulkCall['filter']>} */ (call.filter);
-            const rows = await readByFilter({ executor, family, p }, { jobName, statuses });
+            const { lane, statuses } = /** @type {NonNullable<BulkCall['filter']>} */ (call.filter);
+            const rows = await readByFilter({ executor, family, p }, { lane, statuses });
 
             // A filter reports nothing: a retry skips the jobs without a payload
             return {
@@ -339,17 +339,17 @@ export function createBulk({ adapter, tablePrefix: p, wakeFor, unblockKeys, emit
         const ids = usable.map(job => job.id);
 
         if (!ids.length) {
-            return { count: 0, ids: [], ignored, cancelled: [], names: [], keys: [] };
+            return { count: 0, ids: [], ignored, cancelled: [], lanes: [], keys: [] };
         }
 
         const written = await write(executor, operation, call, ids);
         const changedIds = new Set(written.ids ?? ids);
         const changed = usable.filter(job => changedIds.has(job.id));
-        const names = operation === 'retry' ? [...new Set(changed.map(job => job.name))] : [];
+        const lanes = operation === 'retry' ? [...new Set(changed.map(job => job.lane))] : [];
 
-        if (names.length && notifyChannel) {
+        if (lanes.length && notifyChannel) {
             // The NOTIFY goes with the commit
-            await notifyNames(executor, notifyChannel, names);
+            await notifyLanes(executor, notifyChannel, lanes);
         }
 
         return {
@@ -357,9 +357,9 @@ export function createBulk({ adapter, tablePrefix: p, wakeFor, unblockKeys, emit
             ids: changed.map(job => job.id),
             ignored,
             cancelled: operation === 'cancel'
-                ? changed.map(job => ({ id: job.id, name: job.name, attempts: job.attempts }))
+                ? changed.map(job => ({ id: job.id, lane: job.lane, attempts: job.attempts }))
                 : [],
-            names,
+            lanes,
             keys: operation === 'retry'
                 ? []
                 : [...new Set(changed.filter(job => job.status === 'pending')
@@ -374,11 +374,11 @@ export function createBulk({ adapter, tablePrefix: p, wakeFor, unblockKeys, emit
     function afterOwnedCommit(outcome) {
         try {
             for (const job of outcome.cancelled) {
-                emit({ type: 'cancelled', jobId: job.id, jobName: job.name, attempt: job.attempts + 1 });
+                emit({ type: 'cancelled', jobId: job.id, lane: job.lane, attempt: job.attempts + 1 });
             }
 
-            for (const name of outcome.names) {
-                wakeFor(name, true);
+            for (const lane of outcome.lanes) {
+                wakeFor(lane, true);
             }
         } catch (error) {
             reportError('after_commit', error);
@@ -396,14 +396,14 @@ export function createBulk({ adapter, tablePrefix: p, wakeFor, unblockKeys, emit
      * @param {Outcome} outcome
      */
     function afterCallerCall(connection, outcome) {
-        if (!outcome.names.length && !outcome.keys.length) {
+        if (!outcome.lanes.length && !outcome.keys.length) {
             return;
         }
 
         const work = (/** @type {boolean} */ committed) => {
             try {
-                for (const name of outcome.names) {
-                    wakeFor(name, committed);
+                for (const lane of outcome.lanes) {
+                    wakeFor(lane, committed);
                 }
             } catch (error) {
                 reportError('after_commit', error);
@@ -485,9 +485,9 @@ export function createBulk({ adapter, tablePrefix: p, wakeFor, unblockKeys, emit
      * @returns {Promise<Outcome>}
      */
     async function runBatches(operation, call) {
-        const { jobName, statuses } = /** @type {NonNullable<BulkCall['filter']>} */ (call.filter);
+        const { lane, statuses } = /** @type {NonNullable<BulkCall['filter']>} */ (call.filter);
         /** @type {Outcome} */
-        const total = { count: 0, ids: [], ignored: [], cancelled: [], names: [], keys: [] };
+        const total = { count: 0, ids: [], ignored: [], cancelled: [], lanes: [], keys: [] };
         /** @type {{ ms: number, id: string } | null} */
         let after = null;
 
@@ -495,7 +495,7 @@ export function createBulk({ adapter, tablePrefix: p, wakeFor, unblockKeys, emit
             // oxlint-disable-next-line no-await-in-loop -- one batch after the other
             const batch = await readBatch(
                 { executor: adapter.queue, family, p },
-                { jobName, statuses, after, limit: BATCH_SIZE },
+                { lane, statuses, after, limit: BATCH_SIZE },
             );
 
             if (!batch.length) {

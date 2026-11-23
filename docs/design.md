@@ -11,8 +11,8 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 
 1. **Transactional enqueue.** sqlane inserts a job with the connection of the caller's transaction. The job exists only
    if that transaction commits, and it never starts before its data is visible.
-2. **Cheap idle job names.** 1000 job names, most of them idle, cost about the same as 10. The database load of a
-   process does not grow with the number of registered job names. It grows only with the names that have pending jobs.
+2. **Cheap idle lanes.** 1000 lanes, most of them idle, cost about the same as 10. The database load of a
+   process does not grow with the number of registered lanes. It grows only with the lanes that have pending jobs.
 3. **Low latency.** In the same process, a job starts right after the commit when the adapter sees the commit, and
    about 25 ms after it otherwise. In another process, a job starts within a few milliseconds with PostgreSQL NOTIFY,
    and about 25 ms after the commit with a hint. Without either, it starts within the poll interval, which is 5 s by
@@ -24,14 +24,14 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
    flood on one key does not hold back the others. [Guarantees](#guarantees) gives the exact condition.
 7. **Rate limits.** A key of a global rate limit starts at most `max` jobs per `per` in the cluster, spread evenly, and
    a job over the limit waits without using an attempt.
-8. **Failure jobs.** When a job fails for good, sqlane adds a job of another name, in the same transaction that marks the job as failed.
+8. **Failure jobs.** When a job fails for good, sqlane adds a job of another lane, in the same transaction that marks the job as failed.
 9. **Library hygiene.** sqlane has no global state, does not read `process.env`, writes nothing to the console and never
    exits the process. The app injects the connections, the logger and the metrics.
 
 ## Non-goals
 
 - Exactly-once execution. Handlers must be idempotent.
-- A dashboard. `jobs.stats()` gives the counts per job name, and the tables are plain SQL (see [Data](#data)).
+- A dashboard. `lanes.stats()` gives the counts per lane, and the tables are plain SQL (see [Data](#data)).
 - Priorities, or a strict order across processes.
 - Workflows, batches, job dependencies.
 - SQLite, other databases.
@@ -39,24 +39,24 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 
 ## Terms
 
-| Term                  | Meaning                                                                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Job**               | One row: a payload, a state, attempts, a lease.                                                              |
-| **Job name**          | The kind of a job, e.g. `build_report`. It is also the "queue": there is no separate queue.                  |
-| **Job definition**    | The name and the options of a job name. Producers and workers import it.                                     |
-| **Handler**           | The function that runs a job. Only workers register it.                                                      |
-| **Concurrency limit** | The most jobs that run at once: local (per process, in memory) or global (per key, in the cluster).          |
-| **Rate limit**        | The most job starts per period: local (per process, in memory) or global (per key, in the cluster).          |
-| **Fair share weight** | A name's share of the free slots against the other due names.                                                |
-| **Key**               | A string (`order:42`): a global limit counts the running jobs of each key.                                   |
-| **Rate key**          | A key of a global rate limit, `@<name>` or `@<name>:<value>`: it counts the starts of its jobs.              |
-| **Slot of a key**     | One of the `max` places of a key. A running job holds one slot of each of its keys.                          |
-| **Blocked job**       | A due job with a full key, or a rate key without quota: out of the due jobs until the key has room or quota. |
-| **Failure job**       | A job that sqlane adds when another job fails for good.                                                      |
-| **Adapter**           | Wraps a driver: the dialect, the queue's pool, and the raw connections given to `enqueue`.                   |
-| **Hint**              | A message "jobs of this name are ready" between processes. Only an optimization.                             |
-| **Schedule**          | A cron in a time zone, or a fixed interval, that adds a job at each of its times.                            |
-| **Slot**              | One time of a schedule. It adds at most one job.                                                             |
+| Term                  | Meaning                                                                                                                                                                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Job**               | One row: a payload, a state, attempts, a lease.                                                                                                                                                                                                   |
+| **Lane**              | The jobs that share a name, e.g. `build_report`, with the default options of its definition. It is also the "queue": there is no separate queue. Lanes share the table and the workers, with fair sharing between them; a lane is not a priority. |
+| **Lane definition**   | The name and the options of a lane. Producers and workers import it.                                                                                                                                                                              |
+| **Handler**           | The function that runs the jobs of a lane. Only workers add lanes, with `lanes.add`.                                                                                                                                                              |
+| **Concurrency limit** | The most jobs that run at once: local (per process, in memory) or global (per key, in the cluster).                                                                                                                                               |
+| **Rate limit**        | The most job starts per period: local (per process, in memory) or global (per key, in the cluster).                                                                                                                                               |
+| **Fair share weight** | A lane's share of the free slots against the other due lanes.                                                                                                                                                                                     |
+| **Key**               | A string (`order:42`): a global limit counts the running jobs of each key.                                                                                                                                                                        |
+| **Rate key**          | A key of a global rate limit, `@<name>` or `@<name>:<value>`: it counts the starts of its jobs.                                                                                                                                                   |
+| **Slot of a key**     | One of the `max` places of a key. A running job holds one slot of each of its keys.                                                                                                                                                               |
+| **Blocked job**       | A due job with a full key, or a rate key without quota: out of the due jobs until the key has room or quota.                                                                                                                                      |
+| **Failure job**       | A job that sqlane adds, to the failure lane, when another job fails for good.                                                                                                                                                                     |
+| **Adapter**           | Wraps a driver: the dialect, the queue's pool, and the raw connections given to `enqueue`.                                                                                                                                                        |
+| **Hint**              | A message "jobs of this lane are ready" between processes. Only an optimization.                                                                                                                                                                  |
+| **Schedule**          | A cron in a time zone, or a fixed interval, that adds a job at each of its times.                                                                                                                                                                 |
+| **Slot**              | One time of a schedule. It adds at most one job.                                                                                                                                                                                                  |
 
 ## API
 
@@ -64,7 +64,7 @@ The [API reference](api.md) describes every function, option, default, error and
 reasons behind the shape of the API.
 
 - **Definition apart from the handler.** Producers import a small job definition, not the handler and its
-  dependencies. So `enqueue` and `handle` take a definition or a name.
+  dependencies. So `enqueue` and `lanes.add` take a definition or a name.
 - **Payload types, no validation.** A definition can declare its payload type, so the compiler checks `enqueue`, the
   handler, `globalConcurrencyLimits` and `globalRateLimits`. sqlane does not validate payloads at runtime, because the app knows its own rules. A
   payload is plain JSON without revivers. sqlane refuses a NUL character on both databases, because PostgreSQL `jsonb`
@@ -80,11 +80,11 @@ reasons behind the shape of the API.
   Instead, an adapter checks the ORM it gets and throws a `ConfigError` with the supported versions. CI tests each
   supported major version. An ORM adapter runs sqlane's SQL on the driver connection under the ORM, or through its
   raw-SQL API, so there is one SQL per dialect. [Adapters](adapters.md) describes each one.
-- **All the options of a name in its definition.** `handle()` takes none: the local limits, the weight and the timeout
-  are definition fields too, read by the worker, so one module describes a job name. A machine that needs other caps
+- **All the options of a lane in its definition.** `lanes.add()` takes none: the local limits, the weight and the timeout
+  are definition fields too, read by the worker, so one module describes a lane. A machine that needs other caps
   computes them in that module, from its own environment.
 - **Limits are objects.** `defineConcurrencyLimit()` and `defineRateLimit()` return a frozen object, which a
-  definition lists or keys. A typo in a string cannot create a new limit, and the max is declared once, so two names
+  definition lists or keys. A typo in a string cannot create a new limit, and the max is declared once, so two lanes
   cannot disagree on it.
 - **Maxes frozen with the keys.** A worker cannot see the limit behind the key of a row: the definition's function
   runs at enqueue. So the row stores each key with its max, and each rate key with its settings, as it stores
@@ -113,41 +113,39 @@ not depend on the `timezone` or `dateStrings` settings of the pool.
 
 ### `sqlane_jobs`
 
-| Column                                                                | Type              | Notes                                                                                                                      |
-| --------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `id`                                                                  | varchar(255), PK  | `<job_name>:<dedupeKey>`, or a new ULID without `dedupeKey`. `<job_name>:schedule:[<key>:]<ISO>` for a slot of a schedule. |
-| `job_name`                                                            | varchar(128)      |                                                                                                                            |
-| `status`                                                              | varchar(16)       | `pending`, `blocked`, `running`, `completed`, `failed`.                                                                    |
-| `run_at`                                                              | ts(3)             | Due time.                                                                                                                  |
-| `attempts`, `max_attempts`                                            | int               |                                                                                                                            |
-| `stalls`, `max_stalls`                                                | int               |                                                                                                                            |
-| `limit_keys`, `limit_maxes`                                           | json / array null | The keys of the global limits and their maxes, frozen at enqueue, sorted by key. Written with the job row.                 |
-| `rate_limits`                                                         | json null         | The rate keys with their settings, `[{ key, max, per_us, burst, cost }]`, frozen at enqueue, sorted by key.                |
-| `blocked_on`                                                          | varchar(255) null | The full key, or the rate key, of a `blocked` job.                                                                         |
-| `enqueue_token`                                                       | varchar(26)       | Per enqueue call: tells created rows from duplicates.                                                                      |
-| `lock_token`                                                          | varchar(26) null  | Set by the claim. Every final write checks it.                                                                             |
-| `locked_by`                                                           | varchar(255) null | `<host>:<pid>:<ULID>`.                                                                                                     |
-| `locked_until`                                                        | ts(3) null        | The lease.                                                                                                                 |
-| `timed_out_at`                                                        | ts(3) null        | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`.                              |
-| `last_error`                                                          | json null         |                                                                                                                            |
-| `completed_retention_ms`, `failed_retention_ms`                       | bigint            | Frozen at enqueue.                                                                                                         |
-| `failure_job`                                                         | varchar(128) null | Frozen at enqueue.                                                                                                         |
-| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)             |                                                                                                                            |
+| Column                                                                | Type              | Notes                                                                                                              |
+| --------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `id`                                                                  | varchar(255), PK  | `<lane>:<dedupeKey>`, or a new ULID without `dedupeKey`. `<lane>:schedule:[<key>:]<ISO>` for a slot of a schedule. |
+| `lane`                                                                | varchar(128)      |                                                                                                                    |
+| `status`                                                              | varchar(16)       | `pending`, `blocked`, `running`, `completed`, `failed`.                                                            |
+| `run_at`                                                              | ts(3)             | Due time.                                                                                                          |
+| `attempts`, `max_attempts`                                            | int               |                                                                                                                    |
+| `stalls`, `max_stalls`                                                | int               |                                                                                                                    |
+| `limit_keys`, `limit_maxes`                                           | json / array null | The keys of the global limits and their maxes, frozen at enqueue, sorted by key. Written with the job row.         |
+| `rate_limits`                                                         | json null         | The rate keys with their settings, `[{ key, max, per_us, burst, cost }]`, frozen at enqueue, sorted by key.        |
+| `blocked_on`                                                          | varchar(255) null | The full key, or the rate key, of a `blocked` job.                                                                 |
+| `enqueue_token`                                                       | varchar(26)       | Per enqueue call: tells created rows from duplicates.                                                              |
+| `lock_token`                                                          | varchar(26) null  | Set by the claim. Every final write checks it.                                                                     |
+| `locked_by`                                                           | varchar(255) null | `<host>:<pid>:<ULID>`.                                                                                             |
+| `locked_until`                                                        | ts(3) null        | The lease.                                                                                                         |
+| `timed_out_at`                                                        | ts(3) null        | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`.                      |
+| `last_error`                                                          | json null         |                                                                                                                    |
+| `completed_retention_ms`, `failed_retention_ms`                       | bigint            | Frozen at enqueue.                                                                                                 |
+| `failure_lane`                                                        | varchar(128) null | Frozen at enqueue.                                                                                                 |
+| `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)             |                                                                                                                    |
 
 `attempts` counts the finished attempts: a completion, a retry and a failure each add one. A stall, a release and a
 wait on a rate limit add none; the stalls have their own count.
 
-`id`, `job_name` and the keys are case-sensitive: `ascii_bin` on MySQL, `COLLATE "C"` on PostgreSQL.
+`id`, `lane` and the keys are case-sensitive: `ascii_bin` on MySQL, `COLLATE "C"` on PostgreSQL.
 
 Indexes:
 
-- MySQL: `(status, job_name, run_at)`, `(status, blocked_on, run_at, id)`, `(expires_at)`, `(job_name, created_at,
-  id)`.
-- PostgreSQL: partial `(job_name, run_at, id) WHERE status = 'pending'`, partial `(locked_until) WHERE status =
-  'running'`, partial `(blocked_on, run_at, id) WHERE status = 'blocked'`, `(expires_at)`, `(job_name, created_at,
-  id)`.
+- MySQL: `(status, lane, run_at)`, `(status, blocked_on, run_at, id)`, `(expires_at)`, `(lane, created_at, id)`.
+- PostgreSQL: partial `(lane, run_at, id) WHERE status = 'pending'`, partial `(locked_until) WHERE status =
+  'running'`, partial `(blocked_on, run_at, id) WHERE status = 'blocked'`, `(expires_at)`, `(lane, created_at, id)`.
 
-`(job_name, created_at, id)` serves `sqlane.jobs.list()`: the jobs of a name, newest first, of any status. Its columns
+`(lane, created_at, id)` serves `sqlane.jobs.list()`: the jobs of a lane, newest first, of any status. Its columns
 never change after the insert, so the index costs one entry per insert, and an update never moves it.
 
 ### `sqlane_payloads`
@@ -176,8 +174,8 @@ recovery deletes them in batches, with SKIP LOCKED: the keys of a limit per clie
 
 | Column                     | Type              | Notes                                                                                         |
 | -------------------------- | ----------------- | --------------------------------------------------------------------------------------------- |
-| `id`                       | varchar(255), PK  | `<job_name>` or `<job_name>:<key>`. ASCII and case-sensitive.                                 |
-| `job_name`                 | varchar(128)      |                                                                                               |
+| `id`                       | varchar(255), PK  | `<lane>` or `<lane>:<key>`. ASCII and case-sensitive.                                         |
+| `lane`                     | varchar(128)      |                                                                                               |
 | `spec`                     | varchar(512)      | The normalized spec: `cron <fields> <timezone>` or `every <ms>`. A late catch-up compares it. |
 | `last_slot_at`             | ts(3)             | The cursor: the last decided slot. It only moves forward. Slots at or before it never run.    |
 | `last_job_id`              | varchar(255) null | The job of the last enqueued slot. `overlap: 'skip'` reads it.                                |
@@ -208,6 +206,7 @@ it).
 | `0006_concurrency_slots`  | 6.0.0      | 6.0.0 | 6.0.0   |
 | `0007_rate_limits`        | 6.0.0      | 6.0.0 | 6.0.0   |
 | `0008_job_list`           | 7.1.0      | 7.1.0 | 7.1.0   |
+| `0009_lanes`              | 9.0.0      | 9.0.0 | 9.0.0   |
 
 A migration merged before its release is tagged with the version that its changeset gives: the next minor, or the next
 major. If the release turns out higher, because a major is cut after it, the tag stays lower than the real release.
@@ -219,8 +218,9 @@ This is harmless: every pin at or above the real version includes it, and it cou
   recorded, in id order. By default it applies every known migration.
 - `schema.rollback({ targetVersion })` reverts the recorded migrations tagged above `targetVersion`, newest first: the
   down statements of each, then the delete of its record. It rejects when a recorded migration is unknown to this
-  version, because its down is not in this code. Every migration tagged after 6.0.0 has a down: today `0008_job_list`,
-  then every new one. A down that drops a column or a table loses its data; its comment and the changelog say so.
+  version, because its down is not in this code. Every migration tagged after 6.0.0 has a down: today `0008_job_list`
+  and `0009_lanes`, then every new one. A down that drops a column or a table loses its data; its comment and the
+  changelog say so.
 - `targetVersion` goes from `6.0.0` up to the higher of the installed version and the highest tag. `0005` and `0006`
   turned the mutex keys of 5.x into concurrency slots, which have no faithful reverse, so `6.0.0` is the floor.
 - `schema.drop()` drops every table that sqlane created under the prefix in any version, `IF EXISTS`: the current
@@ -251,8 +251,8 @@ This is harmless: every pin at or above the real version includes it, and it cou
 commits, so a run can stop between two statements.
 
 - Each down statement is safe to run again: `IF EXISTS`, or a check of the catalog where the dialect has none (MySQL
-  has no `DROP INDEX IF EXISTS`). So a cut rollback is finished by running it again. Every up migration after
-  `0008_job_list` follows the same rule.
+  has no `DROP INDEX IF EXISTS`, and neither MySQL nor MariaDB has `RENAME COLUMN IF EXISTS`). So a cut rollback is
+  finished by running it again. Every up migration after `0008_job_list` follows the same rule.
 - The older up migrations keep their own rules: not every one of their statements can run again. On MariaDB, they use
   `IF NOT EXISTS`, all but `0005_concurrency_limits`: one `ALTER TABLE` without guards. On MySQL,
   `0005_concurrency_limits` and `0008_job_list` are each one `ALTER TABLE`, and `0007_rate_limits` ends with an
@@ -274,7 +274,7 @@ disagree: records written by hand, an index built beforehand, or a cut run.
   abort a PostgreSQL transaction.
 - `findSchemaProblems()` compares with the definitions in `src/schema/expected.js`, written by hand from the
   migrations, per dialect. A test on every supported server checks them: no problem after a fresh `schema.migrate()`,
-  after an upgrade from 6.0.0, and after the 5.x path.
+  after an upgrade from 8.0.0, and after the 5.x path.
 - A migration is required when it is tagged at or below the base of the installed major, `X.0.0`. Within a major,
   the later migrations serve features that only fail on their own SQL without them (see [Versions](#versions)).
 
@@ -282,14 +282,16 @@ disagree: records written by hand, an index built beforehand, or a cut run.
 and `schema.drop()` drops it too. A `schema.migrate()` cut before its first table leaves only an empty
 `sqlane_migrations`, which `schema.drop()` refuses: run `schema.migrate()` again.
 
-`0008_job_list` builds the index `(job_name, created_at, id)` on the jobs. `sqlane.jobs` requires it: on MySQL and
+`0008_job_list` builds the index `(job_name, created_at, id)` on the jobs: `(lane, created_at, id)` once `0009_lanes`
+renames the column. `sqlane.jobs` requires it: on MySQL and
 MariaDB, `jobs.list()` names it in an index hint and rejects without it.
 
 - The build waits for the open transactions that wrote the jobs, and the writes that come after it wait for the build.
   On PostgreSQL, the migration sets no lock timeout after its lock, and `CREATE INDEX` blocks the writes of the table
   while it builds, because a migration is one transaction and `CREATE INDEX CONCURRENTLY` cannot run in one. MySQL and
   MariaDB build it online, but `ALTER TABLE` waits for the metadata lock, up to `lock_wait_timeout`.
-- On a large PostgreSQL table, build the index before the migration, with the name and the columns of the migration:
+- On a large PostgreSQL table, build the index before the migration, with the name and the columns of the migration,
+  on a database before `0009_lanes`:
   `CREATE INDEX CONCURRENTLY <prefix>jobs_list ON <prefix>jobs (job_name, created_at, id)`, where `<prefix>` is the
   `tablePrefix` (`sqlane_` by default). The `IF NOT EXISTS` of the migration then skips it. A failed or cancelled
   concurrent build leaves an invalid index of that name, which `IF NOT EXISTS` would also skip: check
@@ -299,6 +301,20 @@ MariaDB, `jobs.list()` names it in an index hint and rejects without it.
   next `schema.migrate()` fail with `ER_DUP_KEYNAME` (1061), as with `0007_rate_limits`: record the id by hand
   (`INSERT INTO <prefix>migrations (id, applied_at) VALUES ('0008_job_list', UTC_TIMESTAMP(3))`). MariaDB has
   `ADD KEY IF NOT EXISTS`, so it runs again.
+
+`0009_lanes` renames the columns of the lane: `job_name` to `lane` in `<prefix>jobs` and `<prefix>schedules`, and
+`failure_job` to `failure_lane`; on MySQL and MariaDB, the index `<prefix>jobs_status_name_run_at` to
+`<prefix>jobs_status_lane_run_at` too, which the hints of the queries name. The other indexes keep their names, and
+their columns follow the rename. A rename changes only the metadata: no row is copied.
+
+- PostgreSQL runs the renames in the transaction of the migration. MySQL and MariaDB run one `ALTER TABLE` for the jobs
+  and one for the schedules, without an `ALGORITHM` clause, so the server picks; each runs only while the catalog has
+  its old column, so a cut run runs again. The down renames back, with the same checks.
+- On MySQL and MariaDB, `0009_lanes` also renames the index `<prefix>jobs_status_name_run_at`: if it was dropped or
+  renamed by hand, restore it before `schema.migrate()` (`findSchemaProblems()` shows it).
+- Each rename takes the lock of its table, as any DDL: it waits for the open transactions on the table, and the
+  queries that come after it wait for it. Run `schema.migrate()` with no open transaction on the jobs table: the 8.x
+  processes stopped.
 
 ### Versions
 
@@ -339,7 +355,7 @@ A `RateLimitedError` on local rate limits only sends the job back to `pending`, 
 In the caller's transaction, with its connection (with a pool: in a transaction of sqlane):
 
 1. Check the payload (JSON, at most `maxPayloadBytes`, default 256 KiB) and the options (`dedupeKey`, `delay` or `runAt`,
-   `maxAttempts`, `maxStalls`, `retention`, `failureJob`, `globalConcurrencyLimits`, `globalRateLimits`).
+   `maxAttempts`, `maxStalls`, `retention`, `failureLane`, `globalConcurrencyLimits`, `globalRateLimits`).
 2. The global limits: the enqueue option if given, else the definition's function of the payload; as keys, sorted,
    with their maxes. The same for the rate limits, as rate keys with their settings and costs.
 3. `INSERT` the jobs, with their keys, in the order of their ids. This order prevents deadlocks between concurrent
@@ -350,7 +366,7 @@ In the caller's transaction, with its connection (with a pool: in a transaction 
    statement (a CTE), which is atomic even outside a transaction.
 4. PostgreSQL with the NOTIFY hint: `pg_notify` in the same transaction, delivered on commit.
 
-Frozen in the row at enqueue: `maxAttempts`, `maxStalls`, both retentions, `failureJob`, the keys and their maxes, the
+Frozen in the row at enqueue: `maxAttempts`, `maxStalls`, both retentions, `failureLane`, the keys and their maxes, the
 rate keys and their settings. Any process can then retry, stall or fail the job without its definition. Read from the
 worker's definition at run time: `backoff`, `timeout`, `fairShareWeight` and the local limits, of concurrency and of
 rate.
@@ -362,24 +378,24 @@ repeated in one batch: the first is created, the rest are `created: false`.
 
 ### Dispatcher: one loop per process
 
-Each process runs one dispatcher loop. The loop finds the due jobs of the names that the process handles, claims as
+Each process runs one dispatcher loop. The loop finds the due jobs of the lanes that the process added, claims as
 many as the free slots allow, and starts their handlers. The pseudo-code below shows its steps.
 
 ```text
 loop while started
-  names = registered job names with a free slot (under each of its local limits and the instance's cap), and quota
+  lanes = registered lanes with a free slot (under each of its local limits and the instance's cap), and quota
     in each of their local rate limits
-  if no names: wait for a wake
-  probe: the next run_at of each job name that has pending jobs (one statement)
+  if no lanes: wait for a wake
+  probe: the next run_at of each lane that has pending jobs (one statement)
   if nothing due: wait until the next run_at (at most the poll interval) or a wake
-  turn = the due names, the lowest running / weight first, at most 4 per free slot and 4 per free slot of each of
+  turn = the due lanes, the lowest running / weight first, at most 4 per free slot and 4 per free slot of each of
     their local limits; the others at the next turn
-  names with global limits in the turn: their candidates (due jobs whose keys have room), and their due jobs with a
+  lanes with global limits in the turn: their candidates (due jobs whose keys have room), and their due jobs with a
     full key, once per turn; a plan with fill() leaves them their share of the free slots, of the instance and of
     their local limits
-  plain names: lock the oldest due jobs of each, up to min(the rooms of its local limits, the free slots), and take
+  plain lanes: lock the oldest due jobs of each, up to min(the rooms of its local limits, the free slots), and take
     them by share (fill(): the lowest running / weight first, ties round-robin)
-  names with global limits: claim their candidates whose keys have room, by share; block those with a full key
+  lanes with global limits: claim their candidates whose keys have room, by share; block those with a full key
   claimed: start the handlers, loop at once
   none (other processes took them): back off 10–200 ms, with ±50 % jitter
   none (all due jobs blocked): wait for the end of a job of a key, the timer of a rate key, or the poll interval
@@ -396,58 +412,58 @@ row, the error is reported (`error` event, `logger.error`) and the loop backs of
 succeeds, or the back-off, resets the count. The retries are bounded, so a database that keeps failing costs 4 turns
 per back-off, not a busy loop.
 
-**The probe is the key to cheap idle names.** The probe is one statement, and it reads only the names that have
+**The probe is the key to cheap idle lanes.** The probe is one statement, and it reads only the lanes that have
 pending rows.
 
 - On MySQL, the probe is
-  `SELECT job_name, MIN(run_at) FROM sqlane_jobs WHERE status = 'pending' GROUP BY status, job_name`. With the index
-  `(status, job_name, run_at)`, MySQL uses a loose index scan, which makes one index lookup per pending name. The
-  `GROUP BY` names the whole index prefix, because `GROUP BY job_name` alone gets a full index scan.
-- PostgreSQL has no loose index scan. Instead, a recursive CTE skips from one pending name to the next on the partial
-  index. It makes two index lookups per pending name.
+  `SELECT lane, MIN(run_at) FROM sqlane_jobs WHERE status = 'pending' GROUP BY status, lane`. With the index
+  `(status, lane, run_at)`, MySQL uses a loose index scan, which makes one index lookup per pending lane. The
+  `GROUP BY` names the whole index prefix, because `GROUP BY lane` alone gets a full index scan.
+- PostgreSQL has no loose index scan. Instead, a recursive CTE skips from one pending lane to the next on the partial
+  index. It makes two index lookups per pending lane.
 
-**Free slots are shared by weight.** A free slot goes to the eligible due name with the lowest
-`running / fairShareWeight`, under its caps; ties go round-robin from a pointer that starts at a random name in each
-process, so a fleet does not send every process to the same names. The chooser, `fill()` in `fair_share.js`, is a heap
+**Free slots are shared by weight.** A free slot goes to the eligible due lane with the lowest
+`running / fairShareWeight`, under its caps; ties go round-robin from a pointer that starts at a random lane in each
+process, so a fleet does not send every process to the same lanes. The chooser, `fill()` in `fair_share.js`, is a heap
 with exact integer comparisons (`a.running × b.weight` against `b.running × a.weight`). Each event changes one count by
-one: a free slot raises the lowest share by `1 / weight`, and a finished job lowers its own name's count. So after each
-dispatch, for two names with due jobs and room, `running_a / w_a − running_b / w_b ≤ 1 / w_a`: the running counts stay
+one: a free slot raises the lowest share by `1 / weight`, and a finished job lowers its own lane's count. So after each
+dispatch, for two lanes with due jobs and room, `running_a / w_a − running_b / w_b ≤ 1 / w_a`: the running counts stay
 within one slot of the water-filling target at every moment, with no state but the counts and the pointer. The odd
 remainder slot goes by ties, not by time, so it favors long jobs (see
 [How free slots are shared](api.md#how-free-slots-are-shared)).
 
-**Which names a claim requests.** A claim locks up to the free slots of each name that it requests, so a claim of all
-1000 due names would lock thousands of rows to start a few jobs. A claim requests at most 4 names per free slot: the
-names furthest under their share first (`rankNames()`), and at most 4 per free slot of each of their local limits: a
-full limit takes no more names, so the names after it get their turn. The names that the rule serves are always a prefix of that
-order, and the other names are a margin for names whose jobs other processes hold. A claim that fills the free slots does not read the
-next due times of its names: they stay in the backlog, and the next turn claims them again.
+**Which lanes a claim requests.** A claim locks up to the free slots of each lane that it requests, so a claim of all
+1000 due lanes would lock thousands of rows to start a few jobs. A claim requests at most 4 lanes per free slot: the
+lanes furthest under their share first (`rankNames()`), and at most 4 per free slot of each of their local limits: a
+full limit takes no more lanes, so the lanes after it get their turn. The lanes that the rule serves are always a prefix of that
+order, and the other lanes are a margin for lanes whose jobs other processes hold. A claim that fills the free slots does not read the
+next due times of its lanes: they stay in the backlog, and the next turn claims them again.
 
-**Each name once.** On MySQL and MariaDB, each requested name is one branch of the `UNION ALL` that locks the due
-jobs, and `SKIP LOCKED` does not skip the transaction's own locks: a name requested twice would lock its jobs twice,
-and the process would run each of them twice. A probe of more than 100 names reads all names (a long list makes a slow
-range plan), so it also gives the names that the turn claims at once: the turn keeps each name once. The store drops a
-repeated name as well (its first request counts), and the process does not start a job that the same claim gave
+**Each lane once.** On MySQL and MariaDB, each requested lane is one branch of the `UNION ALL` that locks the due
+jobs, and `SKIP LOCKED` does not skip the transaction's own locks: a lane requested twice would lock its jobs twice,
+and the process would run each of them twice. A probe of more than 100 lanes reads all lanes (a long list makes a slow
+range plan), so it also gives the lanes that the turn claims at once: the turn keeps each lane once. The store drops a
+repeated lane as well (its first request counts), and the process does not start a job that the same claim gave
 twice: an `error` event instead. On PostgreSQL the `UPDATE … FROM` of the claim updates a row once, however many
-times it is locked, so there a repeated name could only skew the share.
+times it is locked, so there a repeated lane could only skew the share.
 
-**The names with global limits** find their candidates once per turn, before the plain claim. A plan over all the
-names of the turn gives them their share of the free slots, on their candidate counts, and the plain claim leaves
+**The lanes with global limits** find their candidates once per turn, before the plain claim. A plan over all the
+lanes of the turn gives them their share of the free slots, on their candidate counts, and the plain claim leaves
 those slots free: in the instance, and in their local limits (the plain claim gets the rooms of the limits minus the
 reserved slots, and a `maxJobs` within them). If other processes take the candidates first, the reserved slots stay
 free for one turn, which comes at once.
 
-The process ignores the names that it does not handle. An idle name has no pending row, so it costs nothing. With 1000
-names and pending jobs in 10 of them, the probe reads 10 index entries. A probe with one query per registered name (a
-`UNION`) would grow with the number of all names.
+The process ignores the lanes that it did not add. An idle lane has no pending row, so it costs nothing. With 1000
+lanes and pending jobs in 10 of them, the probe reads 10 index entries. A probe with one query per registered lane (a
+`UNION`) would grow with the number of all lanes.
 
 These events wake the dispatcher:
 
 - An enqueue in this process, or a hint from another process. See
   [Wake-up after the commit](#wake-up-after-the-commit).
-- A finished job, which frees a slot. A job that finishes in a full local limit wakes every name of the limit, not only
+- A finished job, which frees a slot. A job that finishes in a full local limit wakes every lane of the limit, not only
   its own: the slot it frees can go to any of them. A job with global limits first unblocks the jobs of its keys, and
-  wakes their names, here and in the other processes.
+  wakes their lanes, here and in the other processes.
 - The timer of a rate key on which this process blocked jobs, and the time at which a local rate limit allows a start
   again (see [Rate limits](#rate-limits)).
 - The poll interval (5 s by default). It is the fallback, and it also finds jobs whose delay has ended.
@@ -457,11 +473,11 @@ These events wake the dispatcher:
 A raw driver has no after-commit event, so `enqueue` does not know when the job becomes visible. The business logic
 does not need to call anything, because sqlane uses the following signals.
 
-- **Re-probes, the default for any driver.** After an enqueue of a handled name, the dispatcher of this process probes
+- **Re-probes, the default for any driver.** After an enqueue of an added lane, the dispatcher of this process probes
   again a few times. The steps are 20, 50, 100, 200 and 500 ms, 1 s and 2 s after the enqueue, and only the steps that
-  are shorter than the poll interval count. A probe reads all the names, so a process has one series of re-probes. Each
+  are shorter than the poll interval count. A probe reads all the lanes, so a process has one series of re-probes. Each
   enqueue restarts the series from its own time, but a re-probe that is already due within the next 20 ms is kept. The
-  series then goes on from the time of the new enqueue. So a burst of enqueues gives at most one re-probe per 20 ms. The hint transport sends the name to the other processes
+  series then goes on from the time of the new enqueue. So a burst of enqueues gives at most one re-probe per 20 ms. The hint transport sends the lane to the other processes
   at enqueue time, and it does not wait for an answer. The other processes then re-probe in the same way. The latency
   is the commit time plus at most one step, and it is never more than the poll interval. A rolled-back transaction
   costs only the re-probes.
@@ -491,7 +507,7 @@ knex 3.3 and Sequelize 6.37, against MySQL 8.4 and PostgreSQL 18.
 
 ### Hints
 
-A hint is a message between processes. It says that jobs of a name are ready. The app implements the generic
+A hint is a message between processes. It says that jobs of a lane are ready. The app implements the generic
 publish/subscribe interface below, for example with Redis or NATS. The [API reference](api.md#hint) shows an
 implementation for ioredis.
 
@@ -506,20 +522,20 @@ implementation for ioredis.
 
 - With `hint: null`, other processes find new jobs at their next poll. Re-probes in the same process and NOTIFY still
   work.
-- With `hint: { publish, subscribe }`, the channel is `<tablePrefix>ready`, and the message is a job name, or `*`
-  to wake all names (after a sweep). sqlane
+- With `hint: { publish, subscribe }`, the channel is `<tablePrefix>ready`, and the message is a lane, or `*`
+  to wake all lanes (after a sweep). sqlane
   publishes the hint after an enqueue, and `enqueue` does not wait for `publish`. A failed publish never rejects
   `enqueue`. Instead, sqlane emits an `error` event. A process sends a hint only for the jobs that it cannot start
-  itself. When a job frees slots of global limits, the message is the name of each job that it unblocked. A
+  itself. When a job frees slots of global limits, the message is the lane of each job that it unblocked. A
   receiver re-probes
   for a short while, as after its own enqueue, because the hint can arrive before the commit.
 - With `{ notify: true }` on the pg, postgres.js or Drizzle adapter (PostgreSQL), sqlane listens on a dedicated
   connection. With pg, and with Drizzle over node-postgres, this connection comes from the queue's pool. postgres.js
   opens its own connection with `sql.listen`. The enqueue sends `pg_notify` in its transaction, so the hint arrives
   only after the commit. Each enqueue that adds a job calls `pg_notify`. PostgreSQL drops the duplicate notifications
-  of a transaction, so it delivers one notification per transaction and job name. NOTIFY takes a global lock at the
+  of a transaction, so it delivers one notification per transaction and lane. NOTIFY takes a global lock at the
   commit, so under a heavy write load it can limit the commit rate of the whole database.
-- Hints are throttled. A process sends at most one message per job name in each interval of 100 ms.
+- Hints are throttled. A process sends at most one message per lane in each interval of 100 ms.
 
 A lost hint delays a job until the next poll. It never loses a job.
 
@@ -527,23 +543,23 @@ A lost hint delays a job until the next poll. It never loses a job.
 
 **Names without global limits** (in the definition of the claiming process): the due jobs are found, claimed and read
 at once, without candidates. A locked row with global limits or rate limits (from its enqueue options) is not taken:
-the claim returns its name, and the process claims that name with its limits from then on.
+the claim returns its lane, and the process claims that lane with its limits from then on.
 
-- PostgreSQL: one statement, a transaction of its own. A `LATERAL` per due name locks its oldest due jobs
-  (`FOR UPDATE SKIP LOCKED`, at most `min(the rooms of its local limits, free)`). The k-th locked row of a name gets
+- PostgreSQL: one statement, a transaction of its own. A `LATERAL` per due lane locks its oldest due jobs
+  (`FOR UPDATE SKIP LOCKED`, at most `min(the rooms of its local limits, free)`). The k-th locked row of a lane gets
   the share `(running + k − 1) / weight`, its share just before it takes the row. Ordering all rows by `(share, tie)`
   is the greedy of `fill()`, row by row. Without local limits, `LIMIT` keeps the instance's cap. With them, a
   recursive CTE walks the rows in that order and takes a row while the instance and each of its limits have room: a
-  name can have several limits, so one `ROW_NUMBER` per limit would not do. The shares
+  lane can have several limits, so one `ROW_NUMBER` per limit would not do. The shares
   are `float8`: equal rationals give the same double, and different ones (weights ≤ 1000) differ far above its
   precision. An integration test checks the choice against `fill()` on random claims. The statement also
-  returns `unpicked`, the names with a locked row that the claim did not take. The runner replays the choice with
-  `replayTie()` (`fill()` over the claimed rows, plus one row of each unpicked name, under the counts and limit rooms
-  that the claim was given) and moves the tie pointer as `fill()` would. The replay leaves out the names with no
+  returns `unpicked`, the lanes with a locked row that the claim did not take. The runner replays the choice with
+  `replayTie()` (`fill()` over the claimed rows, plus one row of each unpicked lane, under the counts and limit rooms
+  that the claim was given) and moves the tie pointer as `fill()` would. The replay leaves out the lanes with no
   claimed row and a share above every claimed share: they never took a slot, nor tied. A property test checks the
   replay against `fill()` over all the locked rows.
   An `UPDATE … RETURNING` in a CTE claims the rows, joined with their payloads.
-- MySQL: one short transaction. One `UNION ALL` locks the oldest due jobs of each name with their payloads
+- MySQL: one short transaction. One `UNION ALL` locks the oldest due jobs of each lane with their payloads
   (`FOR UPDATE OF j SKIP LOCKED`); `fill()` chooses among them in JS, and one `UPDATE` claims them. The others are
   unlocked at the commit. The payloads are not locked: they are a consistent read, from the read view of the
   statement's first read, while the job rows are the latest committed ones. A job whose enqueue committed during the
@@ -557,8 +573,8 @@ MySQL with the mysql2 adapter, it makes 6 round trips: the probe, and 5 for the 
 read, the `UPDATE` and `COMMIT`).
 
 **Names with global limits** (concurrency or rate): the candidates, then one short transaction on the queue's pool. The
-candidates are the oldest 500 due jobs of each name, split by the held slots and the quota of their keys: those whose
-keys have room, at most twice the free slots of the name, and those with a full key or a rate key without quota.
+candidates are the oldest 500 due jobs of each lane, split by the held slots and the quota of their keys: those whose
+keys have room, at most twice the free slots of the lane, and those with a full key or a rate key without quota.
 
 1. `SELECT … WHERE id IN (candidates) AND status = 'pending' AND run_at <= now ORDER BY run_at, id FOR UPDATE SKIP
    LOCKED`.
@@ -567,7 +583,7 @@ keys have room, at most twice the free slots of the name, and those with a full 
 3. Lock the rows of the rate keys of the others, in the order of the keys (a missing row is inserted first), and read
    their debts and their oldest blocked jobs. Block the jobs over the quota of a key, or behind an older job of the key
    ([Rate limits](#rate-limits)).
-4. Choose among the others by share, FIFO within a name, counting the slots and the quota that the choice takes
+4. Choose among the others by share, FIFO within a lane, counting the slots and the quota that the choice takes
    (`pick()`).
 5. Take a slot of each key of the chosen jobs (below). Drop the jobs that did not get all their slots.
 6. Move the `tat` of each rate key by the costs of the jobs that start.
@@ -629,7 +645,7 @@ A global limit counts the running jobs of each of its keys in the whole cluster:
 limit without keys. A key of a limit of 1 is a mutex.
 
 - **Format.** A job has at most 10 keys. A key has at most 255 printable ASCII characters. sqlane removes duplicate keys
-  at enqueue, before it counts them. The keys are global strings, so jobs of different names can share them. Each key
+  at enqueue, before it counts them. The keys are global strings, so jobs of different lanes can share them. Each key
   is stored with the max of its limit, frozen at enqueue.
 - **Slots.** A running job holds one row of `sqlane_concurrency_slots` per key: `(key, slot)`, the lowest slot that no
   job holds. A job starts if, for each of its keys, fewer slots are held than its own max. The claim inserts the rows in
@@ -640,22 +656,22 @@ limit without keys. A key of a limit of 1 is a mutex.
   checks its own: after a lowering, new jobs wait until the held slots drop below the new max. Two claims that race
   during the change can overshoot the lower max for a moment; with one max, the slots are exact.
 - **Blocked jobs.** A claim blocks a due job whose key is full: `status = 'blocked'`, `blocked_on` = the key. It leaves
-  the due jobs, so the 500 candidates of a name are never all jobs of one full key, and a flood of one client does not
+  the due jobs, so the 500 candidates of a lane are never all jobs of one full key, and a flood of one client does not
   hold back the others. Jobs of a key start in FIFO order among those that can start; a job with several keys waits
   only for its full keys, so under contention it can wait longer than a newer job with fewer keys.
 - **Unblock.** After the end of a job with keys, and after a claim that blocked jobs, the process unblocks the keys: the
   oldest jobs blocked on each key, as many as its free slots by the max of its oldest blocked job, go back to
-  `pending`, and their names are woken here and by a hint. The release and the claim each unblock after their own
+  `pending`, and their lanes are woken here and by a hint. The release and the claim each unblock after their own
   commit, so the later of the two sees both: a job is not left blocked on a key with room. An unblocked job that is
   still blocked by another key is blocked again on that key. The stall recovery sweeps the keys with blocked jobs about
   every 30 s, for a process that stopped before its unblock and for the slots whose linger ended.
-- **Which jobs count.** A claim reads the keys of the rows, not the definition: a job of any name with keys from its
-  enqueue options counts. A worker claims a name through the global limits when its definition has
-  `globalConcurrencyLimits` or `globalRateLimits`, or once a plain claim met a row of the name with limits.
-- **Fair share.** A name whose due jobs all have full keys has no candidates: it takes no slot and banks nothing.
+- **Which jobs count.** A claim reads the keys of the rows, not the definition: a job of any lane with keys from its
+  enqueue options counts. A worker claims a lane through the global limits when its definition has
+  `globalConcurrencyLimits` or `globalRateLimits`, or once a plain claim met a row of the lane with limits.
+- **Fair share.** A lane whose due jobs all have full keys has no candidates: it takes no slot and banks nothing.
 - **Timeout.** JavaScript cannot stop a handler. On a timeout, sqlane aborts the `signal` with a `JobTimeoutError` and
   emits a `timed_out` event. The job stays `running`, and its lease is renewed. It keeps its slots and its slot of the
-  process until the handler settles, but for at most one more lease. During this time, `jobs.stats()` counts it as
+  process until the handler settles, but for at most one more lease. During this time, `lanes.stats()` counts it as
   `stuck`. Then the attempt fails with the `JobTimeoutError`. The job is retried after its backoff, or it fails for
   good, and its slots are freed. This applies to all jobs, with or without keys.
 - **Linger.** The slots outlive their job row only in two cases, as rows with a `held_until` time. The first case is a
@@ -671,7 +687,7 @@ limit without keys. A key of a limit of 1 is a mutex.
   that is left runs the sweep again at once, after 5–30 ms, up to 3 times, as a turn of the dispatcher; then it is an
   `error` event.
 - **A job with global limits needs a timeout.** The lease is renewed while a handler runs. Without a timeout, a hung
-  handler would hold its slots in the whole cluster forever. So `handle()` throws a `ConfigError` if the definition has
+  handler would hold its slots in the whole cluster forever. So `lanes.add()` throws a `ConfigError` if the definition has
   `globalConcurrencyLimits` and no timeout, from the definition or from `defaults`. A job can also get limits only from its enqueue options. If its handler has
   no timeout, the job fails for good at the claim with a `FatalJobError` ("a job with global concurrency limits needs a
   timeout"), and its failure job runs.
@@ -694,7 +710,7 @@ the cluster, in `sqlane_rate_limits`; a local limit counts in the memory of each
   jobs in the due index, where every claim reads them again, and would lose their order.
 - **In the claim.** The claim locks the rows of the rate keys of its jobs: an `INSERT` of the missing rows at the
   current time, which locks the existing ones, in the order of the keys. On PostgreSQL, the statement that locks the
-  jobs does it, when their names are known to have rate keys; else a statement of its own. Then a read of the rows,
+  jobs does it, when their lanes are known to have rate keys; else a statement of its own. Then a read of the rows,
   with the oldest job blocked on each key, in a statement after the lock: it sees the jobs that another claim blocked
   while it held a row (a single statement would read them in its snapshot, taken before it waited). The order of the
   locks is the same everywhere: the job rows, the rate rows, then the slots. So the claims, the releases and the
@@ -705,7 +721,7 @@ the cluster, in `sqlane_rate_limits`; a local limit counts in the memory of each
 - **Blocked, with a timer.** A job over the quota is blocked on the rate key, with `run_at` unchanged and no attempt
   used, so a flood on one key does not hold back the others. The process that blocks it arms a timer at the time when
   the oldest blocked job of the key may start: one timer per process, over a heap of keys. The timer unblocks the
-  oldest jobs of the key, as many as the quota allows now (at most 500), wakes their names here and by a hint, and arms
+  oldest jobs of the key, as many as the quota allows now (at most 500), wakes their lanes here and by a hint, and arms
   itself for the next one. The unblock does not take the quota, the claims do: until they catch up, the next unblock
   of the key in the process counts the jobs that it made pending as if they started then. So a full batch is followed
   at once by the next one only while the quota admits more, and a long pause does not turn the whole queue pending.
@@ -733,7 +749,7 @@ the cluster, in `sqlane_rate_limits`; a local limit counts in the memory of each
   and its slots are freed. All the jobs of the key wait, as the other side refuses them all. There is no cap on the
   bounces of a job.
 - **Local limits.** The same GCRA in memory, on the monotonic clock of the process. A local limit has no keys, and a
-  start costs 1. A name over one of its local rate limits gets no slot, and its jobs stay pending; the process wakes it
+  start costs 1. A lane over one of its local rate limits gets no slot, and its jobs stay pending; the process wakes it
   when the limit allows a start. A `RateLimitedError` on a local limit pauses it in this process, and the job is
   pending again at once: another process may take it.
 - **Settings frozen with the keys.** The `rate_limits` of a job hold `max`, `per`, `burst` and the cost of each key.
@@ -743,7 +759,7 @@ the cluster, in `sqlane_rate_limits`; a local limit counts in the memory of each
 
 ### Failure jobs
 
-When a job fails for good (no attempts left, too many stalls, or a `FatalJobError`), and its row has a `failureJob`:
+When a job fails for good (no attempts left, too many stalls, or a `FatalJobError`), and its row has a `failureLane`:
 
 - The fail and the insert of the failure job commit together. If the database refuses the insert, the job still fails,
   but without its failure job. sqlane then logs an error and emits a `failure_job_not_added` event.
@@ -752,13 +768,14 @@ When a job fails for good (no attempts left, too many stalls, or a `FatalJobErro
       by its enqueue token. sqlane uses no savepoint on MySQL, because some drivers, such as Prisma, prepare every
       statement, and MySQL cannot prepare `SAVEPOINT`.
     - A deadlock rolls back the whole transaction on both databases, so the write runs again.
-- Payload (`FailedJobPayload`): `{ job: { id, name, payload, attempt, maxAttempts }, error: { name, message, stack } }`.
+- Payload (`FailedJobPayload`): `{ job: { id, lane, payload, attempt, maxAttempts }, error: { name, message, stack } }`.
   Exempt from `maxPayloadBytes`; `error.stack` is cut to 8 KiB.
 - A `FatalJobError` fails the job at once, with the same failure job.
-- The failure job is an ordinary job. Its options come from its definition: `start()` and `drain()` check that it resolves (a
-  definition object, or a name in `jobs` or handled) and has no `failureJob` of its own (`ConfigError`). A stall-fail
-  in a process that does not know the definition uses the defaults. Its row always gets `failure_job = null` (no
-  chains), and it is exempt from `unknownJobs: 'reject'`.
+- The failure job is an ordinary job. Its options come from the definition of its lane: `start()` and `drain()` check
+  that the failure lane resolves (a definition object, or a name in `lanes` or added) and has no `failureLane` of its
+  own (`ConfigError`). A stall-fail
+  in a process that does not know the definition uses the defaults. Its row always gets `failure_lane = null` (no
+  chains), and it is exempt from `unknownLanes: 'reject'`.
 - A replayed fail (lost acknowledgment) or a lost lease adds no second failure job.
 
 ### Close
@@ -787,9 +804,9 @@ and the hint subscription. It never ends the app's pool.
 
 `drain({ timeout, includeDelayed })` claims and runs jobs until none is left, without `start()`:
 
-- Only the names this instance handles, and only the due jobs. Pending jobs of other names are not waited for.
+- Only the lanes this instance added, and only the due jobs. Pending jobs of other lanes are not waited for.
 - `includeDelayed: true` also runs the delayed jobs and the retries in backoff at once (each round makes the pending
-  jobs of the handled names due now): for tests like "fails 3 times, then the failure job runs".
+  jobs of the added lanes due now): for tests like "fails 3 times, then the failure job runs".
 - Returns counts: `completed`, `retried` (failed attempts that were retried), `failed` (jobs that failed for good).
   On timeout it rejects with `DrainTimeoutError`.
 - It waits for the timers of the rate keys on which it blocked jobs, when they are due before the timeout, but not for
@@ -797,7 +814,7 @@ and the hint subscription. It never ends the app's pool.
 
 ### Schedules
 
-`schedule(job, options)` adds a schedule in code, before `start()`, like `handle()`. A schedule produces **slots**:
+`schedule(job, options)` adds a schedule in code, before `start()`, like `lanes.add()`. A schedule produces **slots**:
 the instants of a 5-field cron in an IANA time zone, or of a fixed `every` interval counted from the Unix epoch.
 
 **The timer.** Each started process keeps one timer for the earliest slot of all its schedules. It sleeps at most 1
@@ -813,7 +830,7 @@ slots:
    and it is on time (the database time minus the slot is at most 1 minute), or it is a late catch-up. A slot more
    than 1 s ahead of the database time is deferred.
 3. With `overlap: 'skip'`, it reads the status of the last job of each winner.
-4. It inserts the jobs of all winners, of all names, in one statement on PostgreSQL, with one NOTIFY per name. On
+4. It inserts the jobs of all winners, of all lanes, in one statement on PostgreSQL, with one NOTIFY per lane. On
    MySQL and MariaDB, it uses the enqueue insert. On-time jobs get `runAt` = their due time (the slot, plus the
    jitter), late ones are due now (plus the jitter's offset).
 5. It moves the cursors of the winners in one `UPDATE`.
@@ -825,7 +842,7 @@ a warning. A missing row (after a manual `DELETE`) is inserted again by an on-ti
 
 **Why at most one job per slot.** A slot is decided only while the transaction holds the row lock, and the lock pass
 reads the latest committed row. The cursor and the jobs commit together, so a crash leaves neither. The cursor
-outlives the job's retention, so the dedupe is permanent. The deterministic job id `<name>:schedule:[<key>:]<ISO>` is
+outlives the job's retention, so the dedupe is permanent. The deterministic job id `<lane>:schedule:[<key>:]<ISO>` is
 a second guard, and it makes a manual run with the `slot` enqueue option dedupe with the scheduler.
 
 **The clock.** The decisions use the database time of the fire transaction, so the clock of a process changes only when
@@ -856,7 +873,7 @@ from 5 s to 60 s.
 
 **Why no leader, and no chained pending job.** A leader adds a moving part, and the row lock already picks one
 process per slot. A future pending job per schedule (as BullMQ does) would make every probe read one index entry per
-scheduled name, and it breaks when that job is deleted or a deploy changes the spec.
+scheduled lane, and it breaks when that job is deleted or a deploy changes the spec.
 
 ### Bulk operations
 
@@ -874,7 +891,7 @@ adapter's `poolTransaction`), or the caller's.
    statement, a job claimed in between is not changed. A remove on MySQL and MariaDB deletes only the payloads whose job
    is gone. PostgreSQL returns the changed ids; MySQL and MariaDB count the changed rows.
 4. **After the commit** of a transaction that sqlane owns: the `cancelled` events, the wakes and hints of the retried
-   names, and the unblock of the concurrency keys of the cancelled or removed pending jobs. In the caller's transaction:
+   lanes, and the unblock of the concurrency keys of the cancelled or removed pending jobs. In the caller's transaction:
    no event, and the rest at the adapter's after-commit hook, else at once.
 
 A retry is due at `GREATEST(now, MAX(held_until))` of the job's slots, so it does not start beside a handler that may
@@ -936,7 +953,7 @@ The table lists each guarantee and the mechanism that keeps it.
 | A job does not start before its data is visible.                                                                                                                                               | Other connections see only committed rows.                                                                                                                    |
 | A committed job runs at least once.                                                                                                                                                            | Leases, stall recovery, and the release on close.                                                                                                             |
 | Only the current owner saves the result of a job.                                                                                                                                              | The claim uses SKIP LOCKED, and every write checks the `lock_token`.                                                                                          |
-| A job with a `dedupeKey` is added once while its row exists.                                                                                                                                   | The primary key is `<job_name>:<dedupeKey>`.                                                                                                                  |
+| A job with a `dedupeKey` is added once while its row exists.                                                                                                                                   | The primary key is `<lane>:<dedupeKey>`.                                                                                                                      |
 | At most `max` jobs with a common key of a global limit run at the same time, unless a handler ignores its `signal` past the lease or `exitsBy`, or two claims race during a change of the max. | The primary key `(key, slot)` of `sqlane_concurrency_slots`, the claim, and the linger of slots.                                                              |
 | A job blocked on a key is due again once the key has room.                                                                                                                                     | The unblock after each release and after each claim that blocks, and the sweep of the stall recovery.                                                         |
 | Any window of length `per` sees at most `max + burst − 1` starts of a key of a global rate limit, counted by cost, while its jobs carry one setting of the key.                                | The row of the key in `sqlane_rate_limits`, locked by the claim, whose `tat` moves in the transaction of the claim.                                           |
@@ -957,7 +974,7 @@ The table lists each guarantee and the mechanism that keeps it.
   each time a handler's `RateLimitedError` makes its job wait. New event types may come in minor versions.
 - **Schedules.** `schedules.list()` gives the next slot, the last slot and the last job of each schedule, from the
   table and from this process.
-- **Gauges.** For each job name, `jobs.stats()` returns the number of pending, blocked, due, running, stuck, failed
+- **Gauges.** For each lane, `lanes.stats()` returns the number of pending, blocked, due, running, stuck, failed
   and completed jobs, and the age of the oldest due job. A stuck job is a `running` job with a `timed_out_at` time: it
   timed out, and its handler has not settled yet. A blocked job, on a full key or on a rate key, counts in `blocked`,
   not in `pending`; a job held back by a local rate limit stays pending. The failed and completed jobs count until
@@ -1010,9 +1027,9 @@ repository of their own. `test/` holds the integration tests and the test databa
 The source files in `src/` have snake_case names. These are the main ones:
 
 - `create_sqlane.js` is the facade. It creates the instance and connects the parts below.
-- `define_job.js` defines jobs.
-- `registry.js` keeps the handlers, their weights and local limits.
-- `fair_share.js` shares the free slots between the names: `fill()`, `rankNames()`, `chooseRows()`, and `replayTie()` for the choices made in SQL.
+- `define_lane.js` defines the lanes.
+- `registry.js` keeps the added lanes: their handlers, weights and local limits.
+- `fair_share.js` shares the free slots between the lanes: `fill()`, `rankNames()`, `chooseRows()`, and `replayTie()` for the choices made in SQL.
 - `define_concurrency_limit.js` defines the concurrency limits; `concurrency_keys.js` checks the global limits of a
   job at enqueue.
 - `define_rate_limit.js` defines the rate limits; `rate_keys.js` checks the global rate limits of a job at enqueue;
@@ -1020,7 +1037,7 @@ The source files in `src/` have snake_case names. These are the main ones:
   rate keys.
 - `runner.js` implements `start()`, `close()` and `drain()`, and connects these parts. `dispatcher.js` runs the
   dispatcher loop: the wakes, the probes and the claims. `job_runs.js` runs a claimed job and writes its result, and
-  `failure_jobs.js` adds its failure job. `leases.js` renews the leases. `key_unblocks.js` unblocks the jobs blocked on
+  `failure_lanes.js` adds its failure job. `leases.js` renews the leases. `key_unblocks.js` unblocks the jobs blocked on
   keys, with the timer of the rate keys. `local_limits.js` holds the rooms of the local limits, and the wake timer of
   the local rate limits. `reprobes.js` re-probes after an enqueue. `maintenance.js` recovers stalled jobs, sweeps the
   slots and runs the cleanup.

@@ -16,7 +16,7 @@ export type BulkCall = {
      */
     ids: string[] | null;
     filter: {
-        jobName: string;
+        lane: string;
         statuses: readonly JobStatus[];
     } | null;
     mode: 'atomic' | 'batches';
@@ -29,7 +29,7 @@ export type BulkCall = {
  * The arguments of a call, checked.
  * @typedef {object} BulkCall
  * @property {string[] | null} ids The distinct ids, in the order of their first appearance. Null: a filter.
- * @property {{ jobName: string, statuses: readonly JobStatus[] } | null} filter
+ * @property {{ lane: string, statuses: readonly JobStatus[] } | null} filter
  * @property {'atomic' | 'batches'} mode
  * @property {boolean} strict
  * @property {boolean} includeAffectedJobIds
@@ -53,13 +53,13 @@ export type Outcome = {
     ignored: BulkIgnoredJob[];
     cancelled: {
         id: string;
-        name: string;
+        lane: string;
         attempts: number;
     }[];
     /**
-     * The names of the retried jobs.
+     * The lanes of the retried jobs.
      */
-    names: string[];
+    lanes: string[];
     /**
      * The concurrency keys of the pending jobs cancelled or removed.
      */
@@ -69,7 +69,7 @@ export type BulkDeps = {
     store: import('./store/store.js').Store;
     adapter: import('./types.js').Adapter<any>;
     tablePrefix: string;
-    wakeFor: (name: string, committed: boolean) => void;
+    wakeFor: (lane: string, committed: boolean) => void;
     /**
      * Never rejects.
      */
@@ -84,8 +84,8 @@ export type BulkDeps = {
  * @property {number} count
  * @property {string[]} ids The changed ids (on MySQL outside a transaction: the locked ones).
  * @property {BulkIgnoredJob[]} ignored
- * @property {{ id: string, name: string, attempts: number }[]} cancelled
- * @property {string[]} names The names of the retried jobs.
+ * @property {{ id: string, lane: string, attempts: number }[]} cancelled
+ * @property {string[]} lanes The lanes of the retried jobs.
  * @property {string[]} keys The concurrency keys of the pending jobs cancelled or removed.
  */
 /**
@@ -93,7 +93,7 @@ export type BulkDeps = {
  * @property {import('./store/store.js').Store} store
  * @property {import('./types.js').Adapter<any>} adapter
  * @property {string} tablePrefix
- * @property {(name: string, committed: boolean) => void} wakeFor
+ * @property {(lane: string, committed: boolean) => void} wakeFor
  * @property {(keys: string[]) => Promise<void>} unblockKeys Never rejects.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit
  * @property {(operation: string, error: unknown) => void} reportError

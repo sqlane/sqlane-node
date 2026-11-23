@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { parseCron } from './cron.js';
-import { defineJob } from './define_job.js';
+import { defineLane } from './define_lane.js';
 import { ConfigError } from './errors.js';
 import {
     checkSchedule,
@@ -15,7 +15,7 @@ import {
     slotDedupeKeyOf,
 } from './schedule.js';
 
-const report = defineJob({ name: 'nightly_report' });
+const report = defineLane({ name: 'nightly_report' });
 
 describe('checkSchedule', () => {
     test('a cron in a zone', () => {
@@ -23,7 +23,7 @@ describe('checkSchedule', () => {
 
         expect(entry).toMatchObject({
             id: 'nightly_report',
-            name: 'nightly_report',
+            lane: 'nightly_report',
             key: null,
             spec: 'cron 0 3 * * 1-5 Europe/Berlin',
             payload: {},
@@ -90,8 +90,8 @@ describe('checkSchedule', () => {
         expect(() => checkSchedule(report, options)).toThrow(message);
     });
 
-    test('rejects a bad job name', () => {
-        expect(() => checkSchedule('Bad Name', { every: '1m' })).toThrow(/job definition or a job name/);
+    test('rejects a bad lane name', () => {
+        expect(() => checkSchedule('Bad Name', { every: '1m' })).toThrow(/lane definition or a lane name/);
     });
 
     test('accepts the intervals that divide a day, and any interval up to 1 hour', () => {

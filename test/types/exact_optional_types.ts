@@ -14,24 +14,24 @@ export async function exactOptionalTypes() {
 
     // A field set to undefined counts as absent
     await sqlane.jobs.list(
-        { jobName: 'build_report', status: undefined },
+        { lane: 'build_report', status: undefined },
         { limit: undefined, cursor: undefined, includePayload: undefined },
     );
-    await sqlane.jobs.list({ jobName: 'build_report' }, { cursor });
+    await sqlane.jobs.list({ lane: 'build_report' }, { cursor });
     // The nextCursor of a page, as it comes: null on the last page
-    await sqlane.jobs.list({ jobName: 'build_report' }, { cursor: nextCursor });
-    await sqlane.jobs.list({ jobName: 'build_report' }, { cursor: null });
+    await sqlane.jobs.list({ lane: 'build_report' }, { cursor: nextCursor });
+    await sqlane.jobs.list({ lane: 'build_report' }, { cursor: null });
 
     // The bulk methods: a field set to undefined counts as absent
-    await sqlane.jobs.retry({ jobIds: ['a'], jobName: undefined, status: undefined }, {
+    await sqlane.jobs.retry({ jobIds: ['a'], lane: undefined, status: undefined }, {
         budget: undefined,
         connection: undefined,
         mode: undefined,
         strict: undefined,
         includeAffectedJobIds: undefined,
     });
-    await sqlane.jobs.cancel({ jobName: 'build_report', status: undefined, jobIds: undefined }, { strict: undefined });
-    await sqlane.jobs.remove({ jobName: 'build_report' }, { connection: undefined, mode: undefined });
+    await sqlane.jobs.cancel({ lane: 'build_report', status: undefined, jobIds: undefined }, { strict: undefined });
+    await sqlane.jobs.remove({ lane: 'build_report' }, { connection: undefined, mode: undefined });
 
     // keyStats: an option set to undefined counts as absent
     await sqlane.jobs.keyStats({ limit: undefined, type: undefined, orderBy: undefined });

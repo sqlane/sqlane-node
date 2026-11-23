@@ -1,26 +1,26 @@
-export type FailureJobs = {
+export type FailureLanes = {
     /**
      * The failure job of a failed job: its definition's
-     * options (or the defaults), and no failure job of its own.
+     * options (or the defaults), and no failure lane of its own.
      */
     build: import('./store/store.js').FailureJobBuilder;
     /**
-     * An added failure job wakes its name
+     * An added failure job wakes its lane
      * here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
      */
     report: (job: {
         id: string;
-        name: string;
+        lane: string;
         attempt: number;
-        failureJob: string | null;
+        failureLane: string | null;
     }, result: import('./store/store.js').FailureJobResult | null) => void;
 };
 /**
- * @typedef {object} FailureJobs
+ * @typedef {object} FailureLanes
  * @property {import('./store/store.js').FailureJobBuilder} build The failure job of a failed job: its definition's
- *     options (or the defaults), and no failure job of its own.
- * @property {(job: { id: string, name: string, attempt: number, failureJob: string | null },
- *     result: import('./store/store.js').FailureJobResult | null) => void} report An added failure job wakes its name
+ *     options (or the defaults), and no failure lane of its own.
+ * @property {(job: { id: string, lane: string, attempt: number, failureLane: string | null },
+ *     result: import('./store/store.js').FailureJobResult | null) => void} report An added failure job wakes its lane
  *     here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
  */
 /**
@@ -29,13 +29,13 @@ export type FailureJobs = {
  * @param {import('./defaults.js').ResolvedDefaults} params.defaults
  * @param {(event: import('./types.js').SqlaneEvent) => void} params.emit
  * @param {(operation: string, error: unknown) => void} params.reportError
- * @param {(name: string) => void} params.onAdded A failure job of the name was added: its commit is to come.
- * @returns {FailureJobs}
+ * @param {(lane: string) => void} params.onAdded A failure job of the lane was added: its commit is to come.
+ * @returns {FailureLanes}
  */
-export declare function createFailureJobs({ registry, defaults, emit, reportError, onAdded }: {
+export declare function createFailureLanes({ registry, defaults, emit, reportError, onAdded }: {
     registry: import('./registry.js').Registry;
     defaults: import('./defaults.js').ResolvedDefaults;
     emit: (event: import('./types.js').SqlaneEvent) => void;
     reportError: (operation: string, error: unknown) => void;
-    onAdded: (name: string) => void;
-}): FailureJobs;
+    onAdded: (lane: string) => void;
+}): FailureLanes;

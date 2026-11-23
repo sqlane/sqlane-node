@@ -78,14 +78,14 @@ export declare function waitAtMost(promise: Promise<unknown>, ms: number, { ref 
  * @param {{ completed: number, retried: number, failed: number }} params.counts The results, counted for drain().
  * @param {{ leaseMs: number, maxFinalizingMs: number, missingPayloadGraceMs: number }} params.timings
  * @param {() => import('./runner.js').RunnerState} params.state
- * @param {import('./failure_jobs.js').FailureJobs} params.failureJobs
+ * @param {import('./failure_lanes.js').FailureLanes} params.failureLanes
  * @param {(key: string, delayMs: number) => void} params.armRateWake The timer of a rate key with a job blocked on it.
  * @param {(entry: HandlerEntry) => void} params.wakeAfterRates Its local rate limits that admit no start now: a wake of
- *     their names when one may start.
+ *     their lanes when one may start.
  * @param {import('./hint_channel.js').HintChannel} params.hintChannel
  * @returns {JobRuns}
  */
-export declare function createJobRuns({ store, defaults, logger, emit, reportError, counts, timings: t, state, failureJobs, armRateWake, wakeAfterRates, hintChannel, }: {
+export declare function createJobRuns({ store, defaults, logger, emit, reportError, counts, timings: t, state, failureLanes, armRateWake, wakeAfterRates, hintChannel, }: {
     store: import('./store/store.js').Store;
     defaults: import('./defaults.js').ResolvedDefaults;
     logger: import('./types.js').Logger | undefined;
@@ -102,7 +102,7 @@ export declare function createJobRuns({ store, defaults, logger, emit, reportErr
         missingPayloadGraceMs: number;
     };
     state: () => import('./runner.js').RunnerState;
-    failureJobs: import('./failure_jobs.js').FailureJobs;
+    failureLanes: import('./failure_lanes.js').FailureLanes;
     armRateWake: (key: string, delayMs: number) => void;
     wakeAfterRates: (entry: HandlerEntry) => void;
     hintChannel: import('./hint_channel.js').HintChannel;

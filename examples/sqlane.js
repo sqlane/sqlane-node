@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { createSqlane } from '@sqlane/core';
 import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
-import { allJobs } from './jobs.js';
+import { allLanes } from './jobs.js';
 
 /** The app's database: business transactions, handlers. */
 export const db = drizzle({ client: new Pool({ connectionString: 'postgres://app@localhost/app', max: 20 }) });
@@ -14,22 +14,22 @@ const queueDb = drizzle({ client: new Pool({ connectionString: 'postgres://app@l
 export const sqlane = createSqlane({
     // NOTIFY wakes the workers of every process at the commit
     adapter: drizzleAdapter(queueDb, { dialect: 'postgres', notify: true }),
-    jobs: allJobs,
+    lanes: allLanes,
     localMaxConcurrency: 10,
     defaults: { timeout: '10m' },
-    unknownJobs: 'reject',
+    unknownLanes: 'reject',
     onEvent: (event) => {
         if (event.type === 'failed') {
-            reportError(event.jobName, event.error);
+            reportError(event.lane, event.error);
         }
     },
 });
 
 /**
- * @param {string} jobName
+ * @param {string} lane
  * @param {unknown} error
  */
-function reportError(jobName, error) {
-    void jobName;
+function reportError(lane, error) {
+    void lane;
     void error;
 }

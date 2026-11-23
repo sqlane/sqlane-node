@@ -1,7 +1,7 @@
-export type ShareName = {
+export type ShareLane = {
     name: string;
     /**
-     * Its position in the order of the handle() calls: the order of the ties.
+     * Its position in the order of the lanes.add() calls: the order of the ties.
      */
     index: number;
     /**
@@ -13,7 +13,7 @@ export type ShareName = {
      */
     running: number;
     /**
-     * Its local limits, each shared by its names: its max minus its running.
+     * Its local limits, each shared by its lanes: its max minus its running.
      */
     limits: {
         room: number;
@@ -29,54 +29,54 @@ export type Ranked = {
     running: number;
 };
 /**
- * Gives the free slots, one at a time, to the eligible name with the lowest running / weight; ties in the order of
+ * Gives the free slots, one at a time, to the eligible lane with the lowest running / weight; ties in the order of
  * (index − base) mod size. The base is fixed for the call. Mutates running, available and the limit rooms.
  * @template T
  * @param {object} params
- * @param {ShareName[]} params.names
+ * @param {ShareLane[]} params.lanes
  * @param {number} params.free The free slots of the instance.
  * @param {number} params.base The tie pointer.
- * @param {number} params.size The handled names: the span of the tie order.
- * @param {(name: ShareName) => T | null} params.take The next unit of the name; null: it has none.
- * @returns {{ chosen: T[], lastTieWinner: number | null }} `lastTieWinner`: the index of the last name that won a
+ * @param {number} params.size The added lanes: the span of the tie order.
+ * @param {(lane: ShareLane) => T | null} params.take The next unit of the lane; null: it has none.
+ * @returns {{ chosen: T[], lastTieWinner: number | null }} `lastTieWinner`: the index of the last lane that won a
  *     slot against an equal share.
  */
-export declare function fill<T>({ names, free, base, size, take }: {
-    names: ShareName[];
+export declare function fill<T>({ lanes, free, base, size, take }: {
+    lanes: ShareLane[];
     free: number;
     base: number;
     size: number;
-    take: (name: ShareName) => T | null;
+    take: (lane: ShareLane) => T | null;
 }): {
     chosen: T[];
     lastTieWinner: number | null;
 };
 /**
- * Sorts the names in place, in the order of their current share, then the tie order: a plan serves a prefix of this
+ * Sorts the lanes in place, in the order of their current share, then the tie order: a plan serves a prefix of this
  * order.
  * @template {Ranked} T
- * @param {T[]} names
+ * @param {T[]} lanes
  * @param {number} base
  * @param {number} size
  * @returns {T[]} The same array.
  */
-export declare function rankNames<T extends Ranked>(names: T[], base: number, size: number): T[];
+export declare function rankLanes<T extends Ranked>(lanes: T[], base: number, size: number): T[];
 /**
- * Chooses among locked rows: the rows of each name in FIFO order are its units.
- * @template {{ name: string }} T
+ * Chooses among locked rows: the rows of each lane in FIFO order are its units.
+ * @template {{ lane: string }} T
  * @param {object} params
  * @param {T[]} params.rows In the order of run_at, id.
- * @param {ShareName[]} params.names Their `available` is set from the rows.
+ * @param {ShareLane[]} params.lanes Their `available` is set from the rows.
  * @param {number} params.free
  * @param {number} params.base
  * @param {number} params.size
  * @returns {{ chosen: T[], lastTieWinner: number | null }}
  */
 export declare function chooseRows<T extends {
-    name: string;
-}>({ rows, names, free, base, size }: {
+    lane: string;
+}>({ rows, lanes, free, base, size }: {
     rows: T[];
-    names: ShareName[];
+    lanes: ShareLane[];
     free: number;
     base: number;
     size: number;
@@ -85,27 +85,27 @@ export declare function chooseRows<T extends {
     lastTieWinner: number | null;
 };
 /**
- * The names of the requests of a claim, with the counts and the limit rooms that the claim was given.
+ * The lanes of the requests of a claim, with the counts and the limit rooms that the claim was given.
  * @param {{ index: number }[]} entries Of the requests, in their order: their handlers.
  * @param {import('./store/store.js').DueRequest[]} requests
  * @param {number[]} limitRooms
  * @param {(request: import('./store/store.js').DueRequest) => boolean} [keep]
- * @returns {ShareName[]}
+ * @returns {ShareLane[]}
  */
-export declare function shareNamesOfRequests(entries: {
+export declare function shareLanesOfRequests(entries: {
     index: number;
-}[], requests: import('./store/store.js').DueRequest[], limitRooms: number[], keep?: (request: import('./store/store.js').DueRequest) => boolean): ShareName[];
+}[], requests: import('./store/store.js').DueRequest[], limitRooms: number[], keep?: (request: import('./store/store.js').DueRequest) => boolean): ShareLane[];
 /**
- * The last tie of a choice made in SQL: `fill()` over the claimed rows, with one more row of each name that the claim
+ * The last tie of a choice made in SQL: `fill()` over the claimed rows, with one more row of each lane that the claim
  * left a locked row of, under the counts and rooms that the claim was given, makes the same choice and the same ties.
- * Each name has a row left in the replay exactly when it has one in the claim. A name with no claimed row and a share
- * above every claimed share is left out: it never took a slot, nor tied with the name that did.
+ * Each lane has a row left in the replay exactly when it has one in the claim. A lane with no claimed row and a share
+ * above every claimed share is left out: it never took a slot, nor tied with the lane that did.
  * @param {object} params
  * @param {{ index: number }[]} params.entries Of the requests, in their order: their handlers.
  * @param {import('./store/store.js').DueRequest[]} params.requests
  * @param {number[]} params.limitRooms
- * @param {{ name: string }[]} params.jobs The claimed jobs.
- * @param {string[]} params.unpicked The names with a locked row that the claim did not take.
+ * @param {{ lane: string }[]} params.jobs The claimed jobs.
+ * @param {string[]} params.unpicked The lanes with a locked row that the claim did not take.
  * @param {number} params.base
  * @param {number} params.size
  * @returns {number | null}
@@ -117,7 +117,7 @@ export declare function replayTie({ entries, requests, limitRooms, jobs, unpicke
     requests: import('./store/store.js').DueRequest[];
     limitRooms: number[];
     jobs: {
-        name: string;
+        lane: string;
     }[];
     unpicked: string[];
     base: number;

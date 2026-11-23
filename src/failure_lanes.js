@@ -3,11 +3,11 @@
 import { buildNewJob } from './new_job.js';
 
 /**
- * @typedef {object} FailureJobs
+ * @typedef {object} FailureLanes
  * @property {import('./store/store.js').FailureJobBuilder} build The failure job of a failed job: its definition's
- *     options (or the defaults), and no failure job of its own.
- * @property {(job: { id: string, name: string, attempt: number, failureJob: string | null },
- *     result: import('./store/store.js').FailureJobResult | null) => void} report An added failure job wakes its name
+ *     options (or the defaults), and no failure lane of its own.
+ * @property {(job: { id: string, lane: string, attempt: number, failureLane: string | null },
+ *     result: import('./store/store.js').FailureJobResult | null) => void} report An added failure job wakes its lane
  *     here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
  */
 
@@ -17,20 +17,20 @@ import { buildNewJob } from './new_job.js';
  * @param {import('./defaults.js').ResolvedDefaults} params.defaults
  * @param {(event: import('./types.js').SqlaneEvent) => void} params.emit
  * @param {(operation: string, error: unknown) => void} params.reportError
- * @param {(name: string) => void} params.onAdded A failure job of the name was added: its commit is to come.
- * @returns {FailureJobs}
+ * @param {(lane: string) => void} params.onAdded A failure job of the lane was added: its commit is to come.
+ * @returns {FailureLanes}
  */
-export function createFailureJobs({ registry, defaults, emit, reportError, onAdded }) {
+export function createFailureLanes({ registry, defaults, emit, reportError, onAdded }) {
     return {
         build: (failed) => {
             const newJob = buildNewJob({
-                name: failed.failureJob,
-                definition: registry.findDefinition(failed.failureJob),
+                lane: failed.failureLane,
+                definition: registry.findDefinition(failed.failureLane),
                 defaults,
                 payload: {
                     job: {
                         id: failed.id,
-                        name: failed.name,
+                        lane: failed.lane,
                         payload: failed.payload,
                         attempt: failed.attempt,
                         maxAttempts: failed.maxAttempts,
@@ -41,7 +41,7 @@ export function createFailureJobs({ registry, defaults, emit, reportError, onAdd
                 maxPayloadBytes: Infinity,
             });
 
-            return { ...newJob, failureJob: null };
+            return { ...newJob, failureLane: null };
         },
         report: (job, result) => {
             if (result && 'notAdded' in result) {
@@ -49,13 +49,13 @@ export function createFailureJobs({ registry, defaults, emit, reportError, onAdd
                 emit({
                     type: 'failure_job_not_added',
                     jobId: job.id,
-                    jobName: job.name,
+                    lane: job.lane,
                     attempt: job.attempt,
-                    failureJob: String(job.failureJob),
+                    failureLane: String(job.failureLane),
                     error: result.notAdded,
                 });
             } else if (result && 'added' in result) {
-                onAdded(result.added.name);
+                onAdded(result.added.lane);
             }
         },
     };

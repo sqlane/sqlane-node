@@ -58,7 +58,7 @@ export function createLeases({ store, running, timings: t, state, setTimer, emit
         emit({
             type: 'lease_lost',
             jobId: job.claimed.id,
-            jobName: job.claimed.name,
+            lane: job.claimed.lane,
             attempt: job.claimed.attempts + 1,
         });
     }

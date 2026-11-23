@@ -166,6 +166,34 @@ export function mariadbMigrations(p) {
             statements: [`ALTER TABLE ${p}jobs ADD KEY IF NOT EXISTS ${p}jobs_list (job_name, created_at, id)`],
             down: [`ALTER TABLE ${p}jobs DROP KEY IF EXISTS ${p}jobs_list`],
         },
+        {
+            // 9.0: the kind of a job is its lane. Renames only: metadata, no copy of the table. A step runs only if
+            // its old column exists: a run cut between the two ALTER TABLE runs again.
+            id: '0009_lanes',
+            version: '9.0.0',
+            statements: [
+                {
+                    ifColumnExists: [`${p}jobs`, 'job_name'],
+                    sql: `ALTER TABLE ${p}jobs RENAME COLUMN job_name TO lane, RENAME COLUMN failure_job TO failure_lane,
+                        RENAME INDEX ${p}jobs_status_name_run_at TO ${p}jobs_status_lane_run_at`,
+                },
+                {
+                    ifColumnExists: [`${p}schedules`, 'job_name'],
+                    sql: `ALTER TABLE ${p}schedules RENAME COLUMN job_name TO lane`,
+                },
+            ],
+            down: [
+                {
+                    ifColumnExists: [`${p}jobs`, 'lane'],
+                    sql: `ALTER TABLE ${p}jobs RENAME COLUMN lane TO job_name, RENAME COLUMN failure_lane TO failure_job,
+                        RENAME INDEX ${p}jobs_status_lane_run_at TO ${p}jobs_status_name_run_at`,
+                },
+                {
+                    ifColumnExists: [`${p}schedules`, 'lane'],
+                    sql: `ALTER TABLE ${p}schedules RENAME COLUMN lane TO job_name`,
+                },
+            ],
+        },
     ];
 }
 

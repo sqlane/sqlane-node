@@ -1,13 +1,13 @@
-// The re-probes after an enqueue (or a hint) of a handled name: its commit is to come, so the dispatcher probes its
-// names again a few times, until the job is visible. See docs/design.md › Wake-up after the commit.
+// The re-probes after an enqueue (or a hint) of a added lane: its commit is to come, so the dispatcher probes its
+// lanes again a few times, until the job is visible. See docs/design.md › Wake-up after the commit.
 
 /** The wakes after the last enqueue (or hint), until its commit makes the job visible */
 const REPROBE_DELAYS_MS = [20, 50, 100, 200, 500, 1000, 2000];
 
 /**
  * @typedef {object} Reprobes
- * @property {(names: readonly string[]) => void} follow An enqueue of the names: one series of re-probes, from the
- *     last enqueue, of the names enqueued within its steps. Only the steps shorter than the poll interval count.
+ * @property {(lanes: readonly string[]) => void} follow An enqueue of the lanes: one series of re-probes, from the
+ *     last enqueue, of the lanes enqueued within its steps. Only the steps shorter than the poll interval count.
  */
 
 /**
@@ -16,12 +16,12 @@ const REPROBE_DELAYS_MS = [20, 50, 100, 200, 500, 1000, 2000];
  * @param {() => import('./runner.js').RunnerState} params.state No re-probe unless started.
  * @param {(func: () => void, delayMs: number) => NodeJS.Timeout} params.setTimer An unref'd timer.
  * @param {(timer: NodeJS.Timeout) => void} params.clearTimer
- * @param {(names: string[]) => void} params.wake A speculative wake of the names: a probe first.
+ * @param {(lanes: string[]) => void} params.wake A speculative wake of the lanes: a probe first.
  * @returns {Reprobes}
  */
 export function createReprobes({ pollIntervalMs, state, setTimer, clearTimer, wake }) {
-    /** @type {Map<string, number>} The names of the enqueues of the current series of re-probes: their last enqueue */
-    const reprobeNames = new Map();
+    /** @type {Map<string, number>} The lanes of the enqueues of the current series of re-probes: their last enqueue */
+    const reprobeLanes = new Map();
     /** The time of the last enqueue (or hint): the re-probes follow it */
     let reprobeFrom = 0;
     /** @type {{ timer: NodeJS.Timeout, at: number } | null} The next re-probe */
@@ -36,7 +36,7 @@ export function createReprobes({ pollIntervalMs, state, setTimer, clearTimer, wa
 
         if (at === undefined || state() !== 'started') {
             reprobe = null;
-            reprobeNames.clear();
+            reprobeLanes.clear();
 
             return;
         }
@@ -44,14 +44,14 @@ export function createReprobes({ pollIntervalMs, state, setTimer, clearTimer, wa
         const timer = setTimer(() => {
             const stepAt = Date.now();
 
-            for (const [name, enqueuedAt] of reprobeNames) {
+            for (const [lane, enqueuedAt] of reprobeLanes) {
                 // Its last step is past: a series that goes on for later enqueues does not probe it again
                 if (stepAt - enqueuedAt > lastDelay) {
-                    reprobeNames.delete(name);
+                    reprobeLanes.delete(lane);
                 }
             }
 
-            wake([...reprobeNames.keys()]);
+            wake([...reprobeLanes.keys()]);
             scheduleReprobe();
         }, at - now);
 
@@ -59,12 +59,12 @@ export function createReprobes({ pollIntervalMs, state, setTimer, clearTimer, wa
     }
 
     return {
-        follow: (names) => {
-            // One series of re-probes, from the last enqueue: of the names enqueued within its steps
+        follow: (lanes) => {
+            // One series of re-probes, from the last enqueue: of the lanes enqueued within its steps
             reprobeFrom = Date.now();
 
-            for (const name of names) {
-                reprobeNames.set(name, reprobeFrom);
+            for (const lane of lanes) {
+                reprobeLanes.set(lane, reprobeFrom);
             }
 
             // A re-probe that comes sooner stays: then the series goes on from this enqueue. A burst of enqueues gives

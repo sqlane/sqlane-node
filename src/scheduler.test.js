@@ -74,7 +74,7 @@ function fakeStore(now) {
         for (const candidate of params.candidates) {
             if (candidate.insertMissing && !database.rows.has(candidate.id)) {
                 database.rows.set(candidate.id, {
-                    id: candidate.id, jobName: candidate.name, spec: candidate.spec, lastSlotMs: 0, lastJobId: null,
+                    id: candidate.id, lane: candidate.lane, spec: candidate.spec, lastSlotMs: 0, lastJobId: null,
                 });
             }
 
@@ -107,7 +107,7 @@ function fakeStore(now) {
                 });
                 result.decided.push({
                     id: candidate.id,
-                    name: candidate.name,
+                    lane: candidate.lane,
                     slot: candidate.slot,
                     late: decision === 'late',
                     outcome: skip ? 'skipped' : 'enqueued',
@@ -121,7 +121,7 @@ function fakeStore(now) {
     }
 
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
-        registerSchedules: async (/** @type {{ id: string, name: string, spec: string }[]} */ entries) => {
+        registerSchedules: async (/** @type {{ id: string, lane: string, spec: string }[]} */ entries) => {
             database.registers.push(entries.map(({ id }) => id));
 
             if (database.failRead) {
@@ -131,7 +131,7 @@ function fakeStore(now) {
             for (const entry of entries) {
                 if (!database.rows.has(entry.id)) {
                     database.rows.set(entry.id, {
-                        id: entry.id, jobName: entry.name, spec: entry.spec, lastSlotMs: Date.now(), lastJobId: null,
+                        id: entry.id, lane: entry.lane, spec: entry.spec, lastSlotMs: Date.now(), lastJobId: null,
                     });
                 }
             }
@@ -269,7 +269,7 @@ function setup({ schedules, localOffsetMs = 0, offset = { ms: localOffsetMs }, t
         defaults: resolveDefaults(),
         maxPayloadBytes: 1024,
         findDefinition: () => null,
-        unknownJobs: 'allow',
+        unknownLanes: 'allow',
         notifyChannel: null,
         onCreated: name => created.push(name),
         emit: event => events.push(event),
@@ -361,7 +361,7 @@ describe('start', () => {
             ],
         });
         const row = (/** @type {string} */ id, /** @type {number} */ lastSlotMs, spec = 'every 3600000') => {
-            database.rows.set(id, { id, jobName: id, spec, lastSlotMs, lastJobId: null });
+            database.rows.set(id, { id, lane: id, spec, lastSlotMs, lastJobId: null });
         };
 
         // 12:00:30: the slot 12:00 of `on_time` is 30 s old, the slot 12:00 of the others too
@@ -402,7 +402,7 @@ describe('tick', () => {
         expect(events[0]).toStrictEqual({
             type: 'schedule_fired',
             scheduleId: 'a',
-            jobName: 'a',
+            lane: 'a',
             scheduledAt: new Date('2026-06-01T12:01:00.000Z'),
             late: false,
             jobId: 'a:schedule:2026-06-01T12:01:00.000Z',
@@ -560,7 +560,7 @@ describe('the clock of the database', () => {
     test('the registration seeds the skew, even with a slow round trip: a deferred slot at start still fires', async () => {
         const { database, start, logger } = started({ schedules: [['tick', { every: '1m' }]], localOffsetMs: 5000 });
 
-        database.rows.set('tick', { id: 'tick', jobName: 'tick', spec: 'every 60000', lastSlotMs: START - MINUTE_MS, lastJobId: null });
+        database.rows.set('tick', { id: 'tick', lane: 'tick', spec: 'every 60000', lastSlotMs: START - MINUTE_MS, lastJobId: null });
         database.rttMs = 60;
         vi.setSystemTime(START + (59.5 * SECOND_MS));
         await start();
@@ -800,12 +800,12 @@ describe('add and list', () => {
     test('lists the rows of other services, and the registered schedules without a row', async () => {
         const { scheduler, database } = setup({ schedules: [['tick', { every: '1m' }]] });
 
-        database.rows.set('gone', { id: 'gone', jobName: 'gone', spec: 'every 1000', lastSlotMs: 5, lastJobId: 'gone:x' });
+        database.rows.set('gone', { id: 'gone', lane: 'gone', spec: 'every 1000', lastSlotMs: 5, lastJobId: 'gone:x' });
 
         await expect(scheduler.list()).resolves.toStrictEqual([
             {
                 id: 'gone',
-                name: 'gone',
+                lane: 'gone',
                 spec: 'every 1000',
                 registered: false,
                 nextAt: null,
@@ -815,7 +815,7 @@ describe('add and list', () => {
             },
             {
                 id: 'tick',
-                name: 'tick',
+                lane: 'tick',
                 spec: 'every 60000',
                 registered: true,
                 nextAt: new Date('2026-06-01T12:01:00.000Z'),
@@ -855,7 +855,7 @@ describe('jitter', () => {
         const due = dueTime('job_0', options, '2026-06-01T10:00:00Z');
 
         database.rows.set('job_0', {
-            id: 'job_0', jobName: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T09:00:00Z'), lastJobId: null,
+            id: 'job_0', lane: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T09:00:00Z'), lastJobId: null,
         });
         vi.setSystemTime(Date.parse('2026-06-01T10:20:00Z'));
         await start();
@@ -909,7 +909,7 @@ describe('jitter', () => {
         const { database, start } = started({ schedules: [['job_0', hourly]] });
 
         database.rows.set('job_0', {
-            id: 'job_0', jobName: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T08:00:00Z'), lastJobId: null,
+            id: 'job_0', lane: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T08:00:00Z'), lastJobId: null,
         });
         vi.setSystemTime(Date.parse('2026-06-01T10:50:00Z'));
         await start();
@@ -926,7 +926,7 @@ describe('jitter', () => {
         const due = dueTime('job_0', hourly, '2026-06-01T10:00:00Z');
 
         database.rows.set('job_0', {
-            id: 'job_0', jobName: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T09:00:00Z'), lastJobId: null,
+            id: 'job_0', lane: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T09:00:00Z'), lastJobId: null,
         });
         vi.setSystemTime(due + 500);
         failNext(database, 1, params => ({

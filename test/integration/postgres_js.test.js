@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from '
 import { connectTestDatabase } from '../support/test_database.js';
 import { postgresJsAdapter } from '../../src/adapters/postgres_js.js';
 import { poolTransactionIsolation, readCommitted } from './helpers/isolation.js';
-import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineLane } from '../../src/index.js';
 import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 import { checkSchemaChanges, SCHEMA_CHANGES } from './helpers/schema_checks.js';
@@ -190,30 +190,30 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
 
     test('drain: retries, global limits, a failure job and the stats', async () => {
         const reportLimit = defineConcurrencyLimit({ name: 'r', max: 1 });
-        const report = defineJob({
+        const report = defineLane({
             name: 'report',
             globalConcurrencyLimits: ({ payload }) => [reportLimit.key(payload.id)],
             timeout: '5s',
         });
-        const reportFailed = defineJob({ name: 'report_failed' });
-        const failing = defineJob({
+        const reportFailed = defineLane({ name: 'report_failed' });
+        const failing = defineLane({
             name: 'failing',
             maxAttempts: 2,
             backoff: { type: 'fixed', delay: 10, jitter: 0 },
-            failureJob: reportFailed,
+            failureLane: reportFailed,
         });
-        const { sqlane, p } = await freshSqlane({ jobs: [report, reportFailed, failing] });
+        const { sqlane, p } = await freshSqlane({ lanes: [report, reportFailed, failing] });
         /** @type {unknown[]} */
         const payloads = [];
 
-        sqlane.handle(report, ({ payload }) => {
+        sqlane.lanes.add(report, ({ payload }) => {
             payloads.push(payload);
         });
-        sqlane.handle(failing, () => {
+        sqlane.lanes.add(failing, () => {
             throw new Error('always');
         });
-        sqlane.handle(reportFailed, ({ payload }) => {
-            payloads.push(payload.job.name);
+        sqlane.lanes.add(reportFailed, ({ payload }) => {
+            payloads.push(payload.job.lane);
         });
         await sqlane.enqueueMany(sql, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
         await sqlane.enqueue(sql, failing, {});
@@ -221,7 +221,7 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
         await expect(sqlane.drain({ includeDelayed: true }))
             .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
         expect(payloads).toStrictEqual([{ id: 1 }, { id: 1 }, 'failing']);
-        await expect(sqlane.jobs.stats()).resolves.toMatchObject([
+        await expect(sqlane.lanes.stats()).resolves.toMatchObject([
             { name: 'failing', pending: 0, failed: 1, completed: 0 },
             { name: 'report', pending: 0, completed: 2 },
             { name: 'report_failed', pending: 0, completed: 1 },
@@ -236,7 +236,7 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
             pollInterval: '10s',
         }, p);
 
-        worker.handle('ping', () => {});
+        worker.lanes.add('ping', () => {});
         await worker.start();
         await sleep(200);
         await sql.begin(async (/** @type {any} */ tx) => {

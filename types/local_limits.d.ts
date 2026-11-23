@@ -28,23 +28,23 @@ export declare function localLimitsOf(entry: HandlerEntry): readonly LocalLimit[
  */
 export declare function limitsRoom(entry: HandlerEntry): number;
 /**
- * The names of a choice, with their counts now. The names of one limit share one room object; the room of a rate
+ * The lanes of a choice, with their counts now. The lanes of one limit share one room object; the room of a rate
  * limit is the starts that its quota admits now, one per job.
  * @param {HandlerEntry[]} entries
- * @returns {import('./fair_share.js').ShareName[]}
+ * @returns {import('./fair_share.js').ShareLane[]}
  */
-export declare function shareNamesOf(entries: HandlerEntry[]): import('./fair_share.js').ShareName[];
+export declare function shareLanesOf(entries: HandlerEntry[]): import('./fair_share.js').ShareLane[];
 /**
  * @param {import('./registry.js').Registry} registry
- * @param {string[]} names
+ * @param {string[]} lanes
  * @param {number} at
- * @returns {boolean} One of the names waits for a local rate limit that admits a start before the time.
+ * @returns {boolean} One of the lanes waits for a local rate limit that admits a start before the time.
  */
-export declare function ratesAdmitBefore(registry: import('./registry.js').Registry, names: string[], at: number): boolean;
+export declare function ratesAdmitBefore(registry: import('./registry.js').Registry, lanes: string[], at: number): boolean;
 export type LocalRateWakes = {
     /**
-     * The local rate limits of the name that admit no start now:
-     * its names wake when one may start. A name over one of them is left out of the turns, as a name at its local cap.
+     * The local rate limits of the lane that admit no start now:
+     * its lanes wake when one may start. A lane over one of them is left out of the turns, as a lane at its local cap.
      */
     wakeAfterRates: (entry: HandlerEntry) => void;
     /**
@@ -54,20 +54,20 @@ export type LocalRateWakes = {
 };
 /**
  * @typedef {object} LocalRateWakes
- * @property {(entry: HandlerEntry) => void} wakeAfterRates The local rate limits of the name that admit no start now:
- *     its names wake when one may start. A name over one of them is left out of the turns, as a name at its local cap.
+ * @property {(entry: HandlerEntry) => void} wakeAfterRates The local rate limits of the lane that admit no start now:
+ *     its lanes wake when one may start. A lane over one of them is left out of the turns, as a lane at its local cap.
  * @property {() => void} clear Forgets the limits, and stops the timer.
  */
 /**
- * The timer of the local rate limits that a turn left names out for: a wake of their names when one may start.
+ * The timer of the local rate limits that a turn left lanes out for: a wake of their lanes when one may start.
  * @param {object} params
  * @param {(func: () => void, delayMs: number) => NodeJS.Timeout} params.setTimer An unref'd timer.
  * @param {(timer: NodeJS.Timeout) => void} params.clearTimer
- * @param {(names: string[]) => void} params.wake A speculative wake of the names: a probe first.
+ * @param {(lanes: string[]) => void} params.wake A speculative wake of the lanes: a probe first.
  * @returns {LocalRateWakes}
  */
 export declare function createLocalRateWakes({ setTimer, clearTimer, wake }: {
     setTimer: (func: () => void, delayMs: number) => NodeJS.Timeout;
     clearTimer: (timer: NodeJS.Timeout) => void;
-    wake: (names: string[]) => void;
+    wake: (lanes: string[]) => void;
 }): LocalRateWakes;

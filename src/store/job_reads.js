@@ -1,4 +1,4 @@
-// The reads of sqlane.jobs: one job by its id, and a page of the jobs of a name. Plain reads on the queue's pool,
+// The reads of sqlane.jobs: one job by its id, and a page of the jobs of a lane. Plain reads on the queue's pool,
 // without a lock. MySQL and MariaDB share their SQL: JSON as text, times as epoch ms that SQL computes.
 import { parseRateKey } from '../rate_limit_shape.js';
 import { isRateKey } from '../rate_keys.js';
@@ -47,9 +47,9 @@ function columnsOf(family, withPayload) {
     const { epochMs, json, array } = SQL[family];
     const payload = withPayload ? `, ${json('pl.payload')} AS payload, pl.id IS NOT NULL AS payload_found` : '';
 
-    return `j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
+    return `j.id, j.lane, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
             ${array('j.limit_keys')} AS limit_keys, ${array('j.limit_maxes')} AS limit_maxes,
-            ${json('j.rate_limits')} AS rate_limits, j.blocked_on, j.failure_job, ${json('j.last_error')} AS last_error,
+            ${json('j.rate_limits')} AS rate_limits, j.blocked_on, j.failure_lane, ${json('j.last_error')} AS last_error,
             j.timed_out_at IS NOT NULL AS timed_out,
             ${epochMs('j.run_at')} AS run_at_ms, ${epochMs('j.created_at')} AS created_at_ms,
             ${epochMs('j.started_at')} AS started_at_ms, ${epochMs('j.finished_at')} AS finished_at_ms,
@@ -97,7 +97,7 @@ function recordOf(row) {
 
     return {
         id,
-        name: String(row.job_name),
+        lane: String(row.lane),
         status,
         attempts: Number(row.attempts),
         maxAttempts: Number(row.max_attempts),
@@ -118,7 +118,7 @@ function recordOf(row) {
             return { limit, key, max: rate.max, per: rate.per_us / 1000, burst: rate.burst, cost: rate.cost };
         }),
         blockedOn: status === 'blocked' && row.blocked_on !== null ? blockedOnOf(String(row.blocked_on)) : null,
-        failureJob: row.failure_job === null ? null : String(row.failure_job),
+        failureLane: row.failure_lane === null ? null : String(row.failure_lane),
         ...(found && { payload: parsed(row.payload) }),
     };
 }
@@ -143,7 +143,7 @@ export async function getJob(executor, family, p, id) {
 
 /**
  * @typedef {object} ListParams
- * @property {string} jobName
+ * @property {string} lane
  * @property {readonly import('../types.js').JobStatus[] | null} statuses Null: every status.
  * @property {number} limit
  * @property {{ enqueuedAtMs: number, id: string } | null} after The last job of the previous page.
@@ -151,10 +151,10 @@ export async function getJob(executor, family, p, id) {
  */
 
 /**
- * A page of the jobs of a name, newest first: by enqueue time, then by id. One row more than the limit tells whether
- * a next page exists. Both families seek in the index `(job_name, created_at, id)` of 0008_job_list: PostgreSQL with
+ * A page of the jobs of a lane, newest first: by enqueue time, then by id. One row more than the limit tells whether
+ * a next page exists. Both families seek in the index `(lane, created_at, id)` of 0008_job_list: PostgreSQL with
  * a row comparison, which it does not do with an OR; MySQL and MariaDB with the OR, which they turn into ranges, and an
- * index hint, without which MariaDB 10.11 filters the rows of the name, and MySQL 8.4 and MariaDB 11.8 sort the rows of
+ * index hint, without which MariaDB 10.11 filters the rows of the lane, and MySQL 8.4 and MariaDB 11.8 sort the rows of
  * a status.
  * @param {Executor} executor
  * @param {Family} family
@@ -163,7 +163,7 @@ export async function getJob(executor, family, p, id) {
  * @returns {Promise<{ jobs: JobRecord[], last: { enqueuedAtMs: number, id: string } | null }>} `last`: the last job of
  *     the page, when a next page may exist.
  */
-export async function listJobs(executor, family, p, { jobName, statuses, limit, after, includePayload }) {
+export async function listJobs(executor, family, p, { lane, statuses, limit, after, includePayload }) {
     const sql = SQL[family];
     /** @type {unknown[]} */
     const params = [];
@@ -172,7 +172,7 @@ export async function listJobs(executor, family, p, { jobName, statuses, limit, 
 
         return sql.placeholder(params.length);
     };
-    const conditions = [`j.job_name = ${param(jobName)}`];
+    const conditions = [`j.lane = ${param(lane)}`];
 
     if (statuses) {
         conditions.push(`j.status IN (${statuses.map(status => param(status)).join(', ')})`);

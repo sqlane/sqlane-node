@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from '
 import { connectTestDatabase } from '../support/test_database.js';
 import { checkSchedules } from './helpers/schedule_checks.js';
 import { typeOrmAdapter } from '../../src/adapters/typeorm.js';
-import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineLane } from '../../src/index.js';
 import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { dialectOptions } from './helpers/test_adapter.js';
 import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
@@ -207,7 +207,7 @@ describe.each([
     test('the commit wakes the worker at once: the job does not wait for a re-probe', async () => {
         const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
 
-        sqlane.handle('ping', () => {});
+        sqlane.lanes.add('ping', () => {});
         await sqlane.start();
         await sleep(100);
         await dataSource.transaction(async (/** @type {any} */ manager) => {
@@ -227,7 +227,7 @@ describe.each([
         const rolledBack = dataSource.createQueryRunner();
         const committed = dataSource.createQueryRunner();
 
-        sqlane.handle('ping', () => {});
+        sqlane.lanes.add('ping', () => {});
         await sqlane.start();
 
         try {
@@ -254,28 +254,28 @@ describe.each([
 
     test('drain: retries, global limits and a failure job', async () => {
         const reportLimit = defineConcurrencyLimit({ name: 'r', max: 1 });
-        const report = defineJob({
+        const report = defineLane({
             name: 'report',
             globalConcurrencyLimits: ({ payload }) => [reportLimit.key(payload.id)],
             timeout: '5s',
         });
-        const reportFailed = defineJob({ name: 'report_failed' });
-        const failing = defineJob({
+        const reportFailed = defineLane({ name: 'report_failed' });
+        const failing = defineLane({
             name: 'failing',
             maxAttempts: 2,
             backoff: { type: 'fixed', delay: 10, jitter: 0 },
-            failureJob: reportFailed,
+            failureLane: reportFailed,
         });
-        const { sqlane, p } = await freshSqlane({ jobs: [report, reportFailed, failing] });
+        const { sqlane, p } = await freshSqlane({ lanes: [report, reportFailed, failing] });
         /** @type {unknown[]} */
         const failures = [];
 
-        sqlane.handle(report, () => {});
-        sqlane.handle(failing, () => {
+        sqlane.lanes.add(report, () => {});
+        sqlane.lanes.add(failing, () => {
             throw new Error('always');
         });
-        sqlane.handle(reportFailed, ({ payload }) => {
-            failures.push(payload.job.name);
+        sqlane.lanes.add(reportFailed, ({ payload }) => {
+            failures.push(payload.job.lane);
         });
         await sqlane.enqueueMany(dataSource, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
         await sqlane.enqueue(dataSource, failing, {});
@@ -283,7 +283,7 @@ describe.each([
         await expect(sqlane.drain({ includeDelayed: true }))
             .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
         expect(failures).toStrictEqual(['failing']);
-        await expect(sqlane.jobs.stats()).resolves.toMatchObject([
+        await expect(sqlane.lanes.stats()).resolves.toMatchObject([
             { name: 'failing', pending: 0, failed: 1, completed: 0 },
             { name: 'report', pending: 0, completed: 2 },
             { name: 'report_failed', pending: 0, completed: 1 },

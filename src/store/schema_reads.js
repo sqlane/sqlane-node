@@ -17,6 +17,20 @@ export async function indexExists(executor, table, index) {
 }
 
 /**
+ * MySQL and MariaDB.
+ * @param {import('../types.js').Executor} executor
+ * @param {string} table
+ * @param {string} column
+ * @returns {Promise<boolean>}
+ */
+export async function columnExists(executor, table, column) {
+    const rows = await executor.query(`SELECT 1 AS found FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`, [table, column]);
+
+    return rows.length > 0;
+}
+
+/**
  * @param {import('../types.js').Executor} executor
  * @param {string} p The table prefix.
  * @param {ColumnRead[]} [columns] The columns of the prefix, from `readColumns`: no `<p>migrations` with an `id`

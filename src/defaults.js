@@ -1,6 +1,6 @@
 import { parseDuration } from './duration.js';
 import { ConfigError } from './errors.js';
-import { checkJobFields, checkObject } from './validate.js';
+import { checkOptionFields, checkObject } from './validate.js';
 
 /**
  * The job defaults of an instance, merged with the built-in ones and checked.
@@ -23,7 +23,7 @@ export function resolveDefaults(defaults = {}) {
     const scope = { where: 'createSqlane: "defaults"', ErrorClass: ConfigError };
 
     checkObject(defaults, ['maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout'], 'defaults', scope);
-    checkJobFields(defaults, scope);
+    checkOptionFields(defaults, scope);
 
     return {
         maxAttempts: defaults.maxAttempts ?? 3,

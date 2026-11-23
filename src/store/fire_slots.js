@@ -8,7 +8,7 @@ const enqueueToken = createMonotonicUlid();
  * A slot that a process tries to enqueue.
  * @typedef {object} SlotCandidate
  * @property {string} id The schedule id.
- * @property {string} name The job name.
+ * @property {string} lane
  * @property {string} spec The normalized spec of this process.
  * @property {number} slot
  * @property {number} due When its job is due: the slot plus its jitter; the slot without jitter.
@@ -22,7 +22,7 @@ const enqueueToken = createMonotonicUlid();
  * The row of a schedule.
  * @typedef {object} ScheduleRow
  * @property {string} id
- * @property {string} jobName
+ * @property {string} lane
  * @property {string} spec
  * @property {number} lastSlotMs The cursor: the last decided slot.
  * @property {string | null} lastJobId
@@ -39,7 +39,7 @@ const enqueueToken = createMonotonicUlid();
 /**
  * @typedef {object} DecidedSlot
  * @property {string} id
- * @property {string} name
+ * @property {string} lane
  * @property {number} slot
  * @property {boolean} late
  * @property {'enqueued' | 'skipped' | 'lost' | 'dropped'} outcome
@@ -76,7 +76,7 @@ const enqueueToken = createMonotonicUlid();
  * @property {(executor: Executor, p: string, jobIds: string[]) => Promise<Set<string>>} findUnfinishedJobs The ids
  *     of the jobs that are pending or running.
  * @property {(executor: Executor, p: string, jobs: NewJob[], options: InsertOptions) => Promise<Set<string>>}
- *     insertJobs All names in one call. The ids that it created.
+ *     insertJobs All lanes in one call. The ids that it created.
  * @property {(executor: Executor, p: string, winners: Winner[]) => Promise<void>} updateCursors
  */
 
@@ -88,7 +88,7 @@ const enqueueToken = createMonotonicUlid();
 /**
  * @typedef {object} Winner
  * @property {string} id
- * @property {string} name
+ * @property {string} lane
  * @property {string} spec
  * @property {number} slot
  * @property {string | null} jobId Null: keep the last job.
@@ -169,7 +169,7 @@ export async function runFire(executor, p, statements, params) {
         } else {
             result.decided.push({
                 id: candidate.id,
-                name: candidate.name,
+                lane: candidate.lane,
                 slot: candidate.slot,
                 late: dbNowMs - candidate.due > params.graceMs,
                 outcome: decision,
@@ -202,7 +202,7 @@ export async function runFire(executor, p, statements, params) {
 
     await statements.updateCursors(executor, p, winners.map(({ candidate }) => ({
         id: candidate.id,
-        name: candidate.name,
+        lane: candidate.lane,
         spec: candidate.spec,
         slot: candidate.slot,
         jobId: jobIdById.get(candidate.id) ?? null,
@@ -213,7 +213,7 @@ export async function runFire(executor, p, statements, params) {
 
         result.decided.push({
             id: candidate.id,
-            name: candidate.name,
+            lane: candidate.lane,
             slot: candidate.slot,
             late,
             outcome: jobId === null ? 'skipped' : 'enqueued',

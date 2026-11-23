@@ -7,6 +7,14 @@
  */
 export declare function indexExists(executor: import('../types.js').Executor, table: string, index: string): Promise<boolean>;
 /**
+ * MySQL and MariaDB.
+ * @param {import('../types.js').Executor} executor
+ * @param {string} table
+ * @param {string} column
+ * @returns {Promise<boolean>}
+ */
+export declare function columnExists(executor: import('../types.js').Executor, table: string, column: string): Promise<boolean>;
+/**
  * @param {import('../types.js').Executor} executor
  * @param {string} p The table prefix.
  * @param {ColumnRead[]} [columns] The columns of the prefix, from `readColumns`: no `<p>migrations` with an `id`

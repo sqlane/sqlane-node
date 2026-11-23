@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import {
     createSqlane,
     defineConcurrencyLimit,
-    defineJob,
+    defineLane,
     defineRateLimit,
     DrainTimeoutError,
     FatalJobError,
@@ -74,13 +74,13 @@ async function freshSqlane(options = {}) {
 
 /**
  * @param {string} p
- * @returns {Promise<{ id: string, job_name: string, status: string, attempts: number }[]>}
+ * @returns {Promise<{ id: string, lane: string, status: string, attempts: number }[]>}
  */
 async function readJobs(p) {
-    return (await database.query(`SELECT id, job_name, status, attempts FROM ${p}jobs ORDER BY created_at, id`))
+    return (await database.query(`SELECT id, lane, status, attempts FROM ${p}jobs ORDER BY created_at, id`))
         .map(row => ({
             id: String(row.id),
-            job_name: String(row.job_name),
+            lane: String(row.lane),
             status: String(row.status),
             attempts: Number(row.attempts),
         }));
@@ -176,7 +176,7 @@ describe('start()', () => {
         /** @type {import('../../src/types.js').HandlerContext[]} */
         const contexts = [];
 
-        sqlane.handle('build_report', (context) => {
+        sqlane.lanes.add('build_report', (context) => {
             contexts.push(context);
         });
         await sqlane.start();
@@ -188,7 +188,7 @@ describe('start()', () => {
         await expect(readJobs(p)).resolves.toMatchObject([{ status: 'completed' }]);
         expect(contexts).toMatchObject([{
             payload: { reportId: 'r1' },
-            job: { id, name: 'build_report', attempt: 1, maxAttempts: 3, globalConcurrencyLimits: [] },
+            job: { id, lane: 'build_report', attempt: 1, maxAttempts: 3, globalConcurrencyLimits: [] },
         }]);
         expect(contexts[0].signal.aborted).toBe(false);
         expect(events.map(event => event.type)).toStrictEqual(['claimed', 'completed']);
@@ -197,7 +197,7 @@ describe('start()', () => {
     test('a job enqueued in this process starts at once, not at the next poll', async () => {
         const { sqlane, p } = await freshSqlane({ pollInterval: '10s' });
 
-        sqlane.handle('ping', () => {});
+        sqlane.lanes.add('ping', () => {});
         await sqlane.start();
         // The first turn has probed nothing; the next poll is 10 s away
         await sleep(100);
@@ -223,7 +223,7 @@ describe('start()', () => {
         /** @type {Map<string, number>} */
         const startedAt = new Map();
 
-        sqlane.handle('ping', ({ job }) => {
+        sqlane.lanes.add('ping', ({ job }) => {
             startedAt.set(job.id, Date.now());
         });
         await sqlane.start();
@@ -244,7 +244,7 @@ describe('start()', () => {
         const { sqlane, p } = await freshSqlane();
         const flaky = failingFirst(2, call => new Error(`fail ${call}`));
 
-        sqlane.handle(defineJob({ name: 'flaky', backoff: fixedBackoff }), flaky.handler);
+        sqlane.lanes.add(defineLane({ name: 'flaky', backoff: fixedBackoff }), flaky.handler);
         await sqlane.start();
         await sqlane.enqueue(testAdapter.pool, 'flaky', {});
         await waitFor(async () => (await readJobs(p))[0]?.status === 'completed');
@@ -254,15 +254,15 @@ describe('start()', () => {
     });
 
     test('after the last attempt: failed, and its failure job runs with the failed job', async () => {
-        const reportFailed = defineJob({ name: 'report_failed' });
-        const { sqlane, p } = await freshSqlane({ jobs: [reportFailed] });
+        const reportFailed = defineLane({ name: 'report_failed' });
+        const { sqlane, p } = await freshSqlane({ lanes: [reportFailed] });
         /** @type {unknown[]} */
         const failures = [];
 
-        sqlane.handle(defineJob({ name: 'build', maxAttempts: 2, backoff: fixedBackoff, failureJob: 'report_failed' }), () => {
+        sqlane.lanes.add(defineLane({ name: 'build', maxAttempts: 2, backoff: fixedBackoff, failureLane: 'report_failed' }), () => {
             throw new Error('broken');
         });
-        sqlane.handle(reportFailed, ({ payload }) => {
+        sqlane.lanes.add(reportFailed, ({ payload }) => {
             failures.push(payload);
         });
         await sqlane.start();
@@ -271,32 +271,32 @@ describe('start()', () => {
 
         await waitFor(() => failures.length === 1);
         expect(failures[0]).toMatchObject({
-            job: { id, name: 'build', payload: { reportId: 'r1' }, attempt: 2, maxAttempts: 2 },
+            job: { id, lane: 'build', payload: { reportId: 'r1' }, attempt: 2, maxAttempts: 2 },
             error: { name: 'Error', message: 'broken' },
         });
         await expect(readJobs(p)).resolves.toMatchObject([
-            { job_name: 'build', status: 'failed', attempts: 2 },
-            { job_name: 'report_failed', status: expect.stringMatching(/running|completed/) },
+            { lane: 'build', status: 'failed', attempts: 2 },
+            { lane: 'report_failed', status: expect.stringMatching(/running|completed/) },
         ]);
     });
 
     test('FatalJobError: fails at once; RetryJobError: retries after its delay', async () => {
         const { sqlane, p, events } = await freshSqlane();
 
-        sqlane.handle('fatal', () => {
+        sqlane.lanes.add('fatal', () => {
             throw new FatalJobError('no such report');
         });
-        sqlane.handle('limited', failingFirst(1, () => new RetryJobError('rate limited', { delay: '300ms' })).handler);
+        sqlane.lanes.add('limited', failingFirst(1, () => new RetryJobError('rate limited', { delay: '300ms' })).handler);
         await sqlane.start();
         await sqlane.enqueue(testAdapter.pool, 'fatal', {});
         await sqlane.enqueue(testAdapter.pool, 'limited', {});
         await waitFor(async () => (await readJobs(p)).every(job => ['failed', 'completed'].includes(job.status)));
 
         await expect(readJobs(p)).resolves.toMatchObject([
-            { job_name: 'fatal', status: 'failed', attempts: 1 },
-            { job_name: 'limited', status: 'completed', attempts: 2 },
+            { lane: 'fatal', status: 'failed', attempts: 1 },
+            { lane: 'limited', status: 'completed', attempts: 2 },
         ]);
-        expect(events.find(event => event.type === 'retried')).toMatchObject({ jobName: 'limited', delayMs: 300 });
+        expect(events.find(event => event.type === 'retried')).toMatchObject({ lane: 'limited', delayMs: 300 });
     });
 });
 
@@ -309,7 +309,7 @@ describe('the async context of a handler', () => {
             /** @type {unknown[]} */
             const stores = [];
 
-            sqlane.handle('ping', () => {
+            sqlane.lanes.add('ping', () => {
                 stores.push(storage.getStore());
             });
             await storage.run({ owner: 'worker' }, () => sqlane.start());
@@ -328,7 +328,7 @@ describe('the async context of a handler', () => {
         /** @type {unknown[]} */
         const stores = [];
 
-        sqlane.handle('ping', () => {
+        sqlane.lanes.add('ping', () => {
             stores.push(storage.getStore());
         });
         await storage.run({ owner: 'request' }, () => sqlane.enqueue(testAdapter.pool, 'ping', {}));
@@ -358,10 +358,10 @@ describe('concurrency', () => {
             allMeter.leave();
         };
 
-        sqlane.handle(defineJob({ name: 'solo', localConcurrencyLimits: [solo] }), slowHandler(privateMeter));
-        sqlane.handle(defineJob({ name: 'shared_a', localConcurrencyLimits: [shared] }), slowHandler(sharedMeter));
-        sqlane.handle(defineJob({ name: 'shared_b', localConcurrencyLimits: [shared] }), slowHandler(sharedMeter));
-        sqlane.handle('free', slowHandler(concurrencyMeter()));
+        sqlane.lanes.add(defineLane({ name: 'solo', localConcurrencyLimits: [solo] }), slowHandler(privateMeter));
+        sqlane.lanes.add(defineLane({ name: 'shared_a', localConcurrencyLimits: [shared] }), slowHandler(sharedMeter));
+        sqlane.lanes.add(defineLane({ name: 'shared_b', localConcurrencyLimits: [shared] }), slowHandler(sharedMeter));
+        sqlane.lanes.add('free', slowHandler(concurrencyMeter()));
 
         for (const name of ['solo', 'shared_a', 'shared_b', 'free']) {
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues
@@ -388,13 +388,13 @@ describe('concurrency', () => {
         };
 
         // The busy name fills the instance: its claims fill the free slots, so it stays in the backlog, claimed at once
-        sqlane.handle('busy', async (context) => {
+        sqlane.lanes.add('busy', async (context) => {
             count(context);
             await sleep(20);
         });
 
         for (const name of names) {
-            sqlane.handle(name, count);
+            sqlane.lanes.add(name, count);
         }
 
         await sqlane.start();
@@ -420,13 +420,13 @@ describe('concurrency', () => {
         const perKey = new Map([['order:1', concurrencyMeter()], ['order:2', concurrencyMeter()]]);
         const allMeter = concurrencyMeter();
         const order = defineConcurrencyLimit({ name: 'order', max: 1 });
-        const sync = defineJob({
+        const sync = defineLane({
             name: 'sync',
             globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
             timeout: '5s',
         });
 
-        sqlane.handle(sync, async ({ job }) => {
+        sqlane.lanes.add(sync, async ({ job }) => {
             const key = job.globalConcurrencyLimits[0].key;
             const meter = /** @type {ReturnType<typeof concurrencyMeter>} */ (perKey.get(key));
 
@@ -448,7 +448,7 @@ describe('concurrency', () => {
     test('a backlog of 600 jobs on a full key, more than a search reads: the jobs of another key still run', async () => {
         const { sqlane, p } = await freshSqlane();
         const client = defineConcurrencyLimit({ name: 'client', max: 1 });
-        const send = defineJob({
+        const send = defineLane({
             name: 'send',
             globalConcurrencyLimits: ({ payload }) => [client.key(payload.clientId)],
             timeout: '30s',
@@ -459,7 +459,7 @@ describe('concurrency', () => {
         /** @type {string[]} */
         const done = [];
 
-        sqlane.handle(send, async ({ payload }) => {
+        sqlane.lanes.add(send, async ({ payload }) => {
             await gates[payload.clientId];
             done.push(payload.clientId);
         });
@@ -502,11 +502,11 @@ describe('global rate limits', () => {
         }));
         // One start each 100 ms
         const smooth = defineRateLimit({ name: 'smooth', max: 10, per: '1s' });
-        const tick = defineJob({ name: 'tick', globalRateLimits: () => [smooth] });
+        const tick = defineLane({ name: 'tick', globalRateLimits: () => [smooth] });
         /** @type {number[]} */
         const starts = [];
 
-        sqlane.handle(tick, () => {
+        sqlane.lanes.add(tick, () => {
             starts.push(Date.now());
         });
         await sqlane.enqueueMany(testAdapter.pool, tick, [1, 2, 3, 4].map(n => ({ payload: { n } })));
@@ -525,11 +525,11 @@ describe('global rate limits', () => {
     test('a flood on one rate key does not hold the other keys of the name', async () => {
         const { sqlane, p } = await freshSqlane();
         const account = defineRateLimit({ name: 'account', max: 3, per: '1h', burst: 3 });
-        const call = defineJob({ name: 'call', globalRateLimits: ({ payload }) => [account.key(payload.account)] });
+        const call = defineLane({ name: 'call', globalRateLimits: ({ payload }) => [account.key(payload.account)] });
         /** @type {string[]} */
         const done = [];
 
-        sqlane.handle(call, ({ payload }) => {
+        sqlane.lanes.add(call, ({ payload }) => {
             done.push(payload.account);
         });
         // More than a search reads
@@ -553,12 +553,12 @@ describe('global rate limits', () => {
             timings: TIMINGS,
         }));
         const quota = defineRateLimit({ name: 'quota', max: 3, per: '1h', burst: 3 });
-        const call = defineJob({ name: 'call', globalRateLimits: () => [quota] });
+        const call = defineLane({ name: 'call', globalRateLimits: () => [quota] });
 
         instances.push(other);
 
         for (const each of [sqlane, other]) {
-            each.handle(call, () => {});
+            each.lanes.add(call, () => {});
         }
 
         await sqlane.enqueueMany(testAdapter.pool, call, Array.from({ length: 12 }, (_, n) => ({ payload: { n } })));
@@ -577,12 +577,12 @@ describe('global rate limits', () => {
             timings: TIMINGS,
         }));
         const smooth = defineRateLimit({ name: 'smooth', max: 10, per: '1s' });
-        const tick = defineJob({ name: 'tick', globalRateLimits: () => [smooth] });
+        const tick = defineLane({ name: 'tick', globalRateLimits: () => [smooth] });
 
         instances.push(other);
 
         for (const each of [sqlane, other]) {
-            each.handle(tick, () => {});
+            each.lanes.add(tick, () => {});
         }
 
         await sqlane.enqueueMany(testAdapter.pool, tick, [1, 2, 3].map(n => ({ payload: { n } })));
@@ -599,9 +599,9 @@ describe('global rate limits', () => {
         const { sqlane } = await freshSqlane();
         // One start each 50 ms
         const smooth = defineRateLimit({ name: 'smooth', max: 20, per: '1s' });
-        const tick = defineJob({ name: 'tick', globalRateLimits: () => [smooth] });
+        const tick = defineLane({ name: 'tick', globalRateLimits: () => [smooth] });
 
-        sqlane.handle(tick, () => {});
+        sqlane.lanes.add(tick, () => {});
         await sqlane.enqueueMany(testAdapter.pool, tick, [1, 2, 3, 4].map(n => ({ payload: { n } })));
         await expect(sqlane.drain()).resolves.toStrictEqual({ completed: 4, retried: 0, failed: 0 });
     });
@@ -619,8 +619,8 @@ describe('local rate limits', () => {
         const starts = [];
 
         for (const name of ['read', 'write']) {
-            sqlane.handle(defineJob({ name, localRateLimits: [disk] }), ({ job }) => {
-                starts.push({ name: job.name, at: Date.now() });
+            sqlane.lanes.add(defineLane({ name, localRateLimits: [disk] }), ({ job }) => {
+                starts.push({ name: job.lane, at: Date.now() });
             });
             // oxlint-disable-next-line no-await-in-loop -- two names
             await sqlane.enqueueMany(testAdapter.pool, name, [1, 2, 3].map(n => ({ payload: { n } })));
@@ -654,11 +654,11 @@ describe('local rate limits', () => {
             timings: TIMINGS,
         }));
         const hourly = defineRateLimit({ name: 'hourly', max: 1, per: '1h' });
-        const report = defineJob({ name: 'report', localRateLimits: [hourly] });
+        const report = defineLane({ name: 'report', localRateLimits: [hourly] });
 
         instances.push(other);
-        sqlane.handle(report, () => {});
-        other.handle(report, () => {});
+        sqlane.lanes.add(report, () => {});
+        other.lanes.add(report, () => {});
         await sqlane.enqueueMany(testAdapter.pool, report, [1, 2, 3].map(n => ({ payload: { n } })));
         await sqlane.start();
         await waitFor(async () => (await statusCounts(p)).completed === 1);
@@ -676,9 +676,9 @@ describe('local rate limits', () => {
         const { sqlane } = await freshSqlane();
         // One start each 50 ms
         const disk = defineRateLimit({ name: 'disk', max: 20, per: '1s' });
-        const scan = defineJob({ name: 'scan', localRateLimits: [disk] });
+        const scan = defineLane({ name: 'scan', localRateLimits: [disk] });
 
-        sqlane.handle(scan, () => {});
+        sqlane.lanes.add(scan, () => {});
         await sqlane.enqueueMany(testAdapter.pool, scan, [1, 2, 3, 4].map(n => ({ payload: { n } })));
         await expect(sqlane.drain()).resolves.toStrictEqual({ completed: 4, retried: 0, failed: 0 });
     });
@@ -697,7 +697,7 @@ function rateLimitedEvent(events) {
 /**
  * Handles the jobs: the first call of all throws the error; each call records its start.
  * @param {Sqlane} sqlane
- * @param {import('../../src/types.js').JobDefinition<any>[]} jobs
+ * @param {import('../../src/types.js').LaneDefinition<any>[]} jobs
  * @param {() => Error} makeError
  * @returns {{ name: string, payload: any, at: number }[]} The starts.
  */
@@ -706,8 +706,8 @@ function throwFirst(sqlane, jobs, makeError) {
     const starts = [];
 
     for (const job of jobs) {
-        sqlane.handle(job, ({ job: { name }, payload }) => {
-            starts.push({ name, payload, at: Date.now() });
+        sqlane.lanes.add(job, ({ job: { lane }, payload }) => {
+            starts.push({ name: lane, payload, at: Date.now() });
 
             if (starts.length === 1) {
                 throw makeError();
@@ -721,7 +721,7 @@ function throwFirst(sqlane, jobs, makeError) {
 describe('RateLimitedError', () => {
     // Plenty of quota: only the error holds the key
     const api = defineRateLimit({ name: 'api', max: 100, per: '1s', burst: 100 });
-    const call = defineJob({
+    const call = defineLane({
         name: 'call',
         globalRateLimits: ({ payload }) => [api.key(payload.account)],
         timeout: '5s',
@@ -740,7 +740,7 @@ describe('RateLimitedError', () => {
         const event = /** @type {{ retryAt: Date }} */ (rateLimitedEvent(events));
 
         expect(event).toMatchObject({
-            jobName: 'call',
+            lane: 'call',
             attempt: 1,
             limit: 'api',
             key: 'a1',
@@ -797,7 +797,7 @@ describe('RateLimitedError', () => {
         const disk = defineRateLimit({ name: 'disk', max: 100, per: '1s', burst: 100 });
         const starts = throwFirst(
             sqlane,
-            ['scan', 'index'].map(name => defineJob({ name, localRateLimits: [disk] })),
+            ['scan', 'index'].map(name => defineLane({ name, localRateLimits: [disk] })),
             () => new RateLimitedError({ limit: disk, retryAfter: '300ms' }),
         );
 
@@ -807,7 +807,7 @@ describe('RateLimitedError', () => {
 
         const limitedAt = Date.now();
 
-        expect(rateLimitedEvent(events)).toMatchObject({ jobName: 'scan', attempt: 1, limit: 'disk', key: null, scope: 'local' });
+        expect(rateLimitedEvent(events)).toMatchObject({ lane: 'scan', attempt: 1, limit: 'disk', key: null, scope: 'local' });
         await expect(readJobs(p)).resolves.toMatchObject([{ status: 'pending', attempts: 0 }]);
         // Another name of the limit waits too
         await sqlane.enqueue(testAdapter.pool, 'index', {});
@@ -829,23 +829,23 @@ describe('RateLimitedError', () => {
             const elsewhere = defineRateLimit({ name: 'elsewhere', max: 1, per: '1s' });
 
             throwFirst(sqlane, [call], () => new RateLimitedError({ limit: elsewhere, retryAfter: '100ms' }));
-            sqlane.handle('plain', failingFirst(1, () => new RateLimitedError({ retryAfter: '50ms' })).handler);
+            sqlane.lanes.add('plain', failingFirst(1, () => new RateLimitedError({ retryAfter: '50ms' })).handler);
             await sqlane.start();
             await sqlane.enqueue(testAdapter.pool, call, { account: 'a1', n: 1 });
             await sqlane.enqueue(testAdapter.pool, 'plain', {});
             await waitFor(async () => (await statusCounts(p)).completed === 2, 3000);
 
             await expect(readJobs(p)).resolves.toMatchObject([
-                { job_name: 'call', status: 'completed', attempts: 2 },
-                { job_name: 'plain', status: 'completed', attempts: 2 },
+                { lane: 'call', status: 'completed', attempts: 2 },
+                { lane: 'plain', status: 'completed', attempts: 2 },
             ]);
             // The two jobs run at once: their events come in either order
             const retried = events.filter(event => event.type === 'retried')
-                .toSorted((a, b) => a.jobName.localeCompare(b.jobName));
+                .toSorted((a, b) => a.lane.localeCompare(b.lane));
 
             expect(retried).toMatchObject([
-                { jobName: 'call', delayMs: 100 },
-                { jobName: 'plain', delayMs: 50 },
+                { lane: 'call', delayMs: 100 },
+                { lane: 'plain', delayMs: 50 },
             ]);
             expect(rateLimitedEvent(events)).toBeUndefined();
         });
@@ -898,7 +898,7 @@ describe('a transient error of a claim', () => {
         };
         const { sqlane, events } = await freshSqlane({ adapter: failingClaims(failures), logger });
 
-        sqlane.handle('a', () => {});
+        sqlane.lanes.add('a', () => {});
         await sqlane.start();
         await sqlane.enqueue(testAdapter.pool, 'a', {});
         await waitFor(() => events.some(event => event.type === 'completed'));
@@ -913,7 +913,7 @@ describe('a transient error of a claim', () => {
         const failures = { left: 4 };
         const { sqlane, events } = await freshSqlane({ adapter: failingClaims(failures) });
 
-        sqlane.handle('a', () => {});
+        sqlane.lanes.add('a', () => {});
         await sqlane.start();
         await sqlane.enqueue(testAdapter.pool, 'a', {});
         await waitFor(() => events.some(event => event.type === 'completed'));
@@ -929,7 +929,7 @@ test('a timeout: the signal aborts; the job keeps running until the handler sett
     const { sqlane, p, events } = await freshSqlane();
     const slow = slowFirst(300);
 
-    sqlane.handle(defineJob({ name: 'slow', backoff: fixedBackoff, timeout: '50ms' }), slow.handler);
+    sqlane.lanes.add(defineLane({ name: 'slow', backoff: fixedBackoff, timeout: '50ms' }), slow.handler);
     await sqlane.start();
     await sqlane.enqueue(testAdapter.pool, 'slow', {});
     await waitFor(() => events.some(event => event.type === 'timed_out'));
@@ -946,7 +946,7 @@ describe('close()', () => {
         /** @type {unknown[]} */
         const reasons = [];
 
-        sqlane.handle('long', async ({ signal }) => {
+        sqlane.lanes.add('long', async ({ signal }) => {
             await new Promise((resolve) => {
                 signal.addEventListener('abort', resolve);
             });
@@ -966,7 +966,7 @@ describe('close()', () => {
     test('abandon: nothing is written; the lease ends', async () => {
         const { sqlane, p } = await freshSqlane();
 
-        sqlane.handle('long', () => sleep(1000));
+        sqlane.lanes.add('long', () => sleep(1000));
         await sqlane.start();
         await sqlane.enqueue(testAdapter.pool, 'long', {});
         await waitFor(async () => (await readJobs(p))[0]?.status === 'running');
@@ -978,7 +978,7 @@ describe('close()', () => {
     test('waits for the running handlers until the deadline', async () => {
         const { sqlane, p } = await freshSqlane();
 
-        sqlane.handle('short', () => sleep(100));
+        sqlane.lanes.add('short', () => sleep(100));
         await sqlane.start();
         await sqlane.enqueue(testAdapter.pool, 'short', {});
         await waitFor(async () => (await readJobs(p))[0]?.status === 'running');
@@ -989,11 +989,11 @@ describe('close()', () => {
 });
 
 describe('drain()', () => {
-    test('runs the due jobs of the handled names until none is left', async () => {
+    test('runs the due jobs of the added lanes until none is left', async () => {
         const { sqlane, p } = await freshSqlane();
         let calls = 0;
 
-        sqlane.handle('ping', () => {
+        sqlane.lanes.add('ping', () => {
             calls++;
         });
         await sqlane.enqueueMany(testAdapter.pool, 'ping', [{ payload: {} }, { payload: {} }]);
@@ -1011,14 +1011,14 @@ describe('drain()', () => {
     });
 
     test('includeDelayed: "fails 3 times, then the failure job runs"', async () => {
-        const failed = defineJob({ name: 'build_failed' });
-        const { sqlane } = await freshSqlane({ jobs: [failed] });
+        const failed = defineLane({ name: 'build_failed' });
+        const { sqlane } = await freshSqlane({ lanes: [failed] });
         let failureRuns = 0;
 
-        sqlane.handle(defineJob({ name: 'build', failureJob: 'build_failed' }), () => {
+        sqlane.lanes.add(defineLane({ name: 'build', failureLane: 'build_failed' }), () => {
             throw new Error('broken');
         });
-        sqlane.handle(failed, () => {
+        sqlane.lanes.add(failed, () => {
             failureRuns++;
         });
         await sqlane.enqueue(testAdapter.pool, 'build', {});
@@ -1031,7 +1031,7 @@ describe('drain()', () => {
     test('rejects with DrainTimeoutError when it does not finish in time', async () => {
         const { sqlane } = await freshSqlane();
 
-        sqlane.handle('long', () => sleep(500));
+        sqlane.lanes.add('long', () => sleep(500));
         await sqlane.enqueue(testAdapter.pool, 'long', {});
 
         await expect(sqlane.drain({ timeout: '100ms' })).rejects.toThrow(DrainTimeoutError);

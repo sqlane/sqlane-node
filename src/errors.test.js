@@ -17,7 +17,7 @@ import {
     RetryJobError,
     ShutdownError,
     SqlaneError,
-    UnknownJobError,
+    UnknownLaneError,
 } from './errors.js';
 
 /** @type {[new (message: string, options?: ErrorOptions) => SqlaneError, string][]} */
@@ -35,7 +35,7 @@ const ERRORS = [
     [MissingPayloadError, 'MISSING_PAYLOAD'],
     [PayloadTooLargeError, 'PAYLOAD_TOO_LARGE'],
     [ShutdownError, 'SHUTDOWN'],
-    [UnknownJobError, 'UNKNOWN_JOB'],
+    [UnknownLaneError, 'UNKNOWN_LANE'],
 ];
 
 test.each(ERRORS)('%o has its name and code, and extends SqlaneError', (ErrorClass, code) => {

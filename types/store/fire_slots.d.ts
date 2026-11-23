@@ -3,10 +3,7 @@ export type SlotCandidate = {
      * The schedule id.
      */
     id: string;
-    /**
-     * The job name.
-     */
-    name: string;
+    lane: string;
     /**
      * The normalized spec of this process.
      */
@@ -29,7 +26,7 @@ export type SlotCandidate = {
 };
 export type ScheduleRow = {
     id: string;
-    jobName: string;
+    lane: string;
     spec: string;
     /**
      * The cursor: the last decided slot.
@@ -44,7 +41,7 @@ export type ClockSample = {
 };
 export type DecidedSlot = {
     id: string;
-    name: string;
+    lane: string;
     slot: number;
     late: boolean;
     outcome: 'enqueued' | 'skipped' | 'lost' | 'dropped';
@@ -119,7 +116,7 @@ export type FireStatements = {
      */
     findUnfinishedJobs: (executor: Executor, p: string, jobIds: string[]) => Promise<Set<string>>;
     /**
-     * All names in one call. The ids that it created.
+     * All lanes in one call. The ids that it created.
      */
     insertJobs: (executor: Executor, p: string, jobs: NewJob[], options: InsertOptions) => Promise<Set<string>>;
     updateCursors: (executor: Executor, p: string, winners: Winner[]) => Promise<void>;
@@ -136,7 +133,7 @@ export type LockedRows = {
 };
 export type Winner = {
     id: string;
-    name: string;
+    lane: string;
     spec: string;
     slot: number;
     /**
@@ -148,7 +145,7 @@ export type Winner = {
  * A slot that a process tries to enqueue.
  * @typedef {object} SlotCandidate
  * @property {string} id The schedule id.
- * @property {string} name The job name.
+ * @property {string} lane
  * @property {string} spec The normalized spec of this process.
  * @property {number} slot
  * @property {number} due When its job is due: the slot plus its jitter; the slot without jitter.
@@ -161,7 +158,7 @@ export type Winner = {
  * The row of a schedule.
  * @typedef {object} ScheduleRow
  * @property {string} id
- * @property {string} jobName
+ * @property {string} lane
  * @property {string} spec
  * @property {number} lastSlotMs The cursor: the last decided slot.
  * @property {string | null} lastJobId
@@ -176,7 +173,7 @@ export type Winner = {
 /**
  * @typedef {object} DecidedSlot
  * @property {string} id
- * @property {string} name
+ * @property {string} lane
  * @property {number} slot
  * @property {boolean} late
  * @property {'enqueued' | 'skipped' | 'lost' | 'dropped'} outcome
@@ -210,7 +207,7 @@ export type Winner = {
  * @property {(executor: Executor, p: string, jobIds: string[]) => Promise<Set<string>>} findUnfinishedJobs The ids
  *     of the jobs that are pending or running.
  * @property {(executor: Executor, p: string, jobs: NewJob[], options: InsertOptions) => Promise<Set<string>>}
- *     insertJobs All names in one call. The ids that it created.
+ *     insertJobs All lanes in one call. The ids that it created.
  * @property {(executor: Executor, p: string, winners: Winner[]) => Promise<void>} updateCursors
  */
 /** @typedef {import('../types.js').Executor} Executor */
@@ -220,7 +217,7 @@ export type Winner = {
 /**
  * @typedef {object} Winner
  * @property {string} id
- * @property {string} name
+ * @property {string} lane
  * @property {string} spec
  * @property {number} slot
  * @property {string | null} jobId Null: keep the last job.

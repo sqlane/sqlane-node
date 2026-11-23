@@ -1,7 +1,7 @@
 import { parseDuration } from './duration.js';
 import { ConfigError, InvalidRateLimitError } from './errors.js';
 import { isPerMs, isRateMax, isUpTo, MAX_RATE } from './rate_limit_shape.js';
-import { checkObject, JOB_NAME_REGEXP } from './validate.js';
+import { checkObject, NAME_REGEXP } from './validate.js';
 
 export { isRateLimit, isRateLimitKey } from './rate_limit_shape.js';
 
@@ -18,8 +18,8 @@ export function defineRateLimit(options) {
 
     checkObject(options, ['name', 'max', 'per', 'burst'], 'options', { where, ErrorClass: ConfigError });
 
-    if (!JOB_NAME_REGEXP.test(name)) {
-        throw new ConfigError(`${where}: "name" must match ${JOB_NAME_REGEXP}`);
+    if (!NAME_REGEXP.test(name)) {
+        throw new ConfigError(`${where}: "name" must match ${NAME_REGEXP}`);
     }
 
     const { max } = options;

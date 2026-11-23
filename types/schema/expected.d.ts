@@ -1,6 +1,7 @@
 export type ExpectedTable = {
     /**
-     * The id that creates it: also the id of its columns and indexes, unless they name one.
+     * The id of the migration that gives it this name and definition: also that of its
+     * columns and indexes, unless they name one.
      */
     migration: string;
     /**

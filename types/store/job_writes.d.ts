@@ -27,7 +27,7 @@ export type LockedJob = {
      * The keys of its global limits, as stored.
      */
     keys: string[];
-    name: string;
+    lane: string;
     /**
      * Its payload exists.
      */
@@ -51,28 +51,28 @@ export type Written = {
  */
 export declare function readByIds({ executor, family, p }: Db, ids: readonly string[]): Promise<ReadJob[]>;
 /**
- * The jobs of a name in the statuses, and whether their payload exists. No lock.
+ * The jobs of a lane in the statuses, and whether their payload exists. No lock.
  * @param {Db} db
- * @param {{ jobName: string, statuses: readonly JobStatus[] }} filter
+ * @param {{ lane: string, statuses: readonly JobStatus[] }} filter
  * @returns {Promise<{ id: string, found: boolean }[]>}
  */
-export declare function readByFilter({ executor, family, p }: Db, { jobName, statuses }: {
-    jobName: string;
+export declare function readByFilter({ executor, family, p }: Db, { lane, statuses }: {
+    lane: string;
     statuses: readonly JobStatus[];
 }): Promise<{
     id: string;
     found: boolean;
 }[]>;
 /**
- * The next batch of the jobs of a name in the statuses, in the order of `jobs.list`: after `after`, newest first. No
+ * The next batch of the jobs of a lane in the statuses, in the order of `jobs.list`: after `after`, newest first. No
  * lock. It seeks in the index of 0008_job_list, as `jobs.list`.
  * @param {Db} db
- * @param {{ jobName: string, statuses: readonly JobStatus[], after: { ms: number, id: string } | null, limit: number }}
+ * @param {{ lane: string, statuses: readonly JobStatus[], after: { ms: number, id: string } | null, limit: number }}
  *     params
  * @returns {Promise<{ id: string, ms: number }[]>}
  */
-export declare function readBatch({ executor, family, p }: Db, { jobName, statuses, after, limit }: {
-    jobName: string;
+export declare function readBatch({ executor, family, p }: Db, { lane, statuses, after, limit }: {
+    lane: string;
     statuses: readonly JobStatus[];
     after: {
         ms: number;
@@ -129,10 +129,10 @@ export declare function removeJobs({ executor, family, p }: Db, { ids, statuses 
     statuses: readonly JobStatus[];
 }): Promise<Written>;
 /**
- * PostgreSQL with the `notify` option: the hint of the retried names, in the transaction (sent at its commit).
+ * PostgreSQL with the `notify` option: the hint of the retried lanes, in the transaction (sent at its commit).
  * @param {Executor} executor
  * @param {string} channel
- * @param {readonly string[]} names
+ * @param {readonly string[]} lanes
  * @returns {Promise<void>}
  */
-export declare function notifyNames(executor: Executor, channel: string, names: readonly string[]): Promise<void>;
+export declare function notifyLanes(executor: Executor, channel: string, lanes: readonly string[]): Promise<void>;

@@ -2,10 +2,10 @@ import { afterAll, beforeAll, expect, test } from 'vitest';
 import {
     createSqlane,
     defineConcurrencyLimit,
-    defineJob,
+    defineLane,
     defineRateLimit,
     InvalidOptionsError,
-    UnknownJobError,
+    UnknownLaneError,
 } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
@@ -13,14 +13,14 @@ import { connectTestDatabase } from '../support/test_database.js';
 /** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
 const READ_JOB_SQL = {
     mysql: p => `
-        SELECT j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
-               j.limit_maxes, j.rate_limits, j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
+        SELECT j.id, j.lane, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
+               j.limit_maxes, j.rate_limits, j.failure_lane, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
                TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(3), j.run_at) DIV 1000 AS run_in_ms,
                TIMESTAMPDIFF(MICROSECOND, '1970-01-01', j.run_at) DIV 1000 AS run_at_ms
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id WHERE j.id = ?`,
     postgres: p => `
-        SELECT j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
-               j.limit_maxes, j.rate_limits, j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
+        SELECT j.id, j.lane, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
+               j.limit_maxes, j.rate_limits, j.failure_lane, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
                (EXTRACT(EPOCH FROM j.run_at - clock_timestamp()) * 1000)::bigint AS run_in_ms,
                (EXTRACT(EPOCH FROM j.run_at) * 1000)::bigint AS run_at_ms
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id WHERE j.id = $1`,
@@ -34,12 +34,12 @@ const SET_TIME_ZONE_SQL = {
 
 const report = defineConcurrencyLimit({ name: 'report', max: 1 });
 const reports = defineConcurrencyLimit({ name: 'reports', max: 3 });
-const buildReport = defineJob({
+const buildReport = defineLane({
     name: 'build_report',
     maxAttempts: 5,
     retention: { completed: '10m' },
     globalConcurrencyLimits: ({ payload }) => [reports, report.key(payload.reportId)],
-    failureJob: 'report_failed',
+    failureLane: 'report_failed',
 });
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
@@ -52,7 +52,7 @@ let sqlane;
 beforeAll(async () => {
     database = await connectTestDatabase();
     testAdapter = createTestAdapter();
-    sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: database.tablePrefix, jobs: [buildReport] });
+    sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: database.tablePrefix, lanes: [buildReport] });
     await sqlane.schema.migrate();
 });
 
@@ -113,7 +113,7 @@ test('adds the job in the caller\'s transaction, with the values frozen at enque
 
     expect(job).toMatchObject({
         id: 'build_report:r1',
-        job_name: 'build_report',
+        lane: 'build_report',
         status: 'pending',
         attempts: 0,
         max_attempts: 5,
@@ -122,7 +122,7 @@ test('adds the job in the caller\'s transaction, with the values frozen at enque
         limit_keys: ['report:r1', 'reports'],
         limit_maxes: [1, 3],
         rate_limits: null,
-        failure_job: 'report_failed',
+        failure_lane: 'report_failed',
         completed_retention_ms: 600_000,
         failed_retention_ms: 2_592_000_000,
         payload: { reportId: 'r1' },
@@ -133,7 +133,7 @@ test('adds the job in the caller\'s transaction, with the values frozen at enque
 
 test('the global rate limits: a JSON array sorted by key, with their settings in µs; the option replaces them', async () => {
     const api = defineRateLimit({ name: 'report_api', max: 100, per: '1m', burst: 5 });
-    const limited = defineJob({
+    const limited = defineLane({
         name: 'limited_report',
         globalRateLimits: ({ payload }) => [api.key(payload.tenant, { cost: 2 }), api],
         globalConcurrencyLimits: () => [reports],
@@ -243,7 +243,7 @@ test('enqueueMany adds 1,200 jobs at once', async () => {
     expect(results.filter(result => result.created)).toHaveLength(1200);
 
     const [{ count }] = await database.query(
-        `SELECT COUNT(*) AS count FROM ${database.tablePrefix}jobs WHERE job_name = 'send_email'`,
+        `SELECT COUNT(*) AS count FROM ${database.tablePrefix}jobs WHERE lane = 'send_email'`,
     );
 
     expect(Number(count)).toBe(1200);
@@ -259,15 +259,15 @@ test('a bad item adds no job of the call', async () => {
     await expect(readJob('build_report:b1')).resolves.toBeUndefined();
 });
 
-test('unknownJobs: reject: an unknown name throws, a name of "jobs" passes', async () => {
+test('unknownLanes: reject: an unknown lane throws, a lane of "lanes" passes', async () => {
     const strict = createSqlane({
         adapter: testAdapter.adapter,
         tablePrefix: database.tablePrefix,
-        jobs: [buildReport],
-        unknownJobs: 'reject',
+        lanes: [buildReport],
+        unknownLanes: 'reject',
     });
 
-    await expect(strict.enqueue(testAdapter.pool, 'not_registered', {})).rejects.toThrow(UnknownJobError);
+    await expect(strict.enqueue(testAdapter.pool, 'not_registered', {})).rejects.toThrow(UnknownLaneError);
     await expect(strict.enqueue(testAdapter.pool, 'build_report', { reportId: 'u1' }))
         .resolves.toMatchObject({ created: true });
 });

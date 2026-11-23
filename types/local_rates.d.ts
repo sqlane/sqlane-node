@@ -9,9 +9,9 @@ export type RateState = {
      */
     tatUs: number;
     /**
-     * Its handled names.
+     * Its added lanes.
      */
-    names: string[];
+    lanes: string[];
 };
 /**
  * A local rate limit in this instance.
@@ -19,7 +19,7 @@ export type RateState = {
  * @property {import('./types.js').RateLimit} limit
  * @property {import('./rate_keys.js').GlobalRateLimit} settings Its settings as gcra.js reads them: a start costs 1.
  * @property {number} tatUs Its theoretical arrival time, in µs of the process clock.
- * @property {string[]} names Its handled names.
+ * @property {string[]} lanes Its added lanes.
  */
 /**
  * @param {import('./types.js').RateLimit} limit

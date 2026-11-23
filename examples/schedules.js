@@ -1,18 +1,18 @@
 // Scenarios: cron and repeatable jobs. Call schedule() in the worker code, before start().
-import { defineJob } from '@sqlane/core';
+import { defineLane } from '@sqlane/core';
 import { db, sqlane } from './sqlane.js';
 
-export const nightlyReport = defineJob({ name: 'nightly_report', timeout: '10m' });
-export const syncTenant = defineJob({ name: 'sync_tenant', timeout: '1m' });
+export const nightlyReport = defineLane({ name: 'nightly_report', timeout: '10m' });
+export const syncTenant = defineLane({ name: 'sync_tenant', timeout: '1m' });
 
-sqlane.handle(nightlyReport, async ({ job, signal }) => {
+sqlane.lanes.add(nightlyReport, async ({ job, signal }) => {
     // The slot, also when the run is late: the day of the report
     const day = job.scheduledAt;
 
     await fetch(`https://reports.example.com/nightly?day=${day?.toISOString()}`, { method: 'POST', signal });
 });
 
-sqlane.handle(syncTenant, async ({ payload, signal }) => {
+sqlane.lanes.add(syncTenant, async ({ payload, signal }) => {
     await fetch(`https://erp.example.com/tenants/${payload.tenantId}/sync`, { method: 'POST', signal });
 });
 

@@ -1,7 +1,7 @@
 export type KeyUnblocks = {
     /**
      * Makes the jobs blocked on the concurrency keys
-     * pending again, as far as the keys have room, and wakes their names here and in the other processes. It runs after
+     * pending again, as far as the keys have room, and wakes their lanes here and in the other processes. It runs after
      * the commit of a release, and after the commit of a claim that blocked jobs: the later of the two sees both, so a
      * job is not left blocked on a key with room. Never rejects: an error is reported.
      */
@@ -38,7 +38,7 @@ export type KeyUnblocks = {
 /**
  * @typedef {object} KeyUnblocks
  * @property {(keys: readonly string[]) => Promise<void>} unblockKeys Makes the jobs blocked on the concurrency keys
- *     pending again, as far as the keys have room, and wakes their names here and in the other processes. It runs after
+ *     pending again, as far as the keys have room, and wakes their lanes here and in the other processes. It runs after
  *     the commit of a release, and after the commit of a claim that blocked jobs: the later of the two sees both, so a
  *     job is not left blocked on a key with room. Never rejects: an error is reported.
  * @property {(key: string, delayMs: number) => void} armRateWake Arms the timer of a rate key on which this process
@@ -58,7 +58,7 @@ export type KeyUnblocks = {
  * @param {() => import('./runner.js').RunnerState} params.state
  * @param {(func: () => void, delayMs: number) => NodeJS.Timeout} params.setTimer An unref'd timer.
  * @param {(timer: NodeJS.Timeout) => void} params.clearTimer
- * @param {(names: string[]) => void} params.wake A wake of the names of this process: their jobs are due.
+ * @param {(lanes: string[]) => void} params.wake A wake of the lanes of this process: their jobs are due.
  * @param {import('./hint_channel.js').HintChannel} params.hintChannel
  * @param {(operation: string, error: unknown) => void} params.reportError
  * @returns {KeyUnblocks}
@@ -68,7 +68,7 @@ export declare function createKeyUnblocks({ store, state, setTimer, clearTimer, 
     state: () => import('./runner.js').RunnerState;
     setTimer: (func: () => void, delayMs: number) => NodeJS.Timeout;
     clearTimer: (timer: NodeJS.Timeout) => void;
-    wake: (names: string[]) => void;
+    wake: (lanes: string[]) => void;
     hintChannel: import('./hint_channel.js').HintChannel;
     reportError: (operation: string, error: unknown) => void;
 }): KeyUnblocks;

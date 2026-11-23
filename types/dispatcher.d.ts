@@ -4,14 +4,14 @@ export type LocalLimit = import('./local_limits.js').LocalLimit;
 export type Dispatcher = {
     /**
      * Ends the sleep of the
-     * loop. The next turn looks at the given names, or at all names.
+     * loop. The next turn looks at the given lanes, or at all lanes.
      */
-    wake: (names?: readonly string[], options?: {
+    wake: (lanes?: readonly string[], options?: {
         speculative?: boolean;
     }) => void;
     /**
-     * For start() and drain(), after the check of the registry: reads the handled names,
-     * and starts the tie pointer at a random name.
+     * For start() and drain(), after the check of the registry: reads the added lanes,
+     * and starts the tie pointer at a random lane.
      */
     prepare: () => void;
     /**
@@ -23,14 +23,14 @@ export type Dispatcher = {
     run: (serverCheck?: (() => Promise<void>) | null) => Promise<void>;
     /**
      * Claims the due
-     * jobs of the names, by share within the free slots, and starts them. For drain().
+     * jobs of the lanes, by share within the free slots, and starts them. For drain().
      */
-    claimAndStart: (dueNames: string[]) => Promise<{
+    claimAndStart: (dueLanes: string[]) => Promise<{
         candidates: number;
         claimed: number;
     }>;
     /**
-     * The jobs of the name that can start now: under its local
+     * The jobs of the lane that can start now: under its local
      * limits and the instance's cap.
      */
     freeSlots: (entry: HandlerEntry) => number;
@@ -41,17 +41,17 @@ export type Dispatcher = {
 };
 /**
  * @typedef {object} Dispatcher
- * @property {(names?: readonly string[], options?: { speculative?: boolean }) => void} wake Ends the sleep of the
- *     loop. The next turn looks at the given names, or at all names.
- * @property {() => void} prepare For start() and drain(), after the check of the registry: reads the handled names,
- *     and starts the tie pointer at a random name.
+ * @property {(lanes?: readonly string[], options?: { speculative?: boolean }) => void} wake Ends the sleep of the
+ *     loop. The next turn looks at the given lanes, or at all lanes.
+ * @property {() => void} prepare For start() and drain(), after the check of the registry: reads the added lanes,
+ *     and starts the tie pointer at a random lane.
  * @property {(serverCheck?: (() => Promise<void>) | null) => Promise<void>} run The loop: one turn after the other,
  *     while the runner is started. An error of a turn is retried, or reported and backed off. `serverCheck`: the check
  *     of the server that start() could not run (the database was down): no turn before it passes; a `ConfigError` of
  *     it ends the loop.
- * @property {(dueNames: string[]) => Promise<{ candidates: number, claimed: number }>} claimAndStart Claims the due
- *     jobs of the names, by share within the free slots, and starts them. For drain().
- * @property {(entry: HandlerEntry) => number} freeSlots The jobs of the name that can start now: under its local
+ * @property {(dueLanes: string[]) => Promise<{ candidates: number, claimed: number }>} claimAndStart Claims the due
+ *     jobs of the lanes, by share within the free slots, and starts them. For drain().
+ * @property {(entry: HandlerEntry) => number} freeSlots The jobs of the lane that can start now: under its local
  *     limits and the instance's cap.
  * @property {() => boolean} claiming A claim runs: it may have counted the free slots before a job ended.
  */
@@ -67,12 +67,12 @@ export type Dispatcher = {
  * @param {import('./types.js').Logger | undefined} params.logger
  * @param {(operation: string, error: unknown) => void} params.reportError
  * @param {(claimed: ClaimedJob, payload: { found: boolean, payload: unknown }) => void} params.startJob Takes a slot
- *     of the instance and of the local limits of its name, and runs the job.
+ *     of the instance and of the local limits of its lane, and runs the job.
  * @param {(keys: readonly string[]) => Promise<void>} params.unblockKeys The unblock of the concurrency keys: never
  *     rejects.
  * @param {(key: string, delayMs: number) => void} params.armRateWake The timer of a rate key with blocked jobs.
  * @param {(entry: HandlerEntry) => void} params.wakeAfterRates Its local rate limits that admit no start now: a wake of
- *     their names when one may start.
+ *     their lanes when one may start.
  * @returns {Dispatcher}
  */
 export declare function createDispatcher({ store, registry, localMaxConcurrency, running, timings: t, random, state, logger, reportError, startJob, unblockKeys, armRateWake, wakeAfterRates, }: {

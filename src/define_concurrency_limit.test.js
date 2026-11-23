@@ -2,7 +2,7 @@ import { expect, test } from 'vitest';
 import { defineConcurrencyLimit, isConcurrencyLimit } from './define_concurrency_limit.js';
 import { ConfigError } from './errors.js';
 
-test('a frozen limit, known to defineJob()', () => {
+test('a frozen limit, known to defineLane()', () => {
     const heavy = defineConcurrencyLimit({ name: 'heavy', max: 2 });
 
     expect(heavy).toMatchObject({ name: 'heavy', max: 2 });

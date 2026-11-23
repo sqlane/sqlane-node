@@ -6,16 +6,15 @@ import { normalizeGlobalRateLimits } from './rate_keys.js';
 import { serializePayload } from './payload.js';
 import { isSlotKey, isSlotTime, MAX_KEY_LENGTH, SLOT_PREFIX, slotDedupeKeyOf } from './schedule.js';
 import {
-    checkFailureJob,
-    checkJobFields,
+    checkFailureLane,
+    checkOptionFields,
     checkObject,
-    isPlainObject,
-    JOB_NAME_REGEXP,
+    NAME_REGEXP,
     PRINTABLE_ID_REGEXP,
 } from './validate.js';
 
 const ENQUEUE_OPTION_NAMES = [
-    'dedupeKey', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureJob', 'globalConcurrencyLimits',
+    'dedupeKey', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureLane', 'globalConcurrencyLimits',
     'globalRateLimits', 'slot',
 ];
 const MAX_DEDUPE_KEY_LENGTH = 120;
@@ -25,9 +24,9 @@ const ulid = createMonotonicUlid();
 /**
  * A job to insert, with every value frozen at enqueue.
  * @typedef {object} NewJob
- * @property {string} id `<name>:<dedupeKey>`, or a ULID.
+ * @property {string} id `<lane>:<dedupeKey>`, or a ULID.
  * @property {boolean} hasJobId
- * @property {string} name
+ * @property {string} lane
  * @property {string} payloadJson
  * @property {readonly import('./concurrency_keys.js').GlobalLimit[]} limits Its global limits: sorted by key, without
  *     duplicates.
@@ -37,15 +36,15 @@ const ulid = createMonotonicUlid();
  * @property {number} maxStalls
  * @property {number} completedRetentionMs
  * @property {number} failedRetentionMs
- * @property {string | null} failureJob
+ * @property {string | null} failureLane
  * @property {number} delayMs From the DB clock at insert. 0 with `runAt`.
  * @property {Date | null} runAt
  */
 
 /**
  * @typedef {object} NewJobParams
- * @property {string} name
- * @property {import('./types.js').JobDefinition | null} definition Null: an unknown name, the defaults only.
+ * @property {string} lane
+ * @property {import('./types.js').LaneDefinition | null} definition Null: an unknown name, the defaults only.
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {unknown} payload
  * @property {import('./types.js').EnqueueOptions | undefined} options
@@ -124,27 +123,17 @@ function getSchedule(options, where) {
  * @param {NewJobParams} params
  * @returns {NewJob}
  */
-export function buildNewJob({ name, definition, defaults, payload, options = {}, maxPayloadBytes }) {
-    const where = `enqueue(${JSON.stringify(name)})`;
+export function buildNewJob({ lane, definition, defaults, payload, options = {}, maxPayloadBytes }) {
+    const where = `enqueue(${JSON.stringify(lane)})`;
 
-    if (typeof name !== 'string' || !JOB_NAME_REGEXP.test(name)) {
-        throw new InvalidOptionsError(`${where}: the job name must match ${JOB_NAME_REGEXP}`);
+    if (typeof lane !== 'string' || !NAME_REGEXP.test(lane)) {
+        throw new InvalidOptionsError(`${where}: the lane name must match ${NAME_REGEXP}`);
     }
 
     const scope = { where, ErrorClass: InvalidOptionsError };
 
-    // The options of 5.x and 7.x: an error that names the new one
-    if (/** @type {Record<string, unknown>} */ (options)?.mutexKeys !== undefined) {
-        throw new InvalidOptionsError(`${where}: "mutexKeys" was removed in 6.0: use "globalConcurrencyLimits"`);
-    }
-
-    // Also `{ jobId: undefined }`: the code of 7.x, not an unknown option
-    if (isPlainObject(options) && 'jobId' in options) {
-        throw new InvalidOptionsError(`${where}: "jobId" was renamed in 8.0: use "dedupeKey"`);
-    }
-
     checkObject(options, ENQUEUE_OPTION_NAMES, 'options', scope);
-    checkJobFields(options, scope);
+    checkOptionFields(options, scope);
 
     let { dedupeKey } = options;
 
@@ -160,7 +149,7 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
         dedupeKey = slotDedupeKeyFrom(options.slot, where);
     }
 
-    const failureJob = options.failureJob ?? definition?.failureJob;
+    const failureLane = options.failureLane ?? definition?.failureLane;
     const payloadJson = serializePayload(payload, maxPayloadBytes, where);
     // The limits come from the payload as the handler gets it: as JSON gives it back.
     const rawLimits = options.globalConcurrencyLimits
@@ -171,9 +160,9 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
     const retention = { ...definition?.retention, ...options.retention };
 
     return {
-        id: dedupeKey === undefined ? ulid() : `${name}:${dedupeKey}`,
+        id: dedupeKey === undefined ? ulid() : `${lane}:${dedupeKey}`,
         hasJobId: dedupeKey !== undefined,
-        name,
+        lane,
         payloadJson,
         limits,
         rateLimits: normalizeGlobalRateLimits(rawRateLimits, where, limits.length),
@@ -181,7 +170,7 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
         maxStalls: options.maxStalls ?? definition?.maxStalls ?? defaults.maxStalls,
         completedRetentionMs: parseDuration(retention.completed) ?? defaults.retention.completedMs,
         failedRetentionMs: parseDuration(retention.failed) ?? defaults.retention.failedMs,
-        failureJob: failureJob === undefined ? null : checkFailureJob(failureJob, name, scope),
+        failureLane: failureLane === undefined ? null : checkFailureLane(failureLane, lane, scope),
         ...getSchedule(options, where),
     };
 }

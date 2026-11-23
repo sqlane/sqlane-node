@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import { pgAdapter } from '../../src/adapters/pg.js';
-import { createSqlane, defineConcurrencyLimit, defineJob } from '../../src/index.js';
+import { createSqlane, defineConcurrencyLimit, defineLane } from '../../src/index.js';
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
@@ -114,7 +114,7 @@ async function timeUntil(condition, timeoutMs) {
     return Date.now() - startedAt;
 }
 
-test('jobs.stats: the counts of each name', async () => {
+test('lanes.stats: the counts of each name', async () => {
     const p = nextPrefix();
     const sqlane = sqlaneOn(p);
     const store = createStore(testAdapter.adapter, p);
@@ -147,7 +147,7 @@ test('jobs.stats: the counts of each name', async () => {
     });
     await store.completeJobs(claimed.filter(job => completedIds.includes(job.id)));
 
-    const stats = await sqlane.jobs.stats();
+    const stats = await sqlane.lanes.stats();
 
     expect(stats).toStrictEqual([
         {
@@ -176,16 +176,16 @@ test('jobs.stats: the counts of each name', async () => {
     expect(stats[0].oldestDueAgeMs).toBeGreaterThanOrEqual(50_000);
 });
 
-test('jobs.stats: a name with only completed jobs has an entry', async () => {
+test('lanes.stats: a name with only completed jobs has an entry', async () => {
     const p = nextPrefix();
     const sqlane = sqlaneOn(p);
 
     await sqlane.schema.migrate();
     await sqlane.enqueue(testAdapter.pool, 'done', {});
-    sqlane.handle('done', () => {});
+    sqlane.lanes.add('done', () => {});
     await sqlane.drain();
 
-    await expect(sqlane.jobs.stats()).resolves.toStrictEqual([{
+    await expect(sqlane.lanes.stats()).resolves.toStrictEqual([{
         name: 'done',
         pending: 0,
         blocked: 0,
@@ -206,7 +206,7 @@ describe('hints', () => {
         const worker = sqlaneOn(p, { hint, pollInterval: '10s' });
 
         await producer.schema.migrate();
-        worker.handle('ping', () => {});
+        worker.lanes.add('ping', () => {});
         await worker.start();
         await sleep(100);
 
@@ -237,7 +237,7 @@ describe('hints', () => {
         const stores = [];
 
         await producer.schema.migrate();
-        worker.handle('ping', () => {
+        worker.lanes.add('ping', () => {
             stores.push(storage.getStore());
         });
         await storage.run({ owner: 'worker' }, () => worker.start());
@@ -278,18 +278,18 @@ describe('hints', () => {
         const hint = memoryHint();
         // Two names with one key: each process handles one, so the second job can only run in the second process
         const order = defineConcurrencyLimit({ name: 'order', max: 1 });
-        const firstJob = defineJob({ name: 'sync_first', globalConcurrencyLimits: () => [order.key(1)], timeout: '5s' });
-        const secondJob = defineJob({ name: 'sync_second', globalConcurrencyLimits: () => [order.key(1)], timeout: '5s' });
+        const firstJob = defineLane({ name: 'sync_first', globalConcurrencyLimits: () => [order.key(1)], timeout: '5s' });
+        const secondJob = defineLane({ name: 'sync_second', globalConcurrencyLimits: () => [order.key(1)], timeout: '5s' });
         const first = sqlaneOn(p, { hint, pollInterval: '10s' });
         const second = sqlaneOn(p, { hint, pollInterval: '10s' });
         /** @type {(() => void) | null} */
         let finishFirst = null;
 
         await first.schema.migrate();
-        first.handle(firstJob, () => new Promise((resolve) => {
+        first.lanes.add(firstJob, () => new Promise((resolve) => {
             finishFirst = () => resolve(undefined);
         }));
-        second.handle(secondJob, () => {});
+        second.lanes.add(secondJob, () => {});
 
         await first.enqueue(testAdapter.pool, firstJob, {});
         await first.start();
@@ -313,7 +313,7 @@ describe('hints', () => {
         const worker = sqlaneOn(p, { adapter, pollInterval: '10s' });
 
         await producer.schema.migrate();
-        worker.handle('ping', () => {});
+        worker.lanes.add('ping', () => {});
         await worker.start();
         await sleep(200);
 

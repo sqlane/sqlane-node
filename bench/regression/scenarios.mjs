@@ -9,7 +9,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 /**
  * @typedef {object} Context
- * @property {any} lib The module of sqlane: `createSqlane`, `defineJob`.
+ * @property {any} lib The module of sqlane: `createSqlane`, `defineLane`.
  * @property {(options?: Record<string, unknown>) => any} create A sqlane instance on the scenario's database, with
  *     these options on top of its adapter.
  * @property {any} pool The pool of the scenario's database, for `enqueue`.
@@ -27,7 +27,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
  */
 
 const NAMES = 1000;
-/** The statement that looks for the job names with due jobs: the same `delay_ms` column in every dialect */
+/** The statement that looks for the lanes with due jobs: the same `delay_ms` column in every dialect */
 const ROUNDS = /\bdelay_ms\b/;
 const JOBS = 200;
 
@@ -38,7 +38,7 @@ const JOBS = 200;
  * @returns {any[]} Definitions `job_0000`…, with these options.
  */
 function definitions(lib, count, options = {}) {
-    return Array.from({ length: count }, (_, index) => lib.defineJob({
+    return Array.from({ length: count }, (_, index) => lib.defineLane({
         name: `job_${String(index).padStart(4, '0')}`,
         ...options,
     }));
@@ -50,7 +50,7 @@ function definitions(lib, count, options = {}) {
  */
 function handleAll(sqlane, jobs) {
     for (const job of jobs) {
-        sqlane.handle(job, async () => {});
+        sqlane.lanes.add(job, async () => {});
     }
 }
 
@@ -78,7 +78,7 @@ export const SCENARIOS = [
         unit: 'enqueue, in a transaction of its own',
         async run({ lib, create, pool, measure }) {
             const [job] = definitions(lib, 1);
-            const sqlane = create({ jobs: [job] });
+            const sqlane = create({ lanes: [job] });
 
             await sqlane.schema.migrate();
 
@@ -98,7 +98,7 @@ export const SCENARIOS = [
         unit: '`enqueueMany` of 100 jobs',
         async run({ lib, create, pool, measure }) {
             const [job] = definitions(lib, 1);
-            const sqlane = create({ jobs: [job] });
+            const sqlane = create({ lanes: [job] });
 
             await sqlane.schema.migrate();
 
@@ -117,11 +117,11 @@ export const SCENARIOS = [
     },
     {
         name: 'run',
-        unit: 'job claimed, run and completed, over 1000 handled names',
+        unit: 'job claimed, run and completed, over 1000 added lanes',
         timing: ROUNDS,
         async run({ lib, create, pool, measure }) {
             const jobs = definitions(lib, NAMES);
-            const sqlane = create({ jobs, localMaxConcurrency: 1 });
+            const sqlane = create({ lanes: jobs, localMaxConcurrency: 1 });
 
             handleAll(sqlane, jobs);
             await sqlane.schema.migrate();
@@ -145,10 +145,10 @@ export const SCENARIOS = [
     },
     {
         name: 'idle',
-        unit: '`drain()` of 1000 handled names with no job: its rounds until it finds none',
+        unit: '`drain()` of 1000 added lanes with no job: its rounds until it finds none',
         async run({ lib, create, measure }) {
             const jobs = definitions(lib, NAMES);
-            const sqlane = create({ jobs });
+            const sqlane = create({ lanes: jobs });
 
             handleAll(sqlane, jobs);
             await sqlane.schema.migrate();
@@ -164,7 +164,7 @@ export const SCENARIOS = [
     },
     {
         name: 'global_limits',
-        unit: 'job with 2 global limits (a key of 1 of 10, and one shared of 5), 100 jobs of 2 names',
+        unit: 'job with 2 global limits (a key of 1 of 10, and one shared of 5), 100 jobs of 2 lanes',
         timing: ROUNDS,
         async run({ lib, create, pool, measure }) {
             const account = lib.defineConcurrencyLimit({ name: 'account', max: 1 });
@@ -176,7 +176,7 @@ export const SCENARIOS = [
                 ],
                 timeout: '1m',
             });
-            const sqlane = create({ jobs, localMaxConcurrency: 1 });
+            const sqlane = create({ lanes: jobs, localMaxConcurrency: 1 });
 
             handleAll(sqlane, jobs);
             await sqlane.schema.migrate();
@@ -200,7 +200,7 @@ export const SCENARIOS = [
     },
     {
         name: 'global_rate_limits',
-        unit: 'job with a key of 1 of 10 of a global rate limit that none reaches, 100 jobs of 2 names',
+        unit: 'job with a key of 1 of 10 of a global rate limit that none reaches, 100 jobs of 2 lanes',
         timing: ROUNDS,
         async run({ lib, create, pool, measure }) {
             // A burst of 1000 per key: the 10 starts of each key fit at once, so no job blocks and the counts are
@@ -210,7 +210,7 @@ export const SCENARIOS = [
                 globalRateLimits: (/** @type {{ payload: { key: number } }} */ { payload }) => [api.key(payload.key)],
                 timeout: '1m',
             });
-            const sqlane = create({ jobs, localMaxConcurrency: 1 });
+            const sqlane = create({ lanes: jobs, localMaxConcurrency: 1 });
 
             handleAll(sqlane, jobs);
             await sqlane.schema.migrate();
@@ -234,12 +234,12 @@ export const SCENARIOS = [
     },
     {
         name: 'schedule',
-        unit: 'slot of 1000 `every: \'10s\'` schedules, in one process that handles none of them',
+        unit: 'slot of 1000 `every: \'10s\'` schedules, in one process that adds none of their lanes',
         async run({ lib, create, measure }) {
             const jobs = definitions(lib, NAMES);
             let fired = 0;
             const sqlane = create({
-                jobs,
+                lanes: jobs,
                 // The stall recovery and the cleanup run every 30 s and 5 minutes: off, so the window holds the
                 // scheduler's work only (`timings` is undocumented, for the tests of sqlane). Their first run comes
                 // at a random time within the interval: 3 weeks, not 1 h, where it fell in the window of 20 s about

@@ -34,7 +34,7 @@ Node.js 22.12+ · ESM · TypeScript types · zero dependencies · npm provenance
 ```ts
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import { createSqlane, defineJob } from '@sqlane/core';
+import { createSqlane, defineLane } from '@sqlane/core';
 import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
 import { orders } from './schema.js';
 
@@ -43,15 +43,15 @@ const db = drizzle({ client: new Pool({ connectionString: url }) }); // yours
 const queuePool = new Pool({ connectionString: url, max: 3 }); // sqlane's own
 const queueDb = drizzle({ client: queuePool });
 
-const sendReceipt = defineJob<{ orderId: number }>({ name: 'send_receipt' });
+const sendReceipt = defineLane<{ orderId: number }>({ name: 'send_receipt' });
 const sqlane = createSqlane({
     adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }),
-    jobs: [sendReceipt],
+    lanes: [sendReceipt],
 });
 await sqlane.schema.migrate(); // creates the sqlane_* tables
 
 // Worker: runs the job after the commit, in this process or another
-sqlane.handle(sendReceipt, ({ payload }) => sendReceiptEmail(payload.orderId));
+sqlane.lanes.add(sendReceipt, ({ payload }) => sendReceiptEmail(payload.orderId));
 await sqlane.start();
 
 // Producer: the order and its job commit together, or not at all
@@ -191,17 +191,17 @@ transaction, so:
   [`RateLimitedError`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#errors-that-handlers-throw) to
   pause the key for every job. For APIs that charge points, a job can cost several units of a limit.
 - **[Concurrency limits, global or local](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineconcurrencylimit).**
-  "One sync per order at a time": a job takes several keys, each with its own max, across processes and job names.
+  "One sync per order at a time": a job takes several keys, each with its own max, across processes and lanes.
   Local limits cap jobs per process. A flood on one key never blocks the others.
 - **[Several limits on one job](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineratelimit).**
   Concurrency and rate limits together, each with its own `max`, `per` and `burst`: "5000 calls an hour per token, 10
   a second overall, and 2 at once per repo". Up to 10 global keys per job, plus local limits.
 - **[Your driver or ORM](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md).** mysql2, pg, postgres.js,
   Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM and MikroORM.
-- **[Idle job names cost nothing](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#dispatcher-one-loop-per-process).**
-  One query per poll covers all names, so 1000 idle names cost about what one does.
-- **[Fair share across job names](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#how-free-slots-are-shared).**
-  A backlog of one name never starves the others; weights tune the shares.
+- **[Idle lanes cost nothing](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#dispatcher-one-loop-per-process).**
+  One query per poll covers all lanes, so 1000 idle lanes cost about what one does.
+- **[Fair share across lanes](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#how-free-slots-are-shared).**
+  A backlog of one lane never starves the others; weights tune the shares.
 - **[Wake-up within milliseconds](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#wake-up-after-the-commit).**
   NOTIFY on PostgreSQL, or any pub/sub such as Redis as a [hint](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#hint);
   polling as the fallback.
@@ -211,11 +211,11 @@ transaction, so:
   deadline; the unfinished ones go back to the queue without using an attempt.
 - **And the basics:** [retries with backoff](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#backoff),
   delayed jobs and deduplication by `dedupeKey` ([enqueue](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue)),
-  timeouts that abort the handler ([defineJob](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#definejob)),
+  timeouts that abort the handler ([defineLane](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#definelane)),
   [crash recovery](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#leases-and-stalls),
   [typed payloads](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#typed-payloads),
   [events](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#events) and
-  [stats](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsstats), and
+  [stats](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesstats), and
   [migrations by version](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate), with rollback
   and schema checks.
 
@@ -231,7 +231,7 @@ How sqlane compares with BullMQ, pg-boss and 5 more:
 | ------------------------------------------ | ------------ | --------------- |
 | CPU instructions per job                   | **3.1 M**    | 3.9–29.6 M      |
 | SQL statements per job ¹                   | **3.0**      | 3.7–25.8        |
-| Idle database CPU, 1000 job names          | **0.1 M/s**  | 0.07–350 M/s    |
+| Idle database CPU, 1000 names              | **0.1 M/s**  | 0.07–350 M/s    |
 | Enqueue to handler start, p50 / p99        | **4 / 5 ms** | 3–58 / 3–200 ms |
 | Jobs per second, one worker with 8 slots ² | **2,810**    | 69–6,820        |
 
@@ -257,14 +257,15 @@ the transaction code change ([adapters](https://github.com/sqlane/sqlane-node/bl
 npm install @sqlane/core
 ```
 
-**1. Define your jobs.** A job name, such as `send_receipt`, is also its queue. Keep the definitions in a module that
-producers and workers both import. The type parameter types the payload in `enqueue` and in the handler.
+**1. Define your lanes.** A lane, such as `send_receipt`, is the jobs that share a name: also their queue. Keep the
+definitions in a module that producers and workers both import. The type parameter types the payload in `enqueue`
+and in the handler.
 
 ```ts
 // jobs.ts
-import { defineJob } from '@sqlane/core';
+import { defineLane } from '@sqlane/core';
 
-export const sendReceipt = defineJob<{ orderId: number }>({
+export const sendReceipt = defineLane<{ orderId: number }>({
     name: 'send_receipt',
     maxAttempts: 5,
     timeout: '1m',
@@ -291,7 +292,7 @@ const queueDb = drizzle({ client: queuePool });
 export const sqlane = createSqlane({
     // notify: NOTIFY wakes the workers of every process at the commit
     adapter: drizzleAdapter(queueDb, { dialect: 'postgres', notify: true }),
-    jobs: [sendReceipt],
+    lanes: [sendReceipt],
 });
 
 await sqlane.schema.migrate();
@@ -327,7 +328,7 @@ exceed a concurrency limit ([guarantees](https://github.com/sqlane/sqlane-node/b
 import { sendReceipt } from './jobs.js';
 import { sqlane } from './sqlane.js';
 
-sqlane.handle(sendReceipt, async ({ payload, signal }) => {
+sqlane.lanes.add(sendReceipt, async ({ payload, signal }) => {
     await sendReceiptEmail(payload.orderId, { signal }); // your code
 });
 
@@ -347,6 +348,7 @@ process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));
 - The [examples folder](https://github.com/sqlane/sqlane-node/tree/main/examples) has more examples.
 - The [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists what changed in each version. The
   migration guides show how to upgrade your code to a new major version:
+    - [8.x → 9.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/9.md)
     - [7.x → 8.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/8.md)
     - [6.x → 7.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/7.md)
     - [5.x → 6.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/6.md)

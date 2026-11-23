@@ -232,10 +232,10 @@ function machineName(machine) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The lanes of the comparison
+// The tracks of the comparison
 
 /**
- * @typedef {object} Lane
+ * @typedef {object} Track
  * @property {string} id The library, as results.json names it.
  * @property {'postgres' | 'redis'} dialect
  * @property {string} label In the charts: `*` marks an enqueue after the COMMIT.
@@ -244,14 +244,14 @@ function machineName(machine) {
  */
 
 /**
- * @type {{ id: string, name: string, versionName?: string, laneName?: string, label?: string }[]} One row per
+ * @type {{ id: string, name: string, versionName?: string, trackName?: string, label?: string }[]} One row per
  *     library, on PostgreSQL, in this order: sqlane, then the others by npm downloads (a fixed order, so the charts
- *     and tables of every run match the hand-written tables of docs/features_vs_other_libs.md). laneName and label:
- *     its lane's, when the name alone would read as Redis.
+ *     and tables of every run match the hand-written tables of docs/features_vs_other_libs.md). trackName and label:
+ *     its track's, when the name alone would read as Redis.
  */
 const LIBS = [
     { id: 'sqlane', name: 'sqlane' },
-    { id: 'bullmq', name: 'BullMQ', laneName: 'BullMQ on PostgreSQL', label: 'BullMQ (PostgreSQL)' },
+    { id: 'bullmq', name: 'BullMQ', trackName: 'BullMQ on PostgreSQL', label: 'BullMQ (PostgreSQL)' },
     { id: 'pg-boss', name: 'pg-boss' },
     { id: 'graphile-worker', name: 'Graphile Worker' },
     { id: 'boring-node-queue', name: 'Boring Node Queue' },
@@ -277,8 +277,8 @@ const POLLING = {
  * @type {Record<string, (names: number) => string>}
  */
 const IDLE_CAUSES = {
-    'pg-boss': names => `gives each of the ${names} job names a queue of its own, with its own \`work()\` poll, where `
-        + 'the others poll their job names together',
+    'pg-boss': names => `gives each of the ${names} names a queue of its own, with its own \`work()\` poll, where `
+        + 'the others poll their names together',
     'izi-queue': () => 'polls every 100 ms, set for throughput (default 1 s)',
 };
 
@@ -290,7 +290,7 @@ const THROUGHPUT_CAUSES = {
     'izi-queue': 'fetches at most its free slots per poll, every 100 ms',
 };
 
-/** The note of the charts with a `*` lane */
+/** The note of the charts with a `*` track */
 const AFTER_NOTE = '*: enqueue after the COMMIT, not in the caller\'s transaction.';
 
 /**
@@ -321,55 +321,56 @@ const enqueuesAfter = id => compare.perf.some((/** @type {Row} */ row) => (
     row.library === id && row.transactional === false
 ));
 
-/** BullMQ on Redis is in the run: its lane comes right before BullMQ on PostgreSQL */
+/** BullMQ on Redis is in the run: its track comes right before BullMQ on PostgreSQL */
 const hasRedis = compare.perf.some((/** @type {Row} */ row) => row.library === 'bullmq' && row.dialect === 'redis');
 
-/** @type {Lane[]} The libraries on PostgreSQL in the order of LIBS, with BullMQ on Redis before BullMQ on PostgreSQL */
-const LANES = LIBS.flatMap(({ id, name, laneName, label }) => {
+/** @type {Track[]} The libraries on PostgreSQL in the order of LIBS, BullMQ on Redis before BullMQ on PostgreSQL */
+const TRACKS = LIBS.flatMap(({ id, name, trackName, label }) => {
     const after = enqueuesAfter(id);
-    /** @type {Lane} */
-    const lane = {
+    /** @type {Track} */
+    const track = {
         id,
         dialect: 'postgres',
         label: `${label ?? name}${after ? '*' : ''}`,
-        name: laneName ?? name,
+        name: trackName ?? name,
         after,
     };
 
     if (id !== 'bullmq' || !hasRedis) {
-        return [lane];
+        return [track];
     }
 
-    return [{ id, dialect: 'redis', label: `BullMQ (Redis)${after ? '*' : ''}`, name: 'BullMQ on Redis', after }, lane];
+    return [{ id, dialect: 'redis', label: `BullMQ (Redis)${after ? '*' : ''}`, name: 'BullMQ on Redis', after }, track];
 });
 
 /**
  * @typedef {{ timing?: boolean, processes?: number, names?: number }} RunOptions timing: the run of phase B, one
- *     library at a time; processes: the workers of a schedule run; names: the job names, 1000 by default
+ *     library at a time; processes: the workers of a schedule run; names: the names (lanes, queues, tasks…), 1000 by
+ *     default
  */
 
 /**
- * @param {Lane} lane
+ * @param {Track} track
  * @param {string} workload
  * @param {RunOptions} [options]
- * @returns {Row | undefined} the lane's run of the workload: with `names` job names, or `processes` workers for
+ * @returns {Row | undefined} the track's run of the workload: with `names` names, or `processes` workers for
  *     schedules
  */
-function runOf(lane, workload, { timing = false, processes, names = 1000 } = {}) {
-    return compare.perf.find((/** @type {Row} */ row) => row.library === lane.id && row.workload === workload
-        && rowDialect(row) === lane.dialect && Boolean(row.timing) === timing
+function runOf(track, workload, { timing = false, processes, names = 1000 } = {}) {
+    return compare.perf.find((/** @type {Row} */ row) => row.library === track.id && row.workload === workload
+        && rowDialect(row) === track.dialect && Boolean(row.timing) === timing
         && (processes === undefined ? row.names === names : row.processes === processes));
 }
 
 /**
- * @param {Lane} lane
+ * @param {Track} track
  * @param {Row | undefined} row
  * @param {string} workload
- * @returns {Row} the row; a PostgreSQL lane must have it
+ * @returns {Row} the row; a PostgreSQL track must have it
  */
-function required(lane, row, workload) {
+function required(track, row, workload) {
     if (!row) {
-        throw new Error(`bench/compare/results.json: no ${workload} run of ${lane.id} on ${lane.dialect}`);
+        throw new Error(`bench/compare/results.json: no ${workload} run of ${track.id} on ${track.dialect}`);
     }
 
     return row;
@@ -474,7 +475,7 @@ function day(iso) {
 
 /**
  * @typedef {object} Bar
- * @property {Lane} lane
+ * @property {Track} track
  * @property {number[]} parts The stacked segments; none: a row with a note instead of a bar (another unit).
  * @property {string} value The text after the bar.
  * @property {string} alt The value in the alt text.
@@ -489,7 +490,7 @@ function day(iso) {
  * @property {string} unit Of the axis.
  * @property {string} alt The start of the alt text, before the values.
  * @property {Bar[]} bars
- * @property {string} [note] The note of a `*` lane, AFTER_NOTE by default.
+ * @property {string} [note] The note of a `*` track, AFTER_NOTE by default.
  */
 
 // Colors for GitHub's light (#ffffff) and dark (#0d1117) pages; the series pass the palette checks on both.
@@ -606,7 +607,7 @@ function svg({ title, subtitle, legend, bars, unit, note: afterNote = AFTER_NOTE
     const scale = (/** @type {number} */ v) => ((x1 - X0) * Math.min(v, end)) / end;
     const top = legend ? 90 : 68;
     const plotH = bars.length * ROW;
-    const note = bars.some(bar => bar.lane.after) ? afterNote : '';
+    const note = bars.some(bar => bar.track.after) ? afterNote : '';
     const H = top + plotH + (note ? 52 : 30);
     const [pageW, pageH] = [W + (2 * PAD), H + (2 * PAD)];
     const out = [
@@ -646,10 +647,10 @@ function svg({ title, subtitle, legend, bars, unit, note: afterNote = AFTER_NOTE
 
     for (const [i, bar] of bars.entries()) {
         const y = top + (i * ROW) + ((ROW - BAR) / 2);
-        const bold = bar.lane.id === 'sqlane' ? ' font-weight="600"' : '';
+        const bold = bar.track.id === 'sqlane' ? ' font-weight="600"' : '';
         const label = `x="${LABEL_W}" y="${y + 14}" font-size="14" fill="${c.text}" text-anchor="end"${bold}`;
 
-        out.push(`<text ${label}>${escape(bar.lane.label)}</text>`);
+        out.push(`<text ${label}>${escape(bar.track.label)}</text>`);
 
         let x = X0;
 
@@ -689,7 +690,7 @@ function svg({ title, subtitle, legend, bars, unit, note: afterNote = AFTER_NOTE
  * @returns {string} its alt text, escaped for an HTML attribute
  */
 function altText({ alt, bars }) {
-    const values = bars.map(bar => `${bar.lane.name} ${bar.alt}${bar.lane.after ? ' (after the commit)' : ''}`);
+    const values = bars.map(bar => `${bar.track.name} ${bar.alt}${bar.track.after ? ' (after the commit)' : ''}`);
 
     return escape(`${alt}: ${values.join(', ')}`);
 }
@@ -724,19 +725,19 @@ const mega = (/** @type {number} */ n) => n / 1e6;
 
 /**
  * @param {string} workload
- * @param {(lane: Lane, row: Row) => Omit<Bar, 'lane'>} bar
+ * @param {(track: Track, row: Row) => Omit<Bar, 'track'>} bar
  * @param {RunOptions} [options]
- * @returns {Bar[]} a bar per lane: every library on PostgreSQL, BullMQ on Redis when the run has it
+ * @returns {Bar[]} a bar per track: every library on PostgreSQL, BullMQ on Redis when the run has it
  */
 function barsOf(workload, bar, options) {
-    return LANES.flatMap((lane) => {
-        const row = runOf(lane, workload, options);
+    return TRACKS.flatMap((track) => {
+        const row = runOf(track, workload, options);
 
-        if (lane.dialect !== 'postgres' && !row) {
+        if (track.dialect !== 'postgres' && !row) {
             return [];
         }
 
-        return [{ lane, ...bar(lane, required(lane, row, workload)) }];
+        return [{ track, ...bar(track, required(track, row, workload)) }];
     });
 }
 
@@ -744,7 +745,7 @@ function barsOf(workload, bar, options) {
 const cpuChart = {
     name: 'perf_cpu_per_job',
     title: 'CPU instructions per job, steady load',
-    subtitle: `${pg}, ${jobsTrip}, 20 jobs/s over 1000 job names.`,
+    subtitle: `${pg}, ${jobsTrip}, 20 jobs/s over 1000 names.`,
     legend: ['Worker', 'Producer', 'Database'],
     unit: 'M instr.',
     alt: `CPU instructions per job at steady load on PostgreSQL with a ${jobsTrip}`,
@@ -763,10 +764,10 @@ const statementsChart = {
     unit: 'statements',
     alt: `SQL statements per job at steady load on PostgreSQL, each statement a ${jobsTrip}, without the business `
         + 'INSERT',
-    bars: barsOf('steady', (lane, row) => {
+    bars: barsOf('steady', (track, row) => {
         // Redis commands aren't statements: no bar on the same axis, the number as a note. Nor round trips: most run
         // inside its Lua scripts, whose calls are the EVALSHAs
-        if (lane.dialect === 'redis') {
+        if (track.dialect === 'redis') {
             const commands = Math.round(row.redisCommands / row.completed);
             const evalsha = row.redisByCommand?.evalsha;
             const scripts = evalsha ? `${Math.round(evalsha / row.completed)} Lua script calls` : 'Lua scripts';
@@ -788,9 +789,9 @@ const statementsChart = {
 const idleChart = {
     name: 'perf_idle',
     title: 'Database instructions per second, idle',
-    subtitle: `${pg}, 1000 job names, no jobs.`,
+    subtitle: `${pg}, 1000 names, no jobs.`,
     unit: 'M/s',
-    alt: 'Database instructions per second while idle with 1000 job names on PostgreSQL',
+    alt: 'Database instructions per second while idle with 1000 names on PostgreSQL',
     bars: barsOf('idle', (_, row) => {
         const perSecond = mega(row.db.instructions) / row.seconds;
 
@@ -868,7 +869,7 @@ const throughputChart = throughputRows.length
 const ms = n => n.toFixed(n < 10 ? 1 : 0);
 
 /** The rows of phase B have the time of each enqueue call (perf.mjs notes it): sqlane's at least */
-const enqueueMeasured = typeof runOf(LANES[0], 'steady', { timing: true })?.enqueueP50Ms === 'number';
+const enqueueMeasured = typeof runOf(TRACKS[0], 'steady', { timing: true })?.enqueueP50Ms === 'number';
 
 /** @type {Chart | null} The time that an enqueue call takes: in the caller's transaction, or after it (`*`) */
 const enqueueChart = enqueueMeasured
@@ -955,7 +956,7 @@ function table(rows) {
  * @param {Chart} chart
  * @returns {Map<string, Bar>} its bars, by `<library>/<dialect>`
  */
-const barsBy = chart => new Map(chart.bars.map(bar => [`${bar.lane.id}/${bar.lane.dialect}`, bar]));
+const barsBy = chart => new Map(chart.bars.map(bar => [`${bar.track.id}/${bar.track.dialect}`, bar]));
 
 /**
  * @param {Chart} chart
@@ -973,7 +974,7 @@ function totals(chart) {
     return {
         sqlane: /** @type {number} */ (total('sqlane/postgres')),
         others: chart.bars
-            .filter(bar => bar.lane.dialect === 'postgres' && bar.lane.id !== 'sqlane')
+            .filter(bar => bar.track.dialect === 'postgres' && bar.track.id !== 'sqlane')
             .map(bar => sum(bar.parts)),
         redis: total('bullmq/redis'),
     };
@@ -1019,8 +1020,8 @@ function idleText() {
     const above = ascending(others.filter(value => value >= sqlane));
     // Those whose database works less than sqlane's: named, not given as a ratio below 1×
     const below = idleChart.bars
-        .filter(({ lane, parts }) => lane.dialect === 'postgres' && lane.id !== 'sqlane' && sum(parts) < sqlane)
-        .map(({ lane, parts }) => `${lane.name} (${fixed(sum(parts))} M)`);
+        .filter(({ track, parts }) => track.dialect === 'postgres' && track.id !== 'sqlane' && sum(parts) < sqlane)
+        .map(({ track, parts }) => `${track.name} (${fixed(sum(parts))} M)`);
     let text = `sqlane's database uses ${fixed(sqlane)} M instructions per second; the other libraries' `
         + `${range(above.map(fixed), ' M')} (${range(above.map(value => times(value / sqlane)))}×)`;
 
@@ -1030,11 +1031,11 @@ function idleText() {
         text += ` BullMQ on Redis: ${fixed(redis)} M.`;
     }
 
-    const causes = idleChart.bars.flatMap(({ lane, parts }) => {
-        const cause = lane.dialect === 'postgres' ? IDLE_CAUSES[lane.id] : undefined;
-        const row = /** @type {Row} */ (runOf(lane, 'idle'));
+    const causes = idleChart.bars.flatMap(({ track, parts }) => {
+        const cause = track.dialect === 'postgres' ? IDLE_CAUSES[track.id] : undefined;
+        const row = /** @type {Row} */ (runOf(track, 'idle'));
 
-        return cause ? [`${lane.name} (${fixed(sum(parts))} M) ${cause(row.names)}`] : [];
+        return cause ? [`${track.name} (${fixed(sum(parts))} M) ${cause(row.names)}`] : [];
     });
 
     if (causes.length) {
@@ -1057,23 +1058,23 @@ function and(names) {
  */
 function latencyText() {
     const rows = latencyChart.bars.map(bar => ({
-        lane: bar.lane,
-        row: /** @type {Row} */ (runOf(bar.lane, 'steady', { timing: true })),
+        track: bar.track,
+        row: /** @type {Row} */ (runOf(bar.track, 'steady', { timing: true })),
     }));
-    const sqlane = /** @type {Row} */ (rows.find(({ lane }) => lane.id === 'sqlane')?.row);
-    const others = rows.filter(({ lane }) => lane.id !== 'sqlane');
-    const woken = others.filter(({ lane }) => !POLLING[lane.id]);
-    const polling = others.filter(({ lane }) => POLLING[lane.id]);
+    const sqlane = /** @type {Row} */ (rows.find(({ track }) => track.id === 'sqlane')?.row);
+    const others = rows.filter(({ track }) => track.id !== 'sqlane');
+    const woken = others.filter(({ track }) => !POLLING[track.id]);
+    const polling = others.filter(({ track }) => POLLING[track.id]);
     /** @type {Map<string, { names: string[], p50: number, p99: number }>} Those with the same times, fastest first */
     const groups = new Map();
 
-    for (const { lane, row } of woken.toSorted((a, b) => (
+    for (const { track, row } of woken.toSorted((a, b) => (
         a.row.latencyP50Ms - b.row.latencyP50Ms || a.row.latencyP99Ms - b.row.latencyP99Ms
     ))) {
         const [p50, p99] = [row.latencyP50Ms, row.latencyP99Ms];
         const group = groups.get(`${p50}/${p99}`) ?? { names: /** @type {string[]} */ ([]), p50, p99 };
 
-        group.names.push(lane.name);
+        group.names.push(track.name);
         groups.set(`${p50}/${p99}`, group);
     }
 
@@ -1096,21 +1097,21 @@ function latencyText() {
         + `${against.join('; ')}.`;
 
     if (polling.length) {
-        const names = polling.map(({ lane }) => {
-            const { newer } = POLLING[lane.id];
+        const names = polling.map(({ track }) => {
+            const { newer } = POLLING[track.id];
 
-            return newer?.version === versionOf(lane.id) ? `${lane.name} ${newer.version}` : lane.name;
+            return newer?.version === versionOf(track.id) ? `${track.name} ${newer.version}` : track.name;
         });
-        const polls = polling.map(({ lane, row }) => {
-            const { poll, newer } = POLLING[lane.id];
-            const later = newer?.version === versionOf(lane.id) ? `; ${newer.text}` : '';
+        const polls = polling.map(({ track, row }) => {
+            const { poll, newer } = POLLING[track.id];
+            const later = newer?.version === versionOf(track.id) ? `; ${newer.text}` : '';
 
             return `${poll} (p50 ${row.latencyP50Ms} ms, p99 ${row.latencyP99Ms} ms${later})`;
         });
 
         text += polling.length === 1
             ? ` ${names[0]} only polls, ${polls[0]}.`
-            : ` ${and(names)} only poll: ${polling.map(({ lane }, index) => `${lane.name} ${polls[index]}`).join('; ')}.`;
+            : ` ${and(names)} only poll: ${polling.map(({ track }, index) => `${track.name} ${polls[index]}`).join('; ')}.`;
     }
 
     return text;
@@ -1134,19 +1135,19 @@ function schedulesText() {
 
 /**
  * The sentences under the throughput chart, where more is better: sqlane's rate, the libraries that run more (sqlane
- * not the fastest, said plainly), about as many (within 5%) and fewer, then the lanes whose backlog ran out.
+ * not the fastest, said plainly), about as many (within 5%) and fewer, then the tracks whose backlog ran out.
  * @param {Chart} chart
  * @returns {string}
  */
 function throughputText(chart) {
-    const rows = chart.bars.map(({ lane }) => ({
-        lane,
-        row: /** @type {Row} */ (runOf(lane, 'throughput', { names: 1 })),
+    const rows = chart.bars.map(({ track }) => ({
+        track,
+        row: /** @type {Row} */ (runOf(track, 'throughput', { names: 1 })),
     }));
-    const sqlaneRow = /** @type {Row} */ (rows.find(({ lane }) => lane.id === 'sqlane')?.row);
+    const sqlaneRow = /** @type {Row} */ (rows.find(({ track }) => track.id === 'sqlane')?.row);
     const sqlane = sqlaneRow.jobsPerSecond;
-    const others = rows.filter(({ lane }) => lane.id !== 'sqlane')
-        .map(({ lane, row }) => ({ lane, row, ratio: row.jobsPerSecond / sqlane }))
+    const others = rows.filter(({ track }) => track.id !== 'sqlane')
+        .map(({ track, row }) => ({ track, row, ratio: row.jobsPerSecond / sqlane }))
         .toSorted((a, b) => b.ratio - a.ratio);
     const faster = others.filter(({ ratio }) => ratio > 1.05);
     const same = others.filter(({ ratio }) => ratio >= 0.95 && ratio <= 1.05);
@@ -1154,10 +1155,10 @@ function throughputText(chart) {
     const sentences = [`sqlane runs ${rate(sqlane)} jobs per second.`];
 
     if (faster.length) {
-        const list = faster.map(({ lane, row, ratio }, index) => (
+        const list = faster.map(({ track, row, ratio }, index) => (
             index
-                ? `${lane.name} ${rate(row.jobsPerSecond)} (${times(ratio)}×)`
-                : `${lane.name} runs ${rate(row.jobsPerSecond)} (${times(ratio)}× as many)`
+                ? `${track.name} ${rate(row.jobsPerSecond)} (${times(ratio)}×)`
+                : `${track.name} runs ${rate(row.jobsPerSecond)} (${times(ratio)}× as many)`
         ));
 
         sentences.push(`It is not the fastest: ${and(list)}.`);
@@ -1166,21 +1167,21 @@ function throughputText(chart) {
     }
 
     if (same.length) {
-        const list = same.map(({ lane, row }) => `${lane.name} (${rate(row.jobsPerSecond)})`);
+        const list = same.map(({ track, row }) => `${track.name} (${rate(row.jobsPerSecond)})`);
 
         sentences.push(`${and(list)} ${same.length > 1 ? 'run' : 'runs'} about as many, within 5%`
             + `${faster.length ? '' : '; no other library runs more'}.`);
     }
 
     if (slower.length) {
-        const list = slower.map(({ lane, row }) => `${lane.name} ${rate(row.jobsPerSecond)}`);
+        const list = slower.map(({ track, row }) => `${track.name} ${rate(row.jobsPerSecond)}`);
         const ratios = ascending(slower.map(({ ratio }) => 1 / ratio)).map(times);
 
         sentences.push(`The others run fewer: ${and(list)}, so sqlane runs ${range(ratios)}× as many.`);
     }
 
-    const causes = slower.flatMap(({ lane }) => (
-        lane.dialect === 'postgres' && THROUGHPUT_CAUSES[lane.id] ? [`${lane.name} ${THROUGHPUT_CAUSES[lane.id]}`] : []
+    const causes = slower.flatMap(({ track }) => (
+        track.dialect === 'postgres' && THROUGHPUT_CAUSES[track.id] ? [`${track.name} ${THROUGHPUT_CAUSES[track.id]}`] : []
     ));
 
     if (causes.length) {
@@ -1191,7 +1192,7 @@ function throughputText(chart) {
     const drained = rows.filter(({ row }) => row.drained);
 
     if (drained.length) {
-        const list = drained.map(({ lane, row }) => `${lane.name} (${row.seconds.toFixed(1)} s)`);
+        const list = drained.map(({ track, row }) => `${track.name} (${row.seconds.toFixed(1)} s)`);
         const window = compare.machines.throughput?.windowSeconds;
 
         sentences.push(`The backlog of ${backlog.toLocaleString('en-US')} jobs ran out before the end of the `
@@ -1211,12 +1212,12 @@ function throughputText(chart) {
  * @returns {string}
  */
 function enqueueText(chart) {
-    const rows = chart.bars.filter(bar => bar.parts.length).map(({ lane }) => ({
-        lane,
-        row: /** @type {Row} */ (runOf(lane, 'steady', { timing: true })),
+    const rows = chart.bars.filter(bar => bar.parts.length).map(({ track }) => ({
+        track,
+        row: /** @type {Row} */ (runOf(track, 'steady', { timing: true })),
     }));
-    const sqlane = /** @type {Row} */ (rows.find(({ lane }) => lane.id === 'sqlane')?.row);
-    const inside = rows.filter(({ lane }) => lane.id !== 'sqlane' && !lane.after)
+    const sqlane = /** @type {Row} */ (rows.find(({ track }) => track.id === 'sqlane')?.row);
+    const inside = rows.filter(({ track }) => track.id !== 'sqlane' && !track.after)
         .toSorted((a, b) => a.row.enqueueP50Ms - b.row.enqueueP50Ms);
     // As the chart shows them: the same text is a tie
     const shown = (/** @type {Row} */ row) => Number(ms(row.enqueueP50Ms));
@@ -1228,28 +1229,28 @@ function enqueueText(chart) {
         + `${ms(sqlane.enqueueP99Ms)} ms.`];
 
     if (less.length) {
-        sentences.push(`It is not the lowest: ${and(less.map(({ lane, row }) => `${lane.name} (${times50(row)})`))} `
+        sentences.push(`It is not the lowest: ${and(less.map(({ track, row }) => `${track.name} (${times50(row)})`))} `
             + `${less.length > 1 ? 'take' : 'takes'} less.`);
     }
 
     if (same.length) {
-        sentences.push(`${and(same.map(({ lane, row }) => `${lane.name} (p99 ${ms(row.enqueueP99Ms)} ms)`))} `
+        sentences.push(`${and(same.map(({ track, row }) => `${track.name} (p99 ${ms(row.enqueueP99Ms)} ms)`))} `
             + `${same.length > 1 ? 'take' : 'takes'} as long.`);
     }
 
     if (more.length) {
-        const list = more.map(({ lane, row }) => (
-            `${lane.name} ${times50(row)} (${ms(shown(row) - shown(sqlane))} ms more)`
+        const list = more.map(({ track, row }) => (
+            `${track.name} ${times50(row)} (${ms(shown(row) - shown(sqlane))} ms more)`
         ));
 
         sentences.push(`${less.length || same.length ? 'The others take' : 'The other libraries take'} longer: `
             + `${list.join('; ')}.`);
     }
 
-    const after = rows.filter(({ lane }) => lane.after);
+    const after = rows.filter(({ track }) => track.after);
 
     if (after.length) {
-        const list = after.map(({ lane, row }) => `${lane.name} ${times50(row)}`);
+        const list = after.map(({ track, row }) => `${track.name} ${times50(row)}`);
 
         sentences.push(`After the \`COMMIT\`, on ${after.length > 1 ? 'their' : 'its'} own connection, so not inside the `
             + `caller's transaction, nor atomic with it: ${list.join('; ')}.`);
@@ -1276,10 +1277,10 @@ const mb = n => n.toFixed(0);
  * @returns {string} empty when the results have neither (before perf.mjs noted them)
  */
 function footprint() {
-    const rows = LANES.flatMap((lane) => {
-        const row = runOf(lane, 'steady');
+    const rows = TRACKS.flatMap((track) => {
+        const row = runOf(track, 'steady');
 
-        return row ? [{ lane, row }] : [];
+        return row ? [{ track, row }] : [];
     });
 
     if (!rows.some(({ row }) => has(row, 'workerConnections') || has(row, 'workerPeakRssMB'))) {
@@ -1294,17 +1295,17 @@ function footprint() {
      */
     const cell = (row, field, format = String) => (has(row, field) ? format(row[field]) : '—');
     const header = ['Library', 'Worker connections', 'Producer connections', 'Worker peak memory (MB)'];
-    const lines = rows.map(({ lane, row }) => {
+    const lines = rows.map(({ track, row }) => {
         // On Redis: its connections to Redis
-        const unit = (/** @type {number} */ n) => (lane.dialect === 'redis' ? `${n} to Redis` : String(n));
+        const unit = (/** @type {number} */ n) => (track.dialect === 'redis' ? `${n} to Redis` : String(n));
 
         return [
-            lane.name, cell(row, 'workerConnections', unit), cell(row, 'producerConnections', unit),
+            track.name, cell(row, 'workerConnections', unit), cell(row, 'producerConnections', unit),
             cell(row, 'workerPeakRssMB', mb),
         ];
     });
-    const sqlane = rows.find(({ lane }) => lane.id === 'sqlane')?.row;
-    const others = rows.filter(({ lane }) => lane.id !== 'sqlane' && lane.dialect === 'postgres').map(({ row }) => row);
+    const sqlane = rows.find(({ track }) => track.id === 'sqlane')?.row;
+    const others = rows.filter(({ track }) => track.id !== 'sqlane' && track.dialect === 'postgres').map(({ row }) => row);
     /**
      * @param {string} field
      * @param {(n: number) => string} [format]
@@ -1363,21 +1364,21 @@ const sampleInstructions = (sample, roles) => sum(roles.map(role => sample[role]
 /**
  * @param {string} workload
  * @param {(sample: any, row: Row) => number} value of a run: a sample of the row
- * @param {(a: number[]) => number} measure of the values of a lane's runs
+ * @param {(a: number[]) => number} measure of the values of a track's runs
  * @param {RunOptions} [options]
- * @returns {{ lane: Lane, value: number } | undefined} the lane whose runs differ most, by measure; none without a lane
- *     of 2 runs or more
+ * @returns {{ track: Track, value: number } | undefined} the track whose runs differ most, by measure; none without
+ *     a track of 2 runs or more
  */
 function widest(workload, value, measure, options) {
-    /** @type {{ lane: Lane, value: number } | undefined} */
+    /** @type {{ track: Track, value: number } | undefined} */
     let found;
 
-    for (const lane of LANES) {
-        const row = runOf(lane, workload, options);
+    for (const track of TRACKS) {
+        const row = runOf(track, workload, options);
         const samples = /** @type {any[]} */ (row?.samples ?? []);
 
         if (row && samples.length > 1) {
-            const candidate = { lane, value: measure(samples.map(sample => value(sample, row))) };
+            const candidate = { track, value: measure(samples.map(sample => value(sample, row))) };
 
             if (!found || candidate.value > found.value) {
                 found = candidate;
@@ -1443,7 +1444,7 @@ function runsText() {
     }
 
     const parts = apart.flatMap(([what, found]) => (
-        found ? [`${percent(found.value)} ${what} (${found.lane.name})`] : []
+        found ? [`${percent(found.value)} ${what} (${found.track.name})`] : []
     ));
     let text = `**Runs:** ${count}; the numbers of several runs are medians.`;
 
@@ -1458,7 +1459,7 @@ function runsText() {
         : undefined;
 
     if (latency) {
-        const by = latency.value ? `by at most ${latency.value} ms (${latency.lane.name})` : 'by less than 1 ms';
+        const by = latency.value ? `by at most ${latency.value} ms (${latency.track.name})` : 'by less than 1 ms';
 
         text += parts.length ? `; their p50 latencies ${by}` : ` The p50 latencies of a library's runs differ ${by}`;
     }
@@ -1512,8 +1513,8 @@ function conditions() {
 const HOT_PATHS = {
     enqueue: '`enqueue`, in a transaction of its own',
     enqueue_many: '`enqueueMany` of 100 jobs',
-    run: 'A job: its enqueue, claim, run and completion, over 1000 job names',
-    idle: 'A second of a worker with 1000 job names and no job',
+    run: 'A job: its enqueue, claim, run and completion, over 1000 lanes',
+    idle: 'A second of a worker with 1000 lanes and no job',
     schedule: 'A schedule firing, one of 1000 `every: \'10s\'` schedules',
     global_limits: 'A job with one of 100 keys of a global limit of 1: its enqueue, claim, run and completion',
     global_rate_limits:
@@ -1594,12 +1595,12 @@ const withRedis = ({ others, redis }) => (redis === undefined ? others : [...oth
  */
 function readme() {
     const others = LIBS.length - 1;
-    const steady = latencyChart.bars.map(({ lane }) => ({
-        lane,
-        row: /** @type {Row} */ (runOf(lane, 'steady', { timing: true })),
+    const steady = latencyChart.bars.map(({ track }) => ({
+        track,
+        row: /** @type {Row} */ (runOf(track, 'steady', { timing: true })),
     }));
-    const sqlaneSteady = /** @type {Row} */ (steady.find(({ lane }) => lane.id === 'sqlane')?.row);
-    const otherSteady = steady.filter(({ lane }) => lane.id !== 'sqlane').map(({ row }) => row);
+    const sqlaneSteady = /** @type {Row} */ (steady.find(({ track }) => track.id === 'sqlane')?.row);
+    const otherSteady = steady.filter(({ track }) => track.id !== 'sqlane').map(({ row }) => row);
     const cpu = totals(cpuChart);
     const statements = totals(statementsChart);
     const idle = totals(idleChart);
@@ -1608,7 +1609,7 @@ function readme() {
     const rows = [
         ['CPU instructions per job', `**${fixed(cpu.sqlane)} M**`, `${spanOf(withRedis(cpu), fixed)} M`],
         ['SQL statements per job ¹', `**${statements.sqlane.toFixed(1)}**`, spanOf(statements.others, n => n.toFixed(1))],
-        ['Idle database CPU, 1000 job names', `**${fixed(idle.sqlane)} M/s**`, `${spanOf(withRedis(idle), fixed)} M/s`],
+        ['Idle database CPU, 1000 names', `**${fixed(idle.sqlane)} M/s**`, `${spanOf(withRedis(idle), fixed)} M/s`],
         [
             'Enqueue to handler start, p50 / p99',
             `**${sqlaneSteady.latencyP50Ms} / ${sqlaneSteady.latencyP99Ms} ms**`,
@@ -1621,13 +1622,13 @@ function readme() {
     ];
 
     if (throughputChart) {
-        const throughput = throughputChart.bars.map(({ lane }) => ({
-            lane,
-            row: /** @type {Row} */ (runOf(lane, 'throughput', { names: 1 })),
+        const throughput = throughputChart.bars.map(({ track }) => ({
+            track,
+            row: /** @type {Row} */ (runOf(track, 'throughput', { names: 1 })),
         }));
-        const sqlane = /** @type {Row} */ (throughput.find(({ lane }) => lane.id === 'sqlane')?.row);
-        const otherRates = throughput.filter(({ lane }) => lane.id !== 'sqlane').map(({ row }) => row.jobsPerSecond);
-        const drained = throughput.filter(({ row }) => row.drained).map(({ lane }) => lane.name);
+        const sqlane = /** @type {Row} */ (throughput.find(({ track }) => track.id === 'sqlane')?.row);
+        const otherRates = throughput.filter(({ track }) => track.id !== 'sqlane').map(({ row }) => row.jobsPerSecond);
+        const drained = throughput.filter(({ row }) => row.drained).map(({ track }) => track.name);
 
         rows.push([
             `Jobs per second, one worker with 8 slots${drained.length ? ' ²' : ''}`,

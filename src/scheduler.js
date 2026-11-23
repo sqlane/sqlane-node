@@ -107,10 +107,10 @@ function advance(entry, slot, dbNow) {
  * @property {import('./store/store.js').Store} store
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {number} maxPayloadBytes
- * @property {(name: string) => import('./types.js').JobDefinition | null} findDefinition
- * @property {'allow' | 'reject'} unknownJobs
+ * @property {(lane: string) => import('./types.js').LaneDefinition | null} findDefinition
+ * @property {'allow' | 'reject'} unknownLanes
  * @property {string | null} notifyChannel
- * @property {(name: string) => void} onCreated After the commit of a fire: once per name that got a job.
+ * @property {(lane: string) => void} onCreated After the commit of a fire: once per lane that got a job.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit
  * @property {import('./types.js').Logger | undefined} logger
  * @property {Partial<SchedulerTimings>} [timings] For tests.
@@ -158,7 +158,7 @@ export function createScheduler({
     defaults,
     maxPayloadBytes,
     findDefinition,
-    unknownJobs,
+    unknownLanes,
     notifyChannel,
     onCreated,
     emit,
@@ -274,7 +274,7 @@ export function createScheduler({
     function candidateOf(entry, slot) {
         return {
             id: entry.id,
-            name: entry.name,
+            lane: entry.lane,
             spec: entry.spec,
             slot,
             due: entry.jitterMs ? dueOf(entry, slot) : slot,
@@ -302,7 +302,7 @@ export function createScheduler({
         }
 
         return buildNewJob({
-            name: entry.name,
+            lane: entry.lane,
             definition: entry.definition,
             defaults,
             payload: entry.payload,
@@ -480,7 +480,7 @@ export function createScheduler({
         const localNow = now();
         const dbNow = dbTime();
         /** @type {Set<string>} */
-        const createdNames = new Set();
+        const createdLanes = new Set();
 
         if (recovering && !failing) {
             recovering = false;
@@ -505,14 +505,14 @@ export function createScheduler({
             entry.nextAt = advance(entry, decided.slot, dbNow);
 
             if (decided.created) {
-                createdNames.add(decided.name);
+                createdLanes.add(decided.lane);
             }
 
             if (decided.outcome === 'enqueued' || decided.outcome === 'skipped') {
                 emit({
                     type: 'schedule_fired',
                     scheduleId: decided.id,
-                    jobName: decided.name,
+                    lane: decided.lane,
                     scheduledAt: new Date(decided.slot),
                     late: decided.late,
                     jobId: decided.jobId,
@@ -592,8 +592,8 @@ export function createScheduler({
             }
         }
 
-        for (const name of createdNames) {
-            onCreated(name);
+        for (const lane of createdLanes) {
+            onCreated(lane);
         }
     }
 
@@ -825,7 +825,7 @@ export function createScheduler({
     return {
         add: (entry) => {
             if (entries.has(entry.id)) {
-                throw new ConfigError(`schedule(${JSON.stringify(entry.name)}): the schedule "${entry.id}" exists already`);
+                throw new ConfigError(`schedule(${JSON.stringify(entry.lane)}): the schedule "${entry.id}" exists already`);
             }
 
             entries.set(entry.id, entry);
@@ -833,16 +833,16 @@ export function createScheduler({
         prepare: () => {
             for (const entry of entries.values()) {
                 const where = `schedule(${JSON.stringify(entry.id)})`;
-                const known = findDefinition(entry.name);
+                const known = findDefinition(entry.lane);
 
                 if (entry.definition && known && known !== entry.definition) {
-                    throw new ConfigError(`${where}: another definition of "${entry.name}" is in "jobs" or handled`);
+                    throw new ConfigError(`${where}: another definition of "${entry.lane}" is in "lanes" or added`);
                 }
 
                 entry.definition ??= known;
 
-                if (!entry.definition && unknownJobs === 'reject') {
-                    throw new ConfigError(`${where}: the job "${entry.name}" is not in "jobs" and not handled`);
+                if (!entry.definition && unknownLanes === 'reject') {
+                    throw new ConfigError(`${where}: the lane "${entry.lane}" is not in "lanes" and not added`);
                 }
 
                 try {
@@ -922,7 +922,7 @@ export function createScheduler({
 
                 return {
                     id,
-                    name: row?.jobName ?? /** @type {ScheduleEntry} */ (entry).name,
+                    lane: row?.lane ?? /** @type {ScheduleEntry} */ (entry).lane,
                     spec: row?.spec ?? /** @type {ScheduleEntry} */ (entry).spec,
                     registered: Boolean(entry),
                     nextAt: known ? new Date(nextAt) : null,

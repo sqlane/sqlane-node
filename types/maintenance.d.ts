@@ -22,13 +22,13 @@ export type Maintenance = {
  * @param {(event: import('./types.js').SqlaneEvent) => void} params.emit
  * @param {(operation: string, error: unknown) => void} params.reportError
  * @param {{ failed: number }} params.counts The results, counted for drain().
- * @param {import('./failure_jobs.js').FailureJobs} params.failureJobs
+ * @param {import('./failure_lanes.js').FailureLanes} params.failureLanes
  * @param {(key: string, delayMs: number) => void} params.armRateWake The timer of a rate key with blocked jobs.
- * @param {() => void} params.wake A wake of all names of this process.
+ * @param {() => void} params.wake A wake of all lanes of this process.
  * @param {import('./hint_channel.js').HintChannel} params.hintChannel
  * @returns {Maintenance}
  */
-export declare function createMaintenance({ store, running, timings: t, cleanup, state, setTimer, emit, reportError, counts, failureJobs, armRateWake, wake, hintChannel, }: {
+export declare function createMaintenance({ store, running, timings: t, cleanup, state, setTimer, emit, reportError, counts, failureLanes, armRateWake, wake, hintChannel, }: {
     store: import('./store/store.js').Store;
     running: ReadonlyMap<string, import('./job_runs.js').RunningJob>;
     timings: {
@@ -44,7 +44,7 @@ export declare function createMaintenance({ store, running, timings: t, cleanup,
     counts: {
         failed: number;
     };
-    failureJobs: import('./failure_jobs.js').FailureJobs;
+    failureLanes: import('./failure_lanes.js').FailureLanes;
     armRateWake: (key: string, delayMs: number) => void;
     wake: () => void;
     hintChannel: import('./hint_channel.js').HintChannel;

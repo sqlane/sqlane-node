@@ -45,7 +45,7 @@ export type Retention = {
      */
     failed?: Duration;
 };
-export type JobOptions<P = any> = {
+export type LaneOptions<P = any> = {
     /**
      * Matches `^[a-z][a-z0-9_.-]{0,127}$`.
      */
@@ -81,7 +81,7 @@ export type JobOptions<P = any> = {
         payload: P;
     }) => readonly (ConcurrencyLimit | ConcurrencyLimitKey)[];
     /**
-     * 1–1000. The name's share of the free slots of an instance. Default: 1.
+     * 1–1000. The lane's share of the free slots of an instance. Default: 1.
      */
     fairShareWeight?: number;
     /**
@@ -102,13 +102,13 @@ export type JobOptions<P = any> = {
      */
     localRateLimits?: readonly RateLimit[];
     /**
-     * Added when a job fails for good.
+     * Gets a job, the failure job, when a job fails for good.
      */
-    failureJob?: string | JobDefinition;
+    failureLane?: string | LaneDefinition;
 };
-export type JobDefinition<P = any> = Readonly<JobOptions<P>>;
+export type LaneDefinition<P = any> = Readonly<LaneOptions<P>>;
 export type IsAny<T> = 0 extends (1 & T) ? true : false;
-export type DeclaredPayload<J> = J extends JobDefinition<infer P> ? (IsAny<P> extends true ? never : P) : never;
+export type DeclaredPayload<J> = J extends LaneDefinition<infer P> ? (IsAny<P> extends true ? never : P) : never;
 export type EnqueuePayload<J, P> = [DeclaredPayload<J>] extends [never] ? P & NoInfer<Jsonable<P>> : NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>>;
 export type EnqueueManyItem<J, P> = [DeclaredPayload<J>] extends [never] ? EnqueueItem<P> & NoInfer<EnqueueItem<Jsonable<P>>> : EnqueueItem<NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>>>;
 export type HandlerPayload<J> = [DeclaredPayload<J>] extends [never] ? any : DeclaredPayload<J>;
@@ -137,9 +137,9 @@ export type EnqueueBaseOptions = {
      */
     retention?: Retention;
     /**
-     * Overrides the definition's failure job for this job.
+     * Overrides the definition's failure lane for this job.
      */
-    failureJob?: string | JobDefinition;
+    failureLane?: string | LaneDefinition;
     /**
      * Replace the global limits
      * of the definition; `[]` clears them.
@@ -150,15 +150,11 @@ export type EnqueueBaseOptions = {
      * definition; `[]` clears them.
      */
     globalRateLimits?: readonly (RateLimit | RateLimitKey)[];
-    /**
-     * Renamed in 8.0: use `dedupeKey`.
-     */
-    jobId?: never;
 };
 export type EnqueueDedupeKeyOption = {
     /**
      * 1–120 printable ASCII characters, not starting with `schedule:`. The job id is
-     * `<name>:<dedupeKey>`: a job with this id is added once while its row exists.
+     * `<lane>:<dedupeKey>`: a job with this id is added once while its row exists.
      */
     dedupeKey?: string;
     /**
@@ -185,7 +181,7 @@ export type EnqueueOptions = EnqueueBaseOptions & ({
 }) & (EnqueueDedupeKeyOption | EnqueueSlotOption);
 export type EnqueueResult = {
     /**
-     * `<job_name>:<dedupeKey>`, or a new ULID without a `dedupeKey`.
+     * `<lane>:<dedupeKey>`, or a new ULID without a `dedupeKey`.
      */
     id: string;
     /**
@@ -209,9 +205,9 @@ export type JobInfo = {
      */
     id: string;
     /**
-     * The job name.
+     * The lane.
      */
-    name: string;
+    lane: string;
     /**
      * 1 for the first run.
      */
@@ -253,7 +249,7 @@ export type HandlerContext<P = any> = {
      */
     payload: P;
     /**
-     * The job: its id, name, attempt, slot and keys.
+     * The job: its id, lane, attempt, slot and keys.
      */
     job: JobInfo;
     /**
@@ -371,9 +367,9 @@ export type JobEventBase = {
      */
     jobId: string;
     /**
-     * The job name.
+     * The lane.
      */
-    jobName: string;
+    lane: string;
     /**
      * The attempt, from 1. After a stall, the attempt of the run that stalled.
      */
@@ -415,7 +411,7 @@ export type SqlaneEvent = (JobEventBase & ({
     type: 'lease_lost';
 } | {
     type: 'failure_job_not_added';
-    failureJob: string;
+    failureLane: string;
     error: unknown;
 } | {
     type: 'cancelled';
@@ -430,13 +426,13 @@ export type ScheduleFiredEvent = {
      */
     type: 'schedule_fired';
     /**
-     * `<job name>` or `<job name>:<key>`.
+     * `<lane>` or `<lane>:<key>`.
      */
     scheduleId: string;
     /**
-     * The job name.
+     * The lane.
      */
-    jobName: string;
+    lane: string;
     /**
      * The slot.
      */
@@ -461,7 +457,7 @@ export type ScheduleTiming = {
 };
 export type ScheduleBaseOptions = {
     /**
-     * Tells several schedules of one job name apart: 1–64 printable ASCII characters.
+     * Tells several schedules of one lane apart: 1–64 printable ASCII characters.
      */
     key?: string;
     /**
@@ -492,13 +488,13 @@ export type SchedulePayload<J, P> = [DeclaredPayload<J>] extends [never] ? {
 };
 export type ScheduleInfo = {
     /**
-     * `<job name>` or `<job name>:<key>`.
+     * `<lane>` or `<lane>:<key>`.
      */
     id: string;
     /**
-     * The job name.
+     * The lane.
      */
-    name: string;
+    lane: string;
     /**
      * The stored spec, e.g. `cron 0 3 * * * Europe/Berlin` or `every 900000`.
      */
@@ -619,9 +615,10 @@ export type SqlaneOptions<C> = {
      */
     adapter: Adapter<C>;
     /**
-     * The definitions known by name.
+     * The definitions known by name, without a handler: `lanes.add()`
+     * runs a lane.
      */
-    jobs?: readonly JobDefinition[];
+    lanes?: readonly LaneDefinition[];
     /**
      * The handlers that run at the same time in this instance. Default: 10.
      */
@@ -632,10 +629,10 @@ export type SqlaneOptions<C> = {
      */
     defaults?: JobDefaults;
     /**
-     * Default: `'allow'`. `'reject'`: `enqueue` of a name that is not in
-     * `jobs` and not handled throws an `UnknownJobError`.
+     * Default: `'allow'`. `'reject'`: `enqueue` of a lane that is not in
+     * `lanes` and not added throws an `UnknownLaneError`.
      */
-    unknownJobs?: 'allow' | 'reject';
+    unknownLanes?: 'allow' | 'reject';
     /**
      * Default: null: polling only.
      */
@@ -793,9 +790,9 @@ export type DropOptions = {
      */
     lockTimeout?: Duration;
 };
-export type JobStats = {
+export type LaneStats = {
     /**
-     * The job name.
+     * The name of the lane.
      */
     name: string;
     /**
@@ -864,9 +861,9 @@ export type JobRecord<P = any> = {
      */
     id: string;
     /**
-     * The job name.
+     * The lane.
      */
-    name: string;
+    lane: string;
     /**
      * The state when read. `pending` does not include `blocked`.
      */
@@ -950,19 +947,19 @@ export type JobRecord<P = any> = {
      */
     blockedOn: BlockedOn | null;
     /**
-     * The name of its failure job.
+     * Its failure lane.
      */
-    failureJob: string | null;
+    failureLane: string | null;
     /**
      * Absent when not asked for, or when the database holds no payload for the job.
      */
     payload?: P;
 };
-export type JobFilter<J extends JobDefinition | string = JobDefinition | string> = {
+export type JobFilter<J extends LaneDefinition | string = LaneDefinition | string> = {
     /**
-     * A job name, or a definition.
+     * A lane, or its definition.
      */
-    jobName: J;
+    lane: J;
     /**
      * One status, or a non-empty list. Default: every
      * status.
@@ -995,7 +992,7 @@ export type JobPage<P = any> = {
 };
 export type JobSelector = {
     jobIds: readonly string[];
-    jobName?: undefined;
+    lane?: undefined;
     status?: undefined;
 } | (JobFilter & {
     jobIds?: undefined;
@@ -1109,7 +1106,7 @@ export type FailedJobPayload = {
      */
     job: {
         id: string;
-        name: string;
+        lane: string;
         payload: any;
         attempt: number;
         maxAttempts: number;
@@ -1157,10 +1154,10 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * @property {Duration} [failed] Default: `'30d'`.
  */
 /**
- * The options of a job name, shared by its producers and workers. A definition overrides the instance `defaults`.
- * @template [P=any] The payload: `defineJob<{ reportId: string }>(…)` types `enqueue`, `handle`,
+ * The options of a lane, shared by its producers and workers. A definition overrides the instance `defaults`.
+ * @template [P=any] The payload: `defineLane<{ reportId: string }>(…)` types `enqueue`, `lanes.add`,
  *     `globalConcurrencyLimits` and `globalRateLimits`.
- * @typedef {object} JobOptions
+ * @typedef {object} LaneOptions
  * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
  * @property {number} [maxAttempts] The runs of a job before it fails for good. Default: 3. Set at enqueue; a
  *     `one_more` retry changes it.
@@ -1173,28 +1170,28 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  *     limits needs one.
  * @property {(context: { payload: P }) => readonly (ConcurrencyLimit | ConcurrencyLimitKey)[]}
  *     [globalConcurrencyLimits] Limits that the whole cluster counts, per key. Sync, from the context only; at enqueue.
- * @property {number} [fairShareWeight] 1–1000. The name's share of the free slots of an instance. Default: 1.
+ * @property {number} [fairShareWeight] 1–1000. The lane's share of the free slots of an instance. Default: 1.
  * @property {readonly ConcurrencyLimit[]} [localConcurrencyLimits] Limits that each instance counts for its own jobs.
  *     A job starts only while every one of them has room.
  * @property {(context: { payload: P }) => readonly (RateLimit | RateLimitKey)[]} [globalRateLimits] Rate limits that
  *     the whole cluster counts, per key: the starts of jobs. Sync, from the context only; at enqueue. At most 10 keys
  *     with the global concurrency limits.
  * @property {readonly RateLimit[]} [localRateLimits] Rate limits that each instance counts for its own starts: keyless.
- * @property {string | JobDefinition} [failureJob] Added when a job fails for good.
+ * @property {string | LaneDefinition} [failureLane] Gets a job, the failure job, when a job fails for good.
  */
 /**
- * The result of `defineJob()`. Frozen.
+ * The result of `defineLane()`. Frozen.
  * @template [P=any] The payload. `any`: not declared; `enqueue` then checks only that the payload is JSON.
- * @typedef {Readonly<JobOptions<P>>} JobDefinition
+ * @typedef {Readonly<LaneOptions<P>>} LaneDefinition
  */
 /**
  * @template T
  * @typedef {0 extends (1 & T) ? true : false} IsAny
  */
 /**
- * The payload that a job definition declares; `never` for a name or a definition without one.
+ * The payload that a lane definition declares; `never` for a name or a definition without one.
  * @template J
- * @typedef {J extends JobDefinition<infer P> ? (IsAny<P> extends true ? never : P) : never} DeclaredPayload
+ * @typedef {J extends LaneDefinition<infer P> ? (IsAny<P> extends true ? never : P) : never} DeclaredPayload
  */
 /**
  * The payload of an enqueue: the declared one (JSON), else any JSON (inferred as P).
@@ -1227,17 +1224,16 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  *     it.
  * @property {number} [maxStalls] Overrides the definition's `maxStalls` for this job. A `one_more` retry changes it.
  * @property {Retention} [retention] Overrides the definition's retention for this job, field by field.
- * @property {string | JobDefinition} [failureJob] Overrides the definition's failure job for this job.
+ * @property {string | LaneDefinition} [failureLane] Overrides the definition's failure lane for this job.
  * @property {readonly (ConcurrencyLimit | ConcurrencyLimitKey)[]} [globalConcurrencyLimits] Replace the global limits
  *     of the definition; `[]` clears them.
  * @property {readonly (RateLimit | RateLimitKey)[]} [globalRateLimits] Replace the global rate limits of the
  *     definition; `[]` clears them.
- * @property {never} [jobId] Renamed in 8.0: use `dedupeKey`.
  */
 /**
  * @typedef {object} EnqueueDedupeKeyOption
  * @property {string} [dedupeKey] 1–120 printable ASCII characters, not starting with `schedule:`. The job id is
- *     `<name>:<dedupeKey>`: a job with this id is added once while its row exists.
+ *     `<lane>:<dedupeKey>`: a job with this id is added once while its row exists.
  * @property {never} [slot] Not with `dedupeKey`.
  */
 /**
@@ -1253,7 +1249,7 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  */
 /**
  * @typedef {object} EnqueueResult
- * @property {string} id `<job_name>:<dedupeKey>`, or a new ULID without a `dedupeKey`.
+ * @property {string} id `<lane>:<dedupeKey>`, or a new ULID without a `dedupeKey`.
  * @property {boolean} created False: a job with this id exists already, nothing was added.
  */
 /**
@@ -1265,7 +1261,7 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
 /**
  * @typedef {object} JobInfo
  * @property {string} id The job id.
- * @property {string} name The job name.
+ * @property {string} lane The lane.
  * @property {number} attempt 1 for the first run.
  * @property {number} maxAttempts The most attempts of this job: set at enqueue; a `one_more` retry changes it.
  * @property {Date} enqueuedAt The time of the enqueue.
@@ -1281,7 +1277,7 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * @template [P=any]
  * @typedef {object} HandlerContext
  * @property {P} payload As JSON gives it back.
- * @property {JobInfo} job The job: its id, name, attempt, slot and keys.
+ * @property {JobInfo} job The job: its id, lane, attempt, slot and keys.
  * @property {AbortSignal} signal Aborted with a `JobTimeoutError`, a `LeaseLostError` or a `ShutdownError`.
  */
 /**
@@ -1355,7 +1351,7 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
 /**
  * @typedef {object} JobEventBase
  * @property {string} jobId The job id.
- * @property {string} jobName The job name.
+ * @property {string} lane The lane.
  * @property {number} attempt The attempt, from 1. After a stall, the attempt of the run that stalled.
  */
 /**
@@ -1371,7 +1367,7 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  *     | { type: 'stalled' }
  *     | { type: 'released' }
  *     | { type: 'lease_lost' }
- *     | { type: 'failure_job_not_added', failureJob: string, error: unknown }
+ *     | { type: 'failure_job_not_added', failureLane: string, error: unknown }
  *     | { type: 'cancelled' }
  * )) | ScheduleFiredEvent | { type: 'error', operation: string, error: unknown }} SqlaneEvent
  */
@@ -1379,8 +1375,8 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * A slot of a schedule was decided: once in the cluster, by the process that moved the cursor.
  * @typedef {object} ScheduleFiredEvent
  * @property {'schedule_fired'} type The event type.
- * @property {string} scheduleId `<job name>` or `<job name>:<key>`.
- * @property {string} jobName The job name.
+ * @property {string} scheduleId `<lane>` or `<lane>:<key>`.
+ * @property {string} lane The lane.
  * @property {Date} scheduledAt The slot.
  * @property {boolean} late A catch-up of a missed slot.
  * @property {string | null} jobId The job of the slot. Null: `overlap: 'skip'` skipped the slot.
@@ -1392,7 +1388,7 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  */
 /**
  * @typedef {object} ScheduleBaseOptions
- * @property {string} [key] Tells several schedules of one job name apart: 1–64 printable ASCII characters.
+ * @property {string} [key] Tells several schedules of one lane apart: 1–64 printable ASCII characters.
  * @property {'once' | 'skip'} [missed] A slot that no process enqueued within 1 minute. Default: `'once'`: the
  *     latest missed slot runs once, within the catch-up reach.
  * @property {'allow' | 'skip'} [overlap] Default: `'allow'`. `'skip'`: a slot adds no job while the previous job of
@@ -1417,8 +1413,8 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  */
 /**
  * @typedef {object} ScheduleInfo
- * @property {string} id `<job name>` or `<job name>:<key>`.
- * @property {string} name The job name.
+ * @property {string} id `<lane>` or `<lane>:<key>`.
+ * @property {string} lane The lane.
  * @property {string} spec The stored spec, e.g. `cron 0 3 * * * Europe/Berlin` or `every 900000`.
  * @property {boolean} registered `schedule()` was called in this process.
  * @property {Date | null} nextAt Registered: the next slot. Null: not registered, or no next slot.
@@ -1480,12 +1476,13 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * @typedef {object} SqlaneOptions
  * @property {Adapter<C>} adapter The adapter of your driver or ORM, over the queue's own small pool, e.g.
  *     `pgAdapter(queuePool, { dialect: 'postgres' })`.
- * @property {readonly JobDefinition[]} [jobs] The definitions known by name.
+ * @property {readonly LaneDefinition[]} [lanes] The definitions known by name, without a handler: `lanes.add()`
+ *     runs a lane.
  * @property {number} [localMaxConcurrency] The handlers that run at the same time in this instance. Default: 10.
  * @property {JobDefaults} [defaults] Defaults of `maxAttempts`, `maxStalls`, `backoff`, `retention` and `timeout`. A
  *     definition overrides them.
- * @property {'allow' | 'reject'} [unknownJobs] Default: `'allow'`. `'reject'`: `enqueue` of a name that is not in
- *     `jobs` and not handled throws an `UnknownJobError`.
+ * @property {'allow' | 'reject'} [unknownLanes] Default: `'allow'`. `'reject'`: `enqueue` of a lane that is not in
+ *     `lanes` and not added throws an `UnknownLaneError`.
  * @property {Hint | null} [hint] Default: null: polling only.
  * @property {Logger} [logger] Default: no logs.
  * @property {(event: SqlaneEvent) => void} [onEvent] Gets the events of the job lifecycle. A throw is logged.
@@ -1559,8 +1556,8 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * @property {Duration} [lockTimeout] For the migration lock, and for the locks of the tables. Default: `'10m'`.
  */
 /**
- * @typedef {object} JobStats
- * @property {string} name The job name.
+ * @typedef {object} LaneStats
+ * @property {string} name The name of the lane.
  * @property {number} pending The jobs that wait to run, due or not yet, and not blocked on a key.
  * @property {number} blocked The jobs blocked on a key of a global concurrency or rate limit.
  * @property {number} due The pending jobs that are due now.
@@ -1592,7 +1589,7 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * @template [P=any]
  * @typedef {object} JobRecord
  * @property {string} id The full job id.
- * @property {string} name The job name.
+ * @property {string} lane The lane.
  * @property {JobStatus} status The state when read. `pending` does not include `blocked`.
  * @property {number} attempts The finished attempts: a completion, a retry or a failure each add one. A `reset` retry
  *     sets it to 0.
@@ -1618,14 +1615,14 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  *     by the full rate key.
  * @property {BlockedOn | null} blockedOn What a blocked job waits for. Null when it is not blocked. Its `type` may
  *     gain members in a minor.
- * @property {string | null} failureJob The name of its failure job.
+ * @property {string | null} failureLane Its failure lane.
  * @property {P} [payload] Absent when not asked for, or when the database holds no payload for the job.
  */
 /**
  * Which jobs `sqlane.jobs.list()` reads.
- * @template {JobDefinition | string} [J=JobDefinition | string]
+ * @template {LaneDefinition | string} [J=LaneDefinition | string]
  * @typedef {object} JobFilter
- * @property {J} jobName A job name, or a definition.
+ * @property {J} lane A lane, or its definition.
  * @property {JobStatus | readonly JobStatus[] | undefined} [status] One status, or a non-empty list. Default: every
  *     status.
  */
@@ -1645,7 +1642,7 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
 /**
  * The jobs that a bulk method of `sqlane.jobs` changes: up to 1000 full job ids, or a filter as `jobs.list` takes it.
  * Not both.
- * @typedef {{ jobIds: readonly string[], jobName?: undefined, status?: undefined }
+ * @typedef {{ jobIds: readonly string[], lane?: undefined, status?: undefined }
  *     | (JobFilter & { jobIds?: undefined })} JobSelector
  */
 /**
@@ -1730,7 +1727,7 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
 /**
  * The payload of a failure job.
  * @typedef {object} FailedJobPayload
- * @property {{ id: string, name: string, payload: any, attempt: number, maxAttempts: number }} job The job that
+ * @property {{ id: string, lane: string, payload: any, attempt: number, maxAttempts: number }} job The job that
  *     failed for good. Its `maxAttempts`: set at enqueue; a `one_more` retry changes it.
  * @property {JobError} error The last error.
  */

@@ -1,10 +1,10 @@
 export type NewJob = {
     /**
-     * `<name>:<dedupeKey>`, or a ULID.
+     * `<lane>:<dedupeKey>`, or a ULID.
      */
     id: string;
     hasJobId: boolean;
-    name: string;
+    lane: string;
     payloadJson: string;
     /**
      * Its global limits: sorted by key, without
@@ -20,7 +20,7 @@ export type NewJob = {
     maxStalls: number;
     completedRetentionMs: number;
     failedRetentionMs: number;
-    failureJob: string | null;
+    failureLane: string | null;
     /**
      * From the DB clock at insert. 0 with `runAt`.
      */
@@ -28,11 +28,11 @@ export type NewJob = {
     runAt: Date | null;
 };
 export type NewJobParams = {
-    name: string;
+    lane: string;
     /**
      * Null: an unknown name, the defaults only.
      */
-    definition: import('./types.js').JobDefinition | null;
+    definition: import('./types.js').LaneDefinition | null;
     defaults: import('./defaults.js').ResolvedDefaults;
     payload: unknown;
     options: import('./types.js').EnqueueOptions | undefined;
@@ -43,4 +43,4 @@ export type NewJobParams = {
  * @param {NewJobParams} params
  * @returns {NewJob}
  */
-export declare function buildNewJob({ name, definition, defaults, payload, options, maxPayloadBytes }: NewJobParams): NewJob;
+export declare function buildNewJob({ lane, definition, defaults, payload, options, maxPayloadBytes }: NewJobParams): NewJob;

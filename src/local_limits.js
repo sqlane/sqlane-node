@@ -1,5 +1,5 @@
-// The local limits of the handled names in this instance, of concurrency and of rate: the jobs that each admits now,
-// and the wake of the names whose local rate limits admit no start now. The names of a limit share its state.
+// The local limits of the added lanes in this instance, of concurrency and of rate: the jobs that each admits now,
+// and the wake of the lanes whose local rate limits admit no start now. The lanes of a limit share its state.
 import { nowUs, rateRoom, rateWaitMs } from './local_rates.js';
 import { createRateWakes } from './rate_wakes.js';
 
@@ -30,7 +30,7 @@ export function roomOf(limit) {
  * @returns {readonly LocalLimit[]} Its local limits of both kinds.
  */
 export function localLimitsOf(entry) {
-    // Most names have no rate limit: no copy
+    // Most lanes have no rate limit: no copy
     return entry.rates.length ? [...entry.limits, ...entry.rates] : entry.limits;
 }
 
@@ -57,12 +57,12 @@ export function limitsRoom(entry) {
 }
 
 /**
- * The names of a choice, with their counts now. The names of one limit share one room object; the room of a rate
+ * The lanes of a choice, with their counts now. The lanes of one limit share one room object; the room of a rate
  * limit is the starts that its quota admits now, one per job.
  * @param {HandlerEntry[]} entries
- * @returns {import('./fair_share.js').ShareName[]}
+ * @returns {import('./fair_share.js').ShareLane[]}
  */
-export function shareNamesOf(entries) {
+export function shareLanesOf(entries) {
     /** @type {Map<LocalLimit, { room: number }>} */
     const rooms = new Map();
 
@@ -84,31 +84,31 @@ export function shareNamesOf(entries) {
 
 /**
  * @param {import('./registry.js').Registry} registry
- * @param {string[]} names
+ * @param {string[]} lanes
  * @param {number} at
- * @returns {boolean} One of the names waits for a local rate limit that admits a start before the time.
+ * @returns {boolean} One of the lanes waits for a local rate limit that admits a start before the time.
  */
-export function ratesAdmitBefore(registry, names, at) {
+export function ratesAdmitBefore(registry, lanes, at) {
     const now = nowUs();
 
-    return names.some(name => registry.getEntry(name)?.rates.some(
+    return lanes.some(lane => registry.getEntry(lane)?.rates.some(
         rate => rateRoom(rate, now) <= 0 && Date.now() + rateWaitMs(rate, now) < at,
     ));
 }
 
 /**
  * @typedef {object} LocalRateWakes
- * @property {(entry: HandlerEntry) => void} wakeAfterRates The local rate limits of the name that admit no start now:
- *     its names wake when one may start. A name over one of them is left out of the turns, as a name at its local cap.
+ * @property {(entry: HandlerEntry) => void} wakeAfterRates The local rate limits of the lane that admit no start now:
+ *     its lanes wake when one may start. A lane over one of them is left out of the turns, as a lane at its local cap.
  * @property {() => void} clear Forgets the limits, and stops the timer.
  */
 
 /**
- * The timer of the local rate limits that a turn left names out for: a wake of their names when one may start.
+ * The timer of the local rate limits that a turn left lanes out for: a wake of their lanes when one may start.
  * @param {object} params
  * @param {(func: () => void, delayMs: number) => NodeJS.Timeout} params.setTimer An unref'd timer.
  * @param {(timer: NodeJS.Timeout) => void} params.clearTimer
- * @param {(names: string[]) => void} params.wake A speculative wake of the names: a probe first.
+ * @param {(lanes: string[]) => void} params.wake A speculative wake of the lanes: a probe first.
  * @returns {LocalRateWakes}
  */
 export function createLocalRateWakes({ setTimer, clearTimer, wake }) {
@@ -118,13 +118,13 @@ export function createLocalRateWakes({ setTimer, clearTimer, wake }) {
         setTimer,
         clearTimer,
         onDue: (limitNames) => {
-            const names = limitNames.flatMap(name => waitingRates.get(name)?.names ?? []);
+            const lanes = limitNames.flatMap(name => waitingRates.get(name)?.lanes ?? []);
 
             for (const name of limitNames) {
                 waitingRates.delete(name);
             }
 
-            wake(names);
+            wake(lanes);
         },
         batchMs: 0,
     });

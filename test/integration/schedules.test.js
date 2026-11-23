@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Client } from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
-import { ConfigError, createSqlane, defineConcurrencyLimit, defineJob, defineRateLimit } from '../../src/index.js';
+import { ConfigError, createSqlane, defineConcurrencyLimit, defineLane, defineRateLimit } from '../../src/index.js';
 import { pgAdapter } from '../../src/adapters/pg.js';
 import { resolveDefaults } from '../../src/defaults.js';
 import { buildNewJob } from '../../src/new_job.js';
@@ -216,7 +216,7 @@ function slotJob(candidate, late = false) {
     const slot = { at: new Date(candidate.slot) };
 
     return buildNewJob({
-        name: candidate.name,
+        lane: candidate.lane,
         definition: null,
         defaults,
         payload: {},
@@ -402,7 +402,7 @@ const CREATED_MS = isPostgres
 function fire(p, slots, params = {}) {
     const candidates = slots.map(({ id, slot, spec = 'every 3600000', insertMissing, catchUpFrom = -Infinity }) => ({
         id,
-        name: id,
+        lane: id,
         spec,
         slot,
         due: slot,
@@ -431,7 +431,7 @@ function fire(p, slots, params = {}) {
  */
 async function register(p, ids, lastSlotMs) {
     await createStore(testAdapter.adapter, p).registerSchedules(
-        ids.map(id => ({ id, name: id, spec: 'every 3600000' })),
+        ids.map(id => ({ id, lane: id, spec: 'every 3600000' })),
         Date.now,
     );
 
@@ -502,7 +502,7 @@ describe('the fire of the store', () => {
         await register(p, ['tick'], slot - HOUR_MS);
         await fire(p, [{ id: 'tick', slot }], {
             buildJob: (/** @type {SlotCandidate} */ candidate) => buildNewJob({
-                name: candidate.name,
+                lane: candidate.lane,
                 definition: null,
                 defaults,
                 payload: {},
@@ -528,7 +528,7 @@ describe('the fire of the store', () => {
         await register(p, ['tick'], slot - HOUR_MS);
         await fire(p, [{ id: 'tick', slot }], {
             buildJob: (/** @type {SlotCandidate} */ candidate) => buildNewJob({
-                name: candidate.name,
+                lane: candidate.lane,
                 definition: null,
                 defaults,
                 payload: null,
@@ -667,7 +667,7 @@ describe('the fire of the store', () => {
             // oxlint-disable-next-line no-await-in-loop -- one transaction at a time
             results.push(await store.fireSlots({
                 candidates: ids.slice(start, start + 100).map(id => ({
-                    id, name: id, spec: 'every 3600000', slot, due: slot, missed: 'once', overlap: 'allow', catchUpFrom: 0,
+                    id, lane: id, spec: 'every 3600000', slot, due: slot, missed: 'once', overlap: 'allow', catchUpFrom: 0,
                 })),
                 buildJob: slotJob,
                 notifyChannel: null,
@@ -696,7 +696,7 @@ describe('the fire of the store', () => {
             await listener.query(`LISTEN ${p}ready`);
 
             const jobs = ['alpha', 'beta', 'gamma', 'alpha'].map((name, index) => buildNewJob({
-                name, definition: null, defaults, payload: {}, options: { dedupeKey: `j${index}` }, maxPayloadBytes: 1024,
+                lane: name, definition: null, defaults, payload: {}, options: { dedupeKey: `j${index}` }, maxPayloadBytes: 1024,
             }));
 
             await testAdapter.adapter.queueTransaction(executor => insertScheduledJobsPostgres(executor, p, jobs, {
@@ -783,7 +783,7 @@ describe('schedules end to end', () => {
         /** @type {Date[]} */
         const scheduledAt = [];
 
-        sqlane.handle('once', ({ job }) => {
+        sqlane.lanes.add('once', ({ job }) => {
             scheduledAt.push(/** @type {Date} */ (job.scheduledAt));
         });
         sqlane.schedule('once', { every: '1h' });
@@ -847,22 +847,22 @@ describe('schedules end to end', () => {
     });
 
     test('a scheduled job is an ordinary job: the payload, scheduledAt, a retry, a global limit, a failure job', async () => {
-        const job = defineJob({
+        const job = defineLane({
             name: 'nightly',
             timeout: '10s',
             maxAttempts: 2,
             backoff: { type: 'fixed', delay: 10, jitter: 0 },
             // One run at a time: the next slot waits for the key
             globalConcurrencyLimits: () => [defineConcurrencyLimit({ name: 'nightly', max: 1 })],
-            failureJob: 'nightly_failed',
+            failureLane: 'nightly_failed',
         });
         const { sqlane } = await freshSqlane();
         const runs = scheduledRuns();
         /** @type {unknown[]} */
         const failures = [];
 
-        sqlane.handle(job, runs.handler);
-        sqlane.handle('nightly_failed', ({ payload }) => {
+        sqlane.lanes.add(job, runs.handler);
+        sqlane.lanes.add('nightly_failed', ({ payload }) => {
             failures.push(payload);
         });
         sqlane.schedule(job, { every: '1s', payload: { region: 'eu' } });
@@ -889,7 +889,7 @@ describe('schedules end to end', () => {
         /** @type {unknown[]} */
         const payloads = [];
 
-        sqlane.handle('tick', ({ payload }) => {
+        sqlane.lanes.add('tick', ({ payload }) => {
             payloads.push(payload);
         });
         sqlane.schedule('tick', { every: '1s' });
@@ -911,7 +911,7 @@ describe('schedules end to end', () => {
 
         for (const name of ['alpha', 'beta']) {
             scheduler.sqlane.schedule(name, { every: '2s' });
-            worker.sqlane.handle(name, () => {
+            worker.sqlane.lanes.add(name, () => {
                 startedAt[name] = Date.now();
             });
         }
@@ -958,8 +958,8 @@ describe('schedules end to end', () => {
         sqlane.schedule('tick', { every: '1s', key: 'k' });
 
         await expect(sqlane.schedules.list()).resolves.toMatchObject([
-            { id: 'other', name: 'other', spec: 'every 3600000', registered: false, nextAt: null, lastJobId: null },
-            { id: 'tick:k', name: 'tick', registered: true, lastSlotAt: null, lastJobId: null },
+            { id: 'other', lane: 'other', spec: 'every 3600000', registered: false, nextAt: null, lastJobId: null },
+            { id: 'tick:k', lane: 'tick', registered: true, lastSlotAt: null, lastJobId: null },
         ]);
         await sqlane.start();
         await waitFor(async () => (await readJobs(p)).length > 0);
@@ -989,7 +989,7 @@ describe('schedules end to end', () => {
         };
         const { sqlane } = instanceOn(p, { adapter });
 
-        sqlane.handle('tick', () => {});
+        sqlane.lanes.add('tick', () => {});
         await sqlane.start();
         await sqlane.enqueue(testAdapter.pool, 'tick', {});
         await sleep(500);

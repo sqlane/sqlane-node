@@ -3,16 +3,18 @@ import { ConfigError, InvalidOptionsError, MigrationLockTimeoutError } from './e
 import { mariadbMigrations, mariadbMigrationsTable } from './schema/mariadb.js';
 import { mysqlMigrations, mysqlMigrationsTable } from './schema/mysql.js';
 import { postgresMigrations, postgresMigrationsTable } from './schema/postgres.js';
-import { indexExists, readColumns, recordedIds } from './store/schema_reads.js';
+import { columnExists, indexExists, readColumns, recordedIds } from './store/schema_reads.js';
 import { isLockTimeoutError } from './transient_error.js';
 import { baseVersion, compareVersions, installedVersion, parseVersion } from './version.js';
 
 /** @typedef {import('./types.js').Executor} Executor */
 
 /**
- * A statement of a down migration, safe to run again: plain SQL, or SQL that runs only if an index exists (MySQL has
- * no `DROP KEY IF EXISTS`).
- * @typedef {string | { ifIndexExists: [table: string, index: string], sql: string }} DownStep
+ * A statement of a migration: plain SQL, or SQL that runs only if an index or a column exists, by the catalog when the
+ * step runs (MySQL has no `DROP KEY IF EXISTS` and no `RENAME COLUMN IF EXISTS`): a cut run runs again.
+ * @typedef {string
+ *     | { ifIndexExists: [table: string, index: string], sql: string }
+ *     | { ifColumnExists: [table: string, column: string], sql: string }} Step
  */
 
 /**
@@ -20,8 +22,8 @@ import { baseVersion, compareVersions, installedVersion, parseVersion } from './
  * @property {string} id Such as `0001_initial`. The order of the migrations.
  * @property {string} version The lowest version of sqlane that ships it, on this dialect. Never below the tag of an
  *     earlier id.
- * @property {readonly string[]} statements Its SQL, in order.
- * @property {readonly DownStep[]} [down] Reverts it: every migration tagged above 6.0.0 has one.
+ * @property {readonly Step[]} statements Its SQL, in order.
+ * @property {readonly Step[]} [down] Reverts it: every migration tagged above 6.0.0 has one.
  */
 
 /** Every table that sqlane created in any version: `drop()` drops those that exist, in this order */
@@ -99,29 +101,32 @@ function checkLockTimeout(lockTimeout, where) {
 }
 
 /**
- * Runs the statements one after the other: DDL in order.
+ * Runs a step: its condition is read when it runs, after the steps before it.
  * @param {Executor} executor
- * @param {{ sql: string, params: unknown[] }[]} steps
+ * @param {Step} step
  * @returns {Promise<void>}
  */
-async function runInOrder(executor, steps) {
-    for (const { sql, params } of steps) {
-        // oxlint-disable-next-line no-await-in-loop -- each statement needs the previous one
-        await executor.query(sql, params);
+async function runStep(executor, step) {
+    if (typeof step === 'string') {
+        await executor.query(step, []);
+    } else if ('ifIndexExists' in step
+        ? await indexExists(executor, ...step.ifIndexExists)
+        : await columnExists(executor, ...step.ifColumnExists)) {
+        await executor.query(step.sql, []);
     }
 }
 
 /**
- * The statements of the missing migrations, each followed by its record.
- * @param {Migration[]} missing
- * @param {string} recordSql
- * @returns {{ sql: string, params: unknown[] }[]}
+ * Runs the steps one after the other: DDL in order.
+ * @param {Executor} executor
+ * @param {readonly Step[]} steps
+ * @returns {Promise<void>}
  */
-function toSteps(missing, recordSql) {
-    return missing.flatMap(({ id, statements }) => [
-        ...statements.map(sql => ({ sql, params: [] })),
-        { sql: recordSql, params: [id] },
-    ]);
+async function runInOrder(executor, steps) {
+    for (const step of steps) {
+        // oxlint-disable-next-line no-await-in-loop -- each step needs the previous one
+        await runStep(executor, step);
+    }
 }
 
 /**
@@ -262,7 +267,12 @@ export async function runMigrations(adapter, tablePrefix, options = {}, context 
         const applied = await recordedIds(executor, tablePrefix);
         const missing = migrations.filter(({ id }) => !applied.has(id));
 
-        await runInOrder(executor, toSteps(missing, recordSql));
+        for (const { id, statements } of missing) {
+            // oxlint-disable-next-line no-await-in-loop -- the migrations in order
+            await runInOrder(executor, statements);
+            // oxlint-disable-next-line no-await-in-loop -- after its statements
+            await executor.query(recordSql, [id]);
+        }
 
         return missing.map(({ id }) => id);
     });
@@ -282,19 +292,6 @@ async function boundMysqlTableLocks(executor, lockTimeoutMs) {
     return async () => {
         await executor.query('SET SESSION lock_wait_timeout = ?', [Number(seconds)]);
     };
-}
-
-/**
- * @param {Executor} executor
- * @param {DownStep} step
- * @returns {Promise<void>}
- */
-async function runDownStep(executor, step) {
-    if (typeof step === 'string') {
-        await executor.query(step, []);
-    } else if (await indexExists(executor, ...step.ifIndexExists)) {
-        await executor.query(step.sql, []);
-    }
 }
 
 /**
@@ -370,11 +367,8 @@ export async function rollbackMigrations(adapter, tablePrefix, options, context 
 
         try {
             for (const { id, down = [] } of reverted) {
-                for (const step of down) {
-                    // oxlint-disable-next-line no-await-in-loop -- DDL in order
-                    await runDownStep(executor, step);
-                }
-
+                // oxlint-disable-next-line no-await-in-loop -- the migrations in order
+                await runInOrder(executor, down);
                 // oxlint-disable-next-line no-await-in-loop -- after its down
                 await executor.query(deleteSql, [id]);
             }

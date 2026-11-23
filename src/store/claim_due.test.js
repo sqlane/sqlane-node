@@ -12,13 +12,13 @@ import * as mysqlWorker from './mysql_worker.js';
 function lockedRow(id, payload) {
     return {
         id,
-        job_name: 'a',
+        lane: 'a',
         run_at_ms: 1000,
         attempts: 0,
         max_attempts: 3,
         stalls: 0,
         max_stalls: 1,
-        failure_job: null,
+        failure_lane: null,
         created_at_ms: 1000,
         has_keys: 0,
         waited_ms: 5,

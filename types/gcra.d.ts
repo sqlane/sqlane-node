@@ -54,7 +54,7 @@ export type RateWait = {
 };
 export type RateSplit<J extends {
     id: string;
-    name: string;
+    lane: string;
     rateLimits: readonly GlobalRateLimit[];
 }> = {
     /**
@@ -66,7 +66,7 @@ export type RateSplit<J extends {
      */
     blocked: {
         id: string;
-        name: string;
+        lane: string;
         key: string;
     }[];
     /**
@@ -87,24 +87,24 @@ export type RateSplit<J extends {
  * @typedef {{ key: string, delayMs: number }} RateWait
  */
 /**
- * @template {{ id: string, name: string, rateLimits: readonly GlobalRateLimit[] }} J
+ * @template {{ id: string, lane: string, rateLimits: readonly GlobalRateLimit[] }} J
  * @typedef {object} RateSplit
  * @property {J[]} open The jobs whose rate keys allow them, with the older jobs of the claim.
- * @property {{ id: string, name: string, key: string }[]} blocked The others, each with the key that it waits on.
+ * @property {{ id: string, lane: string, key: string }[]} blocked The others, each with the key that it waits on.
  * @property {RateWait[]} waits The keys on which the split blocked the first job: the time until it may start.
  */
 /**
  * Splits locked jobs, oldest first, by their rate keys. A job waits on the first of its keys that has an older blocked
  * job, or an older job of this split that waits, or not enough quota after the older jobs of the split that fit: FIFO
  * per key. A job that fits takes its quota of each of its keys, in the simulation only.
- * @template {{ id: string, name: string, rateLimits: readonly GlobalRateLimit[] }} J
+ * @template {{ id: string, lane: string, rateLimits: readonly GlobalRateLimit[] }} J
  * @param {{ job: J, runAtMs: number }[]} rows In the order of (run_at, id).
  * @param {Map<string, RateKeyState>} states Of their keys.
  * @returns {RateSplit<J>}
  */
 export declare function splitByRate<J extends {
     id: string;
-    name: string;
+    lane: string;
     rateLimits: readonly GlobalRateLimit[];
 }>(rows: {
     job: J;

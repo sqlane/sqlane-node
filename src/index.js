@@ -2,7 +2,7 @@
 
 export { createSqlane } from './create_sqlane.js';
 export { defineConcurrencyLimit } from './define_concurrency_limit.js';
-export { defineJob } from './define_job.js';
+export { defineLane } from './define_lane.js';
 export { defineRateLimit } from './define_rate_limit.js';
 export {
     ClosedError,
@@ -23,7 +23,7 @@ export {
     RetryJobError,
     ShutdownError,
     SqlaneError,
-    UnknownJobError,
+    UnknownLaneError,
 } from './errors.js';
 
 /**
@@ -38,6 +38,7 @@ export {
  * @typedef {import('./sqlane.js').SqlaneJobs<C>} SqlaneJobs
  * @template [C=any]
  */
+/** @typedef {import('./sqlane.js').SqlaneLanes} SqlaneLanes */
 /** @typedef {import('./sqlane.js').SqlaneSchedules} SqlaneSchedules */
 /** @typedef {import('./sqlane.js').SqlaneSchema} SqlaneSchema */
 /**
@@ -81,13 +82,13 @@ export {
 /** @typedef {import('./types.js').Hint} Hint */
 /** @typedef {import('./types.js').JobDefaults} JobDefaults */
 /**
- * @typedef {import('./types.js').JobDefinition<P>} JobDefinition
+ * @typedef {import('./types.js').LaneDefinition<P>} LaneDefinition
  * @template [P=any]
  */
 /** @typedef {import('./types.js').JobError} JobError */
 /**
  * @typedef {import('./types.js').JobFilter<J>} JobFilter
- * @template {import('./types.js').JobDefinition | string} [J=import('./types.js').JobDefinition | string]
+ * @template {import('./types.js').LaneDefinition | string} [J=import('./types.js').LaneDefinition | string]
  */
 /** @typedef {import('./types.js').JobInfo} JobInfo */
 /**
@@ -99,11 +100,11 @@ export {
  * @template [P=any]
  */
 /**
- * @typedef {import('./types.js').JobOptions<P>} JobOptions
+ * @typedef {import('./types.js').LaneOptions<P>} LaneOptions
  * @template [P=any]
  */
 /** @typedef {import('./types.js').JobSelector} JobSelector */
-/** @typedef {import('./types.js').JobStats} JobStats */
+/** @typedef {import('./types.js').LaneStats} LaneStats */
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 /** @typedef {import('./types.js').ListJobsOptions} ListJobsOptions */
 /** @typedef {import('./types.js').KeyStats} KeyStats */

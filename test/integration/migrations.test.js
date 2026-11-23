@@ -29,9 +29,12 @@ const LOCK_SQL = {
 const SIX = ['0005_concurrency_limits', '0006_concurrency_slots'];
 const RATE_LIMITS = ['0007_rate_limits'];
 const JOB_LIST = ['0008_job_list'];
-const ALL_MIGRATIONS = inject('databaseDialect') === 'postgres'
-    ? ['0001_initial', '0002_pending_order', '0003_job_keys', '0004_schedules', ...SIX, ...RATE_LIMITS, ...JOB_LIST]
-    : ['0001_initial', '0002_job_keys', '0004_schedules', ...SIX, ...RATE_LIMITS, ...JOB_LIST];
+const LANES = ['0009_lanes'];
+// No 0003 on MySQL and MariaDB
+const UP_TO_4X = inject('databaseDialect') === 'postgres'
+    ? ['0001_initial', '0002_pending_order', '0003_job_keys', '0004_schedules']
+    : ['0001_initial', '0002_job_keys', '0004_schedules'];
+const ALL_MIGRATIONS = [...UP_TO_4X, ...SIX, ...RATE_LIMITS, ...JOB_LIST, ...LANES];
 
 const isMysqlFamily = inject('databaseDialect') !== 'postgres';
 
@@ -148,6 +151,12 @@ function sqlaneOf(tablePrefix, installedVersion) {
 }
 
 /**
+ * @param {import('../../src/migrations.js').Step} step
+ * @returns {string} Its SQL, run or not.
+ */
+const stepSql = step => (typeof step === 'string' ? step : step.sql);
+
+/**
  * Applies the migrations but the last `count`, as the version that had them left the database.
  * @param {string} tablePrefix
  * @param {number} count
@@ -156,7 +165,7 @@ function sqlaneOf(tablePrefix, installedVersion) {
 async function migrateAllBut(tablePrefix, count, rowsSql) {
     const migrations = migrationsOf(database.dialect, tablePrefix).slice(0, -count);
 
-    for (const sql of [...migrations.flatMap(migration => migration.statements), ...rowsSql]) {
+    for (const sql of [...migrations.flatMap(migration => migration.statements.map(stepSql)), ...rowsSql]) {
         // oxlint-disable-next-line no-await-in-loop -- DDL in order
         await database.query(sql);
     }
@@ -203,19 +212,15 @@ test('applies the migrations once', async () => {
     await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [] });
 });
 
-test('a database of 3.x applies only 0004_schedules, and keeps its jobs', async () => {
+test('a database of 3.x applies 0004_schedules and the next ones, and keeps its jobs', async () => {
     const tablePrefix = nextPrefix();
     const sqlane = sqlaneOf(tablePrefix);
+    const next = ALL_MIGRATIONS.slice(ALL_MIGRATIONS.indexOf('0004_schedules'));
 
-    await sqlane.schema.migrate();
-    // As 3.x left it: without the table of the schedules and its record
-    await database.query(`DROP TABLE ${tablePrefix}schedules`);
-    await database.query(`DELETE FROM ${tablePrefix}migrations WHERE id = '0004_schedules'`);
-    await sqlane.enqueue(testAdapter.pool, 'nightly_report', {});
+    await migrateAllBut(tablePrefix, next.length, FIVE_X_ROWS_SQL[database.family](tablePrefix));
 
-    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: ['0004_schedules'] });
-    await expect(database.query(`SELECT job_name FROM ${tablePrefix}jobs`))
-        .resolves.toStrictEqual([{ job_name: 'nightly_report' }]);
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: next });
+    await expect(database.query(`SELECT lane FROM ${tablePrefix}jobs`)).resolves.toStrictEqual([{ lane: 'sync' }]);
     await expect(database.query(`SELECT id FROM ${tablePrefix}schedules`)).resolves.toStrictEqual([]);
 });
 
@@ -225,11 +230,12 @@ test('a database of 5.x: mutex keys become global limits with max 1, a hold beco
 
     await migrateAllBut(
         tablePrefix,
-        SIX.length + RATE_LIMITS.length + JOB_LIST.length,
+        SIX.length + RATE_LIMITS.length + JOB_LIST.length + LANES.length,
         FIVE_X_ROWS_SQL[database.family](tablePrefix),
     );
 
-    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [...SIX, ...RATE_LIMITS, ...JOB_LIST] });
+    await expect(sqlane.schema.migrate())
+        .resolves.toStrictEqual({ applied: [...SIX, ...RATE_LIMITS, ...JOB_LIST, ...LANES] });
 
     const [job] = await database.query(`SELECT limit_keys, limit_maxes, blocked_on, rate_limits FROM ${tablePrefix}jobs`);
 
@@ -244,9 +250,13 @@ test('a database of 6.0: 0007 adds the rate keys in µs and the rate limits of t
     const sqlane = sqlaneOf(tablePrefix);
     const api = defineRateLimit({ name: 'api', max: 10, per: '1s', burst: 2 });
 
-    await migrateAllBut(tablePrefix, RATE_LIMITS.length + JOB_LIST.length, SIX_ROWS_SQL[database.family](tablePrefix));
+    await migrateAllBut(
+        tablePrefix,
+        RATE_LIMITS.length + JOB_LIST.length + LANES.length,
+        SIX_ROWS_SQL[database.family](tablePrefix),
+    );
 
-    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [...RATE_LIMITS, ...JOB_LIST] });
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [...RATE_LIMITS, ...JOB_LIST, ...LANES] });
 
     const [job] = await database.query(`SELECT limit_keys, limit_maxes, rate_limits FROM ${tablePrefix}jobs`);
 
@@ -270,16 +280,177 @@ test('a database of 7.x: 0008 adds the index of the lists; jobs.list pages throu
     const tablePrefix = nextPrefix();
     const sqlane = sqlaneOf(tablePrefix);
 
-    await migrateAllBut(tablePrefix, JOB_LIST.length, []);
-    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: JOB_LIST });
+    await migrateAllBut(tablePrefix, JOB_LIST.length + LANES.length, []);
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [...JOB_LIST, ...LANES] });
 
     const added = await sqlane.enqueueMany(testAdapter.pool, 'ping', [{ payload: {} }, { payload: {} }, { payload: {} }]);
-    const page1 = await sqlane.jobs.list({ jobName: 'ping' }, { limit: 2 });
-    const page2 = await sqlane.jobs.list({ jobName: 'ping' }, { limit: 2, cursor: page1.nextCursor });
+    const page1 = await sqlane.jobs.list({ lane: 'ping' }, { limit: 2 });
+    const page2 = await sqlane.jobs.list({ lane: 'ping' }, { limit: 2, cursor: page1.nextCursor });
 
     expect([page1.jobs.length, page2.jobs.length, page2.nextCursor]).toStrictEqual([2, 1, null]);
     expect([...page1.jobs, ...page2.jobs].map(job => job.id).toSorted())
         .toStrictEqual(added.map(({ id }) => id).toSorted());
+});
+
+/** @type {Record<'mysql' | 'postgres', (p: string) => string[]>} A job of 8.0 with a failure job, and a schedule */
+const EIGHT_ROWS_SQL = {
+    mysql: p => [
+        `INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, enqueue_token,
+            completed_retention_ms, failed_retention_ms, failure_job, created_at, updated_at)
+         VALUES ('j1', 'build', 'pending', UTC_TIMESTAMP(3), 3, 2, 't', 0, 0, 'report', UTC_TIMESTAMP(3),
+            UTC_TIMESTAMP(3))`,
+        `INSERT INTO ${p}schedules (id, job_name, spec, last_slot_at, created_at, updated_at)
+         VALUES ('nightly', 'build', 'cron:0 3 * * *', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))`,
+    ],
+    postgres: p => [
+        `INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, enqueue_token,
+            completed_retention_ms, failed_retention_ms, failure_job, created_at, updated_at)
+         VALUES ('j1', 'build', 'pending', now(), 3, 2, 't', 0, 0, 'report', now(), now())`,
+        `INSERT INTO ${p}schedules (id, job_name, spec, last_slot_at, created_at, updated_at)
+         VALUES ('nightly', 'build', 'cron:0 3 * * *', now(), now(), now())`,
+    ],
+};
+
+/**
+ * @type {Record<'mysql' | 'postgres', { columns: string, indexes: string | null }>} By the catalog, for a table prefix.
+ *     PostgreSQL: its indexes keep their names.
+ */
+const LANE_NAMES_SQL = {
+    mysql: {
+        columns: `SELECT table_name AS t, column_name AS c FROM information_schema.columns
+                   WHERE table_schema = DATABASE() AND LEFT(table_name, CHAR_LENGTH(?)) = ?
+                     AND column_name IN ('job_name', 'lane', 'failure_job', 'failure_lane')`,
+        indexes: `SELECT DISTINCT table_name AS t, index_name AS c FROM information_schema.statistics
+                   WHERE table_schema = DATABASE() AND LEFT(table_name, CHAR_LENGTH(?)) = ?
+                     AND index_name LIKE '%status%run_at'`,
+    },
+    postgres: {
+        columns: `SELECT table_name AS t, column_name AS c FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND starts_with(table_name, $1)
+                     AND column_name IN ('job_name', 'lane', 'failure_job', 'failure_lane')`,
+        indexes: null,
+    },
+};
+
+/**
+ * @param {string} tablePrefix
+ * @returns {Promise<string[]>} The columns of the lane, of either version, as `<table>.<column>` without the prefix,
+ *     and on MySQL and MariaDB the index of the due jobs: sorted.
+ */
+async function laneNames(tablePrefix) {
+    const { columns, indexes } = LANE_NAMES_SQL[database.family];
+    const params = database.family === 'mysql' ? [tablePrefix, tablePrefix] : [tablePrefix];
+    const rows = [...await database.query(columns, params), ...indexes ? await database.query(indexes, params) : []];
+
+    return rows.map(row => `${String(row.t)}.${String(row.c)}`.replaceAll(tablePrefix, '')).toSorted();
+}
+
+const NAMES_OF_8 = isMysqlFamily
+    ? ['jobs.failure_job', 'jobs.job_name', 'jobs.jobs_status_name_run_at', 'schedules.job_name']
+    : ['jobs.failure_job', 'jobs.job_name', 'schedules.job_name'];
+const NAMES_OF_9 = isMysqlFamily
+    ? ['jobs.failure_lane', 'jobs.jobs_status_lane_run_at', 'jobs.lane', 'schedules.lane']
+    : ['jobs.failure_lane', 'jobs.lane', 'schedules.lane'];
+
+/**
+ * @param {string} tablePrefix
+ * @returns {Promise<unknown>} The job and the schedule of EIGHT_ROWS_SQL, by their columns of 9.0.
+ */
+async function laneRows(tablePrefix) {
+    return [
+        ...await database.query(`SELECT id, lane, failure_lane FROM ${tablePrefix}jobs`),
+        ...await database.query(`SELECT id, lane FROM ${tablePrefix}schedules`),
+    ];
+}
+
+const LANE_ROWS = [{ id: 'j1', lane: 'build', failure_lane: 'report' }, { id: 'nightly', lane: 'build' }];
+const STATUS_OF_9 = { ok: true, missingRequired: [], missingOptional: [], unknownApplied: [] };
+
+test('a fresh migrate() ends with the columns of the lane', async () => {
+    const tablePrefix = nextPrefix();
+
+    await sqlaneOf(tablePrefix, '9.0.0').schema.migrate();
+    await expect(laneNames(tablePrefix)).resolves.toStrictEqual(NAMES_OF_9);
+});
+
+test('a database of 8.0: 0009 renames job_name and failure_job to lane and failure_lane; the rows stay', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix, '9.0.0');
+
+    await migrateAllBut(tablePrefix, LANES.length, EIGHT_ROWS_SQL[database.family](tablePrefix));
+    await expect(laneNames(tablePrefix)).resolves.toStrictEqual(NAMES_OF_8);
+    await expect(sqlane.schema.getMigrationStatus()).resolves.toStrictEqual({
+        ok: false, missingRequired: LANES, missingOptional: [], unknownApplied: [],
+    });
+
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: LANES });
+    await expect(laneNames(tablePrefix)).resolves.toStrictEqual(NAMES_OF_9);
+    await expect(laneRows(tablePrefix)).resolves.toStrictEqual(LANE_ROWS);
+    await expect(sqlane.schema.getMigrationStatus()).resolves.toStrictEqual(STATUS_OF_9);
+    await expect(sqlane.schema.findSchemaProblems()).resolves.toStrictEqual({ ok: true, problems: [] });
+});
+
+test('rollback to 8.0.0: job_name and failure_job again, 0009 missing and required by 9.0; migrate() renames them '
+    + 'again', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix, '9.0.0');
+
+    await migrateAllBut(tablePrefix, LANES.length, EIGHT_ROWS_SQL[database.family](tablePrefix));
+    await sqlane.schema.migrate();
+
+    await expect(sqlane.schema.rollback({ targetVersion: '8.0.0' })).resolves.toStrictEqual({ reverted: LANES });
+    await expect(laneNames(tablePrefix)).resolves.toStrictEqual(NAMES_OF_8);
+    await expect(database.query(`SELECT id, job_name, failure_job FROM ${tablePrefix}jobs`))
+        .resolves.toStrictEqual([{ id: 'j1', job_name: 'build', failure_job: 'report' }]);
+    await expect(sqlane.schema.getMigrationStatus()).resolves.toStrictEqual({
+        ok: false, missingRequired: LANES, missingOptional: [], unknownApplied: [],
+    });
+    await expect(sqlane.schema.findSchemaProblems()).resolves.toMatchObject({ ok: false });
+
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: LANES });
+    await expect(laneNames(tablePrefix)).resolves.toStrictEqual(NAMES_OF_9);
+    await expect(laneRows(tablePrefix)).resolves.toStrictEqual(LANE_ROWS);
+    await expect(sqlane.schema.findSchemaProblems()).resolves.toStrictEqual({ ok: true, problems: [] });
+});
+
+/**
+ * @param {string} tablePrefix
+ * @returns {import('../../src/migrations.js').Migration} 0009_lanes, the last migration
+ */
+function lanesMigration(tablePrefix) {
+    const lanes = /** @type {import('../../src/migrations.js').Migration} */ (
+        migrationsOf(database.dialect, tablePrefix).at(-1));
+
+    expect(lanes.id).toBe('0009_lanes');
+
+    return lanes;
+}
+
+test.runIf(isMysqlFamily)('0009 cut after the ALTER of the jobs (no record): migrate() runs it again', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix, '9.0.0');
+    const [jobsStep] = lanesMigration(tablePrefix).statements;
+
+    await migrateAllBut(tablePrefix, LANES.length, EIGHT_ROWS_SQL[database.family](tablePrefix));
+    await database.query(stepSql(jobsStep));
+
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: LANES });
+    await expect(laneNames(tablePrefix)).resolves.toStrictEqual(NAMES_OF_9);
+    await expect(laneRows(tablePrefix)).resolves.toStrictEqual(LANE_ROWS);
+    await expect(sqlane.schema.findSchemaProblems()).resolves.toStrictEqual({ ok: true, problems: [] });
+});
+
+test.runIf(isMysqlFamily)('a rollback of 0009 cut after the ALTER of the jobs (record kept) runs again', async () => {
+    const tablePrefix = nextPrefix();
+    const sqlane = sqlaneOf(tablePrefix, '9.0.0');
+    const [jobsStep] = /** @type {import('../../src/migrations.js').Step[]} */ (lanesMigration(tablePrefix).down);
+
+    await sqlane.schema.migrate();
+    await database.query(stepSql(jobsStep));
+
+    await expect(sqlane.schema.rollback({ targetVersion: '8.0.0' })).resolves.toStrictEqual({ reverted: LANES });
+    await expect(laneNames(tablePrefix)).resolves.toStrictEqual(NAMES_OF_8);
+    await expect(recordedIds(tablePrefix)).resolves.not.toContain('0009_lanes');
 });
 
 test('concurrent migrations apply each version once', async () => {
@@ -320,14 +491,15 @@ test('targetVersion: the migrations tagged up to it, then the next ones', async 
     const sqlane = sqlaneOf(nextPrefix());
 
     await expect(sqlane.schema.migrate({ targetVersion: '6.0.0' }))
-        .resolves.toStrictEqual({ applied: ALL_MIGRATIONS.slice(0, -JOB_LIST.length) });
+        .resolves.toStrictEqual({ applied: ALL_MIGRATIONS.slice(0, -JOB_LIST.length - LANES.length) });
     await expect(sqlane.schema.migrate({ targetVersion: '7.1.0' })).resolves.toStrictEqual({ applied: JOB_LIST });
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: LANES });
     await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [] });
 });
 
 test('a targetVersion with no migration of its own: the migrations tagged below it', async () => {
     await expect(sqlaneOf(nextPrefix()).schema.migrate({ targetVersion: '7.0.4' }))
-        .resolves.toStrictEqual({ applied: ALL_MIGRATIONS.slice(0, -JOB_LIST.length) });
+        .resolves.toStrictEqual({ applied: ALL_MIGRATIONS.slice(0, -JOB_LIST.length - LANES.length) });
 });
 
 test('without targetVersion: every known migration, also those tagged above the installed version', async () => {
@@ -335,20 +507,20 @@ test('without targetVersion: every known migration, also those tagged above the 
 });
 
 test('a targetVersion above the installed version, up to the highest tag (merged before its release)', async () => {
-    await expect(sqlaneOf(nextPrefix(), '7.0.4').schema.migrate({ targetVersion: '7.1.0' }))
+    await expect(sqlaneOf(nextPrefix(), '7.0.4').schema.migrate({ targetVersion: '9.0.0' }))
         .resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
 });
 
 test('an installed pre-release counts as its base version', async () => {
-    await expect(sqlaneOf(nextPrefix(), '8.0.0-rc.1').schema.migrate({ targetVersion: '8.0.0' }))
+    await expect(sqlaneOf(nextPrefix(), '9.0.0-rc.1').schema.migrate({ targetVersion: '9.0.0' }))
         .resolves.toStrictEqual({ applied: ALL_MIGRATIONS });
 });
 
 test.each([
     { targetVersion: '5.9.0', installed: '7.1.0' },
-    { targetVersion: '7.1.1', installed: '7.1.0' },
-    { targetVersion: '7.1.1', installed: '7.0.4' },
-    { targetVersion: '8.0.1', installed: '8.0.0-rc.1' },
+    { targetVersion: '9.0.1', installed: '9.0.0' },
+    { targetVersion: '9.0.1', installed: '7.0.4' },
+    { targetVersion: '9.0.1', installed: '9.0.0-rc.1' },
     { targetVersion: 'v7.1.0', installed: '7.1.0' },
     { targetVersion: '7.1.0-rc.1', installed: '7.1.0' },
     { targetVersion: null, installed: '7.1.0' },
@@ -386,10 +558,12 @@ test('rollback: reverts the migrations tagged above targetVersion; migrate() app
     const sqlane = sqlaneOf(tablePrefix);
 
     await sqlane.schema.migrate();
-    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).resolves.toStrictEqual({ reverted: JOB_LIST });
+    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' }))
+        .resolves.toStrictEqual({ reverted: [...LANES, ...JOB_LIST] });
     await expect(hasJobsList(tablePrefix)).resolves.toBe(false);
-    await expect(recordedIds(tablePrefix)).resolves.toStrictEqual(ALL_MIGRATIONS.slice(0, -JOB_LIST.length));
-    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: JOB_LIST });
+    await expect(recordedIds(tablePrefix))
+        .resolves.toStrictEqual(ALL_MIGRATIONS.slice(0, -JOB_LIST.length - LANES.length));
+    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [...JOB_LIST, ...LANES] });
     await expect(hasJobsList(tablePrefix)).resolves.toBe(true);
 });
 
@@ -402,7 +576,7 @@ test('rollback: nothing above targetVersion, or no table: nothing reverted', asy
     await sqlane.schema.migrate({ targetVersion: '6.0.0' });
     await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).resolves.toStrictEqual({ reverted: [] });
     await sqlane.schema.migrate();
-    await expect(sqlane.schema.rollback({ targetVersion: '7.1.0' })).resolves.toStrictEqual({ reverted: [] });
+    await expect(sqlane.schema.rollback({ targetVersion: '9.0.0' })).resolves.toStrictEqual({ reverted: [] });
     await expect(recordedIds(tablePrefix)).resolves.toStrictEqual(ALL_MIGRATIONS.toSorted());
 });
 
@@ -413,8 +587,10 @@ test('rollback: a cut run is finished by running it again (the index gone, its r
     await sqlane.schema.migrate();
     await database.query(DROP_JOBS_LIST_SQL[database.family](tablePrefix));
 
-    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).resolves.toStrictEqual({ reverted: JOB_LIST });
-    await expect(recordedIds(tablePrefix)).resolves.toStrictEqual(ALL_MIGRATIONS.slice(0, -JOB_LIST.length));
+    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' }))
+        .resolves.toStrictEqual({ reverted: [...LANES, ...JOB_LIST] });
+    await expect(recordedIds(tablePrefix))
+        .resolves.toStrictEqual(ALL_MIGRATIONS.slice(0, -JOB_LIST.length - LANES.length));
 });
 
 test('rollback: a migration recorded but unknown to this version: a ConfigError, nothing reverted', async () => {
@@ -517,7 +693,7 @@ test('drop: a prefix of 5.x, with its mutexes and job_keys, dropped whole', asyn
 
     await migrateAllBut(
         tablePrefix,
-        SIX.length + RATE_LIMITS.length + JOB_LIST.length,
+        SIX.length + RATE_LIMITS.length + JOB_LIST.length + LANES.length,
         FIVE_X_ROWS_SQL[database.family](tablePrefix),
     );
 
@@ -602,23 +778,23 @@ const BROKEN_COLUMNS_SQL = {
     mysql: p => [
         `ALTER TABLE ${p}jobs DROP COLUMN rate_limits`,
         `ALTER TABLE ${p}jobs MODIFY finished_at DATETIME NULL`,
-        `ALTER TABLE ${p}jobs MODIFY failure_job VARCHAR(128) CHARACTER SET utf8mb4 NULL`,
+        `ALTER TABLE ${p}jobs MODIFY failure_lane VARCHAR(128) CHARACTER SET utf8mb4 NULL`,
         `ALTER TABLE ${p}jobs MODIFY updated_at DATETIME(3) NULL`,
     ],
     postgres: p => [
         `ALTER TABLE ${p}jobs DROP COLUMN rate_limits`,
         `ALTER TABLE ${p}jobs ALTER COLUMN finished_at TYPE timestamptz`,
-        `ALTER TABLE ${p}jobs ALTER COLUMN failure_job TYPE varchar(128) COLLATE "default"`,
+        `ALTER TABLE ${p}jobs ALTER COLUMN failure_lane TYPE varchar(128) COLLATE "default"`,
         `ALTER TABLE ${p}jobs ALTER COLUMN updated_at DROP NOT NULL`,
     ],
 };
 
-/** @type {Record<'mysql' | 'postgres', { finishedAt: string[], failureJob: RegExp }>} Expected and found */
+/** @type {Record<'mysql' | 'postgres', { finishedAt: string[], failureLane: RegExp }>} Expected and found */
 const BROKEN_TYPES = {
-    mysql: { finishedAt: ['datetime(3)', 'datetime'], failureJob: /^varchar\(128\) collate utf8mb4_/u },
+    mysql: { finishedAt: ['datetime(3)', 'datetime'], failureLane: /^varchar\(128\) collate utf8mb4_/u },
     postgres: {
         finishedAt: ['timestamp(3) with time zone', 'timestamp with time zone'],
-        failureJob: /^character varying\(128\) collate default$/u,
+        failureLane: /^character varying\(128\) collate default$/u,
     },
 };
 
@@ -647,7 +823,11 @@ test.each([
         await sqlaneOf(p).schema.migrate();
     } },
     { path: 'the 5.x path', prepare: async (/** @type {string} */ p) => {
-        await migrateAllBut(p, SIX.length + RATE_LIMITS.length + JOB_LIST.length, FIVE_X_ROWS_SQL[database.family](p));
+        await migrateAllBut(
+            p,
+            SIX.length + RATE_LIMITS.length + JOB_LIST.length + LANES.length,
+            FIVE_X_ROWS_SQL[database.family](p),
+        );
         await sqlaneOf(p).schema.migrate();
     } },
 ])('status and problems: none after $path', async ({ prepare }) => {
@@ -662,16 +842,16 @@ test.each([
 
 test('problems: a column dropped, a type, a collation and a nullability changed', async () => {
     const tablePrefix = nextPrefix();
-    const sqlane = sqlaneOf(tablePrefix, '7.1.0');
+    const sqlane = sqlaneOf(tablePrefix, '9.0.0');
     const table = `${tablePrefix}jobs`;
-    const { finishedAt, failureJob } = BROKEN_TYPES[database.family];
+    const { finishedAt, failureLane } = BROKEN_TYPES[database.family];
 
     await sqlane.schema.migrate();
     await runAll(tablePrefix, BROKEN_COLUMNS_SQL[database.family](tablePrefix));
 
     await expect(sqlane.schema.findSchemaProblems()).resolves.toStrictEqual({ ok: false, problems: [
-        { table, column: 'failure_job', issue: 'wrong_type', expected: expect.any(String),
-            found: expect.stringMatching(failureJob), required: true },
+        { table, column: 'failure_lane', issue: 'wrong_type', expected: expect.any(String),
+            found: expect.stringMatching(failureLane), required: true },
         { table, column: 'finished_at', issue: 'wrong_type', expected: finishedAt[0], found: finishedAt[1],
             required: true },
         { table, column: 'updated_at', issue: 'wrong_nullability', expected: 'not null', found: 'null', required: true },
@@ -679,16 +859,16 @@ test('problems: a column dropped, a type, a collation and a nullability changed'
     ] });
 });
 
-test('problems: jobs_list missing, required from the major that its tag belongs to (8.0.0)', async () => {
+test('problems: jobs_list missing, required from the major that its tag belongs to (9.0.0: over the lane)', async () => {
     const tablePrefix = nextPrefix();
     const problem = { table: `${tablePrefix}jobs`, index: `${tablePrefix}jobs_list`, issue: 'missing_index' };
 
     await sqlaneOf(tablePrefix).schema.migrate();
     await database.query(DROP_JOBS_LIST_SQL[database.family](tablePrefix));
 
-    await expect(sqlaneOf(tablePrefix, '7.1.0').schema.findSchemaProblems())
+    await expect(sqlaneOf(tablePrefix, '8.0.0').schema.findSchemaProblems())
         .resolves.toStrictEqual({ ok: true, problems: [{ ...problem, required: false }] });
-    await expect(sqlaneOf(tablePrefix, '8.0.0-rc.1').schema.findSchemaProblems())
+    await expect(sqlaneOf(tablePrefix, '9.0.0-rc.1').schema.findSchemaProblems())
         .resolves.toStrictEqual({ ok: false, problems: [{ ...problem, required: true }] });
 });
 
@@ -698,14 +878,14 @@ test('problems: an index on its columns in another order', async () => {
 
     await sqlane.schema.migrate();
     await database.query(DROP_JOBS_LIST_SQL[database.family](tablePrefix));
-    await database.query(JOBS_LIST_ON_SQL[database.family](tablePrefix, 'created_at, job_name, id'));
+    await database.query(JOBS_LIST_ON_SQL[database.family](tablePrefix, 'created_at, lane, id'));
 
     await expect(sqlane.schema.findSchemaProblems()).resolves.toStrictEqual({ ok: true, problems: [{
         table: `${tablePrefix}jobs`,
         index: `${tablePrefix}jobs_list`,
         issue: 'wrong_index',
-        expected: '(job_name, created_at, id)',
-        found: '(created_at, job_name, id)',
+        expected: '(lane, created_at, id)',
+        found: '(created_at, lane, id)',
         required: false,
     }] });
 });
@@ -720,7 +900,7 @@ test.runIf(!isMysqlFamily)('problems: an invalid index (a failed concurrent buil
     ]);
 
     await expect(sqlane.schema.findSchemaProblems()).resolves.toMatchObject({ problems: [{
-        issue: 'wrong_index', found: '(job_name, created_at, id) invalid',
+        issue: 'wrong_index', found: '(lane, created_at, id) invalid',
     }] });
 });
 
@@ -746,8 +926,8 @@ test('an empty prefix: every table missing, every migration missing; no throw', 
     });
     await expect(sqlane.schema.getMigrationStatus()).resolves.toStrictEqual({
         ok: false,
-        missingRequired: ALL_MIGRATIONS.slice(0, -JOB_LIST.length),
-        missingOptional: JOB_LIST,
+        missingRequired: ALL_MIGRATIONS.slice(0, -JOB_LIST.length - LANES.length),
+        missingOptional: [...JOB_LIST, ...LANES],
         unknownApplied: [],
     });
     await expect(listTables(tablePrefix)).resolves.toStrictEqual([]);

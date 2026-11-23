@@ -1,5 +1,5 @@
 import { createMonotonicUlid } from './ulid.js';
-import { InvalidOptionsError, UnknownJobError } from './errors.js';
+import { InvalidOptionsError, UnknownLaneError } from './errors.js';
 import { buildNewJob } from './new_job.js';
 import { insertJobsMariadb } from './store/mariadb_enqueue.js';
 import { insertJobsMysql } from './store/mysql_enqueue.js';
@@ -13,9 +13,9 @@ const enqueueToken = createMonotonicUlid();
  * @typedef {object} EnqueuerOptions
  * @property {import('./types.js').Adapter<C>} adapter
  * @property {string} tablePrefix Checked.
- * @property {(name: string) => import('./types.js').JobDefinition | null} findDefinition The known definition of
- *     a name.
- * @property {'allow' | 'reject'} unknownJobs
+ * @property {(lane: string) => import('./types.js').LaneDefinition | null} findDefinition The known definition of
+ *     a lane.
+ * @property {'allow' | 'reject'} unknownLanes
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {number} maxPayloadBytes
  * @property {string | null} notifyChannel PostgreSQL NOTIFY: `pg_notify` in the enqueue transaction, delivered on
@@ -39,7 +39,7 @@ export function createEnqueuer({
     adapter,
     tablePrefix,
     findDefinition,
-    unknownJobs,
+    unknownLanes,
     defaults,
     maxPayloadBytes,
     notifyChannel,
@@ -50,38 +50,38 @@ export function createEnqueuer({
     const insertJobs = insertJobsByDialect[adapter.dialect];
 
     /**
-     * @param {import('./types.js').JobDefinition | string} job
-     * @returns {{ name: string, definition: import('./types.js').JobDefinition | null }}
+     * @param {import('./types.js').LaneDefinition | string} given
+     * @returns {{ lane: string, definition: import('./types.js').LaneDefinition | null }}
      */
-    function resolveJob(job) {
-        if (isPlainObject(job) && typeof job.name === 'string') {
-            return { name: job.name, definition: job };
+    function resolveLane(given) {
+        if (isPlainObject(given) && typeof given.name === 'string') {
+            return { lane: given.name, definition: given };
         }
 
-        if (typeof job !== 'string') {
-            throw new InvalidOptionsError('enqueue: the job must be a job definition or a job name');
+        if (typeof given !== 'string') {
+            throw new InvalidOptionsError('enqueue: the lane must be a lane definition or a lane name');
         }
 
-        const definition = findDefinition(job);
+        const definition = findDefinition(given);
 
-        if (!definition && unknownJobs === 'reject') {
-            throw new UnknownJobError(`enqueue("${job}"): the job is not in "jobs" and not handled`);
+        if (!definition && unknownLanes === 'reject') {
+            throw new UnknownLaneError(`enqueue("${given}"): the lane is not in "lanes" and not added`);
         }
 
-        return { name: job, definition };
+        return { lane: given, definition };
     }
 
     /**
      * @param {C} connection
-     * @param {import('./types.js').JobDefinition | string} job
+     * @param {import('./types.js').LaneDefinition | string} given
      * @param {readonly { payload: unknown, options?: import('./types.js').EnqueueOptions }[]} items
      * @returns {Promise<import('./types.js').EnqueueResult[]>}
      */
-    async function insert(connection, job, items) {
-        const { name, definition } = resolveJob(job);
+    async function insert(connection, given, items) {
+        const { lane, definition } = resolveLane(given);
         // Checks all the items before the INSERT: a bad item adds no job.
         const newJobs = items.map(item => buildNewJob({
-            name,
+            lane,
             definition,
             defaults,
             payload: item.payload,
@@ -128,17 +128,17 @@ export function createEnqueuer({
     }
 
     return {
-        enqueue: async (connection, job, payload, options) => {
-            const [result] = await insert(connection, job, [{ payload, options }]);
+        enqueue: async (connection, lane, payload, options) => {
+            const [result] = await insert(connection, lane, [{ payload, options }]);
 
             return result;
         },
-        enqueueMany: (connection, job, items) => {
+        enqueueMany: (connection, lane, items) => {
             if (!Array.isArray(items)) {
                 return Promise.reject(new InvalidOptionsError('enqueueMany: "items" must be an array'));
             }
 
-            return insert(connection, job, items);
+            return insert(connection, lane, items);
         },
     };
 }

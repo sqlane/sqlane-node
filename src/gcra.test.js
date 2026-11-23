@@ -82,10 +82,10 @@ test('splitByRate: FIFO per key, behind an older blocked job or a waiting job of
     const sms = limitOf({ burst: 2 });
     const other = limitOf({ key: '@sms:b', burst: 2 });
     const rows = ['a1', 'a2', 'a3', 'a4'].map((id, at) => ({
-        job: { id, name: 'send', rateLimits: [sms] },
+        job: { id, lane: 'send', rateLimits: [sms] },
         runAtMs: at,
     }));
-    const behind = { job: { id: 'b1', name: 'send', rateLimits: [other] }, runAtMs: 5 };
+    const behind = { job: { id: 'b1', lane: 'send', rateLimits: [other] }, runAtMs: 5 };
     const split = splitByRate([...rows, behind], new Map([
         ['@sms', { debtUs: 0, head: null }],
         ['@sms:b', { debtUs: 0, head: { runAtMs: 1, id: 'old' } }],
@@ -93,9 +93,9 @@ test('splitByRate: FIFO per key, behind an older blocked job or a waiting job of
 
     expect(split.open.map(job => job.id)).toStrictEqual(['a1', 'a2']);
     expect(split.blocked).toStrictEqual([
-        { id: 'a3', name: 'send', key: '@sms' },
-        { id: 'a4', name: 'send', key: '@sms' },
-        { id: 'b1', name: 'send', key: '@sms:b' },
+        { id: 'a3', lane: 'send', key: '@sms' },
+        { id: 'a4', lane: 'send', key: '@sms' },
+        { id: 'b1', lane: 'send', key: '@sms:b' },
     ]);
     // A wait only for the key on which this split blocked the first job
     expect(split.waits).toStrictEqual([{ key: '@sms', delayMs: 100 }]);
@@ -105,11 +105,11 @@ test('splitByRate: all or nothing; a job blocked on one key takes no quota of th
     const a = limitOf({ key: '@a' });
     const b = limitOf({ key: '@b' });
     const split = splitByRate([
-        { job: { id: 'j1', name: 'x', rateLimits: [a, b] }, runAtMs: 0 },
-        { job: { id: 'j2', name: 'x', rateLimits: [a] }, runAtMs: 1 },
+        { job: { id: 'j1', lane: 'x', rateLimits: [a, b] }, runAtMs: 0 },
+        { job: { id: 'j2', lane: 'x', rateLimits: [a] }, runAtMs: 1 },
     ], new Map([['@a', { debtUs: 0, head: null }], ['@b', { debtUs: 50_000, head: null }]]));
 
-    expect(split.blocked).toStrictEqual([{ id: 'j1', name: 'x', key: '@b' }]);
+    expect(split.blocked).toStrictEqual([{ id: 'j1', lane: 'x', key: '@b' }]);
     expect(split.open.map(job => job.id)).toStrictEqual(['j2']);
     expect(split.waits).toStrictEqual([{ key: '@b', delayMs: 50 }]);
 });

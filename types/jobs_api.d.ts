@@ -1,6 +1,6 @@
 export type JobStatus = import('./types.js').JobStatus;
 export type ListCursor = {
-    jobName: string;
+    lane: string;
     /**
      * Sorted; null: every status.
      */
@@ -10,7 +10,7 @@ export type ListCursor = {
 };
 /**
  * @typedef {object} ListCursor The filter of a list and the last job of its page: the next page starts after it.
- * @property {string} jobName
+ * @property {string} lane
  * @property {readonly JobStatus[] | null} statuses Sorted; null: every status.
  * @property {number} enqueuedAtMs
  * @property {string} id
@@ -26,7 +26,7 @@ export declare function isPossibleJobId(id: unknown): boolean;
  * @returns {string} Opaque: base64url of a JSON array. A later field of the filter goes at its end, only when it is
  *     not its default, so that older versions of the major read the cursors of the default filters.
  */
-export declare function encodeCursor({ jobName, statuses, enqueuedAtMs, id }: ListCursor): string;
+export declare function encodeCursor({ lane, statuses, enqueuedAtMs, id }: ListCursor): string;
 /**
  * @param {unknown} value
  * @returns {ListCursor}

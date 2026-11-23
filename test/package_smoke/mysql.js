@@ -7,17 +7,17 @@ import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 import mysql from 'mysql2/promise';
-import { createSqlane, defineConcurrencyLimit, defineJob } from '@sqlane/core';
+import { createSqlane, defineConcurrencyLimit, defineLane } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
 const url = process.env.DATABASE_URL ?? 'mysql://root@127.0.0.1:13306/app';
 const appPool = mysql.createPool({ uri: url }); // the app's: business transactions
 const queuePool = mysql.createPool({ uri: url, connectionLimit: 3 }); // the queue's own: claims, leases, results
 
-// The job definitions: producers and workers import them
-const sendReceipt = defineJob({ name: 'send_receipt' });
+// The lane definitions: producers and workers import them
+const sendReceipt = defineLane({ name: 'send_receipt' });
 const perOrder = defineConcurrencyLimit({ name: 'order', max: 1 }); // one job per order at a time, in the whole cluster
-const syncOrder = defineJob({
+const syncOrder = defineLane({
     name: 'sync_order',
     globalConcurrencyLimits: ({ payload }) => [perOrder.key(payload.orderId)],
     timeout: '1m',
@@ -26,7 +26,7 @@ const syncOrder = defineJob({
 const events = new EventEmitter();
 const sqlane = createSqlane({
     adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }), // or 'mariadb' on MariaDB
-    jobs: [sendReceipt, syncOrder],
+    lanes: [sendReceipt, syncOrder],
     onEvent: event => events.emit(event.type, event),
 });
 
@@ -40,10 +40,10 @@ let committedAt = 0;
 const timeline = [];
 const startedAt = performance.now();
 
-sqlane.handle(sendReceipt, ({ payload }) => {
+sqlane.lanes.add(sendReceipt, ({ payload }) => {
     console.log(`   send_receipt of order ${payload.orderId} ran ${ms(performance.now() - committedAt)} after the commit`);
 });
-sqlane.handle(syncOrder, async ({ payload, signal }) => {
+sqlane.lanes.add(syncOrder, async ({ payload, signal }) => {
     timeline.push({ order: payload.orderId, event: 'start', at: performance.now() - startedAt });
     await sleep(200, undefined, { signal }); // the work: stops when sqlane aborts the signal
     timeline.push({ order: payload.orderId, event: 'end', at: performance.now() - startedAt });

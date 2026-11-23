@@ -17,35 +17,35 @@ import { isMissingTableError } from './transient_error.js';
 import { checkDuration, checkInteger, checkObject, checkTablePrefix, isPlainObject } from './validate.js';
 
 const OPTION_NAMES = [
-    'adapter', 'jobs', 'localMaxConcurrency', 'defaults', 'unknownJobs', 'hint', 'logger', 'onEvent', 'tablePrefix',
+    'adapter', 'lanes', 'localMaxConcurrency', 'defaults', 'unknownLanes', 'hint', 'logger', 'onEvent', 'tablePrefix',
     'pollInterval', 'maxPayloadBytes', 'cleanup', 'timings', 'installedVersion',
 ];
 
 /**
- * @param {unknown} jobs
+ * @param {unknown} lanes
  * @param {import('./validate.js').Scope} scope
- * @returns {Map<string, import('./types.js').JobDefinition>} The definitions by name.
+ * @returns {Map<string, import('./types.js').LaneDefinition>} The definitions by name.
  */
-function indexJobs(jobs, scope) {
-    if (!Array.isArray(jobs)) {
-        throw new ConfigError(`${scope.where}: "jobs" must be an array of job definitions`);
+function indexLanes(lanes, scope) {
+    if (!Array.isArray(lanes)) {
+        throw new ConfigError(`${scope.where}: "lanes" must be an array of lane definitions`);
     }
 
-    /** @type {Map<string, import('./types.js').JobDefinition>} */
+    /** @type {Map<string, import('./types.js').LaneDefinition>} */
     const byName = new Map();
 
-    for (const job of jobs) {
-        if (!isPlainObject(job) || typeof job.name !== 'string') {
-            throw new ConfigError(`${scope.where}: "jobs" must be an array of job definitions`);
+    for (const lane of lanes) {
+        if (!isPlainObject(lane) || typeof lane.name !== 'string') {
+            throw new ConfigError(`${scope.where}: "lanes" must be an array of lane definitions`);
         }
 
-        const known = byName.get(job.name);
+        const known = byName.get(lane.name);
 
-        if (known && known !== job) {
-            throw new ConfigError(`${scope.where}: two different definitions of "${job.name}" in "jobs"`);
+        if (known && known !== lane) {
+            throw new ConfigError(`${scope.where}: two different definitions of "${lane.name}" in "lanes"`);
         }
 
-        byName.set(job.name, /** @type {import('./types.js').JobDefinition} */ (job));
+        byName.set(lane.name, /** @type {import('./types.js').LaneDefinition} */ (lane));
     }
 
     return byName;
@@ -93,20 +93,6 @@ function resolveHint(adapter, hint) {
 export function createSqlane(options) {
     const scope = { where: 'createSqlane', ErrorClass: ConfigError };
 
-    // The options of 4.x and 5.x: an error that names the new API
-    const given = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (options));
-
-    if (isPlainObject(given) && (given.concurrency !== undefined || given.maxConcurrency !== undefined)) {
-        const old = given.concurrency === undefined ? 'maxConcurrency' : 'concurrency';
-
-        throw new ConfigError(`createSqlane: "${old}" is now "localMaxConcurrency" (6.0)`);
-    }
-
-    if (isPlainObject(given) && given.lanes !== undefined) {
-        throw new ConfigError('createSqlane: "lanes" was removed in 5.0: define limits with defineConcurrencyLimit() '
-            + 'and list them in a job definition\'s "localConcurrencyLimits"');
-    }
-
     checkObject(options, OPTION_NAMES, 'options', scope);
 
     if (!options.adapter) {
@@ -116,15 +102,15 @@ export function createSqlane(options) {
     const {
         adapter,
         tablePrefix = 'sqlane_',
-        unknownJobs = 'allow',
+        unknownLanes = 'allow',
         maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES,
     } = options;
 
     checkTablePrefix(tablePrefix, scope);
     checkInteger(maxPayloadBytes, '"maxPayloadBytes"', scope);
 
-    if (unknownJobs !== 'allow' && unknownJobs !== 'reject') {
-        throw new ConfigError(`createSqlane: "unknownJobs" must be 'allow' or 'reject'`);
+    if (unknownLanes !== 'allow' && unknownLanes !== 'reject') {
+        throw new ConfigError(`createSqlane: "unknownLanes" must be 'allow' or 'reject'`);
     }
 
     const { localMaxConcurrency = 10, cleanup = true } = options;
@@ -136,10 +122,10 @@ export function createSqlane(options) {
     }
 
     const pollIntervalMs = checkDuration(options.pollInterval ?? '5s', '"pollInterval"', scope, true);
-    const jobsByName = indexJobs(options.jobs ?? [], scope);
+    const lanesByName = indexLanes(options.lanes ?? [], scope);
     const defaults = resolveDefaults(options.defaults);
     const registry = createRegistry({
-        jobsByName,
+        lanesByName,
         defaultTimeoutMs: defaults.timeoutMs,
     });
     const hint = resolveHint(adapter, options.hint);
@@ -178,40 +164,40 @@ export function createSqlane(options) {
         adapter,
         tablePrefix,
         findDefinition: registry.findDefinition,
-        unknownJobs,
+        unknownLanes,
         defaults,
         maxPayloadBytes,
         notifyChannel,
     });
     /**
      * Wakes this process, sends the hint to the others.
-     * @param {string} name
+     * @param {string} lane
      * @param {boolean} committed False: the commit is to come.
      */
-    const wakeFor = (name, committed) => {
+    const wakeFor = (lane, committed) => {
         if (committed) {
-            runner.onCommitted([name]);
+            runner.onCommitted([lane]);
         } else {
-            runner.onEnqueued([name]);
+            runner.onEnqueued([lane]);
         }
 
         // A process sends a hint only for the jobs that it cannot start itself
-        if (!notifyChannel && !runner.canStartNow(name)) {
-            hintChannel.publish(name);
+        if (!notifyChannel && !runner.canStartNow(lane)) {
+            hintChannel.publish(lane);
         }
     };
     /**
      * After the commit when the adapter knows it, else at once.
      * @param {unknown} connection
-     * @param {string} name
+     * @param {string} lane
      */
-    const onCreated = (connection, name) => {
+    const onCreated = (connection, lane) => {
         let hooked = false;
 
         try {
             hooked = adapter.afterCommit?.(/** @type {any} */ (connection), () => {
                 try {
-                    wakeFor(name, true);
+                    wakeFor(lane, true);
                 } catch (error) {
                     reportError('after_commit', error);
                 }
@@ -221,7 +207,7 @@ export function createSqlane(options) {
         }
 
         if (!hooked) {
-            wakeFor(name, false);
+            wakeFor(lane, false);
         }
     };
 
@@ -230,9 +216,9 @@ export function createSqlane(options) {
         defaults,
         maxPayloadBytes,
         findDefinition: registry.findDefinition,
-        unknownJobs,
+        unknownLanes,
         notifyChannel,
-        onCreated: name => wakeFor(name, true),
+        onCreated: lane => wakeFor(lane, true),
         emit: runner.emit,
         logger: options.logger,
         timings: /** @type {{ schedules?: object }} */ (testTimings ?? {}).schedules,
@@ -353,45 +339,48 @@ export function createSqlane(options) {
     }
 
     return {
-        enqueue: async (connection, job, payload, enqueueOptions) => {
-            const result = await enqueuer.enqueue(connection, job, payload, enqueueOptions);
+        enqueue: async (connection, lane, payload, enqueueOptions) => {
+            const result = await enqueuer.enqueue(connection, lane, payload, enqueueOptions);
 
             if (result.created) {
-                onCreated(connection, typeof job === 'string' ? job : job.name);
+                onCreated(connection, typeof lane === 'string' ? lane : lane.name);
             }
 
             return result;
         },
-        enqueueMany: async (connection, job, items) => {
-            const results = await enqueuer.enqueueMany(connection, job, items);
+        enqueueMany: async (connection, lane, items) => {
+            const results = await enqueuer.enqueueMany(connection, lane, items);
 
             if (results.some(result => result.created)) {
-                onCreated(connection, typeof job === 'string' ? job : job.name);
+                onCreated(connection, typeof lane === 'string' ? lane : lane.name);
             }
 
             return results;
         },
-        /**
-         * @param {import('./types.js').JobDefinition | string} job
-         * @param {import('./types.js').Handler} handler
-         * @param {unknown} [oldOptions] The options of 5.x: the registry names where they went.
-         */
-        handle(job, handler, oldOptions) {
-            if (runner.isClosed()) {
-                throw new ClosedError('handle() after close()');
-            }
+        lanes: Object.freeze({
+            /**
+             * @param {import('./types.js').LaneDefinition | string} lane
+             * @param {import('./types.js').Handler} handler
+             * @param {unknown} [addOptions] None: the registry rejects any.
+             */
+            add(lane, handler, addOptions) {
+                if (runner.isClosed()) {
+                    throw new ClosedError('lanes.add() after close()');
+                }
 
-            if (runner.isStarted()) {
-                throw new ConfigError('handle() after start(): register all the handlers before start()');
-            }
+                if (runner.isStarted()) {
+                    throw new ConfigError('lanes.add() after start(): add all the lanes before start()');
+                }
 
-            if (!runner.isIdle()) {
-                throw new ConfigError('handle() during drain(): register all the handlers before drain()');
-            }
+                if (!runner.isIdle()) {
+                    throw new ConfigError('lanes.add() during drain(): add all the lanes before drain()');
+                }
 
-            registry.handle(job, handler, oldOptions);
-        },
-        schedule: (job, scheduleOptions) => {
+                registry.add(lane, handler, addOptions);
+            },
+            stats: () => store.getStats(),
+        }),
+        schedule: (lane, scheduleOptions) => {
             if (runner.isClosed()) {
                 throw new ClosedError('schedule() after close()');
             }
@@ -400,9 +389,9 @@ export function createSqlane(options) {
                 throw new ConfigError('schedule() after start(): add all the schedules before start()');
             }
 
-            const entry = checkSchedule(job, scheduleOptions);
+            const entry = checkSchedule(lane, scheduleOptions);
 
-            entry.definition = isPlainObject(job) ? /** @type {import('./types.js').JobDefinition} */ (job) : null;
+            entry.definition = isPlainObject(lane) ? /** @type {import('./types.js').LaneDefinition} */ (lane) : null;
             scheduler.add(entry);
         },
         start: async () => {
@@ -426,7 +415,7 @@ export function createSqlane(options) {
             return startPromise;
         },
         drain: runner.drain,
-        // The runner closes at once: handle() and start() then throw, and the deadline counts from the call. The
+        // The runner closes at once: lanes.add() and start() then throw, and the deadline counts from the call. The
         // scheduler stops in parallel, and a pending registration of start() ends first.
         close: (closeOptions) => {
             closePromise ??= (async () => {
