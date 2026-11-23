@@ -23,7 +23,7 @@ and [MariaDB](#mariadb).
 | [TypeORM](#typeorm)        | `@sqlane/core/adapter-typeorm`     | TypeORM 0.3 and 1.x           | ✅    | ✅      | ✅         |
 | [MikroORM](#mikroorm)      | `@sqlane/core/adapter-mikro-orm`   | MikroORM 6 and 7              | ✅    | ✅      | ✅         |
 
-In the examples below, `buildReport` is the job definition of the [mysql2](#mysql2) example, and `reportId` is a
+In the examples below, `buildReport` is the lane definition of the [mysql2](#mysql2) example, and `reportId` is a
 string id of your app (a `dedupeKey` must be a string). `db`, `sql`, `prisma`, `sequelize`, `dataSource` and `orm` are your
 app's own instances, and `reports` and `Report` are your app's table and model.
 
@@ -40,11 +40,11 @@ own `Pool`, and `dialect` is `'mysql'` or `'mariadb'`.
 
 ```js
 import mysql from 'mysql2/promise';
-import { createSqlane, defineJob } from '@sqlane/core';
+import { createSqlane, defineLane } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
 // Shared by producers and workers
-export const buildReport = defineJob({
+export const buildReport = defineLane({
     name: 'build_report',
     maxAttempts: 5,
     backoff: { type: 'exponential', delay: '5s', maxDelay: '1h' },
@@ -53,7 +53,7 @@ export const buildReport = defineJob({
 
 const appPool = mysql.createPool({ uri: process.env.DATABASE_URL }); // your app's connection pool
 const queuePool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 3 }); // the queue's own pool
-const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }), lanes: [buildReport] });
 
 await sqlane.schema.migrate(); // creates or updates the sqlane_* tables
 
@@ -75,7 +75,7 @@ export async function orderReport(reportId) {
 }
 
 // Worker: in the same process or in another one
-sqlane.handle(buildReport, async ({ payload, signal }) => {
+sqlane.lanes.add(buildReport, async ({ payload, signal }) => {
     await generateReport(payload.reportId, { signal }); // your code: it stops when the signal aborts
 });
 await sqlane.start();
@@ -110,7 +110,7 @@ const appPool = new Pool({ connectionString: process.env.DATABASE_URL }); // you
 const queuePool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }); // the queue's own pool
 const sqlane = createSqlane({
     adapter: pgAdapter(queuePool, { dialect: 'postgres', notify: true }),
-    jobs: [buildReport],
+    lanes: [buildReport],
 });
 
 const client = await appPool.connect();
@@ -141,7 +141,7 @@ database.
 **Prepared statements.** By default (`prepare: true`), sqlane runs its SQL as named prepared statements
 (`sqlane_<hash>`). Each connection parses and plans a statement once, and PostgreSQL then reuses a cached plan. sqlane
 has about 55 statements at run time, and 40 more on the connection that runs `schema.migrate()`. Their number does not
-grow with the job names, the keys or the batch sizes. A connection that has run them all keeps 2–3.5 MB of plans
+grow with the lanes, the keys or the batch sizes. A connection that has run them all keeps 2–3.5 MB of plans
 (PostgreSQL 17); the largest, the claims and `enqueueMany`, take about 0.3 MB each.
 
 A pooler in transaction mode without prepared statement support, such as PgBouncer before 1.21, cannot keep them: set
@@ -175,7 +175,7 @@ const queueSql = postgres(process.env.DATABASE_URL, { max: 3 }); // the queue's 
 // With { notify: true }, NOTIFY wakes the workers at the commit. This also works after an enqueue in a transaction.
 const sqlane = createSqlane({
     adapter: postgresJsAdapter(queueSql, { dialect: 'postgres', notify: true }),
-    jobs: [buildReport],
+    lanes: [buildReport],
 });
 
 await sql.begin(async (sql) => {
@@ -218,7 +218,7 @@ import { knexAdapter } from '@sqlane/core/adapter-knex';
 
 const db = knex({ client: 'pg', connection: process.env.DATABASE_URL }); // your app's connection pool
 const queueDb = knex({ client: 'pg', connection: process.env.DATABASE_URL, pool: { max: 3 } }); // the queue's own pool
-const sqlane = createSqlane({ adapter: knexAdapter(queueDb, { dialect: 'postgres' }), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: knexAdapter(queueDb, { dialect: 'postgres' }), lanes: [buildReport] });
 
 await db.transaction(async (trx) => {
     await trx('reports').insert({ id: reportId });
@@ -264,7 +264,7 @@ import { kyselyAdapter } from '@sqlane/core/adapter-kysely';
 const queueDb = new Kysely({
     dialect: new PostgresDialect({ pool: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) }),
 });
-const sqlane = createSqlane({ adapter: kyselyAdapter(queueDb, { dialect: 'postgres' }), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: kyselyAdapter(queueDb, { dialect: 'postgres' }), lanes: [buildReport] });
 
 await db.transaction().execute(async (trx) => {
     await trx.insertInto('reports').values({ id: reportId }).execute();
@@ -301,7 +301,7 @@ import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
 // queueDb is the queue's own Drizzle database, and it must use a pool.
 const queueDb = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) });
 // On PostgreSQL, you can also pass { notify: true }.
-const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }), lanes: [buildReport] });
 
 await db.transaction(async (tx) => {
     await tx.insert(reports).values({ id: reportId });
@@ -351,7 +351,7 @@ import { PrismaClient } from './generated/prisma/client.js';
 // queuePrisma is the queue's own Prisma client, with a small pool.
 const queuePrisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, max: 3 }) });
 // Prisma does not expose its provider, so you pass the dialect.
-const sqlane = createSqlane({ adapter: prismaAdapter(queuePrisma, { dialect: 'postgres' }), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: prismaAdapter(queuePrisma, { dialect: 'postgres' }), lanes: [buildReport] });
 
 await prisma.$transaction(async (tx) => {
     await tx.report.create({ data: { id: reportId } });
@@ -418,7 +418,7 @@ import { createSqlane } from '@sqlane/core';
 import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
 
 // queueSequelize is the queue's own Sequelize instance.
-const sqlane = createSqlane({ adapter: sequelizeAdapter(queueSequelize, { dialect: 'postgres' }), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: sequelizeAdapter(queueSequelize, { dialect: 'postgres' }), lanes: [buildReport] });
 
 await sequelize.transaction(async (t) => {
     await Report.create({ id: reportId }, { transaction: t });
@@ -474,7 +474,7 @@ import { createSqlane } from '@sqlane/core';
 import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm';
 
 // queueDataSource must be initialized.
-const sqlane = createSqlane({ adapter: typeOrmAdapter(queueDataSource, { dialect: 'postgres' }), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: typeOrmAdapter(queueDataSource, { dialect: 'postgres' }), lanes: [buildReport] });
 
 await dataSource.transaction(async (manager) => {
     await manager.save(Report, { id: reportId });
@@ -508,7 +508,7 @@ import { createSqlane } from '@sqlane/core';
 import { mikroOrmAdapter } from '@sqlane/core/adapter-mikro-orm';
 
 // queueOrm is the queue's own MikroORM instance. The dialect must match its driver.
-const sqlane = createSqlane({ adapter: mikroOrmAdapter(queueOrm.em, { dialect: 'postgres' }), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: mikroOrmAdapter(queueOrm.em, { dialect: 'postgres' }), lanes: [buildReport] });
 
 await orm.em.transactional(async (em) => {
     em.persist(em.create(Report, { id: reportId }));
@@ -557,7 +557,7 @@ const db = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_U
 // The queue's own pool
 const queueDb = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) });
 
-const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }), jobs: [buildReport] });
+const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }), lanes: [buildReport] });
 ```
 
 `close()` never ends your pools. Close them yourself after `sqlane.close()`.

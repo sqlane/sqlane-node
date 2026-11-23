@@ -18,7 +18,7 @@ pnpm bench:vs-other-libs --only perf --libs sqlane      # sqlane's rows only, af
 
 `--only` and `--libs` select runs: the other rows of `results.json` stay. `--parallel` caps the runs that share the
 machine: phase A of the jobs and the schedule runs go in batches of that size (unlimited by default); phase B and the
-throughput run one lane at a time. With too many runs per core, the libraries fall behind the load and the numbers are
+throughput run one track at a time. With too many runs per core, the libraries fall behind the load and the numbers are
 wrong: on 4 cores, unlimited runs missed slots. `--repeats` (3 by default) runs phase A of the jobs that many times,
 `--timing-repeats` phase B (1 by default), `--throughput-repeats` the throughput (1 by default) and `--cron-repeats`
 the schedules (1 by default): a row has the median of each number, and each run in `samples`.
@@ -120,14 +120,14 @@ setting, given in the note) or **No** (with the reason, or what happened instead
 
 ## Performance
 
-On PostgreSQL, and BullMQ also on Redis: a lane per library and database among those that its adapter lists
-(`databases`), PostgreSQL or Redis; the adapters' MySQL and MariaDB lanes don't run here. sqlane, pg-boss, Graphile
+On PostgreSQL, and BullMQ also on Redis: a track per library and database among those that its adapter lists
+(`databases`), PostgreSQL or Redis; the adapters' MySQL and MariaDB tracks don't run here. sqlane, pg-boss, Graphile
 Worker, River, Izi Queue and Boring Node Queue enqueue in the caller's transaction; BullMQ and Sidequest enqueue after
 the `COMMIT`.
 
 Oxen Queue: not compared (it pins mysql2 3.16.3, which has a known high-severity flaw).
 
-- **Setup.** 1000 job names, as each library models them: sqlane handlers, pg-boss queues (a `work()` each), Graphile
+- **Setup.** 1000 job names, as each library models them: sqlane lanes, pg-boss queues (a `work()` each), Graphile
   Worker tasks, River kinds in one queue, BullMQ job names in one queue, Sidequest job classes (`sidequest_jobs.mjs`),
   Boring Node Queue job classes (`Locator.register`), Izi Queue workers. A worker process with 8 slots, empty
   handlers, and each library's wakes: LISTEN/NOTIFY with a poll of 5 s as a fallback where the library has them. A
@@ -144,13 +144,13 @@ Oxen Queue: not compared (it pins mysql2 3.16.3, which has a known high-severity
   transaction (`transactional: false` in its adapter) enqueues after the `COMMIT`, on its own connection: not atomic,
   and its rows say so. `keptUp`: the worker ran at least 95% of the window's jobs.
 - **Idle.** 1000 job names, no jobs, a 60 s window.
-- **Two phases.** Phase A, for instructions and statements: the lanes at once (in batches of `--parallel`), one
+- **Two phases.** Phase A, for instructions and statements: the tracks at once (in batches of `--parallel`), one
   workload at a time (steady, then idle), their windows started together; instructions barely depend on the load of
-  the machine. Phase B, for times: one lane at a time, the steady load, for the latency (enqueue to handler start, p50
+  the machine. Phase B, for times: one track at a time, the steady load, for the latency (enqueue to handler start, p50
   and p99) and the CPU time. Its rows have `timing: true`.
 - **Repeats.** Phase A runs whole `--repeats` times (both workloads, the same batches): each run shares the machine
   with the same runs as before, and a slow stretch of the machine falls on a whole pass, not on one library's runs.
-  Then phase B, `--timing-repeats` times (each lane in turn), with 15 s windows: the latencies don't need longer ones. A row has the median of each number (the latency's p50 and p99 too), `keptUp` only
+  Then phase B, `--timing-repeats` times (each track in turn), with 15 s windows: the latencies don't need longer ones. A row has the median of each number (the latency's p50 and p99 too), `keptUp` only
   if every run kept up, and each run in `samples`: its numbers, the instructions of each process, and their CPU time.
 - **Counters.** Instructions retired, cycles and CPU time of each process, the database with all its processes. Compare
   instructions: see [the three numbers](../../docs/contributing/benchmarks.md#the-three-numbers).
@@ -159,15 +159,15 @@ Oxen Queue: not compared (it pins mysql2 3.16.3, which has a known high-severity
   producer is `BEGIN`, `INSERT INTO orders`, the library's enqueue, `COMMIT`. The statements that name the business
   table `orders`, which no library touches, are the business `INSERT`s; each came with one `BEGIN` and one `COMMIT`, so
   `businessStatements` is 3 per `INSERT`, and `queueStatements` the rest: the library's enqueue, its own transactions,
-  its worker. On BullMQ's Redis lane, whose PostgreSQL holds the business table only, `queueStatements` comes out at 0:
+  its worker. On BullMQ's Redis track, whose PostgreSQL holds the business table only, `queueStatements` comes out at 0:
   the check of the method.
 - **Redis commands per job.** `INFO commandstats` before and after the window: `redisCommands` is the difference, less
   the 1 `INFO` of the first reading, and `redisByCommand` the same per command. Redis counts the commands that its Lua
   scripts call too: `evalsha` is the number of script calls.
 - **Connections.** `connections`: the backends of the window's database in `pg_stat_activity` at the end of the
   window: the worker's, the producer's with its business transactions, and any autovacuum worker on it (on BullMQ's
-  Redis lane, only the business transactions'). `workerConnections` and `producerConnections` count from the
-  process's side: its established TCP connections to the queue's server port (Redis on its lane), from the socket
+  Redis track, only the business transactions'). `workerConnections` and `producerConnections` count from the
+  process's side: its established TCP connections to the queue's server port (Redis on its track), from the socket
   inodes of `/proc/<pid>/fd` in `/proc/<pid>/net/tcp{,6}` on Linux, `lsof` on macOS; the most of two readings, at the
   start and the end of the window. `producerConnections` leaves out the producer's pool of business transactions
   (its `totalCount`, 1: one transaction at a time), which a transactional enqueue shares. A library's child processes
@@ -187,7 +187,7 @@ Oxen Queue: not compared (it pins mysql2 3.16.3, which has a known high-severity
 In the default run, after the jobs; alone with `--only throughput`. The highest rate of one worker: the jobs that it
 completes per second while they wait for it.
 
-- **Lanes.** As for the jobs: each library on PostgreSQL, BullMQ also on Redis. One lane at a time, each run with a new
+- **Tracks.** As for the jobs: each library on PostgreSQL, BullMQ also on Redis. One track at a time, each run with a new
   server (PostgreSQL on port 55550; Redis on 56550, with a PostgreSQL on 55550 for the setup's business table), stopped
   after it: no other run shares the machine.
 - **Backlog.** A fresh database, then the setup process migrates and enqueues 50,000 jobs of one name. One name: a
@@ -201,9 +201,9 @@ completes per second while they wait for it.
   rate is a lower bound. `jobsPerSecond` is `completed` (the jobs after the first) over `seconds` (to the end of the
   window, or to the last job). The counters (the worker, and the database as for the jobs), the statements and the
   Redis commands cover the same window: `run.mjs` reads them when the worker reports its first completion and its end.
-- **Repeats.** `--throughput-repeats` runs each lane again, in turn: a row has the median of each number, `drained` if
+- **Repeats.** `--throughput-repeats` runs each track again, in turn: a row has the median of each number, `drained` if
   any run drained, and each run in `samples`.
-- **Time.** 3.1 minutes on the Ryzen 5 3600: up to 20 s per lane, plus its fill and its start. River's
+- **Time.** 3.1 minutes on the Ryzen 5 3600: up to 20 s per track, plus its fill and its start. River's
   `insertMany` and Sidequest's single enqueues fill the slowest.
 
 ### Schedules
@@ -219,7 +219,7 @@ that its scheduling documentation allows. Sidequest registers its schedules in w
 with `schedule()`. Izi Queue's CronPlugin ticks every 1 s (`interval`, default 60 s). Each adapter's comment says how
 its library keeps a slot to one job.
 
-- **The runs.** 1000 schedules of `* * * * *`, empty handlers, 3 worker processes. A run per lane, as for the jobs,
+- **The runs.** 1000 schedules of `* * * * *`, empty handlers, 3 worker processes. A run per track, as for the jobs,
   each with a server of its own (PostgreSQL: ports from 55450, each run counts the backends of its database's
   connections; Redis: ports from 56450, with a PostgreSQL for the setup's business table), all at once (with
   `--parallel`, in batches). They start together, after all their workers are ready. `--cron-repeats` runs each (1
@@ -244,8 +244,8 @@ What the documents leave out: how far the numbers can be trusted.
   recovery, and 3 runs of each: the documents give the medians and the largest difference between the runs of a
   library, from `samples`. The latencies and the schedules come from one run (differences of about 10% are noise). The setups don't have the same capacity: pg-boss has its slots per queue, the others 8 in all.
 - **The two phases agree.** On the PC run of 18 November 2026 (`--parallel 8`, 3 runs of each phase), the medians of
-  phase B's instructions per job were within 4% of phase A's at steady load on all 9 lanes, and the outliers showed
-  up in both: running the lanes together does not change the instructions.
+  phase B's instructions per job were within 4% of phase A's at steady load on all 9 tracks, and the outliers showed
+  up in both: running the tracks together does not change the instructions.
 - **The latency is a model.** netem delays every packet on the loopback by the same 0.5 ms, with no jitter, loss or
   bandwidth limit: it counts round trips, not a real network.
 - **What the database counts.** On PostgreSQL, the processes of its connections only, not autovacuum or the
@@ -258,7 +258,7 @@ What the documents leave out: how far the numbers can be trusted.
   work of the PostgreSQL server falls in some windows and not in others; the median keeps the typical run.
 - **Throughput: one backlog, one worker.** The rate depends on the size of the backlog (a larger table can cost a
   library more per claim) and on the slots: one size and 8 slots for every library. 50,000 jobs last 20 s at 2,500
-  jobs/s: a faster lane empties the backlog sooner, and its row says so (`drained`). The handlers do nothing, so the rate
+  jobs/s: a faster track empties the backlog sooner, and its row says so (`drained`). The handlers do nothing, so the rate
   is the queue's own ceiling, not an application's, and no producer runs during the window.
 - **Schedule lags aren't in the documents.** They depend on how many runs fire in the same second on the machine;
   `results.json` keeps them.

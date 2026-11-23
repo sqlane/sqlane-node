@@ -3,7 +3,7 @@
 <rect width="752" height="476" rx="6" fill="#0d1117"/>
 <g transform="translate(16 16)">
 <text x="0" y="22" font-size="18" font-weight="600" fill="#f0f6fc">Database instructions per second, idle</text>
-<text x="0" y="46" font-size="14" fill="#9198a1">PostgreSQL 17, 1000 job names, no jobs.</text>
+<text x="0" y="46" font-size="14" fill="#9198a1">PostgreSQL 17, 1000 names, no jobs.</text>
 <line x1="174.0" y1="64" x2="174.0" y2="392" stroke="#3d444d"/>
 <text x="174.0" y="411" font-size="12" fill="#9198a1" text-anchor="middle">0</text>
 <line x1="331.0" y1="64" x2="331.0" y2="392" stroke="#262c36"/>

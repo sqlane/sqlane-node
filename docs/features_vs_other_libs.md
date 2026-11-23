@@ -31,7 +31,7 @@ each library's documentation and types. Versions are [at the bottom](#versions).
 | 🔬 Retry after a configured backoff    | ✅     | ✅      | ✅      | 🟠 ⁴            | ✅                | ✅      | ✅        | 🟠 ⁵      |
 | 🔬 Timeout that aborts the handler     | ✅     | ❌      | ✅      | ❌              | ✅                | ✅      | ✅        | ✅        |
 | 🔬 Job of a killed worker runs again   | ✅     | ✅      | ✅      | ❌ ⁶            | ✅                | ✅      | ✅        | ✅        |
-| 🔬 Mutex key across job names          | ✅     | ❌ ⁷    | 🟠 ⁸    | 🟠 ⁹            | ❌                | ❌ ⁷    | ❌        | ❌        |
+| 🔬 Mutex key across lanes              | ✅     | ❌ ⁷    | 🟠 ⁸    | 🟠 ⁹            | ❌                | ❌ ⁷    | ❌        | ❌        |
 | 🔬 Multiple mutex keys per job         | ✅     | ❌      | ❌      | ❌              | ❌                | ❌      | ❌        | ❌        |
 | 🔬 Priority                            | ❌     | ✅      | ✅      | ✅              | ✅                | ✅      | 🟠 ¹⁰     | ✅        |
 | Configurable crash-recovery time       | ❌     | ✅      | ✅      | ❌ ⁷            | ✅                | ✅      | ✅        | ✅ ¹¹     |
@@ -50,7 +50,7 @@ each library's documentation and types. Versions are [at the bottom](#versions).
 7. In the paid edition only: BullMQ Pro (groups), River Pro (concurrency limits by argument, workflows; Go, Ruby and Rust, not yet TypeScript),
    Graphile Worker Pro (recovery settings).
 8. Within one queue only (`group: { id }` with `groupConcurrency: 1`, or the `singleton` policy with a
-   `singletonKey`), so the job names must share a queue.
+   `singletonKey`), so the jobs must share a queue.
 9. `queue_name` runs its jobs one at a time across task identifiers, but a job has only one queue name.
 10. Priorities are per queue, not per job.
 11. With its `LifelinePlugin`.
@@ -71,7 +71,7 @@ each library's documentation and types. Versions are [at the bottom](#versions).
 
 | Library           | In your transaction                                                                                   | Drivers and ORMs                                                                                               |
 | ----------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| sqlane            | `sqlane.enqueue(tx, job, payload)`                                                                    | mysql2, pg, postgres.js, Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM, MikroORM ([adapters](adapters.md)) |
+| sqlane            | `sqlane.enqueue(tx, lane, payload)`                                                                   | mysql2, pg, postgres.js, Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM, MikroORM ([adapters](adapters.md)) |
 | BullMQ            | — no API takes your connection                                                                        | —                                                                                                              |
 | pg-boss           | `boss.send(name, data, { db: fromKnex(tx) })`                                                         | Knex, Kysely, Drizzle, Prisma, PGlite, Bun SQL; any other through `executeSql`                                 |
 | Graphile Worker   | `SELECT graphile_worker.add_job(...)` on your client                                                  | any that runs SQL                                                                                              |

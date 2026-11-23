@@ -4,7 +4,7 @@ The cost of the queue itself: sqlane and seven other job queues for Node.js do t
 PostgreSQL 17 (BullMQ also on Redis), with a 1 ms round trip between each process and its database, as inside one
 cloud availability zone. For features, see [features vs other libraries](features_vs_other_libs.md).
 
-- **Measured:** CPU and SQL statements per job, the cost of idle job names, the time from enqueue to start, the
+- **Measured:** CPU and SQL statements per job, the idle cost of 1000 names, the time from enqueue to start, the
   highest rate of one worker with a backlog (throughput), the time an enqueue adds to the caller's transaction, the
   connections and memory of a worker, and the cost of cron schedules.
 - **Not measured:** failover, and handlers that do real work. Apart from the throughput, the load is a steady 20 jobs
@@ -87,21 +87,22 @@ script calls (EVALSHA).
 
 <!-- /generated:statements -->
 
-## Idle job names
+## Idle names
 
-No jobs, 1000 job names handled. CPU instructions per second of the database:
+No jobs, 1000 names added to the worker (sqlane lanes, pg-boss queues, Graphile Worker tasks…). CPU instructions
+per second of the database:
 
 <!-- generated:idle -->
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_idle_dark.svg">
-  <img alt="Database instructions per second while idle with 1000 job names on PostgreSQL: sqlane 0.1 M/s, BullMQ on Redis 2.8 M/s (after the commit), BullMQ on PostgreSQL 0.8 M/s (after the commit), pg-boss 350 M/s, Graphile Worker 1.2 M/s, Boring Node Queue 0.07 M/s, River 1.4 M/s, Sidequest 1.5 M/s (after the commit), Izi Queue 12.4 M/s" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_idle_light.svg">
+  <img alt="Database instructions per second while idle with 1000 names on PostgreSQL: sqlane 0.1 M/s, BullMQ on Redis 2.8 M/s (after the commit), BullMQ on PostgreSQL 0.8 M/s (after the commit), pg-boss 350 M/s, Graphile Worker 1.2 M/s, Boring Node Queue 0.07 M/s, River 1.4 M/s, Sidequest 1.5 M/s (after the commit), Izi Queue 12.4 M/s" src="https://raw.githubusercontent.com/sqlane/sqlane-node/main/docs/images/perf_idle_light.svg">
 </picture>
 
 sqlane's database uses 0.1 M instructions per second; the other libraries' 0.8–350 M (7.2–3,300×), except Boring Node
-Queue (0.07 M), which uses less. BullMQ on Redis: 2.8 M. pg-boss (350 M) gives each of the 1000 job names a queue of its
-own, with its own `work()` poll, where the others poll their job names together; Izi Queue (12.4 M) polls every 100 ms,
-set for throughput (default 1 s).
+Queue (0.07 M), which uses less. BullMQ on Redis: 2.8 M. pg-boss (350 M) gives each of the 1000 names a queue of its
+own, with its own `work()` poll, where the others poll their names together; Izi Queue (12.4 M) polls every 100 ms, set
+for throughput (default 1 s).
 
 <!-- /generated:idle -->
 
@@ -223,8 +224,8 @@ operation ([pnpm bench](../bench/regression/ab.mjs)). CI also checks the stateme
 | ------------------------------------------------------------------------------------------------ | ---------------- | -------------- | -------------- |
 | `enqueue`, in a transaction of its own                                                           | 1.00 · 0.96 M    | 5.00 · 2.06 M  | 5.00 · 1.58 M  |
 | `enqueueMany` of 100 jobs                                                                        | 1.00 · 20.5 M    | 5.00 · 32.2 M  | 5.00 · 27.4 M  |
-| A job: its enqueue, claim, run and completion, over 1000 job names                               | 3.01 · 2.92 M    | 18.29 · 9.78 M | 18.32 · 7.98 M |
-| A second of a worker with 1000 job names and no job                                              | 0.200 · 0.51 M   | 0.200 · 2.18 M | 0.200 · 0.67 M |
+| A job: its enqueue, claim, run and completion, over 1000 lanes                                   | 3.01 · 2.92 M    | 18.29 · 9.78 M | 18.32 · 7.98 M |
+| A second of a worker with 1000 lanes and no job                                                  | 0.200 · 0.51 M   | 0.200 · 2.18 M | 0.200 · 0.67 M |
 | A job with one of 100 keys of a global limit of 1: its enqueue, claim, run and completion        | 11.01 · 5.28 M   | 25.59 · 15.6 M | 25.93 · 17.9 M |
 | A job with one of 100 keys of a global rate limit of 1/s: its enqueue, claim, run and completion | 9.01 · 5.34 M    | 23.74 · 17.8 M | 23.59 · 20.7 M |
 | A schedule firing, one of 1000 `every: '10s'` schedules                                          | 0.054 · 0.64 M   | 0.086 · 0.97 M | 0.086 · 0.86 M |
