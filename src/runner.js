@@ -66,7 +66,8 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
 /**
  * @typedef {object} Runner
  * @property {(options?: { serverCheck?: (() => Promise<void>) | null }) => Promise<void>} start `serverCheck`: the
- *     check of the server that did not run (the database was down): the dispatcher runs it before its first turn.
+ *     check of the server that did not run (the database was down): the dispatcher runs it before its first turn,
+ *     and the recovery and the cleanup start once it passes.
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
  * @property {() => void} wake
@@ -402,9 +403,21 @@ export function createRunner({
         dispatcher.prepare();
         state = 'started';
         unblocks.resume();
-        maintenance.start();
 
-        loopDone = dispatcher.run(serverCheck);
+        if (serverCheck) {
+            // The check did not run (the database was down): the recovery and the cleanup write too, so they start
+            // once it passes. A wrong server gets none of their writes
+            loopDone = dispatcher.run(async () => {
+                await serverCheck();
+
+                if (state === 'started') {
+                    maintenance.start();
+                }
+            });
+        } else {
+            maintenance.start();
+            loopDone = dispatcher.run();
+        }
 
         try {
             // NOTIFY comes after the commit: the job is visible. Another hint is sent before the commit of its enqueue:

@@ -61,7 +61,8 @@ export type RunnerParams = {
 export type Runner = {
     /**
      * `serverCheck`: the
-     * check of the server that did not run (the database was down): the dispatcher runs it before its first turn.
+     * check of the server that did not run (the database was down): the dispatcher runs it before its first turn,
+     * and the recovery and the cleanup start once it passes.
      */
     start: (options?: {
         serverCheck?: (() => Promise<void>) | null;
@@ -116,7 +117,8 @@ export type Runner = {
 /**
  * @typedef {object} Runner
  * @property {(options?: { serverCheck?: (() => Promise<void>) | null }) => Promise<void>} start `serverCheck`: the
- *     check of the server that did not run (the database was down): the dispatcher runs it before its first turn.
+ *     check of the server that did not run (the database was down): the dispatcher runs it before its first turn,
+ *     and the recovery and the cleanup start once it passes.
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
  * @property {() => void} wake

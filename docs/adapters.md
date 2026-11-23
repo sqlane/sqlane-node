@@ -596,8 +596,8 @@ statement. On MySQL and MariaDB, a second statement reads the `sql_mode` of the 
 If a check fails, `start()` or `schema.migrate()` rejects with a `ConfigError`. The instance keeps the result, so
 `schema.migrate()` then `start()` asks once. A process that only enqueues never asks. If the database is down, `start()`
 resolves anyway and emits an `error` event with the operation `server_check`. The worker then checks again before it
-claims a job, and claims nothing until the check passes. If the check then fails, the worker emits the `ConfigError` as
-an `error` event and claims no job.
+claims a job, and claims nothing until the check passes; the stall recovery and the cleanup wait for it too. If the
+check then fails, the worker emits the `ConfigError` as an `error` event, claims no job and runs no recovery or cleanup.
 
 **Older versions.** With `allowUnsupportedDbVersion: true`, the adapter runs on a server below the supported version.
 sqlane then logs a warning once per instance, through the `logger` of `createSqlane`. It still checks the database.

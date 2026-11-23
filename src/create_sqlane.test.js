@@ -270,10 +270,11 @@ describe('close()', () => {
 /**
  * A worker whose database is down at start(), then up.
  * @param {Parameters<typeof fakeAdapter>[0]} [options]
+ * @param {object} [sqlaneOptions] More options of createSqlane: `pollInterval`, the undocumented `timings`.
  * @returns {{ sqlane: ReturnType<typeof createSqlane>, down: Error, state: { up: boolean }, statements: string[],
  *     events: import('./types.js').SqlaneEvent[] }}
  */
-function workerStartedWhileDown(options) {
+function workerStartedWhileDown(options, sqlaneOptions = {}) {
     const { adapter } = fakeAdapter(options);
     const down = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
     const query = adapter.queue.query;
@@ -294,7 +295,7 @@ function workerStartedWhileDown(options) {
     /** @type {import('./types.js').SqlaneEvent[]} */
     const events = [];
     const job = defineJob({ name: 'a' });
-    const sqlane = createSqlane({ adapter, jobs: [job], onEvent: event => events.push(event) });
+    const sqlane = createSqlane({ adapter, jobs: [job], onEvent: event => events.push(event), ...sqlaneOptions });
 
     sqlane.handle(job, async () => {});
 
@@ -463,11 +464,12 @@ describe('the check of the server', () => {
         });
         await sqlane.close({ deadline: 0 });
 
-        // The probes of the dispatcher (`delay_ms`) come after the check; the recovery may run before it
+        // The check first: the probes of the dispatcher (`delay_ms`), the recovery and the cleanup come after it
         const firstProbe = statements.findIndex(sql => sql.includes('delay_ms'));
 
         expect(statements.filter(sql => sql === 'SELECT VERSION() AS version')).toHaveLength(1);
-        expect(firstProbe).toBeGreaterThan(statements.indexOf('SELECT VERSION() AS version'));
+        expect(statements[0]).toBe('SELECT VERSION() AS version');
+        expect(firstProbe).toBeGreaterThan(0);
     });
 
     test('a database that is down at start(), then the wrong one: an error event, and no claim', async () => {
@@ -483,15 +485,60 @@ describe('the check of the server', () => {
         });
         await sqlane.close({ deadline: 0 });
 
-        // Other operations (the recovery) may report errors too, while the database is down
+        // The checks while the database is down report the error of the connection
         expect(events.filter(event => /** @type {any} */ (event).error instanceof ConfigError)).toStrictEqual([{
             type: 'error',
             operation: 'server_check',
             error: new ConfigError('start(): "dialect" is "mysql", but the database is MariaDB 11.8.9: pass dialect: '
                 + '\'mariadb\' to the adapter'),
         }]);
-        // No probe, no claim
+        // No probe, no claim, no recovery, no cleanup
         expect(statements.filter(sql => /delay_ms|FOR UPDATE|SKIP LOCKED/u.test(sql))).toStrictEqual([]);
+    });
+
+    // The recovery and the cleanup each 10 ms, the back-off of the check 50 ms: they would run many times in the waits
+    const fastMaintenance = { pollInterval: '50ms', timings: { recoveryIntervalMs: 10, cleanupIntervalMs: 10 } };
+
+    test('a database that is down at start(): no recovery and no cleanup before the check passes, then both run', async () => {
+        const { sqlane, state, statements, events } = workerStartedWhileDown(undefined, fastMaintenance);
+
+        await sqlane.start();
+        await new Promise((resolve) => {
+            setTimeout(resolve, 200);
+        });
+        // While the database is down, only the check runs
+        expect(new Set(events.map(event => /** @type {any} */ (event).operation))).toStrictEqual(new Set(['server_check']));
+
+        state.up = true;
+        await new Promise((resolve) => {
+            setTimeout(resolve, 300);
+        });
+        await sqlane.close({ deadline: 0 });
+
+        expect(statements[0]).toBe('SELECT VERSION() AS version');
+        expect(statements.some(sql => sql.includes('stale.id'))).toBe(true);
+        expect(statements.some(sql => sql.includes('expires_at'))).toBe(true);
+    });
+
+    test('a database that is down at start(), then the wrong one: no recovery and no cleanup, ever', async () => {
+        const { sqlane, state, statements, events } = workerStartedWhileDown({
+            dialect: 'mysql',
+            version: '11.8.9-MariaDB-ubu2404',
+        }, fastMaintenance);
+
+        await sqlane.start();
+        await new Promise((resolve) => {
+            setTimeout(resolve, 200);
+        });
+        state.up = true;
+        await new Promise((resolve) => {
+            setTimeout(resolve, 300);
+        });
+        await sqlane.close({ deadline: 0 });
+
+        expect(statements).toStrictEqual(['SELECT VERSION() AS version']);
+        expect(events.filter(event => /** @type {any} */ (event).operation !== 'server_check')).toStrictEqual([]);
+        expect(events.at(-1)).toMatchObject({ type: 'error', operation: 'server_check', error: expect.any(ConfigError) });
     });
 
     test('a database that is down at start(), then a sql_mode with NO_BACKSLASH_ESCAPES: an error event, and no claim', async () => {
