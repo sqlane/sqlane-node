@@ -239,6 +239,8 @@ export async function publicApiTypes() {
     await sqlane.enqueue(connection, job, {}, { delay: '1s', runAt: new Date() });
     // @ts-expect-error dedupeKey is a string
     await sqlane.enqueue(connection, job, {}, { dedupeKey: 42 });
+    // @ts-expect-error no failureLane at enqueue: the definition of the process that fails the job decides
+    await sqlane.enqueue(connection, job, {}, { failureLane: 'build_failed' });
 
     // lanes.add: no options; local limits and weights are in the definition
     sqlane.lanes.add(job, () => {});

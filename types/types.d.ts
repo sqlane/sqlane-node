@@ -102,7 +102,8 @@ export type LaneOptions<P = any> = {
      */
     localRateLimits?: readonly RateLimit[];
     /**
-     * Gets a job, the failure job, when a job fails for good.
+     * Gets a job, the failure job, when a job fails for good: by the
+     * definition in the process that fails the job.
      */
     failureLane?: string | LaneDefinition;
 };
@@ -136,10 +137,6 @@ export type EnqueueBaseOptions = {
      * Overrides the definition's retention for this job, field by field.
      */
     retention?: Retention;
-    /**
-     * Overrides the definition's failure lane for this job.
-     */
-    failureLane?: string | LaneDefinition;
     /**
      * Replace the global limits
      * of the definition; `[]` clears them.
@@ -947,7 +944,8 @@ export type JobRecord<P = any> = {
      */
     blockedOn: BlockedOn | null;
     /**
-     * Its failure lane.
+     * The failure lane of its definition at enqueue, for display: the process that
+     * fails the job decides, by its definition.
      */
     failureLane: string | null;
     /**
@@ -1177,7 +1175,8 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  *     the whole cluster counts, per key: the starts of jobs. Sync, from the context only; at enqueue. At most 10 keys
  *     with the global concurrency limits.
  * @property {readonly RateLimit[]} [localRateLimits] Rate limits that each instance counts for its own starts: keyless.
- * @property {string | LaneDefinition} [failureLane] Gets a job, the failure job, when a job fails for good.
+ * @property {string | LaneDefinition} [failureLane] Gets a job, the failure job, when a job fails for good: by the
+ *     definition in the process that fails the job.
  */
 /**
  * The result of `defineLane()`. Frozen.
@@ -1224,7 +1223,6 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  *     it.
  * @property {number} [maxStalls] Overrides the definition's `maxStalls` for this job. A `one_more` retry changes it.
  * @property {Retention} [retention] Overrides the definition's retention for this job, field by field.
- * @property {string | LaneDefinition} [failureLane] Overrides the definition's failure lane for this job.
  * @property {readonly (ConcurrencyLimit | ConcurrencyLimitKey)[]} [globalConcurrencyLimits] Replace the global limits
  *     of the definition; `[]` clears them.
  * @property {readonly (RateLimit | RateLimitKey)[]} [globalRateLimits] Replace the global rate limits of the
@@ -1615,7 +1613,8 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  *     by the full rate key.
  * @property {BlockedOn | null} blockedOn What a blocked job waits for. Null when it is not blocked. Its `type` may
  *     gain members in a minor.
- * @property {string | null} failureLane Its failure lane.
+ * @property {string | null} failureLane The failure lane of its definition at enqueue, for display: the process that
+ *     fails the job decides, by its definition.
  * @property {P} [payload] Absent when not asked for, or when the database holds no payload for the job.
  */
 /**

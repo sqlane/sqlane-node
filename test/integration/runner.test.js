@@ -13,6 +13,7 @@ import {
     RetryJobError,
     ShutdownError,
 } from '../../src/index.js';
+import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
 
@@ -1036,4 +1037,218 @@ describe('drain()', () => {
 
         await expect(sqlane.drain({ timeout: '100ms' })).rejects.toThrow(DrainTimeoutError);
     });
+});
+
+/**
+ * Another instance on the tables of the prefix.
+ * @param {string} p
+ * @param {Partial<import('../../src/types.js').SqlaneOptions<any>>} [options]
+ * @returns {{ sqlane: Sqlane, events: SqlaneEvent[] }}
+ */
+function sqlaneOn(p, options = {}) {
+    /** @type {SqlaneEvent[]} */
+    const events = [];
+    const sqlane = createSqlane(/** @type {any} */ ({
+        adapter: testAdapter.adapter,
+        tablePrefix: p,
+        pollInterval: '100ms',
+        onEvent: (/** @type {SqlaneEvent} */ event) => events.push(event),
+        timings: TIMINGS,
+        ...options,
+    }));
+
+    instances.push(sqlane);
+
+    return { sqlane, events };
+}
+
+/**
+ * @param {string} p
+ * @returns {Promise<{ id: string, lane: string, status: string, attempts: number, stalls: number,
+ *     failureLane: string | null, due: boolean }[]>}
+ */
+async function readStalls(p) {
+    const due = { mysql: 'run_at <= UTC_TIMESTAMP(3)', postgres: 'run_at <= clock_timestamp()' }[database.family];
+
+    return (await database.query(`
+        SELECT id, lane, status, attempts, stalls, failure_lane, ${due} AS due FROM ${p}jobs ORDER BY created_at, id
+    `)).map(row => ({
+        id: String(row.id),
+        lane: String(row.lane),
+        status: String(row.status),
+        attempts: Number(row.attempts),
+        stalls: Number(row.stalls),
+        failureLane: row.failure_lane === null ? null : String(row.failure_lane),
+        due: Boolean(Number(row.due)),
+    }));
+}
+
+/**
+ * @param {SqlaneEvent[]} events
+ * @param {string} type
+ * @returns {string[]} The job ids of the events of the type.
+ */
+function jobIdsOf(events, type) {
+    return /** @type {any[]} */ (events).filter(event => event.type === type).map(event => String(event.jobId));
+}
+
+describe('the failure lane: the definition of the process that fails the job decides', () => {
+    test.each([
+        {
+            title: 'its failure lane, not the one of the enqueue',
+            definition: defineLane({ name: 'build', maxAttempts: 1, failureLane: 'b_failed' }),
+            expected: ['b_failed'],
+        },
+        {
+            title: 'a definition without one: no failure job',
+            definition: defineLane({ name: 'build', maxAttempts: 1 }),
+            expected: [],
+        },
+        {
+            title: 'a lane added by name, without a definition: the failure lane of the enqueue',
+            definition: 'build',
+            expected: ['a_failed'],
+        },
+    ])('$title', async ({ definition, expected }) => {
+        const { p } = await freshSqlane();
+        const producer = sqlaneOn(p).sqlane;
+        const worker = sqlaneOn(p, { lanes: [defineLane({ name: 'a_failed' }), defineLane({ name: 'b_failed' })] }).sqlane;
+        const { id } = await producer.enqueue(testAdapter.pool, defineLane({ name: 'build', failureLane: 'a_failed' }), {});
+
+        worker.lanes.add(definition, () => {
+            throw new FatalJobError('broken');
+        });
+
+        await expect(worker.drain()).resolves.toMatchObject({ failed: 1 });
+
+        const jobs = await readStalls(p);
+
+        // The column, written at enqueue: for display
+        expect(jobs[0]).toMatchObject({ id, status: 'failed', failureLane: 'a_failed' });
+        expect(jobs.slice(1).map(job => job.lane)).toStrictEqual(expected);
+    });
+});
+
+describe('a job past its maxStalls', () => {
+    const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+    const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
+    /** The SQL of the family: a full key, a rate key without quota (an hour ahead), and how far it is ahead */
+    const SQL = {
+        mysql: {
+            now: 'UTC_TIMESTAMP(3)',
+            hourAhead: 'UTC_TIMESTAMP(6) + INTERVAL 1 HOUR',
+            aheadMs: 'TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(6), tat) DIV 1000',
+        },
+        postgres: {
+            now: 'clock_timestamp()',
+            hourAhead: 'clock_timestamp() + interval \'1 hour\'',
+            aheadMs: '(EXTRACT(EPOCH FROM tat - clock_timestamp()) * 1000)::bigint',
+        },
+    };
+
+    test.each([
+        { path: 'lanes without limits', limits: {} },
+        {
+            path: 'lanes with limits',
+            limits: { globalConcurrencyLimits: () => [order], globalRateLimits: () => [once], timeout: '1m' },
+        },
+    ])('$path: its claim fails it at once, with its failure job: no handler, no slot, no quota, no attempt used; '
+        + 'claimed, then failed', async ({ limits }) => {
+        const { sqlane, p, events } = await freshSqlane({ lanes: [defineLane({ name: 'build_failed' })] });
+        const build = defineLane({ name: 'build', failureLane: 'build_failed', ...limits });
+        /** @type {unknown[]} */
+        const failures = [];
+        let runs = 0;
+        const { id } = await sqlane.enqueue(testAdapter.pool, build, { reportId: 'r1' }, {
+            // Lanes without limits: the limits of the enqueue options
+            globalConcurrencyLimits: [order],
+            globalRateLimits: [once],
+        });
+
+        const sql = SQL[database.family];
+
+        // A full key and a rate key without quota
+        await database.query(`
+            INSERT INTO ${p}concurrency_slots (limit_key, slot, job_id, lock_token, held_until, created_at)
+            VALUES ('order', 0, 'other', 'other', NULL, ${sql.now})
+        `);
+        await database.query(`
+            INSERT INTO ${p}rate_limits (limit_key, tat)
+            VALUES ('@once', ${sql.hourAhead})
+        `);
+        // As the stall recovery leaves it
+        await database.query(`UPDATE ${p}jobs SET stalls = max_stalls + 1 WHERE id = '${id}'`);
+        sqlane.lanes.add(build, () => {
+            runs++;
+        });
+        sqlane.lanes.add('build_failed', ({ payload }) => {
+            failures.push(payload);
+        });
+
+        await expect(sqlane.drain()).resolves.toStrictEqual({ completed: 1, retried: 0, failed: 1 });
+        expect(runs).toBe(0);
+        expect(failures).toMatchObject([{
+            job: { id, lane: 'build', payload: { reportId: 'r1' }, attempt: 1 },
+            error: { name: 'StalledError' },
+        }]);
+        await expect(readStalls(p)).resolves.toMatchObject([
+            { id, status: 'failed', attempts: 0, stalls: 3 },
+            { lane: 'build_failed', status: 'completed' },
+        ]);
+        await expect(database.query(`SELECT job_id FROM ${p}concurrency_slots`)).resolves
+            .toStrictEqual([{ job_id: 'other' }]);
+
+        const [rate] = await database.query(`SELECT ${sql.aheadMs} AS ahead_ms FROM ${p}rate_limits`);
+
+        // Its quota untouched: an hour ahead, less the time of the test
+        expect(Number(rate.ahead_ms)).toBeLessThanOrEqual(3_600_000);
+        expect(/** @type {any[]} */ (events).filter(event => event.jobId === id).map(event => event.type))
+            .toStrictEqual(['claimed', 'failed']);
+        expect(events.find(event => event.type === 'failed')).toMatchObject({ attempt: 1, error: { name: 'StalledError' } });
+    });
+
+    test('a lane that no process adds: its jobs stay pending past their last stall, their slots freed after the '
+        + 'linger; a process that adds the lane later fails them at once', async () => {
+        const timings = { ...TIMINGS, leaseMs: 1000, renewIntervalMs: 200, recoveryIntervalMs: 200 };
+        const { sqlane, p, events } = await freshSqlane(/** @type {any} */ ({ timings }));
+        const store = createStore(testAdapter.adapter, p);
+        const orphans = await sqlane.enqueueMany(testAdapter.pool, 'orphan', Array.from({ length: 100 }, () => ({
+            payload: {},
+            options: { maxStalls: 0 },
+        })));
+        const keyed = await sqlane.enqueue(testAdapter.pool, 'orphan', {}, {
+            maxStalls: 0,
+            globalConcurrencyLimits: [order],
+        });
+        const orphanIds = [...orphans.map(job => job.id), keyed.id];
+
+        // Their process is gone: their leases end at once
+        await store.claim({
+            candidateIds: orphanIds,
+            fullIds: [],
+            lockToken: 'GONE1',
+            lockedBy: 'gone',
+            leaseMs: 1,
+            pick: locked => locked,
+        });
+        await sqlane.start();
+        await waitFor(() => jobIdsOf(events, 'stalled').length === orphanIds.length);
+        // The linger of the slot ends after one lease; then the sweep deletes it
+        await waitFor(async () => !(await database.query(`SELECT job_id FROM ${p}concurrency_slots`)).length);
+
+        expect(new Set(jobIdsOf(events, 'stalled'))).toStrictEqual(new Set(orphanIds));
+        expect((await readStalls(p)).map(({ status, stalls, attempts, due }) => ({ status, stalls, attempts, due })))
+            .toStrictEqual(orphanIds.map(() => ({ status: 'pending', stalls: 1, attempts: 0, due: true })));
+        expect(jobIdsOf(events, 'failed')).toStrictEqual([]);
+
+        const later = sqlaneOn(p, { lanes: [defineLane({ name: 'orphan_failed' })] }).sqlane;
+        let runs = 0;
+
+        later.lanes.add(defineLane({ name: 'orphan', failureLane: 'orphan_failed' }), () => {
+            runs++;
+        });
+        later.lanes.add('orphan_failed', () => {});
+        await expect(later.drain()).resolves.toStrictEqual({ completed: 101, retried: 0, failed: 101 });
+        expect(runs).toBe(0);
+    }, 15_000);
 });

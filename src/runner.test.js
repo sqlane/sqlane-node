@@ -297,7 +297,6 @@ function runnerWithHeldJobs(withKeys, {
         maxAttempts: 3,
         stalls: 0,
         maxStalls: 2,
-        failureLane: null,
         enqueuedAt: new Date(),
         waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: `token-${index + 1}`,
@@ -645,7 +644,6 @@ async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
         maxAttempts: 3,
         stalls: 0,
         maxStalls: 2,
-        failureLane: null,
         enqueuedAt: new Date(),
         waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: 'token-1',
@@ -849,13 +847,8 @@ test('lease: renewed during drain() for a handler longer than a lease', async ()
     await runner.close({ deadline: 0 });
 });
 
-test.each([
-    { result: 'released', event: { type: 'stalled', jobId: 'job-9', lane: 'ping', attempt: 2 } },
-    { result: 'failed', event: { type: 'failed', jobId: 'job-9', lane: 'ping', attempt: 2, durationMs: 250_000 } },
-])('stall recovery: the $result event has the attempt and the duration of the run that stalled', async ({
-    result,
-    event,
-}) => {
+test('stall recovery: the stalled event has the attempt of the run that stalled', async () => {
+    const event = { type: 'stalled', jobId: 'job-9', lane: 'ping', attempt: 2 };
     const registry = createRegistry({
         lanesByName: new Map(),
         defaultTimeoutMs: null,
@@ -872,7 +865,7 @@ test.each([
 
             return { ...NO_RECOVERY_WORK, stale: found };
         },
-        recoverStaleJob: async () => ({ result, failureResult: null, attempt: 2, runMs: 250_000 }),
+        recoverStaleJob: async () => ({ result: 'released', attempt: 2 }),
         sweepSlots: async () => ({ lingers: 0, orphans: 0, unblocked: 0, rateWaits: [] }),
         deleteIdleRateKeys: async () => 0,
     }));
@@ -1009,7 +1002,6 @@ function dueJobOf(name) {
         maxAttempts: 1,
         stalls: 0,
         maxStalls: 2,
-        failureLane: null,
         enqueuedAt: new Date(),
         waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: `token-${name}`,
@@ -1258,7 +1250,7 @@ function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}
         id++;
 
         return {
-            id: `${name}-${id}`, lane: name, attempts: 0, maxAttempts: 1, stalls: 0, maxStalls: 1, failureLane: null,
+            id: `${name}-${id}`, lane: name, attempts: 0, maxAttempts: 1, stalls: 0, maxStalls: 1,
             enqueuedAt: new Date(0), waitedMs: 0, runAt: new Date(0), startedAt: new Date(0), limits: name === 'keyed' ? [{ key: `k${id}`, max: 1 }] : [],
             rateLimits: [],
             lockToken: 't',
@@ -1780,7 +1772,6 @@ function dueJob(id, name) {
         maxAttempts: 3,
         stalls: 0,
         maxStalls: 2,
-        failureLane: null,
         enqueuedAt: new Date(),
         waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: 'token',
@@ -1911,4 +1902,141 @@ test('a claim that gives one job twice: it runs once, with an error event', asyn
     } finally {
         await runner.close({ deadline: 0 });
     }
+});
+
+test('a job past its maxStalls fails at its claim, as fatal: no handler, no attempt used, no local quota taken; '
+    + 'claimed, then failed', async () => {
+    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
+    /** @type {import('./types.js').SqlaneEvent[]} */
+    const events = [];
+    /** @type {string[]} */
+    const started = [];
+    /** @type {{ id: string, params: Record<string, unknown> }[]} */
+    const fails = [];
+    // The stalled job, then a job of the same lane: the stalled one left the quota of the local rate limit
+    const claims = [[{ ...dueJob('job-1', 'ping'), attempts: 1, stalls: 3, maxStalls: 2 }], [dueJob('job-2', 'ping')]];
+    const failureLane = defineLane({ name: 'ping_failed' });
+    const runner = runnerOf(registry, {
+        probe: async () => claims.slice(0, 1).map(() => ({ name: 'ping', delayMs: 0 })),
+        claimDue: async () => ({ jobs: claims.splice(0, 1).flat(), next: [], limited: [] }),
+        failJob: async (job, params) => {
+            fails.push({ id: job.id, params });
+
+            return { changed: true, failureResult: null };
+        },
+    }, 10, events);
+
+    registry.add(defineLane({ name: 'ping', localRateLimits: [once], failureLane }), ({ job }) => {
+        started.push(job.id);
+    });
+
+    try {
+        await expect(runner.drain()).resolves.toStrictEqual({ completed: 1, retried: 0, failed: 1 });
+        expect(started).toStrictEqual(['job-2']);
+        expect(fails).toMatchObject([{
+            id: 'job-1',
+            params: { error: { name: 'StalledError' }, attemptUsed: false },
+        }]);
+        // The failure lane of the definition of this process
+        expect(/** @type {any} */ (fails[0].params.failureJob).laneOf(null)).toBe('ping_failed');
+        expect(/** @type {any[]} */ (events).filter(event => event.jobId === 'job-1')).toMatchObject([
+            { type: 'claimed', attempt: 2 },
+            { type: 'failed', attempt: 2, error: { name: 'StalledError' } },
+        ]);
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test('a job that fails: its failure job by the definition of this process, and the attempt used', async () => {
+    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    /** @type {Record<string, unknown>[]} */
+    const fails = [];
+    const claims = [[{ ...dueJob('job-1', 'ping'), maxAttempts: 1 }]];
+    const runner = runnerOf(registry, {
+        probe: async () => claims.slice(0, 1).map(() => ({ name: 'ping', delayMs: 0 })),
+        claimDue: async () => ({ jobs: claims.splice(0, 1).flat(), next: [], limited: [] }),
+        failJob: async (_job, params) => {
+            fails.push(params);
+
+            return { changed: true, failureResult: null };
+        },
+    }, 10);
+
+    registry.add(defineLane({ name: 'ping', failureLane: defineLane({ name: 'ping_failed' }) }), () => {
+        throw new Error('broken');
+    });
+
+    try {
+        await expect(runner.drain()).resolves.toMatchObject({ failed: 1 });
+        expect(fails).toMatchObject([{ error: { name: 'Error', message: 'broken' }, attemptUsed: true }]);
+        expect(/** @type {any} */ (fails[0].failureJob).laneOf('other_failed')).toBe('ping_failed');
+    } finally {
+        await runner.close({ deadline: 0 });
+    }
+});
+
+test.each([
+    { stalls: 0, maxStalls: 0 },
+    { stalls: 1, maxStalls: 1 },
+])('a job at its maxStalls ($stalls of $maxStalls) runs its handler and takes the quota of its local rate limits',
+    async ({ stalls, maxStalls }) => {
+        const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+        const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
+        /** @type {string[]} */
+        const started = [];
+        // The job at its max, then one more: the first took the only start of the hour
+        const claims = [[{ ...dueJob('job-1', 'ping'), stalls, maxStalls }], [dueJob('job-2', 'ping')]];
+        const runner = runnerOf(registry, {
+            probe: async () => claims.slice(0, 1).map(() => ({ name: 'ping', delayMs: 0 })),
+            claimDue: async () => ({ jobs: claims.splice(0, 1).flat(), next: [], limited: [] }),
+        }, 10);
+
+        registry.add(defineLane({ name: 'ping', localRateLimits: [once] }), ({ job }) => {
+            started.push(job.id);
+        });
+
+        try {
+            await expect(runner.drain()).resolves.toStrictEqual({ completed: 1, retried: 0, failed: 0 });
+            expect(started).toStrictEqual(['job-1']);
+        } finally {
+            await runner.close({ deadline: 0 });
+        }
+    });
+
+test('a job past its maxStalls: a close() in release mode during the write of its fail does not release it', async () => {
+    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const claims = [[{ ...dueJob('job-1', 'ping'), stalls: 1, maxStalls: 0 }]];
+    /** @type {PromiseWithResolvers<void>} */
+    const failWrite = Promise.withResolvers();
+    let failing = false;
+    /** @type {string[]} */
+    const released = [];
+    const runner = runnerOf(registry, {
+        probe: async () => claims.slice(0, 1).map(() => ({ name: 'ping', delayMs: 0 })),
+        claimDue: async () => ({ jobs: claims.splice(0, 1).flat(), next: [], limited: [] }),
+        failJob: async () => {
+            failing = true;
+            await failWrite.promise;
+
+            return { changed: true, failureResult: null };
+        },
+        releaseJob: async (job) => {
+            released.push(job.id);
+
+            return true;
+        },
+    }, 10);
+
+    registry.add('ping', () => {});
+    await runner.start();
+    await waitFor(() => failing, 1000);
+
+    const closed = runner.close({ deadline: 0, mode: 'release' });
+
+    await sleep(20);
+    failWrite.resolve();
+    await closed;
+    expect(released).toStrictEqual([]);
 });

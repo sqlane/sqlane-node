@@ -1,6 +1,5 @@
 export type Executor = import('../types.js').Executor;
 export type OwnedJob = import('./store.js').OwnedJob;
-export type FailureJobBuilder = import('./store.js').FailureJobBuilder;
 export type FailureJobResult = import('./store.js').FailureJobResult;
 /**
  * Renews the leases of the jobs that the process runs. A row locked by another transaction is skipped: it does not
@@ -48,13 +47,10 @@ export declare function retryJob(executor: Executor, p: string, job: OwnedJob, {
  * @param {Executor} executor
  * @param {string} p
  * @param {OwnedJob} job
- * @param {{ error: import('../error_json.js').ErrorJson, buildFailureJob: FailureJobBuilder }} params
+ * @param {import('./store.js').FailParams} params
  * @returns {Promise<{ changed: boolean, failureResult: FailureJobResult | null }>}
  */
-export declare function failJob(executor: Executor, p: string, job: OwnedJob, { error, buildFailureJob }: {
-    error: import('../error_json.js').ErrorJson;
-    buildFailureJob: FailureJobBuilder;
-}): Promise<{
+export declare function failJob(executor: Executor, p: string, job: OwnedJob, params: import('./store.js').FailParams): Promise<{
     changed: boolean;
     failureResult: FailureJobResult | null;
 }>;
@@ -96,17 +92,18 @@ export declare function rateLimited(executor: Executor, p: string, job: OwnedJob
  */
 export declare function readRecoveryWork(executor: Executor, p: string, limit: number): Promise<readonly Record<string, unknown>[]>;
 /**
- * A running job whose lease ended: one more stall, pending again after 30 s × 2^stalls (at most 1 h); after maxStalls,
- * it fails for good. Its slots linger for one lease: its old handler may still run.
+ * A running job whose lease ended: one more stall, pending again after 30 s × 2^stalls (at most 1 h). Its slots linger
+ * for one lease: its old handler may still run. Past its maxStalls, it keeps its due time (due at once), and its next
+ * claim fails it, without its limits: in a process that adds its lane, by the definition there (docs/design.md › Leases
+ * and stalls).
  * @param {Executor} executor
  * @param {string} p
  * @param {string} id
- * @param {{ leaseMs: number, buildFailureJob: FailureJobBuilder }} params
+ * @param {{ leaseMs: number }} params
  * @returns {Promise<import('./store.js').StaleJobResult>} `result` null: not stale (any more).
  */
-export declare function recoverStaleJob(executor: Executor, p: string, id: string, { leaseMs, buildFailureJob }: {
+export declare function recoverStaleJob(executor: Executor, p: string, id: string, { leaseMs }: {
     leaseMs: number;
-    buildFailureJob: FailureJobBuilder;
 }): Promise<import('./store.js').StaleJobResult>;
 /**
  * Makes the jobs blocked on the keys pending again, the oldest first: on each key, as many as it has room for, by the

@@ -305,7 +305,6 @@ describe('claim', () => {
             maxAttempts: 4,
             stalls: 0,
             maxStalls: 2,
-            failureLane: 'build_failed',
             lockToken: 'TOKEN1',
         });
         expect(claimed.waitedMs).toBeGreaterThanOrEqual(4000);
@@ -525,7 +524,6 @@ describe('claimDue', () => {
             limits: [],
             attempts: 0,
             maxAttempts: 4,
-            failureLane: 'a_failed',
             lockToken: 'TOKEN1',
         });
         expect(claimed[0].waitedMs).toBeGreaterThanOrEqual(29_000);
@@ -1917,5 +1915,148 @@ describe('global rate limits', () => {
         await expect(sqlane.lanes.stats()).resolves.toMatchObject([
             { name: 'call_api', pending: 0, blocked: 2, due: 0, running: 4 },
         ]);
+    });
+});
+
+/**
+ * Its last stall was past its max, as the stall recovery leaves it: pending, due, stalls above its max.
+ * @param {string} p
+ * @param {string} id
+ * @returns {Promise<void>}
+ */
+async function stallOut(p, id) {
+    await database.query(`UPDATE ${p}jobs SET stalls = max_stalls + 1 WHERE id = '${id}'`);
+}
+
+describe('a job past its maxStalls: claimed without its limits, as its claim fails it', () => {
+    const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+    const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
+    const both = defineLane({
+        name: 'both',
+        globalConcurrencyLimits: () => [order],
+        globalRateLimits: () => [once],
+        timeout: '1m',
+    });
+
+    test('lanes with limits: on a full key and a rate key without quota, it is a candidate and is claimed; it takes '
+        + 'no slot and no quota, and is never blocked', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const holder = await sqlane.enqueue(testAdapter.pool, both, {}, { runAt: ago(30) });
+
+        await claimAll(store, [holder.id], 'T1');
+
+        const before = await aheadMs(p);
+        const stalled = await sqlane.enqueue(testAdapter.pool, both, {}, { runAt: ago(20) });
+        const waiting = await sqlane.enqueue(testAdapter.pool, both, {}, { runAt: ago(10) });
+
+        await stallOut(p, stalled.id);
+
+        const found = await store.findCandidates(new Map([['both', 10]]));
+
+        expect(found.startable.map(candidate => candidate.id)).toStrictEqual([stalled.id]);
+        expect(found.full.map(candidate => candidate.id)).toStrictEqual([waiting.id]);
+        await expect(claimWithBlocks(store, [stalled.id], 'T2', [waiting.id])).resolves.toMatchObject({
+            jobs: [{ id: stalled.id, limits: [], rateLimits: [], stalls: 3, maxStalls: 2 }],
+            blockedKeys: ['order'],
+        });
+        await expect(statuses(p)).resolves.toStrictEqual([
+            { id: holder.id, status: 'running', blocked_on: null },
+            { id: stalled.id, status: 'running', blocked_on: null },
+            { id: waiting.id, status: 'blocked', blocked_on: 'order' },
+        ]);
+        await expect(slotsOf(p)).resolves.toMatchObject([{ limit_key: 'order', job_id: holder.id }]);
+        expect((await aheadMs(p))['@once']).toBeLessThanOrEqual(before['@once']);
+    });
+
+    test('a search without the rate keys: a candidate, not full, and its rate keys do not count', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const holder = await sqlane.enqueue(testAdapter.pool, both, {}, { runAt: ago(30) });
+
+        await claimAll(store, [holder.id], 'T1');
+
+        const stalled = await sqlane.enqueue(testAdapter.pool, both, {}, { runAt: ago(20) });
+        /** @type {Set<string>} */
+        const ratedLanes = new Set();
+
+        await stallOut(p, stalled.id);
+        await expect(store.findCandidates(new Map([['both', 10]]), ratedLanes)).resolves.toStrictEqual({
+            startable: [{ id: stalled.id, lane: 'both', runAtMs: expect.any(Number) }],
+            full: [],
+        });
+        expect([...ratedLanes]).toStrictEqual([]);
+    });
+
+    test('the claim that locks the rows of the rate keys with the jobs: none for it, not even a new key', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const stalled = await sqlane.enqueue(testAdapter.pool, both, {}, { runAt: ago(20) });
+
+        await stallOut(p, stalled.id);
+        await expect(store.claim({
+            candidateIds: [stalled.id],
+            fullIds: [],
+            lockToken: 'T1',
+            lockedBy: 'test:T1',
+            leaseMs: LEASE_MS,
+            pick: pickFits,
+            withRates: true,
+        })).resolves.toMatchObject({ jobs: [{ id: stalled.id, rateLimits: [] }] });
+        await expect(aheadMs(p)).resolves.toStrictEqual({});
+    });
+
+    test.each([
+        { maxStalls: 0, stalls: 0 },
+        { maxStalls: 1, stalls: 1 },
+    ])('at its max ($stalls of $maxStalls): it takes a slot and quota, and is blocked on a full key; lanes without '
+        + 'limits leave it', async ({ maxStalls, stalls }) => {
+        const { p, sqlane, store } = await freshTables();
+        const options = { maxStalls, runAt: ago(20) };
+        const first = await sqlane.enqueue(testAdapter.pool, both, {}, options);
+        const second = await sqlane.enqueue(testAdapter.pool, both, {}, options);
+
+        await database.query(`UPDATE ${p}jobs SET stalls = ${stalls}`);
+        await expect(store.findCandidates(new Map([['both', 10]]))).resolves.toMatchObject({
+            startable: [{ id: first.id }],
+            full: [{ id: second.id }],
+        });
+        await expect(claimWithBlocks(store, [first.id], 'T1', [second.id])).resolves.toMatchObject({
+            jobs: [{ id: first.id, limits: [{ key: 'order', max: 1 }], rateLimits: [{ key: '@once' }] }],
+            blockedLanes: ['both'],
+        });
+        await expect(slotsOf(p)).resolves.toMatchObject([{ limit_key: 'order', job_id: first.id }]);
+        expect((await aheadMs(p))['@once']).toBeGreaterThan(3_000_000);
+
+        const plain = await sqlane.enqueue(testAdapter.pool, 'plain', {}, { ...options, globalRateLimits: [once] });
+
+        await database.query(`UPDATE ${p}jobs SET stalls = ${stalls} WHERE id = '${plain.id}'`);
+        await expect(claimDueWithNext(store, { requests: [request('plain', 5, 0)] })).resolves.toMatchObject({
+            jobs: [],
+            limited: ['plain'],
+        });
+    });
+
+    test('lanes without limits: a job with limits from its enqueue options is claimed there, by one lane or by '
+        + 'several', async () => {
+        const { p, sqlane, store } = await freshTables();
+        const options = { globalConcurrencyLimits: [order], globalRateLimits: [once], runAt: ago(20) };
+        const one = await sqlane.enqueue(testAdapter.pool, 'plain', {}, options);
+        const other = await sqlane.enqueue(testAdapter.pool, 'other', {}, options);
+
+        await stallOut(p, one.id);
+        await stallOut(p, other.id);
+        await expect(claimDueWithNext(store, { requests: [request('plain', 5, 0)] })).resolves.toMatchObject({
+            jobs: [{ id: one.id, limits: [], rateLimits: [], stalls: 3, maxStalls: 2 }],
+            limited: [],
+        });
+
+        const third = await sqlane.enqueue(testAdapter.pool, 'plain', {}, options);
+
+        await stallOut(p, third.id);
+
+        const claimed = await claimDueWithNext(store, { requests: [request('other', 5, 0), request('plain', 5, 1)] });
+
+        expect(claimed.jobs.map(job => job.id).toSorted()).toStrictEqual([other.id, third.id].toSorted());
+        expect(claimed.limited).toStrictEqual([]);
+        await expect(slotsOf(p)).resolves.toStrictEqual([]);
+        await expect(aheadMs(p)).resolves.toStrictEqual({});
     });
 });

@@ -3,13 +3,13 @@
 // multi-statement writes run in a queue transaction.
 import { nextUnblockMs, RATE_UNBLOCK_BATCH, toleranceUs, waitMsOf, waitUs as keyWaitUs } from '../gcra.js';
 import { isRateKey } from '../rate_keys.js';
+import { STALLED_ERROR } from '../error_json.js';
 import { createMonotonicUlid } from '../ulid.js';
 import { insertJobsPostgres } from './postgres_enqueue.js';
 import { arrayParam, rateLimitsOf } from './postgres_worker.js';
 
 /** @typedef {import('../types.js').Executor} Executor */
 /** @typedef {import('./store.js').OwnedJob} OwnedJob */
-/** @typedef {import('./store.js').FailureJobBuilder} FailureJobBuilder */
 /** @typedef {import('./store.js').FailureJobResult} FailureJobResult */
 
 const NOW = 'clock_timestamp()';
@@ -198,24 +198,30 @@ export async function retryJob(executor, p, job, { delayMs, error }) {
  * @param {Executor} executor
  * @param {string} p
  * @param {Record<string, unknown>} row The failed job, read in this transaction.
- * @param {{ error: import('../error_json.js').ErrorJson, buildFailureJob: FailureJobBuilder }} params
- * @returns {Promise<FailureJobResult>}
+ * @param {import('./store.js').FailParams} params
+ * @returns {Promise<FailureJobResult | null>} Null: no failure lane.
  */
-async function addFailureJob(executor, p, row, { error, buildFailureJob }) {
+async function addFailureJob(executor, p, row, { error, failureJob }) {
+    const failureLane = failureJob.laneOf(row.failure_lane === null ? null : String(row.failure_lane));
+
+    if (failureLane === null) {
+        return null;
+    }
+
     let newJob;
 
     try {
-        newJob = buildFailureJob({
+        newJob = failureJob.build({
             id: String(row.id),
             lane: String(row.lane),
             payload: row.payload === null ? null : JSON.parse(String(row.payload)),
             attempt: Number(row.attempts) + 1,
             maxAttempts: Number(row.max_attempts),
-            failureLane: String(row.failure_lane),
+            failureLane,
             error,
         });
     } catch (buildError) {
-        return { notAdded: buildError };
+        return { notAdded: buildError, failureLane };
     }
 
     await executor.run('SAVEPOINT sqlane_failure_job', []);
@@ -228,7 +234,7 @@ async function addFailureJob(executor, p, row, { error, buildFailureJob }) {
     } catch (insertError) {
         await executor.run('ROLLBACK TO SAVEPOINT sqlane_failure_job', []);
 
-        return { notAdded: insertError };
+        return { notAdded: insertError, failureLane };
     }
 }
 
@@ -241,9 +247,7 @@ async function addFailureJob(executor, p, row, { error, buildFailureJob }) {
  */
 async function lockJob(executor, p, where, params) {
     const [row] = await executor.query(`
-        SELECT j.id, j.lane, j.lock_token, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.failure_lane,
-               COALESCE(extract(epoch FROM ${NOW} - j.started_at) * 1000, 0)::float8 AS run_ms,
-               pl.payload::text AS payload
+        SELECT j.id, j.lane, j.attempts, j.max_attempts, j.failure_lane, pl.payload::text AS payload
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id
          WHERE ${where}
            FOR UPDATE OF j
@@ -258,10 +262,10 @@ async function lockJob(executor, p, where, params) {
  * @param {Executor} executor
  * @param {string} p
  * @param {OwnedJob} job
- * @param {{ error: import('../error_json.js').ErrorJson, buildFailureJob: FailureJobBuilder }} params
+ * @param {import('./store.js').FailParams} params
  * @returns {Promise<{ changed: boolean, failureResult: FailureJobResult | null }>}
  */
-export async function failJob(executor, p, job, { error, buildFailureJob }) {
+export async function failJob(executor, p, job, params) {
     const row = await lockJob(executor, p, 'j.id = $1 AND j.lock_token = $2', [job.id, job.lockToken]);
 
     if (!row) {
@@ -270,19 +274,14 @@ export async function failJob(executor, p, job, { error, buildFailureJob }) {
 
     await executor.run(`
         UPDATE ${p}jobs
-           SET status = 'failed', attempts = attempts + 1, finished_at = ${NOW},
+           SET status = 'failed', ${params.attemptUsed ? 'attempts = attempts + 1, ' : ''}finished_at = ${NOW},
                expires_at = ${NOW} + failed_retention_ms * ${MS}, ${CLEAR_LOCK}, last_error = $2::text::jsonb,
                updated_at = ${NOW}
          WHERE id = $1
-    `, [job.id, JSON.stringify(error)]);
+    `, [job.id, JSON.stringify(params.error)]);
     await deleteHolds(executor, p, job);
 
-    return {
-        changed: true,
-        failureResult: row.failure_lane === null
-            ? null
-            : await addFailureJob(executor, p, row, { error, buildFailureJob }),
-    };
+    return { changed: true, failureResult: await addFailureJob(executor, p, row, params) };
 }
 
 /**
@@ -392,60 +391,42 @@ export async function readRecoveryWork(executor, p, limit) {
 }
 
 /**
- * The run that stalled, for the events.
- * @param {Record<string, unknown>} row Of lockJob().
- * @returns {{ attempt: number, runMs: number }} Its attempt (1 for the first run), and the time since it started.
- */
-function stalledRun(row) {
-    return { attempt: Number(row.attempts) + 1, runMs: Math.max(Math.round(Number(row.run_ms)), 0) };
-}
-
-/**
- * A running job whose lease ended: one more stall, pending again after 30 s × 2^stalls (at most 1 h); after maxStalls,
- * it fails for good. Its slots linger for one lease: its old handler may still run.
+ * A running job whose lease ended: one more stall, pending again after 30 s × 2^stalls (at most 1 h). Its slots linger
+ * for one lease: its old handler may still run. Past its maxStalls, it keeps its due time (due at once), and its next
+ * claim fails it, without its limits: in a process that adds its lane, by the definition there (docs/design.md › Leases
+ * and stalls).
  * @param {Executor} executor
  * @param {string} p
  * @param {string} id
- * @param {{ leaseMs: number, buildFailureJob: FailureJobBuilder }} params
+ * @param {{ leaseMs: number }} params
  * @returns {Promise<import('./store.js').StaleJobResult>} `result` null: not stale (any more).
  */
-export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJob }) {
-    const row = await lockJob(executor, p, `j.id = $1 AND j.status = 'running' AND j.locked_until < ${NOW}`, [id]);
+export async function recoverStaleJob(executor, p, id, { leaseMs }) {
+    // The job row only: a stall adds no failure job, so it reads neither the payload nor the failure lane
+    const [row] = await executor.query(`
+        SELECT lock_token, attempts, stalls, max_stalls FROM ${p}jobs
+         WHERE id = $1 AND status = 'running' AND locked_until < ${NOW}
+           FOR UPDATE
+    `, [id]);
 
     if (!row) {
-        return { result: null, failureResult: null };
+        return { result: null };
     }
 
-    const error = { name: 'StalledError', message: 'The lease of the job ended: its process stopped or blocked' };
+    // Past its max: its due time stays, already passed, so its next claim comes in its place in line
+    const nextRunAt = Number(row.stalls) >= Number(row.max_stalls)
+        ? 'run_at'
+        : runAt(`LEAST(30000 * power(2, stalls), 3600000) * ${MS}`);
 
     await lingerHolds(executor, p, { id, lockToken: String(row.lock_token) }, leaseMs);
-
-    if (Number(row.stalls) < Number(row.max_stalls)) {
-        await executor.run(`
-            UPDATE ${p}jobs
-               SET status = 'pending', run_at = ${runAt(`LEAST(30000 * power(2, stalls), 3600000) * ${MS}`)},
-                   stalls = stalls + 1, ${CLEAR_LOCK}, last_error = $2::text::jsonb, updated_at = ${NOW}
-             WHERE id = $1
-        `, [id, JSON.stringify(error)]);
-
-        return { result: 'released', failureResult: null, ...stalledRun(row) };
-    }
-
     await executor.run(`
         UPDATE ${p}jobs
-           SET status = 'failed', stalls = stalls + 1, finished_at = ${NOW},
-               expires_at = ${NOW} + failed_retention_ms * ${MS}, ${CLEAR_LOCK}, last_error = $2::text::jsonb,
-               updated_at = ${NOW}
+           SET status = 'pending', run_at = ${nextRunAt}, stalls = stalls + 1, ${CLEAR_LOCK},
+               last_error = $2::text::jsonb, updated_at = ${NOW}
          WHERE id = $1
-    `, [id, JSON.stringify(error)]);
+    `, [id, JSON.stringify(STALLED_ERROR)]);
 
-    return {
-        result: 'failed',
-        failureResult: row.failure_lane === null
-            ? null
-            : await addFailureJob(executor, p, row, { error, buildFailureJob }),
-        ...stalledRun(row),
-    };
+    return { result: 'released', attempt: Number(row.attempts) + 1 };
 }
 
 /**

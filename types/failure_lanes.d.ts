@@ -1,9 +1,9 @@
 export type FailureLanes = {
     /**
-     * The failure job of a failed job: its definition's
-     * options (or the defaults), and no failure lane of its own.
+     * The failure job of a job of a lane with this definition in this process. Null: a lane added without a
+     * definition: the failure lane of the row, from its enqueue.
      */
-    build: import('./store/store.js').FailureJobBuilder;
+    builderOf: (definition: import('./types.js').LaneDefinition | null) => import('./store/store.js').FailureJobBuilder;
     /**
      * An added failure job wakes its lane
      * here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
@@ -12,14 +12,14 @@ export type FailureLanes = {
         id: string;
         lane: string;
         attempt: number;
-        failureLane: string | null;
     }, result: import('./store/store.js').FailureJobResult | null) => void;
 };
 /**
  * @typedef {object} FailureLanes
- * @property {import('./store/store.js').FailureJobBuilder} build The failure job of a failed job: its definition's
- *     options (or the defaults), and no failure lane of its own.
- * @property {(job: { id: string, lane: string, attempt: number, failureLane: string | null },
+ * @property {(definition: import('./types.js').LaneDefinition | null) => import('./store/store.js').FailureJobBuilder}
+ *     builderOf The failure job of a job of a lane with this definition in this process. Null: a lane added without a
+ *     definition: the failure lane of the row, from its enqueue.
+ * @property {(job: { id: string, lane: string, attempt: number },
  *     result: import('./store/store.js').FailureJobResult | null) => void} report An added failure job wakes its lane
  *     here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
  */

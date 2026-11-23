@@ -3,7 +3,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { getBackoffMs } from './backoff.js';
 import { parseDuration } from './duration.js';
-import { toErrorJson } from './error_json.js';
+import { STALLED_ERROR, toErrorJson } from './error_json.js';
 import { FatalJobError, JobTimeoutError, MissingPayloadError, RateLimitedError, RetryJobError } from './errors.js';
 import { nowUs, pauseRate } from './local_rates.js';
 import { parseRateKey, rateKeyOf } from './rate_limit_shape.js';
@@ -236,17 +236,29 @@ export function createJobRuns({
             return;
         }
 
+        await failForGood(job, { error, errorJson: toErrorJson(error), attemptUsed: true, durationMs });
+    }
+
+    /**
+     * The job fails for good, with its failure job: by the definition of its lane in this process.
+     * @param {RunningJob} job
+     * @param {{ error: unknown, errorJson: import('./error_json.js').ErrorJson, attemptUsed: boolean,
+     *     durationMs: number }} params
+     * @returns {Promise<void>}
+     */
+    async function failForGood(job, { error, errorJson, attemptUsed, durationMs }) {
+        const { claimed } = job;
+        const base = { jobId: claimed.id, lane: claimed.lane, attempt: claimed.attempts + 1 };
+
         logger?.error({ error, jobId: claimed.id, lane: claimed.lane }, 'sqlane: job failed');
         await writeResult(job, async () => {
             const { failureResult } = await store.failJob(claimed, {
-                error: toErrorJson(error),
-                buildFailureJob: failureLanes.build,
+                error: errorJson,
+                failureJob: failureLanes.builderOf(job.entry.definition),
+                attemptUsed,
             });
 
-            failureLanes.report(
-                { id: claimed.id, lane: claimed.lane, attempt: base.attempt, failureLane: claimed.failureLane },
-                failureResult,
-            );
+            failureLanes.report({ id: claimed.id, lane: claimed.lane, attempt: base.attempt }, failureResult);
         });
         counts.failed++;
         emit({ type: 'failed', ...base, durationMs, error });
@@ -344,6 +356,19 @@ export function createJobRuns({
         const { claimed, entry } = job;
         /** @type {unknown} */
         let error = null;
+
+        if (claimed.stalls > claimed.maxStalls) {
+            // Its last stall was past its max: it fails without a run, and without an attempt used, as fatal
+            job.settled = true;
+            await failForGood(job, {
+                error: STALLED_ERROR,
+                errorJson: STALLED_ERROR,
+                attemptUsed: false,
+                durationMs: 0,
+            });
+
+            return;
+        }
 
         if (!payload.found) {
             if (Date.now() - claimed.enqueuedAt.getTime() < t.missingPayloadGraceMs) {

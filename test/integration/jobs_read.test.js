@@ -179,11 +179,11 @@ describe('jobs.get()', () => {
     test('a pending job: every field, and its payload', async () => {
         const sqlane = await freshSqlane();
         const runAt = new Date(Date.now() + 3_600_000);
-        const { id } = await sqlane.enqueue(testAdapter.pool, 'build_report', { reportId: 'r1' }, {
+        const buildReport = defineLane({ name: 'build_report', failureLane: 'report_failed' });
+        const { id } = await sqlane.enqueue(testAdapter.pool, buildReport, { reportId: 'r1' }, {
             dedupeKey: 'r1',
             runAt,
             maxAttempts: 5,
-            failureLane: 'report_failed',
         });
 
         await expect(sqlane.jobs.get(id)).resolves.toStrictEqual({

@@ -14,8 +14,8 @@ import {
 } from './validate.js';
 
 const ENQUEUE_OPTION_NAMES = [
-    'dedupeKey', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureLane', 'globalConcurrencyLimits',
-    'globalRateLimits', 'slot',
+    'dedupeKey', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'globalConcurrencyLimits', 'globalRateLimits',
+    'slot',
 ];
 const MAX_DEDUPE_KEY_LENGTH = 120;
 /** Sorted by creation order in this process, also within one millisecond */
@@ -149,7 +149,8 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
         dedupeKey = slotDedupeKeyFrom(options.slot, where);
     }
 
-    const failureLane = options.failureLane ?? definition?.failureLane;
+    // For display (JobRecord.failureLane): the process that fails the job decides, by its definition
+    const failureLane = definition?.failureLane;
     const payloadJson = serializePayload(payload, maxPayloadBytes, where);
     // The limits come from the payload as the handler gets it: as JSON gives it back.
     const rawLimits = options.globalConcurrencyLimits

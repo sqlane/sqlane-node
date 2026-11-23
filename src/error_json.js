@@ -2,6 +2,15 @@
 export const MAX_STACK_LENGTH = 8 * 1024;
 
 /**
+ * The error of a stall: written by the stall recovery, and by the claim that fails a job past its maxStalls.
+ * @type {Readonly<ErrorJson>}
+ */
+export const STALLED_ERROR = Object.freeze({
+    name: 'StalledError',
+    message: 'The lease of the job ended: its process stopped or blocked',
+});
+
+/**
  * @typedef {object} ErrorJson
  * @property {string} name
  * @property {string} message

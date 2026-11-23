@@ -21,6 +21,15 @@ const NOW_US = 'UTC_TIMESTAMP(6)';
 const epochMs = column => `TIMESTAMPDIFF(MICROSECOND, '1970-01-01', ${column}) DIV 1000`;
 const HELD = `(s.held_until IS NULL OR s.held_until >= ${NOW})`;
 /**
+ * A column of the limits of a job, null for a job past its maxStalls: its claim fails it, so it takes no slot and no
+ * quota, and is never blocked (docs/design.md › Leases and stalls).
+ * @param {string} column
+ * @returns {string}
+ */
+const unlessStalledOut = column => `IF(stalls > max_stalls, NULL, ${column})`;
+/** The job has global limits, of concurrency or of rate: the claim of lanes with limits takes it */
+const LIMITED = '(j.limit_keys IS NOT NULL OR j.rate_limits IS NOT NULL) AND j.stalls <= j.max_stalls';
+/**
  * The settings of the rate keys of a JSON array (`rate_limits`), as JSON_TABLE columns.
  * @param {string} json
  * @returns {string} `e`, with `limit_key`, `max_starts`, `per_us`, `burst` and `cost`.
@@ -106,9 +115,11 @@ export async function probe(executor, p, lanes) {
  * @returns {string} The oldest due jobs of each lane, one index range per lane.
  */
 function dueJobsSql(p, lanes, limitSql, withRates) {
+    const rates = `${unlessStalledOut('rate_limits')}${withRates ? ' AS rate_limits' : ' IS NOT NULL AS rated'}`;
+
     return lanes.map((_, index) => `(
-        SELECT id, lane, run_at, limit_keys, limit_maxes,
-               ${withRates ? 'rate_limits' : 'rate_limits IS NOT NULL AS rated'} FROM ${p}jobs
+        SELECT id, lane, run_at, ${unlessStalledOut('limit_keys')} AS limit_keys,
+               ${unlessStalledOut('limit_maxes')} AS limit_maxes, ${rates} FROM ${p}jobs
           FORCE INDEX (${p}jobs_status_lane_run_at)
          WHERE status = 'pending' AND lane = ? AND run_at <= ${NOW}
          ORDER BY run_at, id LIMIT ${limitSql(index)}
@@ -396,8 +407,9 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     }
 
     const lockedRows = await executor.query(`
-        SELECT id, lane, CAST(limit_keys AS CHAR) AS limit_keys, CAST(limit_maxes AS CHAR) AS limit_maxes,
-               CAST(rate_limits AS CHAR) AS rate_limits, attempts, max_attempts, stalls, max_stalls, failure_lane,
+        SELECT id, lane, CAST(${unlessStalledOut('limit_keys')} AS CHAR) AS limit_keys,
+               CAST(${unlessStalledOut('limit_maxes')} AS CHAR) AS limit_maxes,
+               CAST(${unlessStalledOut('rate_limits')} AS CHAR) AS rate_limits, attempts, max_attempts, stalls, max_stalls,
                ${epochMs('created_at')} AS created_at_ms, ${epochMs('run_at')} AS run_at_ms,
                TIMESTAMPDIFF(MICROSECOND, run_at, ${NOW}) DIV 1000 AS waited_ms, ${epochMs(NOW)} AS nowms
           FROM ${p}jobs
@@ -419,7 +431,6 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
             maxAttempts: Number(row.max_attempts),
             stalls: Number(row.stalls),
             maxStalls: Number(row.max_stalls),
-            failureLane: row.failure_lane === null ? null : String(row.failure_lane),
             enqueuedAt: new Date(Number(row.created_at_ms)),
             runAt: new Date(Number(row.run_at_ms)),
             // Set by the write of the claim
@@ -541,7 +552,7 @@ export async function claimDue(executor, p, { requests, free, lockToken, lockedB
 
     const locked = (await executor.query(requests.map(() => `(
         SELECT j.id, j.lane, ${epochMs('j.run_at')} AS run_at_ms, j.attempts, j.max_attempts, j.stalls,
-               j.max_stalls, j.failure_lane, ${epochMs('j.created_at')} AS created_at_ms, j.limit_keys IS NOT NULL OR j.rate_limits IS NOT NULL AS has_limits,
+               j.max_stalls, ${epochMs('j.created_at')} AS created_at_ms, ${LIMITED} AS has_limits,
                TIMESTAMPDIFF(MICROSECOND, j.run_at, ${NOW}) DIV 1000 AS waited_ms, ${epochMs(NOW)} AS nowms,
                CAST(pl.payload AS CHAR) AS payload, pl.id IS NOT NULL AS payload_found
           FROM ${p}jobs j FORCE INDEX (${p}jobs_status_lane_run_at)
@@ -563,7 +574,6 @@ export async function claimDue(executor, p, { requests, free, lockToken, lockedB
                 maxAttempts: Number(row.max_attempts),
                 stalls: Number(row.stalls),
                 maxStalls: Number(row.max_stalls),
-                failureLane: row.failure_lane === null ? null : String(row.failure_lane),
                 enqueuedAt: new Date(Number(row.created_at_ms)),
                 runAt: new Date(Number(row.run_at_ms)),
                 // The time of the lock read: nothing waits after it (SKIP LOCKED; then a plain read of payloads)

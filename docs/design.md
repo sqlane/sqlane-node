@@ -131,11 +131,12 @@ not depend on the `timezone` or `dateStrings` settings of the pool.
 | `timed_out_at`                                                        | ts(3) null        | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`.                      |
 | `last_error`                                                          | json null         |                                                                                                                    |
 | `completed_retention_ms`, `failed_retention_ms`                       | bigint            | Frozen at enqueue.                                                                                                 |
-| `failure_lane`                                                        | varchar(128) null | Frozen at enqueue.                                                                                                 |
+| `failure_lane`                                                        | varchar(128) null | The failure lane of the definition at enqueue, for display.                                                        |
 | `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)             |                                                                                                                    |
 
-`attempts` counts the finished attempts: a completion, a retry and a failure each add one. A stall, a release and a
-wait on a rate limit add none; the stalls have their own count.
+`attempts` counts the finished attempts: a completion, a retry and a failure each add one. A stall, a release, a
+wait on a rate limit and the fail of a job past its `maxStalls` at its claim add none; the stalls have their own
+count.
 
 `id`, `lane` and the keys are case-sensitive: `ascii_bin` on MySQL, `COLLATE "C"` on PostgreSQL.
 
@@ -338,13 +339,17 @@ blocked ◀─claim: a full key, no quota── pending ──claim──▶ run
  │ └─ a slot frees, or its next start ────▶▲ │ ▲              │
  │                                         │ │ └── retry, stall,
  │                                         │ │     release ───┤
- │                                         │ │                └──no attempts / stalls left──▶ failed (+ failure job) ──▶ …
+ │                                         │ │                └──no attempts left, fatal ───▶ failed (+ failure job) ──▶ …
  │                                         │ └── jobs.cancel ────────────────────────────────▶ failed (no failure job)
  └── jobs.cancel ──────────────────────────┼─────────────────────────────────────────────────▶ failed (no failure job)
                                            └── jobs.retry ◀──────────────────────────────── failed
 ```
 
 `jobs.remove` deletes a job in any status but `running`.
+
+A stall past `maxStalls` goes back to `pending` as any stall (running → pending), with its due time kept; its next
+claim fails it at once, without a run (pending → running → failed, with its failure job; see
+[Leases and stalls](#leases-and-stalls)).
 
 A `RateLimitedError` on local rate limits only sends the job back to `pending`, like a release.
 
@@ -355,7 +360,7 @@ A `RateLimitedError` on local rate limits only sends the job back to `pending`, 
 In the caller's transaction, with its connection (with a pool: in a transaction of sqlane):
 
 1. Check the payload (JSON, at most `maxPayloadBytes`, default 256 KiB) and the options (`dedupeKey`, `delay` or `runAt`,
-   `maxAttempts`, `maxStalls`, `retention`, `failureLane`, `globalConcurrencyLimits`, `globalRateLimits`).
+   `maxAttempts`, `maxStalls`, `retention`, `globalConcurrencyLimits`, `globalRateLimits`).
 2. The global limits: the enqueue option if given, else the definition's function of the payload; as keys, sorted,
    with their maxes. The same for the rate limits, as rate keys with their settings and costs.
 3. `INSERT` the jobs, with their keys, in the order of their ids. This order prevents deadlocks between concurrent
@@ -366,10 +371,11 @@ In the caller's transaction, with its connection (with a pool: in a transaction 
    statement (a CTE), which is atomic even outside a transaction.
 4. PostgreSQL with the NOTIFY hint: `pg_notify` in the same transaction, delivered on commit.
 
-Frozen in the row at enqueue: `maxAttempts`, `maxStalls`, both retentions, `failureLane`, the keys and their maxes, the
-rate keys and their settings. Any process can then retry, stall or fail the job without its definition. Read from the
-worker's definition at run time: `backoff`, `timeout`, `fairShareWeight` and the local limits, of concurrency and of
-rate.
+Frozen in the row at enqueue: `maxAttempts`, `maxStalls`, both retentions, the keys and their maxes, the rate keys and
+their settings. Any process can then retry or stall the job without its definition. Read from the worker's definition
+at run time: `backoff`, `timeout`, `fairShareWeight`, the local limits, of concurrency and of rate, and `failureLane`
+(at the fail, [Failure jobs](#failure-jobs)). The `failure_lane` of the row is the one of the definition of the enqueue,
+for display (`JobRecord.failureLane`).
 
 `enqueueMany` inserts many jobs in one statement per table and returns `{ id, created }[]` in input order. `created`
 comes from the call's `enqueue_token` (MySQL has no `RETURNING`): the payloads are inserted only for the rows with
@@ -543,7 +549,9 @@ A lost hint delays a job until the next poll. It never loses a job.
 
 **Names without global limits** (in the definition of the claiming process): the due jobs are found, claimed and read
 at once, without candidates. A locked row with global limits or rate limits (from its enqueue options) is not taken:
-the claim returns its lane, and the process claims that lane with its limits from then on.
+the claim returns its lane, and the process claims that lane with its limits from then on. A row past its `maxStalls`
+counts as one without limits, here and in the claim of lanes with global limits: its claim fails it
+([Leases and stalls](#leases-and-stalls)).
 
 - PostgreSQL: one statement, a transaction of its own. A `LATERAL` per due lane locks its oldest due jobs
   (`FOR UPDATE SKIP LOCKED`, at most `min(the rooms of its local limits, free)`). The k-th locked row of a lane gets
@@ -631,8 +639,18 @@ A lease is the time for which a process owns a running job. A lease lasts 4 minu
   unblocks after the claims and releases, and the timers of the rate keys, do not wait for it. On PostgreSQL the read
   compares the leases and the `tat`s with the start of the statement, so their indexes find them; the recovery of a
   job checks its lease again. A `running` job whose lease has ended gets one more stall. It goes back to `pending` with a delay of
-  30 s × 2^stalls, which is at most 1 h. So the first stall delays the job by 30 s, and the second stall by 60 s. After
-  `maxStalls` stalls (2 by default), the next stall fails the job.
+  30 s × 2^stalls, which is at most 1 h. So the first stall delays the job by 30 s, and the second stall by 60 s.
+- **Past `maxStalls`.** After `maxStalls` stalls (2 by default), the next stall releases the job the same way, with
+  `stalls = maxStalls + 1`, but keeps its due time: it is due at once, in its place in line, not behind the backlog of
+  its lane. Its next claim, in a process that adds its lane, fails it at once, as a `FatalJobError` would (a
+  `StalledError`, no retry), without a run and without an attempt used, with the failure job of the definition of that
+  process. That claim treats the row as one without global limits and rate limits: never blocked, it takes no global
+  slot and no global quota, and the process takes no quota of its local rate limits for it. It still counts toward the
+  local concurrency of the process while its fail is written. The process emits `claimed`, then `failed`; `drain()`
+  counts it, and `close()` waits for its write. The recovery locks the job row only: it reads neither the payload nor
+  the failure lane. The recovery runs in every process, for every
+  lane, and adds no failure job: only a process with the definition of the lane knows its failure lane. A job of a
+  lane that no process adds waits `pending`, as any job of that lane, and holds no slot once its linger ends.
 - The keys of a stalled job linger for one more lease (4 minutes, in `held_until`) instead of being deleted, because
   the old handler may still run. So a job with global limits runs again only after this time.
 - So after a crash, the leases of the process end within 4 minutes. Another process finds the jobs within about 30 s,
@@ -759,7 +777,10 @@ the cluster, in `sqlane_rate_limits`; a local limit counts in the memory of each
 
 ### Failure jobs
 
-When a job fails for good (no attempts left, too many stalls, or a `FatalJobError`), and its row has a `failureLane`:
+When a job fails for good (no attempts left, a claim past `maxStalls`, or a `FatalJobError`), it gets a failure job if
+the definition of its lane in the process that fails it has a `failureLane`. That definition decides, not the row: a job
+enqueued under another definition gets the failure job of this one, or none. A lane added by name, without a
+definition, takes the `failure_lane` of the row, from its enqueue.
 
 - The fail and the insert of the failure job commit together. If the database refuses the insert, the job still fails,
   but without its failure job. sqlane then logs an error and emits a `failure_job_not_added` event.
@@ -773,9 +794,8 @@ When a job fails for good (no attempts left, too many stalls, or a `FatalJobErro
 - A `FatalJobError` fails the job at once, with the same failure job.
 - The failure job is an ordinary job. Its options come from the definition of its lane: `start()` and `drain()` check
   that the failure lane resolves (a definition object, or a name in `lanes` or added) and has no `failureLane` of its
-  own (`ConfigError`). A stall-fail
-  in a process that does not know the definition uses the defaults. Its row always gets `failure_lane = null` (no
-  chains), and it is exempt from `unknownLanes: 'reject'`.
+  own (`ConfigError`). A failure lane added by name, without a definition, uses the defaults. Its row always gets
+  `failure_lane = null` (no chains), and it is exempt from `unknownLanes: 'reject'`.
 - A replayed fail (lost acknowledgment) or a lost lease adds no second failure job.
 
 ### Close
@@ -936,7 +956,7 @@ MySQL files, changed where MariaDB differs. A change of the MySQL SQL must be ma
   (1193), and the store claims again without the prefix, from then on (a debug log). Only the claim statement needs
   it: the other locking reads either have no consistent read in the same statement (`renewLeases`,
   `deleteExpiredJobs`, the claim of jobs with global limits, `unblock`), or lock their one row, by primary key, before the payload
-  subquery opens the view (`lockJob` of `failJob` and of stall recovery). Each statement of the READ COMMITTED queue
+  subquery opens the view (`lockJob` of `failJob`; the stall recovery reads no payload). Each statement of the READ COMMITTED queue
   transaction has a read view of its own, so no view from an earlier statement is open.
 - **Writes by a list of ids.** On a small table, MariaDB scans the whole table for `WHERE id IN (…)` and waits for
   the rows that other claims hold: concurrent claims then deadlock. These writes force the primary key (or the index

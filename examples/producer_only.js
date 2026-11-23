@@ -11,13 +11,13 @@ const sqlane = createSqlane({ adapter: drizzleAdapter(db, { dialect: 'postgres',
 
 /**
  * Re-sends the emails of the given users. The lane is not known here: the job gets the instance defaults, and
- * globalConcurrencyLimits and failureLane come only from the options.
+ * globalConcurrencyLimits comes only from the options. The failure lane is the one of the definition of the worker.
  * @param {string[]} userIds
  * @returns {Promise<void>}
  */
 export async function resendWelcomeEmails(userIds) {
     await sqlane.enqueueMany(db, 'send_email', userIds.map(userId => ({
         payload: { to: userId, template: 'welcome' },
-        options: { maxAttempts: 10, failureLane: 'email_failed' },
+        options: { maxAttempts: 10 },
     })));
 }
