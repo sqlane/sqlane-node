@@ -17,6 +17,12 @@ import { connectTestDatabase } from '../support/test_database.js';
 /** Fast timers: the tests wait milliseconds, not minutes */
 const TIMINGS = { leaseMs: 5000, renewIntervalMs: 500, recoveryIntervalMs: 60_000 };
 
+/** @type {Record<'mysql' | 'postgres', (p: string) => string>} The index of 0008, dropped by hand */
+const DROP_JOBS_LIST_SQL = {
+    mysql: p => `ALTER TABLE ${p}jobs DROP KEY ${p}jobs_list`,
+    postgres: p => `DROP INDEX ${p}jobs_list`,
+};
+
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
 let database;
 /** @type {import('./helpers/test_adapter.js').TestAdapter} */
@@ -590,11 +596,12 @@ describe('keyStats', () => {
         await expect(sqlane.jobs.keyStats(/** @type {any} */ (options))).rejects.toThrow(InvalidOptionsError);
     });
 
-    test('on tables migrated to 0007_rate_limits only', async () => {
+    test('without the index of 0008_job_list', async () => {
         const p = nextPrefix();
         const sqlane = sqlaneOn(p);
 
-        await sqlane.schema.migrate({ targetVersion: '7.0.0' });
+        await sqlane.schema.migrate();
+        await raw(DROP_JOBS_LIST_SQL[database.family](p));
 
         const [job] = await enqueued(sqlane, 'a', 1, { globalConcurrencyLimits: [ORDER.key('a')] });
 

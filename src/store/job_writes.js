@@ -138,11 +138,11 @@ export async function readByFilter({ executor, family, p }, { jobName, statuses 
         p}payloads pl ON pl.id = j.id`;
     const rows = family === 'postgres'
         ? await executor.query(
-                `${select} WHERE j.job_name = $1 AND j.status = ANY(${arrayParam(2, 'text')})`,
+                `${select} WHERE j.lane = $1 AND j.status = ANY(${arrayParam(2, 'text')})`,
                 [jobName, statuses],
             )
         : await executor.query(
-                `${select} WHERE j.job_name = ? AND j.status IN (${marks(statuses.length)})`,
+                `${select} WHERE j.lane = ? AND j.status IN (${marks(statuses.length)})`,
                 [jobName, ...statuses],
             );
 
@@ -163,7 +163,7 @@ export async function readBatch({ executor, family, p }, { jobName, statuses, af
         const rows = await executor.query(`
             SELECT j.id AS id, (EXTRACT(EPOCH FROM j.created_at) * 1000)::bigint AS ms
               FROM ${p}jobs j
-             WHERE j.job_name = $1 AND j.status = ANY(${arrayParam(2, 'text')})${keyset}
+             WHERE j.lane = $1 AND j.status = ANY(${arrayParam(2, 'text')})${keyset}
              ORDER BY j.created_at DESC, j.id DESC
              LIMIT $3
         `, after ? [jobName, statuses, limit, new Date(after.ms).toISOString(), after.id] : [jobName, statuses, limit]);
@@ -176,7 +176,7 @@ export async function readBatch({ executor, family, p }, { jobName, statuses, af
     const rows = await executor.query(`
         SELECT j.id AS id, TIMESTAMPDIFF(MICROSECOND, '1970-01-01', j.created_at) DIV 1000 AS ms
           FROM ${p}jobs j FORCE INDEX (${p}jobs_list)
-         WHERE j.job_name = ? AND j.status IN (${marks(statuses.length)})${keyset}
+         WHERE j.lane = ? AND j.status IN (${marks(statuses.length)})${keyset}
          ORDER BY j.created_at DESC, j.id DESC
          LIMIT ?
     `, [jobName, ...statuses, ...(after ? [time, time, after.id] : []), limit]);
@@ -193,7 +193,7 @@ export async function readBatch({ executor, family, p }, { jobName, statuses, af
  */
 export async function lockJobs({ executor, family, p }, { ids, statuses }) {
     const limits = family === 'postgres' ? 'array_to_json(j.limit_keys)::text' : 'CAST(j.limit_keys AS CHAR)';
-    const columns = `j.id AS id, j.status AS status, j.attempts AS attempts, ${limits} AS limits, j.job_name AS name, `
+    const columns = `j.id AS id, j.status AS status, j.attempts AS attempts, ${limits} AS limits, j.lane AS lane, `
         + `EXISTS (SELECT 1 FROM ${p}payloads pl WHERE pl.id = j.id) AS found`;
     const rows = family === 'postgres'
         ? await executor.query(`SELECT ${columns} FROM ${p}jobs j WHERE j.id = ANY(${arrayParam(1, 'text')
@@ -209,7 +209,7 @@ export async function lockJobs({ executor, family, p }, { ids, statuses }) {
         status: /** @type {JobStatus} */ (row.status),
         attempts: Number(row.attempts),
         keys: row.limits === null || row.limits === undefined ? [] : JSON.parse(String(row.limits)),
-        name: String(row.name),
+        name: String(row.lane),
         found: foundOf(row),
     }));
 }

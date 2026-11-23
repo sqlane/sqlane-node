@@ -16,7 +16,7 @@ const NOW_MS = 'floor(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint';
 function toScheduleRow(row) {
     return {
         id: String(row.id),
-        jobName: String(row.job_name),
+        jobName: String(row.lane),
         spec: String(row.spec),
         lastSlotMs: Number(row.last_slot_ms),
         lastJobId: row.last_job_id === null ? null : String(row.last_job_id),
@@ -36,24 +36,24 @@ export async function insertScheduledJobsPostgres(executor, p, jobs, { enqueueTo
     const rows = await executor.query(`
         WITH input AS (
             SELECT * FROM jsonb_to_recordset($1::text::jsonb) AS r(
-                  id text, job_name text, payload text, limit_keys text[], limit_maxes integer[], rate_limits jsonb,
+                  id text, lane text, payload text, limit_keys text[], limit_maxes integer[], rate_limits jsonb,
                   max_attempts integer, max_stalls integer, completed_retention_ms bigint, failed_retention_ms bigint,
-                  failure_job text, delay_ms bigint, run_at timestamptz
+                  failure_lane text, delay_ms bigint, run_at timestamptz
             )
         ),
         inserted AS (
-            INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, limit_keys, limit_maxes,
-                rate_limits, enqueue_token, completed_retention_ms, failed_retention_ms, failure_job, created_at,
+            INSERT INTO ${p}jobs (id, lane, status, run_at, max_attempts, max_stalls, limit_keys, limit_maxes,
+                rate_limits, enqueue_token, completed_retention_ms, failed_retention_ms, failure_lane, created_at,
                 updated_at)
-            SELECT id, job_name, 'pending',
+            SELECT id, lane, 'pending',
                    -- Truncated: timestamptz(3) rounds, and a rounded-up time is not due for the claim
                    COALESCE(run_at, date_trunc('milliseconds', clock_timestamp() + delay_ms * interval '1 millisecond')),
                    max_attempts, max_stalls, limit_keys, limit_maxes, rate_limits, $2, completed_retention_ms,
-                   failed_retention_ms, failure_job,
+                   failed_retention_ms, failure_lane,
                    clock_timestamp(), clock_timestamp()
               FROM input ORDER BY id
             ON CONFLICT (id) DO NOTHING
-            RETURNING id, job_name
+            RETURNING id, lane
         ),
         payloads AS (
             INSERT INTO ${p}payloads (id, payload)
@@ -62,8 +62,8 @@ export async function insertScheduledJobsPostgres(executor, p, jobs, { enqueueTo
         ),
         -- One NOTIFY per name that got a job: PostgreSQL drops only a repeat of the same channel and message
         notified AS (
-            SELECT pg_notify($3, d.job_name)
-              FROM (SELECT DISTINCT job_name FROM inserted) AS d
+            SELECT pg_notify($3, d.lane)
+              FROM (SELECT DISTINCT lane FROM inserted) AS d
              WHERE $3::text IS NOT NULL
         )
         -- The reference runs the NOTIFY step: a SELECT in WITH runs only when it is read
@@ -77,15 +77,15 @@ export async function insertScheduledJobsPostgres(executor, p, jobs, { enqueueTo
 const STATEMENTS = {
     insertMissing: async (executor, p, candidates) => {
         await executor.query(`
-            INSERT INTO ${p}schedules (id, job_name, spec, last_slot_at, created_at, updated_at)
-            SELECT i.id, i.job_name, i.spec, 'epoch'::timestamptz, clock_timestamp(), clock_timestamp()
-              FROM jsonb_to_recordset($1::text::jsonb) AS i(id text, job_name text, spec text) ORDER BY i.id
+            INSERT INTO ${p}schedules (id, lane, spec, last_slot_at, created_at, updated_at)
+            SELECT i.id, i.lane, i.spec, 'epoch'::timestamptz, clock_timestamp(), clock_timestamp()
+              FROM jsonb_to_recordset($1::text::jsonb) AS i(id text, lane text, spec text) ORDER BY i.id
             ON CONFLICT (id) DO NOTHING
-        `, [JSON.stringify(candidates.map(({ id, name, spec }) => ({ id, job_name: name, spec })))]);
+        `, [JSON.stringify(candidates.map(({ id, name, spec }) => ({ id, lane: name, spec })))]);
     },
     lockRows: async (executor, p, ids) => {
         const rows = await executor.query(`
-            SELECT id, job_name, spec, last_job_id,
+            SELECT id, lane, spec, last_job_id,
                    floor(EXTRACT(EPOCH FROM last_slot_at) * 1000)::bigint AS last_slot_ms, ${NOW_MS} AS db_now_ms
               FROM ${p}schedules WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE SKIP LOCKED
         `, [ids]);
@@ -103,16 +103,16 @@ const STATEMENTS = {
     updateCursors: async (executor, p, winners) => {
         await executor.query(`
             UPDATE ${p}schedules AS s
-               SET last_slot_at = w.slot_at, spec = w.spec, job_name = w.job_name,
+               SET last_slot_at = w.slot_at, spec = w.spec, lane = w.lane,
                    last_job_id = COALESCE(w.job_id, s.last_job_id), updated_at = clock_timestamp()
-              FROM jsonb_to_recordset($1::text::jsonb) AS w(id text, slot_at timestamptz, spec text, job_name text,
+              FROM jsonb_to_recordset($1::text::jsonb) AS w(id text, slot_at timestamptz, spec text, lane text,
                    job_id text)
              WHERE s.id = w.id
         `, [JSON.stringify(winners.map(winner => ({
             id: winner.id,
             slot_at: new Date(winner.slot).toISOString(),
             spec: winner.spec,
-            job_name: winner.name,
+            lane: winner.name,
             job_id: winner.jobId,
         })))]);
     },
@@ -129,7 +129,7 @@ const STATEMENTS = {
 export async function readSchedules(executor, p, ids, now) {
     const sentAt = now();
     const rows = await executor.query(`
-        SELECT s.id, s.job_name, s.spec, s.last_job_id,
+        SELECT s.id, s.lane, s.spec, s.last_job_id,
                floor(EXTRACT(EPOCH FROM s.last_slot_at) * 1000)::bigint AS last_slot_ms, ${NOW_MS} AS db_now_ms
           FROM (SELECT 1) AS one
           LEFT JOIN ${p}schedules AS s ON $1::text[] IS NULL OR s.id = ANY($1::text[])
@@ -162,12 +162,12 @@ export async function registerSchedules(executor, p, schedules, now) {
 
         // oxlint-disable-next-line no-await-in-loop -- one chunk after the other, in id order
         await executor.query(`
-            INSERT INTO ${p}schedules (id, job_name, spec, last_slot_at, created_at, updated_at)
-            SELECT i.id, i.job_name, i.spec, date_trunc('milliseconds', clock_timestamp()), clock_timestamp(),
+            INSERT INTO ${p}schedules (id, lane, spec, last_slot_at, created_at, updated_at)
+            SELECT i.id, i.lane, i.spec, date_trunc('milliseconds', clock_timestamp()), clock_timestamp(),
                    clock_timestamp()
-              FROM jsonb_to_recordset($1::text::jsonb) AS i(id text, job_name text, spec text) ORDER BY i.id
+              FROM jsonb_to_recordset($1::text::jsonb) AS i(id text, lane text, spec text) ORDER BY i.id
             ON CONFLICT (id) DO NOTHING
-        `, [JSON.stringify(chunk.map(({ id, name, spec }) => ({ id, job_name: name, spec })))]);
+        `, [JSON.stringify(chunk.map(({ id, name, spec }) => ({ id, lane: name, spec })))]);
 
         // oxlint-disable-next-line no-await-in-loop -- one chunk after the other
         const read = await readSchedules(executor, p, chunk.map(({ id }) => id), now);

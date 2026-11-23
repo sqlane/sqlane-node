@@ -161,7 +161,8 @@ test('schema.rollback() through Prisma: a table lock held longer than lockTimeou
         await holder;
     }
 
-    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' })).resolves.toStrictEqual({ reverted: ['0008_job_list'] });
+    await expect(sqlane.schema.rollback({ targetVersion: '6.0.0' }))
+        .resolves.toStrictEqual({ reverted: ['0009_lanes', '0008_job_list'] });
 });
 
 test('sqlane.jobs: get and list through the adapter', async () => {

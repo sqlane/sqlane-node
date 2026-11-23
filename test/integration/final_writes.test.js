@@ -14,7 +14,7 @@ import { connectTestDatabase } from '../support/test_database.js';
 /** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
 const READ_JOB_SQL = {
     mysql: p => `
-        SELECT j.status, j.attempts, j.stalls, j.lock_token, j.failure_job, CAST(j.last_error AS CHAR) AS last_error,
+        SELECT j.status, j.attempts, j.stalls, j.lock_token, j.failure_lane, CAST(j.last_error AS CHAR) AS last_error,
                CAST(pl.payload AS CHAR) AS payload,
                TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(3), j.run_at) DIV 1000 AS run_in_ms,
                TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(3), j.locked_until) DIV 1000 AS lease_in_ms,
@@ -22,7 +22,7 @@ const READ_JOB_SQL = {
                j.timed_out_at IS NOT NULL AS timed_out
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id WHERE j.id = ?`,
     postgres: p => `
-        SELECT j.status, j.attempts, j.stalls, j.lock_token, j.failure_job, j.last_error::text AS last_error,
+        SELECT j.status, j.attempts, j.stalls, j.lock_token, j.failure_lane, j.last_error::text AS last_error,
                pl.payload::text AS payload,
                (EXTRACT(EPOCH FROM j.run_at - clock_timestamp()) * 1000)::bigint AS run_in_ms,
                (EXTRACT(EPOCH FROM j.locked_until - clock_timestamp()) * 1000)::bigint AS lease_in_ms,
@@ -490,7 +490,7 @@ describe('failJob', () => {
 
         await expect(readJob(tables.p, failureId)).resolves.toMatchObject({
             status: 'pending',
-            failure_job: null,
+            failure_lane: null,
             payload: {
                 job: { id: 'sync_order:o1', name: 'sync_order', payload: { orderId: 1 }, attempt: 1, maxAttempts: 3 },
                 error: { name: 'Error', message: 'gone' },

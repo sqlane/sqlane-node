@@ -95,7 +95,7 @@ export declare function rateLimited(executor: Executor, p: string, job: OwnedJob
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit Of the stale jobs.
- * @returns {Promise<readonly Record<string, unknown>[]>} id, job_name, and the parts: lingers, orphans, blocked,
+ * @returns {Promise<readonly Record<string, unknown>[]>} id, lane, and the parts: lingers, orphans, blocked,
  *     idle_rate_keys (0 or 1).
  */
 export declare function readRecoveryWork(executor: Executor, p: string, limit: number): Promise<readonly Record<string, unknown>[]>;

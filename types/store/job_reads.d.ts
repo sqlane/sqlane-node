@@ -55,7 +55,7 @@ export type ListParams = {
  */
 /**
  * A page of the jobs of a name, newest first: by enqueue time, then by id. One row more than the limit tells whether
- * a next page exists. Both families seek in the index `(job_name, created_at, id)` of 0008_job_list: PostgreSQL with
+ * a next page exists. Both families seek in the index `(lane, created_at, id)` of 0008_job_list: PostgreSQL with
  * a row comparison, which it does not do with an OR; MySQL and MariaDB with the OR, which they turn into ranges, and an
  * index hint, without which MariaDB 10.11 filters the rows of the name, and MySQL 8.4 and MariaDB 11.8 sort the rows of
  * a status.

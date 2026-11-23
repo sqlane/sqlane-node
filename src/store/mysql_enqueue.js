@@ -49,8 +49,8 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
 
     // A duplicate id keeps its row: its token is not this one.
     await executor.query(`
-        INSERT INTO ${p}jobs (id, job_name, status, run_at, max_attempts, max_stalls, limit_keys, limit_maxes,
-            rate_limits, enqueue_token, completed_retention_ms, failed_retention_ms, failure_job, created_at, updated_at)
+        INSERT INTO ${p}jobs (id, lane, status, run_at, max_attempts, max_stalls, limit_keys, limit_maxes,
+            rate_limits, enqueue_token, completed_retention_ms, failed_retention_ms, failure_lane, created_at, updated_at)
         VALUES ${values.join(', ')}
         ON DUPLICATE KEY UPDATE id = id
     `, params);

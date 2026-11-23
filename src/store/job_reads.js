@@ -47,9 +47,9 @@ function columnsOf(family, withPayload) {
     const { epochMs, json, array } = SQL[family];
     const payload = withPayload ? `, ${json('pl.payload')} AS payload, pl.id IS NOT NULL AS payload_found` : '';
 
-    return `j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
+    return `j.id, j.lane, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
             ${array('j.limit_keys')} AS limit_keys, ${array('j.limit_maxes')} AS limit_maxes,
-            ${json('j.rate_limits')} AS rate_limits, j.blocked_on, j.failure_job, ${json('j.last_error')} AS last_error,
+            ${json('j.rate_limits')} AS rate_limits, j.blocked_on, j.failure_lane, ${json('j.last_error')} AS last_error,
             j.timed_out_at IS NOT NULL AS timed_out,
             ${epochMs('j.run_at')} AS run_at_ms, ${epochMs('j.created_at')} AS created_at_ms,
             ${epochMs('j.started_at')} AS started_at_ms, ${epochMs('j.finished_at')} AS finished_at_ms,
@@ -97,7 +97,7 @@ function recordOf(row) {
 
     return {
         id,
-        name: String(row.job_name),
+        name: String(row.lane),
         status,
         attempts: Number(row.attempts),
         maxAttempts: Number(row.max_attempts),
@@ -118,7 +118,7 @@ function recordOf(row) {
             return { limit, key, max: rate.max, per: rate.per_us / 1000, burst: rate.burst, cost: rate.cost };
         }),
         blockedOn: status === 'blocked' && row.blocked_on !== null ? blockedOnOf(String(row.blocked_on)) : null,
-        failureJob: row.failure_job === null ? null : String(row.failure_job),
+        failureJob: row.failure_lane === null ? null : String(row.failure_lane),
         ...(found && { payload: parsed(row.payload) }),
     };
 }
@@ -152,7 +152,7 @@ export async function getJob(executor, family, p, id) {
 
 /**
  * A page of the jobs of a name, newest first: by enqueue time, then by id. One row more than the limit tells whether
- * a next page exists. Both families seek in the index `(job_name, created_at, id)` of 0008_job_list: PostgreSQL with
+ * a next page exists. Both families seek in the index `(lane, created_at, id)` of 0008_job_list: PostgreSQL with
  * a row comparison, which it does not do with an OR; MySQL and MariaDB with the OR, which they turn into ranges, and an
  * index hint, without which MariaDB 10.11 filters the rows of the name, and MySQL 8.4 and MariaDB 11.8 sort the rows of
  * a status.
@@ -172,7 +172,7 @@ export async function listJobs(executor, family, p, { jobName, statuses, limit, 
 
         return sql.placeholder(params.length);
     };
-    const conditions = [`j.job_name = ${param(jobName)}`];
+    const conditions = [`j.lane = ${param(jobName)}`];
 
     if (statuses) {
         conditions.push(`j.status IN (${statuses.map(status => param(status)).join(', ')})`);

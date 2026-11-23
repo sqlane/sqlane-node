@@ -888,7 +888,7 @@ describe('batches', () => {
         // again, so a walk without its keyset would read them again
         hooks.afterStatement(/SET (?:j\.)?status = 'pending'/, () => {
             hooks.beforeStatement(/AS ms\s+FROM \S+jobs j/, () => raw(
-                `UPDATE ${p}jobs SET status = 'failed' WHERE job_name = 'flaky' AND status = 'pending'`,
+                `UPDATE ${p}jobs SET status = 'failed' WHERE lane = 'flaky' AND status = 'pending'`,
             ));
         });
 

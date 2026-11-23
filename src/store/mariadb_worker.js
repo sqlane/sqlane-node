@@ -63,20 +63,20 @@ function limitsOf(row) {
 }
 
 /**
- * The SQL of the probe. `GROUP BY status, job_name`: the whole index prefix, else MariaDB does not use a loose index
+ * The SQL of the probe. `GROUP BY status, lane`: the whole index prefix, else MariaDB does not use a loose index
  * scan.
  * @param {string} p
  * @param {number} [nameCount] The names of the probe, as parameters; none: all names.
  * @returns {string}
  */
 export function probeSql(p, nameCount = 0) {
-    const names = nameCount ? ` AND job_name IN (${Array.from({ length: nameCount }, () => '?').join(', ')})` : '';
+    const names = nameCount ? ` AND lane IN (${Array.from({ length: nameCount }, () => '?').join(', ')})` : '';
 
     return `
-        SELECT job_name, TIMESTAMPDIFF(MICROSECOND, ${NOW}, MIN(run_at)) DIV 1000 AS delay_ms
-          FROM ${p}jobs FORCE INDEX (${p}jobs_status_name_run_at)
+        SELECT lane, TIMESTAMPDIFF(MICROSECOND, ${NOW}, MIN(run_at)) DIV 1000 AS delay_ms
+          FROM ${p}jobs FORCE INDEX (${p}jobs_status_lane_run_at)
          WHERE status = 'pending'${names}
-         GROUP BY status, job_name
+         GROUP BY status, lane
     `;
 }
 
@@ -99,7 +99,7 @@ export async function probe(executor, p, names) {
     const some = names && names.length <= MAX_PROBE_NAMES ? names : [];
     const rows = await executor.query(probeSql(p, some.length), some);
 
-    return rows.map(row => ({ name: String(row.job_name), delayMs: Number(row.delay_ms) }));
+    return rows.map(row => ({ name: String(row.lane), delayMs: Number(row.delay_ms) }));
 }
 
 /**
@@ -111,10 +111,10 @@ export async function probe(executor, p, names) {
  */
 function dueJobsSql(p, names, limitSql, withRates) {
     return names.map((_, index) => `(
-        SELECT id, job_name, run_at, limit_keys, limit_maxes,
+        SELECT id, lane, run_at, limit_keys, limit_maxes,
                ${withRates ? 'rate_limits' : 'rate_limits IS NOT NULL AS rated'} FROM ${p}jobs
-          FORCE INDEX (${p}jobs_status_name_run_at)
-         WHERE status = 'pending' AND job_name = ? AND run_at <= ${NOW}
+          FORCE INDEX (${p}jobs_status_lane_run_at)
+         WHERE status = 'pending' AND lane = ? AND run_at <= ${NOW}
          ORDER BY run_at, id LIMIT ${limitSql(index)}
     )`).join(' UNION ALL ');
 }
@@ -137,7 +137,7 @@ export async function findCandidates(executor, p, limitsByName, withRates) {
         return { startable: [], full: [], ratedNames: [] };
     }
 
-    const conditions = names.map(() => '(job_name = ? AND name_rank <= ?)').join(' OR ');
+    const conditions = names.map(() => '(lane = ? AND name_rank <= ?)').join(' OR ');
     /**
      * @param {string} column
      * @returns {string} Of the oldest job blocked on the key.
@@ -189,7 +189,7 @@ export async function findCandidates(executor, p, limitsByName, withRates) {
               FROM (SELECT DISTINCT limit_key FROM wk) AS f
         ),${withRates ? rates : ''}
         marked AS (
-            SELECT w.id, w.job_name, w.run_at, ${withRates ? '' : 'w.rated,'}
+            SELECT w.id, w.lane, w.run_at, ${withRates ? '' : 'w.rated,'}
                    EXISTS (
                        SELECT 1 FROM wk JOIN held h ON h.limit_key = wk.limit_key
                         WHERE wk.id = w.id AND h.held >= wk.max_slots
@@ -197,16 +197,16 @@ export async function findCandidates(executor, p, limitsByName, withRates) {
               FROM w
         ),
         ranked AS (
-            SELECT marked.*, ROW_NUMBER() OVER (PARTITION BY job_name, is_full ORDER BY run_at, id) AS name_rank
+            SELECT marked.*, ROW_NUMBER() OVER (PARTITION BY lane, is_full ORDER BY run_at, id) AS name_rank
               FROM marked
         )
-        SELECT id, job_name, ${epochMs('run_at')} AS run_at_ms, is_full${withRates ? '' : ', rated'}
+        SELECT id, lane, ${epochMs('run_at')} AS run_at_ms, is_full${withRates ? '' : ', rated'}
           FROM ranked WHERE is_full OR ${conditions}${withRates ? '' : ' OR rated'}
          ORDER BY run_at, id
     `, [...names, ...names.flatMap(name => [name, limitsByName.get(name)])]);
     const candidates = rows.map(row => ({
         id: String(row.id),
-        name: String(row.job_name),
+        name: String(row.lane),
         runAtMs: Number(row.run_at_ms),
         full: Boolean(Number(row.is_full)),
     }));
@@ -214,7 +214,7 @@ export async function findCandidates(executor, p, limitsByName, withRates) {
     return {
         startable: candidates.filter(row => !row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
         full: candidates.filter(row => row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
-        ratedNames: [...new Set(rows.filter(row => Number(row.rated)).map(row => String(row.job_name)))],
+        ratedNames: [...new Set(rows.filter(row => Number(row.rated)).map(row => String(row.lane)))],
     };
 }
 
@@ -398,8 +398,8 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
     }
 
     const lockedRows = await executor.query(`
-        SELECT id, job_name, CAST(limit_keys AS CHAR) AS limit_keys, CAST(limit_maxes AS CHAR) AS limit_maxes,
-               CAST(rate_limits AS CHAR) AS rate_limits, attempts, max_attempts, stalls, max_stalls, failure_job,
+        SELECT id, lane, CAST(limit_keys AS CHAR) AS limit_keys, CAST(limit_maxes AS CHAR) AS limit_maxes,
+               CAST(rate_limits AS CHAR) AS rate_limits, attempts, max_attempts, stalls, max_stalls, failure_lane,
                ${epochMs('created_at')} AS created_at_ms, ${epochMs('run_at')} AS run_at_ms,
                TIMESTAMPDIFF(MICROSECOND, run_at, ${NOW}) DIV 1000 AS waited_ms, ${epochMs(NOW)} AS nowms
           FROM ${p}jobs
@@ -414,14 +414,14 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
         /** @type {ClaimedJob} */
         job: {
             id: String(row.id),
-            name: String(row.job_name),
+            name: String(row.lane),
             limits: limitsOf(row),
             rateLimits: (row.rate_limits ?? null) === null ? [] : JSON.parse(String(row.rate_limits)),
             attempts: Number(row.attempts),
             maxAttempts: Number(row.max_attempts),
             stalls: Number(row.stalls),
             maxStalls: Number(row.max_stalls),
-            failureJob: row.failure_job === null ? null : String(row.failure_job),
+            failureJob: row.failure_lane === null ? null : String(row.failure_lane),
             enqueuedAt: new Date(Number(row.created_at_ms)),
             runAt: new Date(Number(row.run_at_ms)),
             // Set by the write of the claim
@@ -556,13 +556,13 @@ export async function claimDue(executor, p, { requests, free, lockToken, lockedB
 
     const prefix = snapshotIsolationOff ? SNAPSHOT_ISOLATION_OFF : '';
     const locked = (await executor.query(prefix + requests.map(() => `(
-        SELECT j.id, j.job_name, ${epochMs('j.run_at')} AS run_at_ms, j.attempts, j.max_attempts, j.stalls,
-               j.max_stalls, j.failure_job, ${epochMs('j.created_at')} AS created_at_ms, j.limit_keys IS NOT NULL OR j.rate_limits IS NOT NULL AS has_limits,
+        SELECT j.id, j.lane, ${epochMs('j.run_at')} AS run_at_ms, j.attempts, j.max_attempts, j.stalls,
+               j.max_stalls, j.failure_lane, ${epochMs('j.created_at')} AS created_at_ms, j.limit_keys IS NOT NULL OR j.rate_limits IS NOT NULL AS has_limits,
                TIMESTAMPDIFF(MICROSECOND, j.run_at, ${NOW}) DIV 1000 AS waited_ms, ${epochMs(NOW)} AS nowms,
                -- A subquery, not a join: MariaDB has no FOR UPDATE OF, so a join would lock the payload row too
                (SELECT CAST(pl.payload AS CHAR) FROM ${p}payloads pl WHERE pl.id = j.id) AS payload
-          FROM ${p}jobs j FORCE INDEX (${p}jobs_status_name_run_at)
-         WHERE j.status = 'pending' AND j.job_name = ? AND j.run_at <= ${NOW}
+          FROM ${p}jobs j FORCE INDEX (${p}jobs_status_lane_run_at)
+         WHERE j.status = 'pending' AND j.lane = ? AND j.run_at <= ${NOW}
          ORDER BY j.run_at, j.id LIMIT ?
            FOR UPDATE SKIP LOCKED
     )`).join(' UNION ALL '), requests.flatMap(request => [request.name, request.maxJobs])))
@@ -572,14 +572,14 @@ export async function claimDue(executor, p, { requests, free, lockToken, lockedB
             /** @type {import('./store.js').StartableJob} */
             job: {
                 id: String(row.id),
-                name: String(row.job_name),
+                name: String(row.lane),
                 limits: [],
                 rateLimits: [],
                 attempts: Number(row.attempts),
                 maxAttempts: Number(row.max_attempts),
                 stalls: Number(row.stalls),
                 maxStalls: Number(row.max_stalls),
-                failureJob: row.failure_job === null ? null : String(row.failure_job),
+                failureJob: row.failure_lane === null ? null : String(row.failure_lane),
                 enqueuedAt: new Date(Number(row.created_at_ms)),
                 runAt: new Date(Number(row.run_at_ms)),
                 // The time of the lock read: nothing waits after it (SKIP LOCKED; then a plain read of payloads)

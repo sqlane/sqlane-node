@@ -13,14 +13,14 @@ import { connectTestDatabase } from '../support/test_database.js';
 /** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
 const READ_JOB_SQL = {
     mysql: p => `
-        SELECT j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
-               j.limit_maxes, j.rate_limits, j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
+        SELECT j.id, j.lane, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
+               j.limit_maxes, j.rate_limits, j.failure_lane, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
                TIMESTAMPDIFF(MICROSECOND, UTC_TIMESTAMP(3), j.run_at) DIV 1000 AS run_in_ms,
                TIMESTAMPDIFF(MICROSECOND, '1970-01-01', j.run_at) DIV 1000 AS run_at_ms
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id WHERE j.id = ?`,
     postgres: p => `
-        SELECT j.id, j.job_name, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
-               j.limit_maxes, j.rate_limits, j.failure_job, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
+        SELECT j.id, j.lane, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.limit_keys,
+               j.limit_maxes, j.rate_limits, j.failure_lane, j.completed_retention_ms, j.failed_retention_ms, j.enqueue_token, pl.payload,
                (EXTRACT(EPOCH FROM j.run_at - clock_timestamp()) * 1000)::bigint AS run_in_ms,
                (EXTRACT(EPOCH FROM j.run_at) * 1000)::bigint AS run_at_ms
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id WHERE j.id = $1`,
@@ -113,7 +113,7 @@ test('adds the job in the caller\'s transaction, with the values frozen at enque
 
     expect(job).toMatchObject({
         id: 'build_report:r1',
-        job_name: 'build_report',
+        lane: 'build_report',
         status: 'pending',
         attempts: 0,
         max_attempts: 5,
@@ -122,7 +122,7 @@ test('adds the job in the caller\'s transaction, with the values frozen at enque
         limit_keys: ['report:r1', 'reports'],
         limit_maxes: [1, 3],
         rate_limits: null,
-        failure_job: 'report_failed',
+        failure_lane: 'report_failed',
         completed_retention_ms: 600_000,
         failed_retention_ms: 2_592_000_000,
         payload: { reportId: 'r1' },
@@ -243,7 +243,7 @@ test('enqueueMany adds 1,200 jobs at once', async () => {
     expect(results.filter(result => result.created)).toHaveLength(1200);
 
     const [{ count }] = await database.query(
-        `SELECT COUNT(*) AS count FROM ${database.tablePrefix}jobs WHERE job_name = 'send_email'`,
+        `SELECT COUNT(*) AS count FROM ${database.tablePrefix}jobs WHERE lane = 'send_email'`,
     );
 
     expect(Number(count)).toBe(1200);

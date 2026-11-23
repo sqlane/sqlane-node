@@ -46,7 +46,7 @@ beforeAll(async () => {
     await sqlane.enqueueMany(testAdapter.pool, limited, items);
     await database.query(`
         UPDATE ${p}jobs SET status = 'blocked',
-               blocked_on = CASE job_name WHEN 'rated' THEN '@api:x' ELSE 'one:x' END
+               blocked_on = CASE lane WHEN 'rated' THEN '@api:x' ELSE 'one:x' END
     `);
     // A slot held: the unblock finds the key full, and writes nothing
     await database.query(`

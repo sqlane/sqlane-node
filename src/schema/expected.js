@@ -1,10 +1,11 @@
 // What this version's migrations create, per dialect, for findSchemaProblems(): the tables (`<p>migrations` left
-// out), their columns and their indexes, by name, each with the migration that creates it. Written by hand from the
-// migrations: the test of a fresh and of an upgraded schema on every server checks it.
+// out), their columns and their indexes, by name, each with the migration that gives it this name and definition.
+// Written by hand from the migrations: the test of a fresh and of an upgraded schema on every server checks it.
 
 /**
  * @typedef {object} ExpectedTable
- * @property {string} migration The id that creates it: also the id of its columns and indexes, unless they name one.
+ * @property {string} migration The id of the migration that gives it this name and definition: also that of its
+ *     columns and indexes, unless they name one.
  * @property {[name: string, type: string, notNull: boolean, migration?: string][]} columns The type as the catalog
  *     reports it (MySQL `COLUMN_TYPE` without display widths, PostgreSQL `format_type`), with ` collate <name>` where
  *     the migration sets one.
@@ -13,6 +14,7 @@
  */
 
 const LIMITS = '0005_concurrency_limits';
+const LANES = '0009_lanes';
 const ASCII = ' collate ascii_bin';
 
 /** @type {Record<string, ExpectedTable>} MySQL; MariaDB with its JSON as `longtext` */
@@ -21,7 +23,7 @@ const MYSQL = {
         migration: '0001_initial',
         columns: [
             ['id', `varchar(255)${ASCII}`, true],
-            ['job_name', `varchar(128)${ASCII}`, true],
+            ['lane', `varchar(128)${ASCII}`, true, LANES],
             ['status', `varchar(16)${ASCII}`, true],
             ['run_at', 'datetime(3)', true],
             ['attempts', 'int', true],
@@ -38,7 +40,7 @@ const MYSQL = {
             ['last_error', 'json', false],
             ['completed_retention_ms', 'bigint', true],
             ['failed_retention_ms', 'bigint', true],
-            ['failure_job', `varchar(128)${ASCII}`, false],
+            ['failure_lane', `varchar(128)${ASCII}`, false, LANES],
             ['created_at', 'datetime(3)', true],
             ['started_at', 'datetime(3)', false],
             ['finished_at', 'datetime(3)', false],
@@ -49,10 +51,10 @@ const MYSQL = {
         ],
         indexes: [
             ['PRIMARY', 'unique (id)'],
-            ['jobs_status_name_run_at', '(status, job_name, run_at)'],
+            ['jobs_status_lane_run_at', '(status, lane, run_at)', LANES],
             ['jobs_expires_at', '(expires_at)'],
             ['jobs_blocked', '(status, blocked_on, run_at, id)', LIMITS],
-            ['jobs_list', '(job_name, created_at, id)', '0008_job_list'],
+            ['jobs_list', '(lane, created_at, id)', LANES],
         ],
     },
     payloads: {
@@ -64,7 +66,7 @@ const MYSQL = {
         migration: '0004_schedules',
         columns: [
             ['id', `varchar(255)${ASCII}`, true],
-            ['job_name', `varchar(128)${ASCII}`, true],
+            ['lane', `varchar(128)${ASCII}`, true, LANES],
             ['spec', `varchar(512)${ASCII}`, true],
             ['last_slot_at', 'datetime(3)', true],
             ['last_job_id', `varchar(255)${ASCII}`, false],
@@ -114,7 +116,7 @@ const POSTGRES = {
         migration: '0001_initial',
         columns: [
             ['id', `${VARCHAR}(255)${C}`, true],
-            ['job_name', `${VARCHAR}(128)${C}`, true],
+            ['lane', `${VARCHAR}(128)${C}`, true, LANES],
             ['status', `${VARCHAR}(16)${C}`, true],
             ['run_at', TIME, true],
             ['attempts', 'integer', true],
@@ -131,7 +133,7 @@ const POSTGRES = {
             ['last_error', 'jsonb', false],
             ['completed_retention_ms', 'bigint', true],
             ['failed_retention_ms', 'bigint', true],
-            ['failure_job', `${VARCHAR}(128)${C}`, false],
+            ['failure_lane', `${VARCHAR}(128)${C}`, false, LANES],
             ['created_at', TIME, true],
             ['started_at', TIME, false],
             ['finished_at', TIME, false],
@@ -142,11 +144,11 @@ const POSTGRES = {
         ],
         indexes: [
             ['jobs_pkey', 'unique (id)'],
-            ['jobs_pending', `(job_name, run_at, id)${whereStatus('pending')}`, '0002_pending_order'],
+            ['jobs_pending', `(lane, run_at, id)${whereStatus('pending')}`, LANES],
             ['jobs_running', `(locked_until)${whereStatus('running')}`],
             ['jobs_expires_at', '(expires_at)'],
             ['jobs_blocked', `(blocked_on, run_at, id)${whereStatus('blocked')}`, LIMITS],
-            ['jobs_list', '(job_name, created_at, id)', '0008_job_list'],
+            ['jobs_list', '(lane, created_at, id)', LANES],
         ],
     },
     payloads: {
@@ -158,7 +160,7 @@ const POSTGRES = {
         migration: '0004_schedules',
         columns: [
             ['id', `${VARCHAR}(255)${C}`, true],
-            ['job_name', `${VARCHAR}(128)${C}`, true],
+            ['lane', `${VARCHAR}(128)${C}`, true, LANES],
             ['spec', `${VARCHAR}(512)${C}`, true],
             ['last_slot_at', TIME, true],
             ['last_job_id', `${VARCHAR}(255)${C}`, false],

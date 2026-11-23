@@ -53,16 +53,16 @@ export const rateLimitsOf = json => `(
  */
 async function probeNames(executor, p, names) {
     const rows = await executor.query(`
-        SELECT request.name AS job_name,
+        SELECT request.name AS lane,
                (EXTRACT(EPOCH FROM next.run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
           FROM unnest(${arrayParam(1, 'text')}) AS request(name)
          CROSS JOIN LATERAL (
              SELECT run_at FROM ${p}jobs
-              WHERE status = 'pending' AND job_name = request.name ORDER BY run_at LIMIT 1
+              WHERE status = 'pending' AND lane = request.name ORDER BY run_at LIMIT 1
          ) AS next
     `, [names]);
 
-    return rows.map(row => ({ name: String(row.job_name), delayMs: Number(row.delay_ms) }));
+    return rows.map(row => ({ name: String(row.lane), delayMs: Number(row.delay_ms) }));
 }
 
 /**
@@ -81,22 +81,22 @@ export async function probe(executor, p, names) {
 
     const rows = await executor.query(`
         WITH RECURSIVE names AS (
-            (SELECT job_name FROM ${p}jobs WHERE status = 'pending' ORDER BY job_name LIMIT 1)
+            (SELECT lane FROM ${p}jobs WHERE status = 'pending' ORDER BY lane LIMIT 1)
             UNION ALL
             SELECT (
-                SELECT j.job_name FROM ${p}jobs j
-                 WHERE j.status = 'pending' AND j.job_name > names.job_name ORDER BY j.job_name LIMIT 1
-            ) FROM names WHERE names.job_name IS NOT NULL
+                SELECT j.lane FROM ${p}jobs j
+                 WHERE j.status = 'pending' AND j.lane > names.lane ORDER BY j.lane LIMIT 1
+            ) FROM names WHERE names.lane IS NOT NULL
         )
-        SELECT names.job_name,
+        SELECT names.lane,
                (EXTRACT(EPOCH FROM (
                    SELECT j.run_at FROM ${p}jobs j
-                    WHERE j.status = 'pending' AND j.job_name = names.job_name ORDER BY j.run_at LIMIT 1
+                    WHERE j.status = 'pending' AND j.lane = names.lane ORDER BY j.run_at LIMIT 1
                ) - clock_timestamp()) * 1000)::bigint AS delay_ms
-          FROM names WHERE names.job_name IS NOT NULL
+          FROM names WHERE names.lane IS NOT NULL
     `, []);
 
-    return rows.map(row => ({ name: String(row.job_name), delayMs: Number(row.delay_ms) }));
+    return rows.map(row => ({ name: String(row.lane), delayMs: Number(row.delay_ms) }));
 }
 
 /**
@@ -120,7 +120,7 @@ export async function findCandidates(executor, p, limitsByName, withRates) {
     const rows = await executor.query(candidatesSql(p, withRates), [names, names.map(name => limitsByName.get(name))]);
     const candidates = rows.map(row => ({
         id: String(row.id),
-        name: String(row.job_name),
+        name: String(row.lane),
         runAtMs: Number(row.run_at_ms),
         full: Boolean(row.is_full),
     }));
@@ -128,7 +128,7 @@ export async function findCandidates(executor, p, limitsByName, withRates) {
     return {
         startable: candidates.filter(row => !row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
         full: candidates.filter(row => row.full).map(({ id, name, runAtMs }) => ({ id, name, runAtMs })),
-        ratedNames: [...new Set(rows.filter(row => row.rated).map(row => String(row.job_name)))],
+        ratedNames: [...new Set(rows.filter(row => row.rated).map(row => String(row.lane)))],
     };
 }
 
@@ -170,9 +170,9 @@ function candidatesSql(p, withRates) {
         w AS (
             SELECT due.*, request.max_jobs FROM request
              CROSS JOIN LATERAL (
-                 SELECT id, job_name, run_at, limit_keys, limit_maxes,
+                 SELECT id, lane, run_at, limit_keys, limit_maxes,
                         ${withRates ? 'rate_limits' : 'rate_limits IS NOT NULL AS rated'} FROM ${p}jobs
-                  WHERE status = 'pending' AND job_name = request.name AND run_at <= clock_timestamp()
+                  WHERE status = 'pending' AND lane = request.name AND run_at <= clock_timestamp()
                   ORDER BY run_at, id LIMIT ${LIMIT_WINDOW_SIZE}
              ) AS due
         ),
@@ -187,16 +187,16 @@ function candidatesSql(p, withRates) {
              GROUP BY k.limit_key
         ),${withRates ? rates : ''}
         marked AS (
-            SELECT w.id, w.job_name, w.run_at, w.max_jobs, ${withRates ? '' : 'w.rated,'}
+            SELECT w.id, w.lane, w.run_at, w.max_jobs, ${withRates ? '' : 'w.rated,'}
                    EXISTS (
                        SELECT 1 FROM wk JOIN held h ON h.limit_key = wk.limit_key WHERE wk.id = w.id AND h.held >= wk.max
                    ) ${withRates ? 'OR w.id IN (SELECT id FROM rate_full)' : ''} AS is_full
               FROM w
         ),
         ranked AS (
-            SELECT *, ROW_NUMBER() OVER (PARTITION BY job_name, is_full ORDER BY run_at, id) AS name_rank FROM marked
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY lane, is_full ORDER BY run_at, id) AS name_rank FROM marked
         )
-        SELECT id, job_name, ${epochMs('run_at')} AS run_at_ms, is_full${withRates ? '' : ', rated'}
+        SELECT id, lane, ${epochMs('run_at')} AS run_at_ms, is_full${withRates ? '' : ', rated'}
           FROM ranked WHERE is_full OR name_rank <= max_jobs${withRates ? '' : ' OR rated'}
          ORDER BY run_at, id
     `;
@@ -335,9 +335,9 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
         return { jobs: [], blockedKeys: [], blockedNames: [], rateWaits: [] };
     }
 
-    const columns = `id, job_name, array_to_json(limit_keys)::text AS limit_keys,
+    const columns = `id, lane, array_to_json(limit_keys)::text AS limit_keys,
                array_to_json(limit_maxes)::text AS limit_maxes, rate_limits::text AS rate_limits, attempts,
-               max_attempts, stalls, max_stalls, failure_job, ${epochMs('created_at')} AS created_at_ms,
+               max_attempts, stalls, max_stalls, failure_lane, ${epochMs('created_at')} AS created_at_ms,
                ${epochMs('run_at')} AS run_at_ms,
                (EXTRACT(EPOCH FROM clock_timestamp() - run_at) * 1000)::bigint AS waited_ms`;
     const pending = `FROM ${p}jobs
@@ -360,14 +360,14 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
         /** @type {ClaimedJob} */
         job: {
             id: String(row.id),
-            name: String(row.job_name),
+            name: String(row.lane),
             limits: limitsOf(row),
             rateLimits: row.rate_limits === null ? [] : JSON.parse(String(row.rate_limits)),
             attempts: Number(row.attempts),
             maxAttempts: Number(row.max_attempts),
             stalls: Number(row.stalls),
             maxStalls: Number(row.max_stalls),
-            failureJob: row.failure_job === null ? null : String(row.failure_job),
+            failureJob: row.failure_lane === null ? null : String(row.failure_lane),
             enqueuedAt: new Date(Number(row.created_at_ms)),
             runAt: new Date(Number(row.run_at_ms)),
             // Set by the write of the claim
@@ -501,9 +501,9 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
 function claimedJobsJson(p) {
     return `(
         SELECT json_agg(json_build_object(
-                   'id', c.id, 'name', c.job_name, 'attempts', c.attempts,
+                   'id', c.id, 'lane', c.lane, 'attempts', c.attempts,
                    'maxAttempts', c.max_attempts, 'stalls', c.stalls, 'maxStalls', c.max_stalls,
-                   'failureJob', c.failure_job, 'createdAtMs', c.created_at_ms, 'waitedMs', c.waited_ms,
+                   'failureLane', c.failure_lane, 'createdAtMs', c.created_at_ms, 'waitedMs', c.waited_ms,
                    'runAtMs', ${epochMs('c.run_at')}, 'startedAtMs', ${epochMs('c.started_at')},
                    'found', pl.id IS NOT NULL, 'payload', pl.payload
                ) ORDER BY c.run_at, c.id)
@@ -517,21 +517,21 @@ function claimedJobsJson(p) {
  * @returns {import('./store.js').StartableJob[]}
  */
 function parseClaimedJobs(json, lockToken) {
-    /** @type {{ id: string, name: string, attempts: number, maxAttempts: number, stalls: number, maxStalls: number,
-     *     failureJob: string | null, createdAtMs: number, waitedMs: number, runAtMs: number, startedAtMs: number,
+    /** @type {{ id: string, lane: string, attempts: number, maxAttempts: number, stalls: number, maxStalls: number,
+     *     failureLane: string | null, createdAtMs: number, waitedMs: number, runAtMs: number, startedAtMs: number,
      *     found: boolean, payload: unknown }[]} */
     const jobs = (json ?? null) === null ? [] : JSON.parse(String(json));
 
     return jobs.map(job => ({
         id: job.id,
-        name: job.name,
+        name: job.lane,
         limits: [],
         rateLimits: [],
         attempts: job.attempts,
         maxAttempts: job.maxAttempts,
         stalls: job.stalls,
         maxStalls: job.maxStalls,
-        failureJob: job.failureJob,
+        failureJob: job.failureLane,
         enqueuedAt: new Date(job.createdAtMs),
         runAt: new Date(Number(job.runAtMs)),
         startedAt: new Date(Number(job.startedAtMs)),
@@ -623,7 +623,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
               FROM request
              CROSS JOIN LATERAL (
                  SELECT id, run_at, limit_keys IS NOT NULL OR rate_limits IS NOT NULL AS limited FROM ${p}jobs
-                  WHERE status = 'pending' AND job_name = request.name AND run_at <= clock_timestamp()
+                  WHERE status = 'pending' AND lane = request.name AND run_at <= clock_timestamp()
                   ORDER BY run_at, id LIMIT request.max_jobs
                     FOR UPDATE SKIP LOCKED
              ) AS due
@@ -642,27 +642,27 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
                    timed_out_at = NULL, updated_at = clock_timestamp()
               FROM picked
              WHERE j.id = picked.id
-            RETURNING j.id, j.job_name, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
-                      j.failure_job,
+            RETURNING j.id, j.lane, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
+                      j.failure_lane,
                       ${epochMs('j.created_at')} AS created_at_ms,
                       (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
         ),
         -- The statement's snapshot: the picked jobs are still pending in it. A full claim does not read them: the next
         -- turn claims again
         next AS (
-            SELECT request.name AS job_name,
+            SELECT request.name AS lane,
                    (EXTRACT(EPOCH FROM n.run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
               FROM unnest(${arrayParam(1, 'text')}) AS request(name)
              CROSS JOIN LATERAL (
                  SELECT run_at FROM ${p}jobs
-                  WHERE status = 'pending' AND job_name = request.name AND id NOT IN (SELECT id FROM picked)
+                  WHERE status = 'pending' AND lane = request.name AND id NOT IN (SELECT id FROM picked)
                   ORDER BY run_at LIMIT 1
              ) AS n
              WHERE (SELECT count(*) FROM picked) < $8
         )
         SELECT ${claimedJobsJson(p)} AS jobs,
                (SELECT count(*) FROM picked) >= $8 AS full,
-               (SELECT json_agg(json_build_object('name', job_name, 'delayMs', delay_ms)) FROM next)::text AS next,
+               (SELECT json_agg(json_build_object('name', lane, 'delayMs', delay_ms)) FROM next)::text AS next,
                -- The names with a locked row left, under any cap: the runner replays the choice for its tie pointer
                (SELECT json_agg(DISTINCT name) FROM locked WHERE id NOT IN (SELECT id FROM picked))::text AS unpicked,
                (SELECT json_agg(DISTINCT name) FROM locked_all WHERE limited)::text AS limited
@@ -706,7 +706,7 @@ async function claimDueOfName(executor, p, { name, limit, lockToken, lockedBy, l
     const [row] = await executor.query(`
         WITH locked AS (
             SELECT id, limit_keys IS NOT NULL OR rate_limits IS NOT NULL AS limited FROM ${p}jobs
-             WHERE status = 'pending' AND job_name = $1 AND run_at <= clock_timestamp()
+             WHERE status = 'pending' AND lane = $1 AND run_at <= clock_timestamp()
              ORDER BY run_at, id LIMIT $2
                FOR UPDATE SKIP LOCKED
         ),
@@ -721,8 +721,8 @@ async function claimDueOfName(executor, p, { name, limit, lockToken, lockedBy, l
                    timed_out_at = NULL, updated_at = clock_timestamp()
               FROM picked
              WHERE j.id = picked.id
-            RETURNING j.id, j.job_name, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
-                      j.failure_job,
+            RETURNING j.id, j.lane, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
+                      j.failure_lane,
                       ${epochMs('j.created_at')} AS created_at_ms,
                       (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
         )
@@ -730,7 +730,7 @@ async function claimDueOfName(executor, p, { name, limit, lockToken, lockedBy, l
         SELECT ${claimedJobsJson(p)} AS jobs,
                (
                    SELECT (EXTRACT(EPOCH FROM run_at - clock_timestamp()) * 1000)::bigint FROM ${p}jobs
-                    WHERE status = 'pending' AND job_name = $1 AND id NOT IN (SELECT id FROM picked)
+                    WHERE status = 'pending' AND lane = $1 AND id NOT IN (SELECT id FROM picked)
                     ORDER BY run_at LIMIT 1
                ) AS next_delay_ms,
                (SELECT bool_or(limited) FROM locked) AS limited

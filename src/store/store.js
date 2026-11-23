@@ -430,7 +430,7 @@ export function createStore(adapter, tablePrefix, logger) {
             return {
                 // No stale job: one row with null ids
                 stale: rows.filter(row => row.id !== null)
-                    .map(row => ({ id: String(row.id), name: String(row.job_name) })),
+                    .map(row => ({ id: String(row.id), name: String(row.lane) })),
                 lingers: Number(parts.lingers) > 0,
                 orphans: Number(parts.orphans) > 0,
                 blocked: Number(parts.blocked) > 0,

@@ -1,6 +1,9 @@
 export type Executor = import('./types.js').Executor;
-export type DownStep = string | {
+export type Step = string | {
     ifIndexExists: [table: string, index: string];
+    sql: string;
+} | {
+    ifColumnExists: [table: string, column: string];
     sql: string;
 };
 export type Migration = {
@@ -16,11 +19,11 @@ export type Migration = {
     /**
      * Its SQL, in order.
      */
-    statements: readonly string[];
+    statements: readonly Step[];
     /**
      * Reverts it: every migration tagged above 6.0.0 has one.
      */
-    down?: readonly DownStep[];
+    down?: readonly Step[];
 };
 export type SchemaContext = {
     /**

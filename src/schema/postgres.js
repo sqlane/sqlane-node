@@ -164,6 +164,21 @@ export function postgresMigrations(p) {
             statements: [`CREATE INDEX IF NOT EXISTS ${p}jobs_list ON ${p}jobs (job_name, created_at, id)`],
             down: [`DROP INDEX IF EXISTS ${p}jobs_list`],
         },
+        {
+            // 9.0: the kind of a job is its lane. Renames only: metadata, in the transaction of the migration.
+            id: '0009_lanes',
+            version: '9.0.0',
+            statements: [
+                `ALTER TABLE ${p}jobs RENAME COLUMN job_name TO lane`,
+                `ALTER TABLE ${p}jobs RENAME COLUMN failure_job TO failure_lane`,
+                `ALTER TABLE ${p}schedules RENAME COLUMN job_name TO lane`,
+            ],
+            down: [
+                `ALTER TABLE ${p}jobs RENAME COLUMN lane TO job_name`,
+                `ALTER TABLE ${p}jobs RENAME COLUMN failure_lane TO failure_job`,
+                `ALTER TABLE ${p}schedules RENAME COLUMN lane TO job_name`,
+            ],
+        },
     ];
 }
 

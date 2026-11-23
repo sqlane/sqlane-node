@@ -207,11 +207,11 @@ async function addFailureJob(executor, p, row, { error, buildFailureJob }) {
     try {
         newJob = buildFailureJob({
             id: String(row.id),
-            name: String(row.job_name),
+            name: String(row.lane),
             payload: row.payload === null ? null : JSON.parse(String(row.payload)),
             attempt: Number(row.attempts) + 1,
             maxAttempts: Number(row.max_attempts),
-            failureJob: String(row.failure_job),
+            failureJob: String(row.failure_lane),
             error,
         });
     } catch (buildError) {
@@ -241,7 +241,7 @@ async function addFailureJob(executor, p, row, { error, buildFailureJob }) {
  */
 async function lockJob(executor, p, where, params) {
     const [row] = await executor.query(`
-        SELECT j.id, j.job_name, j.lock_token, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.failure_job,
+        SELECT j.id, j.lane, j.lock_token, j.attempts, j.max_attempts, j.stalls, j.max_stalls, j.failure_lane,
                COALESCE(extract(epoch FROM ${NOW} - j.started_at) * 1000, 0)::float8 AS run_ms,
                pl.payload::text AS payload
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id
@@ -279,7 +279,9 @@ export async function failJob(executor, p, job, { error, buildFailureJob }) {
 
     return {
         changed: true,
-        failureJob: row.failure_job === null ? null : await addFailureJob(executor, p, row, { error, buildFailureJob }),
+        failureJob: row.failure_lane === null
+            ? null
+            : await addFailureJob(executor, p, row, { error, buildFailureJob }),
     };
 }
 
@@ -360,12 +362,12 @@ export async function rateLimited(executor, p, job, { limits, retryAfterMs, erro
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit Of the stale jobs.
- * @returns {Promise<readonly Record<string, unknown>[]>} id, job_name, and the parts: lingers, orphans, blocked,
+ * @returns {Promise<readonly Record<string, unknown>[]>} id, lane, and the parts: lingers, orphans, blocked,
  *     idle_rate_keys (0 or 1).
  */
 export async function readRecoveryWork(executor, p, limit) {
     return executor.query(`
-        SELECT stale.id, stale.job_name, parts.*
+        SELECT stale.id, stale.lane, parts.*
           FROM (
               SELECT EXISTS (
                          SELECT 1 FROM ${p}concurrency_slots WHERE held_until < statement_timestamp()
@@ -381,7 +383,7 @@ export async function readRecoveryWork(executor, p, limit) {
                      EXISTS (SELECT 1 FROM ${p}rate_limits WHERE tat < statement_timestamp())::int AS idle_rate_keys
           ) AS parts
           LEFT JOIN (
-              SELECT id, job_name, locked_until FROM ${p}jobs
+              SELECT id, lane, locked_until FROM ${p}jobs
                WHERE status = 'running' AND locked_until < statement_timestamp()
                ORDER BY locked_until LIMIT $1
           ) AS stale ON true
@@ -439,7 +441,9 @@ export async function recoverStaleJob(executor, p, id, { leaseMs, buildFailureJo
 
     return {
         result: 'failed',
-        failureJob: row.failure_job === null ? null : await addFailureJob(executor, p, row, { error, buildFailureJob }),
+        failureJob: row.failure_lane === null
+            ? null
+            : await addFailureJob(executor, p, row, { error, buildFailureJob }),
         ...stalledRun(row),
     };
 }
@@ -480,12 +484,12 @@ export async function unblock(executor, p, keys) {
         unblocked AS (
             UPDATE ${p}jobs j SET status = 'pending', blocked_on = NULL, updated_at = ${NOW}
               FROM picked WHERE j.id = picked.id
-            RETURNING j.job_name
+            RETURNING j.lane
         )
-        SELECT DISTINCT job_name FROM unblocked
+        SELECT DISTINCT lane FROM unblocked
     `, [keys]);
 
-    return rows.map(row => String(row.job_name));
+    return rows.map(row => String(row.lane));
 }
 
 /**
@@ -571,7 +575,7 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
         unblocked AS (
             UPDATE ${p}jobs j SET status = 'pending', blocked_on = NULL, updated_at = ${NOW}
               FROM marked WHERE j.id = marked.id AND NOT marked.held_back
-            RETURNING j.job_name, marked.limit_key
+            RETURNING j.lane, marked.limit_key
         ),
         -- Of each key, the first job held back: its wait after the prefix; else the last one of the prefix: the wait of a
         -- job like it after the prefix (admitQueue). The debt after the prefix: the need of its last job (null: none)
@@ -594,7 +598,7 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
         counts AS (
             SELECT limit_key, count(*) AS unblocked FROM unblocked GROUP BY limit_key
         )
-        SELECT (SELECT json_agg(DISTINCT job_name) FROM unblocked)::text AS names,
+        SELECT (SELECT json_agg(DISTINCT lane) FROM unblocked)::text AS names,
                (
                    SELECT json_agg(json_build_object(
                        'key', w.limit_key, 'waitUs', w.wait_us, 'left', w.left_over,
@@ -755,7 +759,7 @@ export async function deleteExpiredJobs(executor, p, limit) {
 export async function makeDue(executor, p, names) {
     await executor.run(`
         UPDATE ${p}jobs SET run_at = ${runAt('interval \'0\'')}
-         WHERE status = 'pending' AND job_name = ANY(${arrayParam(1, 'text')}) AND run_at > ${NOW}
+         WHERE status = 'pending' AND lane = ANY(${arrayParam(1, 'text')}) AND run_at > ${NOW}
     `, [names]);
 }
 
@@ -767,7 +771,7 @@ export async function makeDue(executor, p, names) {
  */
 export async function getStats(executor, p) {
     const rows = await executor.query(`
-        SELECT job_name,
+        SELECT lane,
                count(*) FILTER (WHERE status = 'pending') AS pending,
                count(*) FILTER (WHERE status = 'blocked') AS blocked,
                count(*) FILTER (WHERE status = 'pending' AND run_at <= ${NOW}) AS due,
@@ -778,12 +782,12 @@ export async function getStats(executor, p) {
                (EXTRACT(EPOCH FROM ${NOW} - min(run_at) FILTER (WHERE status = 'pending' AND run_at <= ${NOW}))
                    * 1000)::bigint AS oldest_due_age_ms
           FROM ${p}jobs
-         GROUP BY job_name
-         ORDER BY job_name
+         GROUP BY lane
+         ORDER BY lane
     `, []);
 
     return rows.map(row => ({
-        name: String(row.job_name),
+        name: String(row.lane),
         pending: Number(row.pending),
         blocked: Number(row.blocked),
         due: Number(row.due),

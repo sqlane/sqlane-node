@@ -23,7 +23,7 @@ export declare const LIMIT_WINDOW_SIZE = 500;
  */
 export declare const rateLimitsTable: (json: string) => string;
 /**
- * The SQL of the probe. `GROUP BY status, job_name`: the whole index prefix, else MariaDB does not use a loose index
+ * The SQL of the probe. `GROUP BY status, lane`: the whole index prefix, else MariaDB does not use a loose index
  * scan.
  * @param {string} p
  * @param {number} [nameCount] The names of the probe, as parameters; none: all names.

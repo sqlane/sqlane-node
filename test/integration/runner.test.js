@@ -74,13 +74,13 @@ async function freshSqlane(options = {}) {
 
 /**
  * @param {string} p
- * @returns {Promise<{ id: string, job_name: string, status: string, attempts: number }[]>}
+ * @returns {Promise<{ id: string, lane: string, status: string, attempts: number }[]>}
  */
 async function readJobs(p) {
-    return (await database.query(`SELECT id, job_name, status, attempts FROM ${p}jobs ORDER BY created_at, id`))
+    return (await database.query(`SELECT id, lane, status, attempts FROM ${p}jobs ORDER BY created_at, id`))
         .map(row => ({
             id: String(row.id),
-            job_name: String(row.job_name),
+            lane: String(row.lane),
             status: String(row.status),
             attempts: Number(row.attempts),
         }));
@@ -275,8 +275,8 @@ describe('start()', () => {
             error: { name: 'Error', message: 'broken' },
         });
         await expect(readJobs(p)).resolves.toMatchObject([
-            { job_name: 'build', status: 'failed', attempts: 2 },
-            { job_name: 'report_failed', status: expect.stringMatching(/running|completed/) },
+            { lane: 'build', status: 'failed', attempts: 2 },
+            { lane: 'report_failed', status: expect.stringMatching(/running|completed/) },
         ]);
     });
 
@@ -293,8 +293,8 @@ describe('start()', () => {
         await waitFor(async () => (await readJobs(p)).every(job => ['failed', 'completed'].includes(job.status)));
 
         await expect(readJobs(p)).resolves.toMatchObject([
-            { job_name: 'fatal', status: 'failed', attempts: 1 },
-            { job_name: 'limited', status: 'completed', attempts: 2 },
+            { lane: 'fatal', status: 'failed', attempts: 1 },
+            { lane: 'limited', status: 'completed', attempts: 2 },
         ]);
         expect(events.find(event => event.type === 'retried')).toMatchObject({ jobName: 'limited', delayMs: 300 });
     });
@@ -836,8 +836,8 @@ describe('RateLimitedError', () => {
             await waitFor(async () => (await statusCounts(p)).completed === 2, 3000);
 
             await expect(readJobs(p)).resolves.toMatchObject([
-                { job_name: 'call', status: 'completed', attempts: 2 },
-                { job_name: 'plain', status: 'completed', attempts: 2 },
+                { lane: 'call', status: 'completed', attempts: 2 },
+                { lane: 'plain', status: 'completed', attempts: 2 },
             ]);
             // The two jobs run at once: their events come in either order
             const retried = events.filter(event => event.type === 'retried')

@@ -33,7 +33,7 @@ const placeholders = values => values.map(() => '?').join(', ');
 function toScheduleRow(row) {
     return {
         id: String(row.id),
-        jobName: String(row.job_name),
+        jobName: String(row.lane),
         spec: String(row.spec),
         lastSlotMs: Number(row.last_slot_ms),
         lastJobId: row.last_job_id === null ? null : String(row.last_job_id),
@@ -44,7 +44,7 @@ function toScheduleRow(row) {
 const STATEMENTS = {
     insertMissing: async (executor, p, candidates) => {
         await executor.query(`
-            INSERT INTO ${p}schedules (id, job_name, spec, last_slot_at, created_at, updated_at)
+            INSERT INTO ${p}schedules (id, lane, spec, last_slot_at, created_at, updated_at)
             VALUES ${candidates.map(() => `(?, ?, ?, ${EPOCH}, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))`).join(', ')}
             ON DUPLICATE KEY UPDATE id = id
         `, candidates.flatMap(({ id, name, spec }) => [id, name, spec]));
@@ -52,7 +52,7 @@ const STATEMENTS = {
     lockRows: async (executor, p, ids) => {
         // FORCE INDEX: a locking read has no semi-consistent read, a scan would lock other rows
         const rows = await executor.query(`
-            SELECT s.id, s.job_name, s.spec, s.last_job_id, ${LAST_SLOT_MS} AS last_slot_ms, ${NOW_MS} AS db_now_ms
+            SELECT s.id, s.lane, s.spec, s.last_job_id, ${LAST_SLOT_MS} AS last_slot_ms, ${NOW_MS} AS db_now_ms
               FROM ${p}schedules s FORCE INDEX (PRIMARY)
              WHERE s.id IN (${placeholders(ids)}) ORDER BY s.id FOR UPDATE SKIP LOCKED
         `, ids);
@@ -79,7 +79,7 @@ const STATEMENTS = {
             UPDATE ${p}schedules FORCE INDEX (PRIMARY)
                SET last_slot_at = CASE id ${cases} END,
                    spec = CASE id ${cases} END,
-                   job_name = CASE id ${cases} END,
+                   lane = CASE id ${cases} END,
                    ${withJob.length ? `last_job_id = CASE id ${withJob.map(() => 'WHEN ? THEN ?').join(' ')} ELSE last_job_id END,` : ''}
                    updated_at = UTC_TIMESTAMP(3)
              WHERE id IN (${placeholders(winners)})
@@ -104,7 +104,7 @@ const STATEMENTS = {
 export async function readSchedules(executor, p, ids, now) {
     const sentAt = now();
     const rows = await executor.query(`
-        SELECT s.id, s.job_name, s.spec, s.last_job_id, ${LAST_SLOT_MS} AS last_slot_ms, ${NOW_MS} AS db_now_ms
+        SELECT s.id, s.lane, s.spec, s.last_job_id, ${LAST_SLOT_MS} AS last_slot_ms, ${NOW_MS} AS db_now_ms
           FROM (SELECT 1 AS one) AS one
           LEFT JOIN ${p}schedules s ON ${ids === null ? 'TRUE' : `s.id IN (${placeholders(ids)})`}
          ORDER BY s.id
@@ -136,7 +136,7 @@ export async function registerSchedules(executor, p, schedules, now) {
 
         // oxlint-disable-next-line no-await-in-loop -- one chunk after the other, in id order
         await executor.query(`
-            INSERT INTO ${p}schedules (id, job_name, spec, last_slot_at, created_at, updated_at)
+            INSERT INTO ${p}schedules (id, lane, spec, last_slot_at, created_at, updated_at)
             VALUES ${chunk.map(() => '(?, ?, ?, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))').join(', ')}
             ON DUPLICATE KEY UPDATE id = id
         `, chunk.flatMap(({ id, name, spec }) => [id, name, spec]));
