@@ -541,6 +541,53 @@ describe('the check of the server', () => {
         expect(events.at(-1)).toMatchObject({ type: 'error', operation: 'server_check', error: expect.any(ConfigError) });
     });
 
+    // The registration of the schedules retries each 20 ms: it would run many times in the waits
+    const fastSchedules = { pollInterval: '50ms', timings: { schedules: { retryMs: 20, maxRetryMs: 20 } } };
+
+    test('a database that is down at start(): the schedules register and fire once the check passes', async () => {
+        const { sqlane, state, statements } = workerStartedWhileDown(undefined, fastSchedules);
+
+        sqlane.schedule('a', { every: '1s' });
+        await sqlane.start();
+        await new Promise((resolve) => {
+            setTimeout(resolve, 200);
+        });
+        state.up = true;
+        await new Promise((resolve) => {
+            setTimeout(resolve, 1300);
+        });
+        await sqlane.close({ deadline: 0 });
+
+        const registered = statements.findIndex(sql => sql.includes('INSERT INTO sqlane_schedules'));
+
+        expect(statements[0]).toBe('SELECT VERSION() AS version');
+        expect(registered).toBeGreaterThan(0);
+        // A fire: the lock of the row of the schedule, after the registration
+        expect(statements.findIndex(sql => /FROM sqlane_schedules[^]*FOR UPDATE/u.test(sql)))
+            .toBeGreaterThan(registered);
+    });
+
+    test('a database that is down at start(), then the wrong one: no statement on the schedules, no slot job', async () => {
+        const { sqlane, state, statements, events } = workerStartedWhileDown({
+            dialect: 'mysql',
+            version: '11.8.9-MariaDB-ubu2404',
+        }, fastSchedules);
+
+        sqlane.schedule('a', { every: '1s' });
+        await sqlane.start();
+        await new Promise((resolve) => {
+            setTimeout(resolve, 200);
+        });
+        state.up = true;
+        await new Promise((resolve) => {
+            setTimeout(resolve, 1300);
+        });
+        await sqlane.close({ deadline: 0 });
+
+        expect(statements).toStrictEqual(['SELECT VERSION() AS version']);
+        expect(events.at(-1)).toMatchObject({ type: 'error', operation: 'server_check', error: expect.any(ConfigError) });
+    });
+
     test('a database that is down at start(), then a sql_mode with NO_BACKSLASH_ESCAPES: an error event, and no claim', async () => {
         const { sqlane, state, statements, events } = workerStartedWhileDown({
             dialect: 'mysql',
