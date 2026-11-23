@@ -120,6 +120,11 @@ export type Scheduler = {
      */
     start: (read: ScheduleRead | null) => void;
     /**
+     * Registers now, then arms the timer: start() did not register (the check of
+     * the server did not run).
+     */
+    startRegistering: () => void;
+    /**
      * Clears the timer, waits for the fire in flight.
      */
     stop: () => Promise<void>;
@@ -172,6 +177,8 @@ export type FireOutcome = {
  * @property {() => void} prepare At start(): resolves the definitions, and builds a test job of each schedule.
  * @property {() => Promise<ScheduleRead>} register Inserts the missing rows, reads them all.
  * @property {(read: ScheduleRead | null) => void} start Arms the timer. Null: the registration failed; it retries.
+ * @property {() => void} startRegistering Registers now, then arms the timer: start() did not register (the check of
+ *     the server did not run).
  * @property {() => Promise<void>} stop Clears the timer, waits for the fire in flight.
  * @property {() => Promise<import('./types.js').ScheduleInfo[]>} list
  * @property {(error: unknown) => void} reportFailure The registration of start() failed: logged as the fires are.

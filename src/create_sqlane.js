@@ -295,8 +295,8 @@ export function createSqlane(options) {
                 throw error;
             }
 
-            // The database is down: start anyway, as for the schedules. The dispatcher checks again before its first
-            // turn, and claims nothing before the check passes
+            // The database is down: start anyway. The dispatcher checks again before its first turn, and claims
+            // nothing before the check passes; the schedules register once it passes
             reportError('server_check', error);
             serverCheck = () => checkServerOnce('start()');
         }
@@ -304,7 +304,9 @@ export function createSqlane(options) {
         /** @type {import('./store/store.js').ScheduleRead | null} */
         let read = null;
 
-        if (scheduler.size() > 0) {
+        // After a failed check, the schedules wait for it: their registration and their fires write too, and a wrong
+        // server gets none of them
+        if (scheduler.size() > 0 && !serverCheck) {
             try {
                 read = await scheduler.register();
             } catch (error) {
@@ -325,7 +327,24 @@ export function createSqlane(options) {
             return;
         }
 
-        await runner.start({ serverCheck });
+        if (serverCheck) {
+            const check = serverCheck;
+
+            // The dispatcher runs it before its first turn, again until it passes; never after a ConfigError
+            await runner.start({
+                serverCheck: async () => {
+                    await check();
+
+                    if (!runner.isClosed()) {
+                        scheduler.startRegistering();
+                    }
+                },
+            });
+
+            return;
+        }
+
+        await runner.start();
 
         // close() ran during runner.start()
         if (!runner.isClosed()) {
