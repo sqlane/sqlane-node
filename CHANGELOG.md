@@ -1,5 +1,54 @@
 # @sqlane/core
 
+## 8.0.0
+
+### Major Changes
+
+- [#150](https://github.com/sqlane/sqlane-node/pull/150) [`311471e`](https://github.com/sqlane/sqlane-node/commit/311471edf2b2777c0a4bde41f67ca983a6e4b4b7) - `sqlane.jobs.stats()` counts the blocked jobs apart from the pending ones, and the completed jobs that sqlane keeps.
+  `sqlane.schedules.list()` lists the schedules. The enqueue option that deduplicates is `dedupeKey`.
+
+    Breaking changes:
+
+    - `sqlane.getStats()` is now `sqlane.jobs.stats()`. `pending` no longer counts the blocked jobs: add the new `blocked`
+      for the number of 7.x. The new `completed` counts the completed jobs until cleanup deletes them, and a name with only
+      completed jobs now has an entry. `stats()` reads every row kept, on every dialect, as
+      7.x did.
+    - `sqlane.getSchedules()` is now `sqlane.schedules.list()`, with the same result.
+    - The enqueue option `jobId` is now `dedupeKey`, with the same rules, in `enqueue` and in the items of `enqueueMany`.
+      The job id is still `<job name>:<dedupeKey>`. `jobId` rejects with an `InvalidOptionsError` that names `dedupeKey`.
+    - Types: `JobStats` gains `blocked` and `completed`; `EnqueueOptions.jobId` is now `dedupeKey`; the new
+      `SqlaneSchedules`. See
+      [Migrating from 7.x to 8.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/8.md).
+
+- [#145](https://github.com/sqlane/sqlane-node/pull/145) [`744b771`](https://github.com/sqlane/sqlane-node/commit/744b77122233717568c817ac9cc20a4d4d2612b8) - The schema moves to `sqlane.schema`, and each migration is tagged with the version of sqlane that ships it.
+  `schema.migrate({ targetVersion })` applies the migrations up to a version, so an app's own migration tool can pin one
+  per file. `schema.rollback({ targetVersion })` reverts the migrations tagged above a version, and `schema.drop()` drops
+  the tables of sqlane. `schema.getMigrationStatus()` reads the recorded migrations, and `schema.findSchemaProblems()`
+  compares the tables, columns and indexes with what this version needs: check both before `start()` or in a readiness
+  probe. 8.0 adds no migration; a database below 7.1 runs `schema.migrate()` for `0008_job_list`, which 8.0
+  requires.
+
+    Breaking changes:
+
+    - `sqlane.migrate()` is now `sqlane.schema.migrate()`. Its error messages start with `schema.migrate():`.
+    - `getMigrations()` and the `Migration` type are removed. If your migration tool applied their SQL, call
+      `schema.migrate({ targetVersion })` from a migration file instead. A schema built from `getMigrations()` makes
+      `schema.migrate()` fail: drop its tables and migrate again, or record the ids in `sqlane_migrations` by hand. See
+      [Migrating from 7.x to 8.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/8.md).
+
+### Patch Changes
+
+- [#147](https://github.com/sqlane/sqlane-node/pull/147) [`a9ba4b4`](https://github.com/sqlane/sqlane-node/commit/a9ba4b43e96f5bca8cb12a0b4fb3f69a08806989) - When the database is down at `start()`, the stall recovery and the cleanup of finished jobs now wait for the server
+  check, as the claims do. Before, they ran on their timers before the check, and kept running when the server turned out
+  to be the wrong database, an unsupported version or a `sql_mode` that sqlane rejects: they could lock and delete rows on
+  that server. Now such a server gets no recovery and no cleanup.
+
+- [#151](https://github.com/sqlane/sqlane-node/pull/151) [`a49845b`](https://github.com/sqlane/sqlane-node/commit/a49845ba46c7b22a7df6946467ff9e83e3e048a2) - When the database is down at `start()`, the schedules now wait for the server check, as the claims, the stall recovery
+  and the cleanup do. Before, the scheduler registered and fired them as soon as the database came back, even when the
+  server turned out to be the wrong database, an unsupported version or a `sql_mode` that sqlane rejects: it wrote the
+  schedules table and enqueued slot jobs on that server. Now such a server gets no schedule writes. A start with the
+  database up is unchanged.
+
 ## 7.1.0
 
 ### Minor Changes
