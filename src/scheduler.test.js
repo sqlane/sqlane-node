@@ -1004,7 +1004,7 @@ describe('review fixes', () => {
         expect(logger.error).toHaveBeenCalledTimes(2);
     });
 
-    test('getSchedules() before start(), with jitter: a slot that has come and is not due yet', async () => {
+    test('schedules.list() before start(), with jitter: a slot that has come and is not due yet', async () => {
         const { scheduler } = setup({ schedules: [['job_0', { every: '1h', jitter: '59m' }]] });
         const due = dueTime('job_0', { every: '1h', jitter: '59m' }, '2026-06-01T10:00:00Z');
 

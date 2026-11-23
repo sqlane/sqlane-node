@@ -185,24 +185,24 @@ describe.each([
         const { sqlane, p } = await freshSqlane();
 
         await db.transaction().execute(async (trx) => {
-            await expect(sqlane.enqueue(trx, 'ping', { n: 1 }, { jobId: 'a' }))
+            await expect(sqlane.enqueue(trx, 'ping', { n: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(db.transaction().execute(async (trx) => {
-            await sqlane.enqueue(trx, 'ping', { n: 2 }, { jobId: 'b' });
+            await sqlane.enqueue(trx, 'ping', { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-        await expect(sqlane.enqueue(db, 'ping', { n: 3 }, { jobId: 'a' })).resolves.toMatchObject({ created: false });
+        await expect(sqlane.enqueue(db, 'ping', { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
     });
 
     test('a controlled transaction, and a Kysely instance (a transaction of its own)', async () => {
         const { sqlane, p } = await freshSqlane();
         const trx = await db.startTransaction().execute();
 
-        await sqlane.enqueue(trx, 'ping', {}, { jobId: 'controlled' });
+        await sqlane.enqueue(trx, 'ping', {}, { dedupeKey: 'controlled' });
         await trx.commit().execute();
         await sqlane.enqueueMany(db, 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
 
@@ -253,7 +253,11 @@ describe.each([
         await expect(sqlane.drain({ includeDelayed: true }))
             .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
         expect(failures).toStrictEqual(['failing']);
-        await expect(sqlane.getStats()).resolves.toMatchObject([{ name: 'failing', pending: 0, failed: 1 }]);
+        await expect(sqlane.jobs.stats()).resolves.toMatchObject([
+            { name: 'failing', pending: 0, failed: 1, completed: 0 },
+            { name: 'report', pending: 0, completed: 2 },
+            { name: 'report_failed', pending: 0, completed: 1 },
+        ]);
         expect((await statuses(p)).toSorted()).toStrictEqual(['completed', 'completed', 'completed', 'failed']);
     });
 });

@@ -88,7 +88,7 @@ export function createEnqueuer({
             options: item.options,
             maxPayloadBytes,
         }));
-        // A jobId repeated in the call: its first item is the job, the next ones are duplicates.
+        // A dedupeKey repeated in the call: its first item is the job, the next ones are duplicates.
         const firstById = new Map();
 
         for (const newJob of newJobs) {

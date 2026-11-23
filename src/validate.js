@@ -1,6 +1,6 @@
 import { parseDuration } from './duration.js';
 
-/** A job name: no `:` (the job id is `<name>:<jobId>`), lowercase. */
+/** A job name: no `:` (the job id is `<name>:<dedupeKey>`), lowercase. */
 export const JOB_NAME_REGEXP = /^[a-z][a-z0-9_.-]{0,127}$/;
 
 /** A table prefix: the longest table name, `<prefix>migrations`, stays within the 63 characters of PostgreSQL. */

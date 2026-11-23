@@ -63,8 +63,8 @@ export interface SqlaneSchema {
     findSchemaProblems(): Promise<SchemaProblems>;
 }
 /**
- * The jobs in the database: `sqlane.jobs`. Read them; retry, cancel or remove them in bulk; see the keys of the global
- * limits. Before `start()` and after `close()` too. `get`, `list` and the batches require the migration
+ * The jobs in the database: `sqlane.jobs`. Read and count them; retry, cancel or remove them in bulk; see the keys of
+ * the global limits. Before `start()` and after `close()` too. `get`, `list` and the batches require the migration
  * `0008_job_list`; `keyStats` requires `0007`.
  * @template C The connections that the bulk methods accept as `connection`: those of the adapter.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobs | jobs}
@@ -72,7 +72,7 @@ export interface SqlaneSchema {
 export interface SqlaneJobs<C = any> {
     /**
      * Reads one job, with its payload.
-     * @param jobId The full id, as `enqueue` returns it: `<name>:<dedupe key>`, a slot id, or a ULID.
+     * @param jobId The full id, as `enqueue` returns it: `<name>:<dedupeKey>`, a slot id, or a ULID.
      * @returns The job. Null: no job has this id, or the string cannot be a job id.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsget | jobs.get}
      */
@@ -127,6 +127,27 @@ export interface SqlaneJobs<C = any> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#key-stats | jobs.keyStats}
      */
     keyStats(options?: KeyStatsOptions): Promise<KeyStatsPage>;
+    /**
+     * Counts the jobs of each job name, for monitoring and alerts. A growing `oldestDueAgeMs` usually means that no
+     * process handles the name, or that the workers can't keep up; a growing `blocked`, that a key of a global limit
+     * holds its jobs back (see `keyStats`). It reads every row kept: mind the interval of a metric scrape.
+     * @returns One entry per name with jobs in any status, sorted by name. The failed and completed jobs count until
+     *     the cleanup deletes them.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsstats | jobs.stats}
+     */
+    stats(): Promise<JobStats[]>;
+}
+/**
+ * The schedules: `sqlane.schedules`. Before `start()` and after `close()` too.
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#scheduleslist | schedules}
+ */
+export interface SqlaneSchedules {
+    /**
+     * Lists the schedules of the table and those registered in this process, sorted by id. It works before `start()`.
+     * @returns The schedules. `registered: false`: a schedule of another service, or one removed from the code.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#scheduleslist | schedules.list}
+     */
+    list(): Promise<ScheduleInfo[]>;
 }
 /**
  * A sqlane instance, made by `createSqlane()`: one per process. It enqueues jobs, runs the handlers of this process,
@@ -145,9 +166,9 @@ export interface Sqlane<C> {
      * @param job The job definition, or a job name. A name takes its definition from `jobs` or the handled names; else
      *     the job gets the instance defaults.
      * @param payload JSON. With a typed definition, such as `defineJob<{ orderId: number }>(…)`, its type is checked.
-     * @param options `jobId` to dedupe or `slot` to run a schedule slot by hand; `delay` or `runAt`; and overrides of
-     *     the definition for this job.
-     * @returns The job id, and `created: false` when a job with this `jobId` exists already: nothing was added.
+     * @param options `dedupeKey` to dedupe or `slot` to run a schedule slot by hand; `delay` or `runAt`; and overrides
+     *     of the definition for this job.
+     * @returns The job id, and `created: false` when a job with this id exists already: nothing was added.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue | enqueue}
      */
     enqueue<J extends JobDefinition | string, P>(connection: C, job: J, payload: EnqueuePayload<J, P>, options?: EnqueueOptions): Promise<EnqueueResult>;
@@ -157,8 +178,8 @@ export interface Sqlane<C> {
      * @param connection Your transaction, or a connection in one, of the adapter's library; or a pool.
      * @param job The job definition, or a job name.
      * @param items Each a `payload` and optional `options`, as in `enqueue`.
-     * @returns The results, in the order of the items. Two items with one `jobId`: the first adds the job, the next
-     *     get `created: false`.
+     * @returns The results, in the order of the items. Two items with one `dedupeKey`: the first adds the job, the
+     *     next get `created: false`.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueuemany | enqueueMany}
      */
     enqueueMany<J extends JobDefinition | string, P>(connection: C, job: J, items: readonly EnqueueManyItem<J, P>[]): Promise<EnqueueResult[]>;
@@ -184,12 +205,6 @@ export interface Sqlane<C> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedule | schedule}
      */
     schedule<J extends JobDefinition | string, P>(job: J, options: ScheduleBaseOptions & ScheduleTiming & SchedulePayload<J, P>): void;
-    /**
-     * Lists the schedules of the table and those registered in this process, sorted by id. It works before `start()`.
-     * @returns The schedules. `registered: false`: a schedule of another service, or one removed from the code.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getschedules | getSchedules}
-     */
-    getSchedules(): Promise<ScheduleInfo[]>;
     /**
      * Starts the worker of this process: it claims and runs the due jobs of the handled names, renews leases, recovers
      * stalled jobs, deletes expired ones and fires the schedules of this process. A second call does nothing.
@@ -217,15 +232,10 @@ export interface Sqlane<C> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#close | close}
      */
     close(options?: CloseOptions): Promise<void>;
-    /**
-     * Counts the jobs of each job name, for monitoring and alerts. A growing `oldestDueAgeMs` usually means that no
-     * process handles the name, or that the workers can't keep up.
-     * @returns One entry per name with pending, running or failed jobs, sorted by name.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#getstats | getStats}
-     */
-    getStats(): Promise<JobStats[]>;
-    /** The jobs in the database: read them; retry, cancel or remove them in bulk. */
+    /** The jobs in the database: read and count them; retry, cancel or remove them in bulk. */
     readonly jobs: SqlaneJobs<C>;
+    /** The schedules: list them. */
+    readonly schedules: SqlaneSchedules;
     /** The `sqlane_*` tables: create, update, roll back or drop them; check them. */
     readonly schema: SqlaneSchema;
     /**

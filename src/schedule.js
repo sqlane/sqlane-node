@@ -12,7 +12,7 @@ const DAY_MS = 86_400_000;
 /** A cron must fire within this time of `schedule()`: covers February 29 on a weekday, across 2100 */
 const FIRES_WITHIN_MS = 50 * 366 * DAY_MS;
 export const MAX_KEY_LENGTH = 64;
-/** The prefix of the `jobId` of a slot: reserved */
+/** The prefix of the dedupe key of a slot: reserved */
 export const SLOT_PREFIX = 'schedule:';
 const OPTION_NAMES = ['cron', 'timezone', 'every', 'key', 'payload', 'missed', 'overlap', 'jitter'];
 /** The job ids of slots: `<name>:schedule:[<key>:]<ISO>`. The ISO time is anchored at the end: a key may have `:`. */
@@ -61,12 +61,13 @@ export function isSlotTime(ms) {
 }
 
 /**
- * The `jobId` of a slot (the job id without its name): the scheduler and the `slot` enqueue option build the same one.
+ * The dedupe key of a slot (the job id without its name): the scheduler and the `slot` enqueue option build the same
+ * one.
  * @param {string | null | undefined} key
  * @param {number} slotMs
  * @returns {string}
  */
-export function slotJobIdOf(key, slotMs) {
+export function slotDedupeKeyOf(key, slotMs) {
     const time = new Date(slotMs).toISOString();
 
     return key ? `${SLOT_PREFIX}${key}:${time}` : `${SLOT_PREFIX}${time}`;
@@ -244,17 +245,8 @@ export function previousSlot(entry, slotMs) {
 }
 
 /**
- * @param {ScheduleEntry} entry
- * @param {number} slotMs
- * @returns {string} The `jobId` of the slot: `schedule:[<key>:]<ISO>`.
- */
-export function slotJobId(entry, slotMs) {
-    return slotJobIdOf(entry.key, slotMs);
-}
-
-/**
  * The slot of a job, from its id. Only the scheduler and the `slot` enqueue option make such ids.
- * @param {string} jobId The id of a job: `<name>:<jobId>`, or a ULID.
+ * @param {string} jobId The id of a job: `<name>:<dedupeKey>`, or a ULID.
  * @returns {Date | null} Null: not the job of a slot.
  */
 export function scheduledAtOf(jobId) {

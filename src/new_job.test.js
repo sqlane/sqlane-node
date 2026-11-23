@@ -63,7 +63,7 @@ describe('with a definition', () => {
 
         expect(build({
             options: {
-                jobId: 'r1',
+                dedupeKey: 'r1',
                 runAt,
                 maxAttempts: 1,
                 maxStalls: 0,
@@ -121,13 +121,20 @@ describe('with a definition', () => {
             .toThrow('enqueue("build_report"): "mutexKeys" was removed in 6.0: use "globalConcurrencyLimits"');
     });
 
+    test('the jobId of 7.x: an error that names the new option', () => {
+        expect(() => build({ options: /** @type {any} */ ({ jobId: 'r1' }) }))
+            .toThrow('enqueue("build_report"): "jobId" was renamed in 8.0: use "dedupeKey"');
+        expect(() => build({ options: /** @type {any} */ ({ jobId: undefined }) }))
+            .toThrow('enqueue("build_report"): "jobId" was renamed in 8.0: use "dedupeKey"');
+    });
+
     test('a delay', () => {
         expect(build({ options: { delay: '1m30s' } })).toMatchObject({ delayMs: 90_000, runAt: null });
     });
 });
 
 test('an unknown name takes the defaults', () => {
-    expect(build({ name: 'send_email', definition: null, options: { jobId: 'e1' } })).toMatchObject({
+    expect(build({ name: 'send_email', definition: null, options: { dedupeKey: 'e1' } })).toMatchObject({
         id: 'send_email:e1',
         limits: [],
         rateLimits: [],
@@ -148,10 +155,6 @@ test.each([
     ['a bad delay', { options: { delay: -1 } }, InvalidOptionsError],
     ['unordered delay units', { options: { delay: '1ms 1d' } }, InvalidOptionsError],
     ['full retention units', { options: { retention: { completed: '1 days' } } }, InvalidOptionsError],
-    ['a numeric jobId', { options: { jobId: 42 } }, InvalidOptionsError],
-    ['an empty jobId', { options: { jobId: '' } }, InvalidOptionsError],
-    ['a jobId with a space at the end', { options: { jobId: 'r1 ' } }, InvalidOptionsError],
-    ['a jobId of 121 characters', { options: { jobId: 'x'.repeat(121) } }, InvalidOptionsError],
     ['a bad maxAttempts', { options: { maxAttempts: 0 } }, InvalidOptionsError],
     ['the job as its own failure job', { options: { failureJob: 'build_report' } }, InvalidOptionsError],
     ['a payload that is not JSON', { payload: undefined }, InvalidOptionsError],
@@ -161,8 +164,6 @@ test.each([
     ['a bad key of a rate limit', { options: { globalRateLimits: [reportApi.key('a ')] } }, InvalidRateLimitError],
     ['a concurrency limit as a rate limit', { options: { globalRateLimits: [report] } }, InvalidRateLimitError],
     ['a rate limit as a concurrency limit', { options: { globalConcurrencyLimits: [reportApi] } }, InvalidConcurrencyLimitError],
-    ['a jobId with the reserved prefix', { options: { jobId: 'schedule:2026' } }, InvalidOptionsError],
-    ['slot with jobId', { options: { slot: { at: new Date() }, jobId: 'r1' } }, InvalidOptionsError],
     ['a slot without at', { options: { slot: {} } }, InvalidOptionsError],
     ['a slot at an invalid Date', { options: { slot: { at: new Date('nope') } } }, InvalidOptionsError],
     ['a slot before 1970', { options: { slot: { at: new Date('1969-12-31T23:59:59Z') } } }, InvalidOptionsError],
@@ -173,18 +174,34 @@ test.each([
     expect(() => build(/** @type {any} */ (params))).toThrow(ErrorClass);
 });
 
-test('accepts a jobId of 120 characters', () => {
-    expect(build({ options: { jobId: 'x'.repeat(120) } }).id).toBe(`build_report:${'x'.repeat(120)}`);
+const BAD_DEDUPE_KEY = '"dedupeKey" must have 1 to 120 printable ASCII characters';
+
+test.each([
+    ['a numeric dedupeKey', { dedupeKey: 42 }, BAD_DEDUPE_KEY],
+    ['an empty dedupeKey', { dedupeKey: '' }, BAD_DEDUPE_KEY],
+    ['a dedupeKey with a space at the end', { dedupeKey: 'r1 ' }, BAD_DEDUPE_KEY],
+    ['a dedupeKey of 121 characters', { dedupeKey: 'x'.repeat(121) }, BAD_DEDUPE_KEY],
+    ['a dedupeKey with the reserved prefix', { dedupeKey: 'schedule:2026' }, 'the "dedupeKey" prefix "schedule:" is reserved'],
+    ['slot with dedupeKey', { slot: { at: new Date() }, dedupeKey: 'r1' }, '"slot" or "dedupeKey", not both'],
+])('rejects %s', (_, options, message) => {
+    const bad = () => build({ options: /** @type {any} */ (options) });
+
+    expect(bad).toThrow(InvalidOptionsError);
+    expect(bad).toThrow(`enqueue("build_report"): ${message}`);
 });
 
-test('accepts a jobId with schedule: after its start', () => {
-    expect(build({ options: { jobId: 'x:schedule:1' } }).id).toBe('build_report:x:schedule:1');
+test('accepts a dedupeKey of 120 characters', () => {
+    expect(build({ options: { dedupeKey: 'x'.repeat(120) } }).id).toBe(`build_report:${'x'.repeat(120)}`);
+});
+
+test('accepts a dedupeKey with schedule: after its start', () => {
+    expect(build({ options: { dedupeKey: 'x:schedule:1' } }).id).toBe('build_report:x:schedule:1');
 });
 
 describe('a slot run by hand', () => {
     const at = new Date('2026-11-11T02:00:00.000Z');
 
-    test('gets the jobId of the slot, due now', () => {
+    test('gets the dedupe key of the slot, due now', () => {
         expect(build({ options: { slot: { at } } })).toMatchObject({
             id: 'build_report:schedule:2026-11-11T02:00:00.000Z',
             hasJobId: true,

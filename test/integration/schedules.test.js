@@ -696,7 +696,7 @@ describe('the fire of the store', () => {
             await listener.query(`LISTEN ${p}ready`);
 
             const jobs = ['alpha', 'beta', 'gamma', 'alpha'].map((name, index) => buildNewJob({
-                name, definition: null, defaults, payload: {}, options: { jobId: `j${index}` }, maxPayloadBytes: 1024,
+                name, definition: null, defaults, payload: {}, options: { dedupeKey: `j${index}` }, maxPayloadBytes: 1024,
             }));
 
             await testAdapter.adapter.queueTransaction(executor => insertScheduledJobsPostgres(executor, p, jobs, {
@@ -824,7 +824,7 @@ describe('schedules end to end', () => {
             { id: 'report', spec: 'every 7200000' },
             { id: 'tick', spec: 'every 1000' },
         ]);
-        await expect(sqlane.getSchedules()).resolves.toMatchObject([
+        await expect(sqlane.schedules.list()).resolves.toMatchObject([
             { id: 'report', spec: 'every 7200000', registered: true },
             { id: 'tick', spec: 'every 1000', registered: true },
         ]);
@@ -948,7 +948,7 @@ describe('schedules end to end', () => {
         await expect(readJobs(p, `tick:schedule:${new Date(slot).toISOString()}`)).resolves.toHaveLength(1);
     });
 
-    test('getSchedules: the rows of other services, a schedule without a row, the cursor and the last job', async () => {
+    test('schedules.list: the rows of other services, a schedule without a row, the cursor and the last job', async () => {
         const { sqlane, p } = await freshSqlane();
         const other = instanceOn(p);
 
@@ -957,14 +957,14 @@ describe('schedules end to end', () => {
         await other.sqlane.close({ deadline: 0 });
         sqlane.schedule('tick', { every: '1s', key: 'k' });
 
-        await expect(sqlane.getSchedules()).resolves.toMatchObject([
+        await expect(sqlane.schedules.list()).resolves.toMatchObject([
             { id: 'other', name: 'other', spec: 'every 3600000', registered: false, nextAt: null, lastJobId: null },
             { id: 'tick:k', name: 'tick', registered: true, lastSlotAt: null, lastJobId: null },
         ]);
         await sqlane.start();
         await waitFor(async () => (await readJobs(p)).length > 0);
 
-        const [, tick] = await sqlane.getSchedules();
+        const [, tick] = await sqlane.schedules.list();
 
         expect(tick.lastJobId).toMatch(/^tick:schedule:k:/);
         expect(tick.lastSlotAt?.getTime()).toBe(Date.parse(String(tick.lastJobId).slice('tick:schedule:k:'.length)));
@@ -1053,7 +1053,7 @@ describe('jitter', () => {
         await sleep(300);
         await sqlane.start();
 
-        await expect(sqlane.getSchedules())
+        await expect(sqlane.schedules.list())
             .resolves.toMatchObject([{ nextAt: new Date(slot), nextRunAt: new Date(due) }]);
         await waitFor(() => events.some(({ type }) => type === 'schedule_fired'), 12_000);
 

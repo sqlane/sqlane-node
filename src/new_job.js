@@ -4,27 +4,28 @@ import { InvalidOptionsError } from './errors.js';
 import { normalizeGlobalLimits } from './concurrency_keys.js';
 import { normalizeGlobalRateLimits } from './rate_keys.js';
 import { serializePayload } from './payload.js';
-import { isSlotKey, isSlotTime, MAX_KEY_LENGTH, SLOT_PREFIX, slotJobIdOf } from './schedule.js';
+import { isSlotKey, isSlotTime, MAX_KEY_LENGTH, SLOT_PREFIX, slotDedupeKeyOf } from './schedule.js';
 import {
     checkFailureJob,
     checkJobFields,
     checkObject,
+    isPlainObject,
     JOB_NAME_REGEXP,
     PRINTABLE_ID_REGEXP,
 } from './validate.js';
 
 const ENQUEUE_OPTION_NAMES = [
-    'jobId', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureJob', 'globalConcurrencyLimits',
+    'dedupeKey', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureJob', 'globalConcurrencyLimits',
     'globalRateLimits', 'slot',
 ];
-const MAX_JOB_ID_LENGTH = 120;
+const MAX_DEDUPE_KEY_LENGTH = 120;
 /** Sorted by creation order in this process, also within one millisecond */
 const ulid = createMonotonicUlid();
 
 /**
  * A job to insert, with every value frozen at enqueue.
  * @typedef {object} NewJob
- * @property {string} id `<name>:<jobId>`, or a ULID.
+ * @property {string} id `<name>:<dedupeKey>`, or a ULID.
  * @property {boolean} hasJobId
  * @property {string} name
  * @property {string} payloadJson
@@ -52,30 +53,30 @@ const ulid = createMonotonicUlid();
  */
 
 /**
- * @param {unknown} jobId
+ * @param {unknown} dedupeKey
  * @param {string} where
  */
-function checkJobId(jobId, where) {
-    if (typeof jobId !== 'string' || jobId.length > MAX_JOB_ID_LENGTH || !PRINTABLE_ID_REGEXP.test(jobId)) {
+function checkDedupeKey(dedupeKey, where) {
+    if (typeof dedupeKey !== 'string' || dedupeKey.length > MAX_DEDUPE_KEY_LENGTH
+        || !PRINTABLE_ID_REGEXP.test(dedupeKey)) {
         throw new InvalidOptionsError(
-            `${where}: "jobId" must have 1 to ${MAX_JOB_ID_LENGTH} printable ASCII characters, without spaces at the `
-            + `ends: ${JSON.stringify(jobId)}`,
+            `${where}: "dedupeKey" must have 1 to ${MAX_DEDUPE_KEY_LENGTH} printable ASCII characters, without spaces `
+            + `at the ends: ${JSON.stringify(dedupeKey)}`,
         );
     }
 
-    if (jobId.startsWith(SLOT_PREFIX)) {
-        throw new InvalidOptionsError(
-            `${where}: the "jobId" prefix "${SLOT_PREFIX}" is reserved for the slots of schedules: use the option "slot"`,
-        );
+    if (dedupeKey.startsWith(SLOT_PREFIX)) {
+        throw new InvalidOptionsError(`${where}: the "dedupeKey" prefix "${SLOT_PREFIX}" is reserved for the slots `
+            + 'of schedules: use the option "slot"');
     }
 }
 
 /**
  * @param {unknown} slot
  * @param {string} where
- * @returns {string} The `jobId` of the slot.
+ * @returns {string} The dedupe key of the slot.
  */
-function slotJobIdFrom(slot, where) {
+function slotDedupeKeyFrom(slot, where) {
     const { at, key } = checkObject(slot, ['at', 'key'], '"slot"', { where, ErrorClass: InvalidOptionsError });
 
     if (!(at instanceof Date) || !isSlotTime(at.getTime())) {
@@ -88,7 +89,7 @@ function slotJobIdFrom(slot, where) {
         );
     }
 
-    return slotJobIdOf(/** @type {string | undefined} */ (key), at.getTime());
+    return slotDedupeKeyOf(/** @type {string | undefined} */ (key), at.getTime());
 }
 
 /**
@@ -132,26 +133,31 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
 
     const scope = { where, ErrorClass: InvalidOptionsError };
 
-    // The option of 5.x: an error that names the new one
+    // The options of 5.x and 7.x: an error that names the new one
     if (/** @type {Record<string, unknown>} */ (options)?.mutexKeys !== undefined) {
         throw new InvalidOptionsError(`${where}: "mutexKeys" was removed in 6.0: use "globalConcurrencyLimits"`);
+    }
+
+    // Also `{ jobId: undefined }`: the code of 7.x, not an unknown option
+    if (isPlainObject(options) && 'jobId' in options) {
+        throw new InvalidOptionsError(`${where}: "jobId" was renamed in 8.0: use "dedupeKey"`);
     }
 
     checkObject(options, ENQUEUE_OPTION_NAMES, 'options', scope);
     checkJobFields(options, scope);
 
-    let { jobId } = options;
+    let { dedupeKey } = options;
 
-    if (jobId !== undefined) {
-        checkJobId(jobId, where);
+    if (dedupeKey !== undefined) {
+        checkDedupeKey(dedupeKey, where);
     }
 
     if (options.slot !== undefined) {
-        if (jobId !== undefined) {
-            throw new InvalidOptionsError(`${where}: "slot" or "jobId", not both`);
+        if (dedupeKey !== undefined) {
+            throw new InvalidOptionsError(`${where}: "slot" or "dedupeKey", not both`);
         }
 
-        jobId = slotJobIdFrom(options.slot, where);
+        dedupeKey = slotDedupeKeyFrom(options.slot, where);
     }
 
     const failureJob = options.failureJob ?? definition?.failureJob;
@@ -165,8 +171,8 @@ export function buildNewJob({ name, definition, defaults, payload, options = {},
     const retention = { ...definition?.retention, ...options.retention };
 
     return {
-        id: jobId === undefined ? ulid() : `${name}:${jobId}`,
-        hasJobId: jobId !== undefined,
+        id: dedupeKey === undefined ? ulid() : `${name}:${dedupeKey}`,
+        hasJobId: dedupeKey !== undefined,
         name,
         payloadJson,
         limits,

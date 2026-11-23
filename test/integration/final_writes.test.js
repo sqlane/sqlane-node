@@ -475,7 +475,7 @@ describe('rateLimited', () => {
 describe('failJob', () => {
     test('failed with its payload; its failure job added in the same transaction', async () => {
         const tables = await freshTables();
-        const job = await claimedJob(tables, { jobId: 'o1' });
+        const job = await claimedJob(tables, { dedupeKey: 'o1' });
         const result = await tables.store.failJob(job, { error: toErrorJson(new Error('gone')), buildFailureJob });
 
         expect(result).toMatchObject({ changed: true, failureJob: { added: { name: 'sync_failed' } } });

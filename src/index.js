@@ -38,6 +38,7 @@ export {
  * @typedef {import('./sqlane.js').SqlaneJobs<C>} SqlaneJobs
  * @template [C=any]
  */
+/** @typedef {import('./sqlane.js').SqlaneSchedules} SqlaneSchedules */
 /** @typedef {import('./sqlane.js').SqlaneSchema} SqlaneSchema */
 /**
  * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions

@@ -136,7 +136,7 @@ async function enqueueUntilTie(sqlane) {
         // oxlint-disable-next-line no-await-in-loop -- one group after the other
         await sqlane.enqueueMany(testAdapter.pool, 'ping', keys.map(key => ({
             payload: {},
-            options: { jobId: `g${group}${key}` },
+            options: { dedupeKey: `g${group}${key}` },
         })));
         // oxlint-disable-next-line no-await-in-loop -- one group after the other
         await sleep(5);
@@ -180,7 +180,7 @@ describe('jobs.get()', () => {
         const sqlane = await freshSqlane();
         const runAt = new Date(Date.now() + 3_600_000);
         const { id } = await sqlane.enqueue(testAdapter.pool, 'build_report', { reportId: 'r1' }, {
-            jobId: 'r1',
+            dedupeKey: 'r1',
             runAt,
             maxAttempts: 5,
             failureJob: 'report_failed',
@@ -375,7 +375,7 @@ describe('jobs.get()', () => {
     test('an unknown id, or a string that cannot be an id: null; not a string: InvalidOptionsError', async () => {
         const sqlane = await freshSqlane();
 
-        await sqlane.enqueue(testAdapter.pool, 'build_report', {}, { jobId: 'r1' });
+        await sqlane.enqueue(testAdapter.pool, 'build_report', {}, { dedupeKey: 'r1' });
 
         for (const jobId of ['build_report:none', '', 'build_report:r1 ', ' build_report:r1', 'build_report:é',
             `build_report:${'x'.repeat(300)}`]) {
@@ -456,7 +456,7 @@ describe('jobs.list()', () => {
         const page1 = await sqlane.jobs.list({ jobName: 'ping' }, { limit });
 
         // A newer job, enqueued between the pages: before the cursor, not in the next pages
-        await sqlane.enqueue(testAdapter.pool, 'ping', {}, { jobId: 'late' });
+        await sqlane.enqueue(testAdapter.pool, 'ping', {}, { dedupeKey: 'late' });
 
         expect(page1.nextCursor).not.toBeNull();
 
@@ -668,7 +668,7 @@ describe('sqlane.jobs', () => {
         async () => {
             const sqlane = await freshSqlane({ unknownJobs: 'reject', jobs: [defineJob({ name: 'known' })] });
 
-            const { id } = await sqlane.enqueue(testAdapter.pool, 'known', {}, { jobId: 'k1' });
+            const { id } = await sqlane.enqueue(testAdapter.pool, 'known', {}, { dedupeKey: 'k1' });
 
             await expect(sqlane.jobs.list({ jobName: 'unknown' })).resolves.toStrictEqual({ jobs: [], nextCursor: null });
             await expect(sqlane.jobs.get('unknown:x')).resolves.toBeNull();

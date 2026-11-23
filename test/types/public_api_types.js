@@ -214,13 +214,13 @@ export async function publicApiTypes() {
     await sqlane.enqueue(connection, job, { id: 1n });
     // @ts-expect-error a Date in an array is not JSON
     await sqlane.enqueue(connection, job, { dates: [new Date()] });
-    await sqlane.enqueueMany(connection, job, [{ payload: { a: 1 } }, { payload: { a: 2 }, options: { jobId: 'a2' } }]);
+    await sqlane.enqueueMany(connection, job, [{ payload: { a: 1 } }, { payload: { a: 2 }, options: { dedupeKey: 'a2' } }]);
     // @ts-expect-error a Date is not JSON, in enqueueMany too
     await sqlane.enqueueMany(connection, job, [{ payload: { at: new Date() } }]);
 
     // enqueue: the options
     await sqlane.enqueue(connection, job, {}, {
-        jobId: 'r1',
+        dedupeKey: 'r1',
         delay: '10s',
         maxAttempts: 5,
         globalConcurrencyLimits: [heavy, heavy.key('a'), heavy.key(1)],
@@ -230,8 +230,17 @@ export async function publicApiTypes() {
     await sqlane.enqueue(connection, job, {}, { runAt: new Date() });
     // @ts-expect-error delay or runAt, not both
     await sqlane.enqueue(connection, job, {}, { delay: '1s', runAt: new Date() });
-    // @ts-expect-error jobId is a string
-    await sqlane.enqueue(connection, job, {}, { jobId: 42 });
+    // @ts-expect-error dedupeKey is a string
+    await sqlane.enqueue(connection, job, {}, { dedupeKey: 42 });
+    // @ts-expect-error jobId was renamed dedupeKey in 8.0
+    await sqlane.enqueue(connection, job, {}, { jobId: 'r1' });
+    // Not a literal, with another option: neither the excess-property check nor the weak-type check applies
+    const oldOptions = { jobId: 'r1', delay: '1s' };
+
+    // @ts-expect-error jobId was renamed dedupeKey in 8.0, also in options that are not a literal
+    await sqlane.enqueue(connection, job, {}, oldOptions);
+    // @ts-expect-error jobId was renamed dedupeKey in 8.0, in enqueueMany too
+    await sqlane.enqueueMany(connection, job, [{ payload: {}, options: { jobId: 'r1' } }]);
 
     // handle: no options; local limits and weights are in the definition
     sqlane.handle(job, () => {});
@@ -274,7 +283,7 @@ export async function publicApiTypes() {
     });
 
     await sqlane.enqueue(connection, syncOrder, { orderId: 1 });
-    await sqlane.enqueue(connection, syncOrder, { orderId: 1, note: 'n' }, { jobId: 'o1' });
+    await sqlane.enqueue(connection, syncOrder, { orderId: 1, note: 'n' }, { dedupeKey: 'o1' });
     // @ts-expect-error orderId is a number
     await sqlane.enqueue(connection, syncOrder, { orderId: '1' });
     // @ts-expect-error orderId is required
@@ -434,7 +443,12 @@ export async function publicApiTypes() {
     // @ts-expect-error the payload type of the options is not the one of the definition
     sqlane.schedule(syncOrder, otherPayload);
 
-    const [schedule] = await sqlane.getSchedules();
+    /** @type {import('@sqlane/core').SqlaneSchedules} */
+    const schedules = sqlane.schedules;
+    const [schedule] = await schedules.list();
+
+    // @ts-expect-error getSchedules() is now schedules.list()
+    void sqlane.getSchedules;
 
     expectTypeOf(schedule.nextAt).toEqualTypeOf(/** @type {Date | null} */ (null));
     expectTypeOf(schedule.nextRunAt).toEqualTypeOf(/** @type {Date | null} */ (null));
@@ -526,15 +540,30 @@ export async function publicApiTypes() {
          * }} */ (/** @type {any} */ (null)),
     );
 
-    // A mock of SqlaneJobs needs keyStats
+    // stats: blocked apart from pending, and completed
+    const [stats] = await sqlane.jobs.stats();
+
+    expectTypeOf(stats.blocked).toBeNumber();
+    expectTypeOf(stats.completed).toBeNumber();
+    expectTypeOf(stats.oldestDueAgeMs).toEqualTypeOf(/** @type {number | null} */ (null));
+    // @ts-expect-error getStats() is now jobs.stats()
+    void sqlane.getStats;
+
+    // A mock of SqlaneJobs needs keyStats and stats
     /** @type {import('@sqlane/core').SqlaneJobs} */
     // @ts-expect-error keyStats is missing
     const mockWithoutKeyStats = {
-        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod,
+        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod, stats: anyMethod,
     };
     /** @type {import('@sqlane/core').SqlaneJobs} */
     const mock = {
-        get: anyMethod, list: anyMethod, retry: anyMethod, cancel: anyMethod, remove: anyMethod, keyStats: anyMethod,
+        get: anyMethod,
+        list: anyMethod,
+        retry: anyMethod,
+        cancel: anyMethod,
+        remove: anyMethod,
+        keyStats: anyMethod,
+        stats: anyMethod,
     };
 
     void mockWithoutKeyStats;
@@ -622,8 +651,8 @@ export async function publicApiTypes() {
     // enqueue: a slot run by hand
     await sqlane.enqueue(connection, job, {}, { slot: { at: new Date(), key: 'tenant-42' } });
     await sqlane.enqueue(connection, job, {}, { slot: { at: new Date() }, delay: '1m' });
-    // @ts-expect-error slot or jobId, not both
-    await sqlane.enqueue(connection, job, {}, { slot: { at: new Date() }, jobId: 'x' });
+    // @ts-expect-error slot or dedupeKey, not both
+    await sqlane.enqueue(connection, job, {}, { slot: { at: new Date() }, dedupeKey: 'x' });
     // @ts-expect-error slot.at is a Date
     await sqlane.enqueue(connection, job, {}, { slot: { at: '2026-01-01' } });
 

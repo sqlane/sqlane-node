@@ -386,7 +386,6 @@ export function createSqlane(options) {
             entry.definition = isPlainObject(job) ? /** @type {import('./types.js').JobDefinition} */ (job) : null;
             scheduler.add(entry);
         },
-        getSchedules: () => scheduler.list(),
         start: async () => {
             if (runner.isClosed()) {
                 throw new ClosedError('start() after close()');
@@ -454,7 +453,6 @@ export function createSqlane(options) {
             getMigrationStatus: () => getMigrationStatus(adapter, tablePrefix, { installedVersion }),
             findSchemaProblems: () => findSchemaProblems(adapter, tablePrefix, { installedVersion }),
         },
-        getStats: () => store.getStats(),
         jobs: createJobsApi(store, createBulk({
             store,
             adapter,
@@ -465,6 +463,7 @@ export function createSqlane(options) {
             reportError,
             notifyChannel,
         })),
+        schedules: Object.freeze({ list: () => scheduler.list() }),
         wake: () => runner.wake(),
     };
 }

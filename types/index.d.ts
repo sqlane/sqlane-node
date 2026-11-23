@@ -6,6 +6,7 @@ export { ClosedError, ConfigError, DrainTimeoutError, FatalJobError, IgnoredJobs
 export type Adapter<C> = import('./types.js').Adapter<C>;
 export type Sqlane<C> = import('./types.js').Sqlane<C>;
 export type SqlaneJobs<C = any> = import('./sqlane.js').SqlaneJobs<C>;
+export type SqlaneSchedules = import('./sqlane.js').SqlaneSchedules;
 export type SqlaneSchema = import('./sqlane.js').SqlaneSchema;
 export type SqlaneOptions<C> = import('./types.js').SqlaneOptions<C>;
 export type Jsonable<T> = import('./types.js').Jsonable<T>;
@@ -72,6 +73,7 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  * @typedef {import('./sqlane.js').SqlaneJobs<C>} SqlaneJobs
  * @template [C=any]
  */
+/** @typedef {import('./sqlane.js').SqlaneSchedules} SqlaneSchedules */
 /** @typedef {import('./sqlane.js').SqlaneSchema} SqlaneSchema */
 /**
  * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions

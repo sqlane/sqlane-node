@@ -182,17 +182,17 @@ describe.each([
         const { sqlane, p } = await freshSqlane();
 
         await dataSource.transaction(async (/** @type {any} */ manager) => {
-            await expect(sqlane.enqueue(manager, 'ping', { n: 1 }, { jobId: 'a' }))
+            await expect(sqlane.enqueue(manager, 'ping', { n: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(dataSource.transaction(async (/** @type {any} */ manager) => {
-            await sqlane.enqueue(manager, 'ping', { n: 2 }, { jobId: 'b' });
+            await sqlane.enqueue(manager, 'ping', { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-        await expect(sqlane.enqueue(dataSource, 'ping', { n: 3 }, { jobId: 'a' }))
+        await expect(sqlane.enqueue(dataSource, 'ping', { n: 3 }, { dedupeKey: 'a' }))
             .resolves.toMatchObject({ created: false });
     });
 
@@ -233,14 +233,14 @@ describe.each([
         try {
             await rolledBack.startTransaction();
             await rolledBack.startTransaction();
-            await sqlane.enqueue(rolledBack, 'ping', {}, { jobId: 'rolled_back' });
+            await sqlane.enqueue(rolledBack, 'ping', {}, { dedupeKey: 'rolled_back' });
             // The release of the savepoint: not the commit
             await rolledBack.commitTransaction();
             await rolledBack.rollbackTransaction();
 
             await committed.startTransaction();
             await committed.startTransaction();
-            await sqlane.enqueue(committed, 'ping', {}, { jobId: 'committed' });
+            await sqlane.enqueue(committed, 'ping', {}, { dedupeKey: 'committed' });
             await committed.commitTransaction();
             await committed.commitTransaction();
         } finally {
@@ -283,7 +283,11 @@ describe.each([
         await expect(sqlane.drain({ includeDelayed: true }))
             .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
         expect(failures).toStrictEqual(['failing']);
-        await expect(sqlane.getStats()).resolves.toMatchObject([{ name: 'failing', pending: 0, failed: 1 }]);
+        await expect(sqlane.jobs.stats()).resolves.toMatchObject([
+            { name: 'failing', pending: 0, failed: 1, completed: 0 },
+            { name: 'report', pending: 0, completed: 2 },
+            { name: 'report_failed', pending: 0, completed: 1 },
+        ]);
         expect((await statuses(p)).toSorted()).toStrictEqual(['completed', 'completed', 'completed', 'failed']);
     });
 });

@@ -1,6 +1,6 @@
 export type NewJob = {
     /**
-     * `<name>:<jobId>`, or a ULID.
+     * `<name>:<dedupeKey>`, or a ULID.
      */
     id: string;
     hasJobId: boolean;
