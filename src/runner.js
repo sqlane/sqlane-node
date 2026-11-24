@@ -200,8 +200,6 @@ export function createRunner({
         setTimer,
         emit,
         reportError,
-        counts,
-        failureLanes,
         armRateWake,
         wake: wakeUp,
         hintChannel,
@@ -291,8 +289,8 @@ export function createRunner({
             limit.running++;
         }
 
-        if (entry.rates.length) {
-            // A claim takes the quota of the local rate limits
+        if (entry.rates.length && claimed.stalls <= claimed.maxStalls) {
+            // A claim takes the quota of the local rate limits; a job past its maxStalls fails without a run
             const now = nowUs();
 
             for (const rate of entry.rates) {

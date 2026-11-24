@@ -2,7 +2,6 @@
 // every 30 s, and the cleanup of the finished jobs, every 5 minutes. See docs/design.md › Leases and stalls, Cleanup.
 import { ANY_LANE } from './hint_channel.js';
 
-const STALLED = { name: 'StalledError', message: 'The lease of the job ended: its process stopped or blocked' };
 const BATCH = 1000;
 
 /**
@@ -22,8 +21,6 @@ const BATCH = 1000;
  * @param {(func: () => void, delayMs: number) => NodeJS.Timeout} params.setTimer An unref'd timer.
  * @param {(event: import('./types.js').SqlaneEvent) => void} params.emit
  * @param {(operation: string, error: unknown) => void} params.reportError
- * @param {{ failed: number }} params.counts The results, counted for drain().
- * @param {import('./failure_lanes.js').FailureLanes} params.failureLanes
  * @param {(key: string, delayMs: number) => void} params.armRateWake The timer of a rate key with blocked jobs.
  * @param {() => void} params.wake A wake of all lanes of this process.
  * @param {import('./hint_channel.js').HintChannel} params.hintChannel
@@ -38,8 +35,6 @@ export function createMaintenance({
     setTimer,
     emit,
     reportError,
-    counts,
-    failureLanes,
     armRateWake,
     wake,
     hintChannel,
@@ -79,22 +74,13 @@ export function createMaintenance({
                 continue;
             }
 
+            // Past its maxStalls too: its next claim fails it, in a process that adds its lane
             // oxlint-disable-next-line no-await-in-loop -- small batches, one job per transaction
-            const recovered = await store.recoverStaleJob(id, {
-                leaseMs: t.leaseMs,
-                buildFailureJob: failureLanes.build,
-            });
+            const recovered = await store.recoverStaleJob(id, { leaseMs: t.leaseMs });
 
             if (recovered.result === 'released') {
                 freedKeys = true;
                 emit({ type: 'stalled', jobId: id, lane, attempt: recovered.attempt });
-            } else if (recovered.result === 'failed') {
-                const { attempt, runMs } = recovered;
-
-                freedKeys = true;
-                counts.failed++;
-                emit({ type: 'failed', jobId: id, lane, attempt, durationMs: runMs, error: STALLED });
-                failureLanes.report({ id, lane, attempt, failureLane: null }, recovered.failureResult);
             }
         }
 

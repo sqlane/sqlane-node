@@ -18,7 +18,6 @@ function lockedRow(id, payload) {
         max_attempts: 3,
         stalls: 0,
         max_stalls: 1,
-        failure_lane: null,
         created_at_ms: 1000,
         has_keys: 0,
         waited_ms: 5,

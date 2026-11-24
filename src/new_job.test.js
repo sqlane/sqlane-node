@@ -52,7 +52,6 @@ describe('with a definition', () => {
             maxStalls: 2,
             completedRetentionMs: 600_000,
             failedRetentionMs: 2_592_000_000,
-            failureLane: 'report_failed',
             delayMs: 0,
             runAt: null,
         });
@@ -68,7 +67,6 @@ describe('with a definition', () => {
                 maxAttempts: 1,
                 maxStalls: 0,
                 retention: { failed: '1d' },
-                failureLane: 'other_failed',
                 globalConcurrencyLimits: [],
                 globalRateLimits: [],
             },
@@ -81,7 +79,6 @@ describe('with a definition', () => {
             maxStalls: 0,
             completedRetentionMs: 600_000,
             failedRetentionMs: 86_400_000,
-            failureLane: 'other_failed',
             delayMs: 0,
             runAt,
         });
@@ -121,6 +118,11 @@ describe('with a definition', () => {
             .toThrow('enqueue("build_report"): unknown options: jobId');
     });
 
+    test('failureLane is an unknown option: the definition of the process that fails the job decides', () => {
+        expect(() => build({ options: /** @type {any} */ ({ failureLane: 'other_failed' }) }))
+            .toThrow('enqueue("build_report"): unknown options: failureLane');
+    });
+
     test('a delay', () => {
         expect(build({ options: { delay: '1m30s' } })).toMatchObject({ delayMs: 90_000, runAt: null });
     });
@@ -135,7 +137,6 @@ test('an unknown name takes the defaults', () => {
         maxStalls: 2,
         completedRetentionMs: 3_600_000,
         failedRetentionMs: 2_592_000_000,
-        failureLane: null,
     });
 });
 
@@ -149,7 +150,6 @@ test.each([
     ['unordered delay units', { options: { delay: '1ms 1d' } }, InvalidOptionsError],
     ['full retention units', { options: { retention: { completed: '1 days' } } }, InvalidOptionsError],
     ['a bad maxAttempts', { options: { maxAttempts: 0 } }, InvalidOptionsError],
-    ['the lane as its own failure lane', { options: { failureLane: 'build_report' } }, InvalidOptionsError],
     ['a payload that is not JSON', { payload: undefined }, InvalidOptionsError],
     ['a payload above the limit', { maxPayloadBytes: 10 }, PayloadTooLargeError],
     ['a bad key of a limit', { options: { globalConcurrencyLimits: [report.key(' a')] } }, InvalidConcurrencyLimitError],

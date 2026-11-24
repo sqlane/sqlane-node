@@ -49,7 +49,7 @@ function columnsOf(family, withPayload) {
 
     return `j.id, j.lane, j.status, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
             ${array('j.limit_keys')} AS limit_keys, ${array('j.limit_maxes')} AS limit_maxes,
-            ${json('j.rate_limits')} AS rate_limits, j.blocked_on, j.failure_lane, ${json('j.last_error')} AS last_error,
+            ${json('j.rate_limits')} AS rate_limits, j.blocked_on, ${json('j.last_error')} AS last_error,
             j.timed_out_at IS NOT NULL AS timed_out,
             ${epochMs('j.run_at')} AS run_at_ms, ${epochMs('j.created_at')} AS created_at_ms,
             ${epochMs('j.started_at')} AS started_at_ms, ${epochMs('j.finished_at')} AS finished_at_ms,
@@ -118,7 +118,6 @@ function recordOf(row) {
             return { limit, key, max: rate.max, per: rate.per_us / 1000, burst: rate.burst, cost: rate.cost };
         }),
         blockedOn: status === 'blocked' && row.blocked_on !== null ? blockedOnOf(String(row.blocked_on)) : null,
-        failureLane: row.failure_lane === null ? null : String(row.failure_lane),
         ...(found && { payload: parsed(row.payload) }),
     };
 }

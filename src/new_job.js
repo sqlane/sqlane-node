@@ -6,7 +6,6 @@ import { normalizeGlobalRateLimits } from './rate_keys.js';
 import { serializePayload } from './payload.js';
 import { isSlotKey, isSlotTime, MAX_KEY_LENGTH, SLOT_PREFIX, slotDedupeKeyOf } from './schedule.js';
 import {
-    checkFailureLane,
     checkOptionFields,
     checkObject,
     NAME_REGEXP,
@@ -14,8 +13,8 @@ import {
 } from './validate.js';
 
 const ENQUEUE_OPTION_NAMES = [
-    'dedupeKey', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'failureLane', 'globalConcurrencyLimits',
-    'globalRateLimits', 'slot',
+    'dedupeKey', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'globalConcurrencyLimits', 'globalRateLimits',
+    'slot',
 ];
 const MAX_DEDUPE_KEY_LENGTH = 120;
 /** Sorted by creation order in this process, also within one millisecond */
@@ -36,7 +35,6 @@ const ulid = createMonotonicUlid();
  * @property {number} maxStalls
  * @property {number} completedRetentionMs
  * @property {number} failedRetentionMs
- * @property {string | null} failureLane
  * @property {number} delayMs From the DB clock at insert. 0 with `runAt`.
  * @property {Date | null} runAt
  */
@@ -149,7 +147,6 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
         dedupeKey = slotDedupeKeyFrom(options.slot, where);
     }
 
-    const failureLane = options.failureLane ?? definition?.failureLane;
     const payloadJson = serializePayload(payload, maxPayloadBytes, where);
     // The limits come from the payload as the handler gets it: as JSON gives it back.
     const rawLimits = options.globalConcurrencyLimits
@@ -170,7 +167,6 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
         maxStalls: options.maxStalls ?? definition?.maxStalls ?? defaults.maxStalls,
         completedRetentionMs: parseDuration(retention.completed) ?? defaults.retention.completedMs,
         failedRetentionMs: parseDuration(retention.failed) ?? defaults.retention.failedMs,
-        failureLane: failureLane === undefined ? null : checkFailureLane(failureLane, lane, scope),
         ...getSchedule(options, where),
     };
 }

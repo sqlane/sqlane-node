@@ -17,6 +17,15 @@ export const LIMIT_WINDOW_SIZE = 500;
 const epochMs = column => `(EXTRACT(EPOCH FROM ${column}) * 1000)::bigint`;
 const HELD = '(s.held_until IS NULL OR s.held_until >= clock_timestamp())';
 /**
+ * A column of the limits of a job, null for a job past its maxStalls: its claim fails it, so it takes no slot and no
+ * quota, and is never blocked (docs/design.md › Leases and stalls).
+ * @param {string} column
+ * @returns {string}
+ */
+const unlessStalledOut = column => `CASE WHEN stalls > max_stalls THEN NULL ELSE ${column} END`;
+/** The job has global limits, of concurrency or of rate: the claim of lanes with limits takes it */
+const LIMITED = '(limit_keys IS NOT NULL OR rate_limits IS NOT NULL) AND stalls <= max_stalls';
+/**
  * @param {string} tat
  * @returns {string} The debt of a rate key in µs (gcra.js): how far its tat is ahead of now.
  */
@@ -170,8 +179,10 @@ function candidatesSql(p, withRates) {
         w AS (
             SELECT due.*, request.max_jobs FROM request
              CROSS JOIN LATERAL (
-                 SELECT id, lane, run_at, limit_keys, limit_maxes,
-                        ${withRates ? 'rate_limits' : 'rate_limits IS NOT NULL AS rated'} FROM ${p}jobs
+                 SELECT id, lane, run_at, ${unlessStalledOut('limit_keys')} AS limit_keys,
+                        ${unlessStalledOut('limit_maxes')} AS limit_maxes,
+                        ${unlessStalledOut('rate_limits')}${withRates ? ' AS rate_limits' : ' IS NOT NULL AS rated'}
+                   FROM ${p}jobs
                   WHERE status = 'pending' AND lane = request.name AND run_at <= clock_timestamp()
                   ORDER BY run_at, id LIMIT ${LIMIT_WINDOW_SIZE}
              ) AS due
@@ -335,9 +346,10 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
         return { jobs: [], blockedKeys: [], blockedLanes: [], rateWaits: [] };
     }
 
-    const columns = `id, lane, array_to_json(limit_keys)::text AS limit_keys,
-               array_to_json(limit_maxes)::text AS limit_maxes, rate_limits::text AS rate_limits, attempts,
-               max_attempts, stalls, max_stalls, failure_lane, ${epochMs('created_at')} AS created_at_ms,
+    const columns = `id, lane, array_to_json(${unlessStalledOut('limit_keys')})::text AS limit_keys,
+               array_to_json(${unlessStalledOut('limit_maxes')})::text AS limit_maxes,
+               ${unlessStalledOut('rate_limits')}::text AS rate_limits, attempts, max_attempts, stalls, max_stalls,
+               ${epochMs('created_at')} AS created_at_ms,
                ${epochMs('run_at')} AS run_at_ms,
                (EXTRACT(EPOCH FROM clock_timestamp() - run_at) * 1000)::bigint AS waited_ms`;
     const pending = `FROM ${p}jobs
@@ -353,6 +365,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
         rate_rows AS (${lockRateKeysSql(p, `(
             SELECT DISTINCT e.key COLLATE "C" AS limit_key
               FROM locked CROSS JOIN LATERAL jsonb_to_recordset(locked.rate_limits) AS e(key text)
+             WHERE locked.stalls <= locked.max_stalls
         ) AS k ORDER BY k.limit_key`)})
         SELECT ${columns} FROM locked ORDER BY run_at, id`
         : `SELECT ${columns} ${pending}`, [ids])).map(row => ({
@@ -367,7 +380,6 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
             maxAttempts: Number(row.max_attempts),
             stalls: Number(row.stalls),
             maxStalls: Number(row.max_stalls),
-            failureLane: row.failure_lane === null ? null : String(row.failure_lane),
             enqueuedAt: new Date(Number(row.created_at_ms)),
             runAt: new Date(Number(row.run_at_ms)),
             // Set by the write of the claim
@@ -503,7 +515,7 @@ function claimedJobsJson(p) {
         SELECT json_agg(json_build_object(
                    'id', c.id, 'lane', c.lane, 'attempts', c.attempts,
                    'maxAttempts', c.max_attempts, 'stalls', c.stalls, 'maxStalls', c.max_stalls,
-                   'failureLane', c.failure_lane, 'createdAtMs', c.created_at_ms, 'waitedMs', c.waited_ms,
+                   'createdAtMs', c.created_at_ms, 'waitedMs', c.waited_ms,
                    'runAtMs', ${epochMs('c.run_at')}, 'startedAtMs', ${epochMs('c.started_at')},
                    'found', pl.id IS NOT NULL, 'payload', pl.payload
                ) ORDER BY c.run_at, c.id)
@@ -518,8 +530,8 @@ function claimedJobsJson(p) {
  */
 function parseClaimedJobs(json, lockToken) {
     /** @type {{ id: string, lane: string, attempts: number, maxAttempts: number, stalls: number, maxStalls: number,
-     *     failureLane: string | null, createdAtMs: number, waitedMs: number, runAtMs: number, startedAtMs: number,
-     *     found: boolean, payload: unknown }[]} */
+     *     createdAtMs: number, waitedMs: number, runAtMs: number, startedAtMs: number, found: boolean,
+     *     payload: unknown }[]} */
     const jobs = (json ?? null) === null ? [] : JSON.parse(String(json));
 
     return jobs.map(job => ({
@@ -531,7 +543,6 @@ function parseClaimedJobs(json, lockToken) {
         maxAttempts: job.maxAttempts,
         stalls: job.stalls,
         maxStalls: job.maxStalls,
-        failureLane: job.failureLane,
         enqueuedAt: new Date(job.createdAtMs),
         runAt: new Date(Number(job.runAtMs)),
         startedAt: new Date(Number(job.startedAtMs)),
@@ -622,7 +633,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
                    request.weight
               FROM request
              CROSS JOIN LATERAL (
-                 SELECT id, run_at, limit_keys IS NOT NULL OR rate_limits IS NOT NULL AS limited FROM ${p}jobs
+                 SELECT id, run_at, ${LIMITED} AS limited FROM ${p}jobs
                   WHERE status = 'pending' AND lane = request.name AND run_at <= clock_timestamp()
                   ORDER BY run_at, id LIMIT request.max_jobs
                     FOR UPDATE SKIP LOCKED
@@ -643,7 +654,6 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
               FROM picked
              WHERE j.id = picked.id
             RETURNING j.id, j.lane, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
-                      j.failure_lane,
                       ${epochMs('j.created_at')} AS created_at_ms,
                       (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
         ),
@@ -705,7 +715,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
 async function claimDueOfLane(executor, p, { name, limit, lockToken, lockedBy, leaseMs }) {
     const [row] = await executor.query(`
         WITH locked AS (
-            SELECT id, limit_keys IS NOT NULL OR rate_limits IS NOT NULL AS limited FROM ${p}jobs
+            SELECT id, ${LIMITED} AS limited FROM ${p}jobs
              WHERE status = 'pending' AND lane = $1 AND run_at <= clock_timestamp()
              ORDER BY run_at, id LIMIT $2
                FOR UPDATE SKIP LOCKED
@@ -722,7 +732,6 @@ async function claimDueOfLane(executor, p, { name, limit, lockToken, lockedBy, l
               FROM picked
              WHERE j.id = picked.id
             RETURNING j.id, j.lane, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
-                      j.failure_lane,
                       ${epochMs('j.created_at')} AS created_at_ms,
                       (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
         )

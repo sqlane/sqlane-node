@@ -239,6 +239,8 @@ export async function publicApiTypes() {
     await sqlane.enqueue(connection, job, {}, { delay: '1s', runAt: new Date() });
     // @ts-expect-error dedupeKey is a string
     await sqlane.enqueue(connection, job, {}, { dedupeKey: 42 });
+    // @ts-expect-error no failureLane at enqueue: the definition of the process that fails the job decides
+    await sqlane.enqueue(connection, job, {}, { failureLane: 'build_failed' });
 
     // lanes.add: no options; local limits and weights are in the definition
     sqlane.lanes.add(job, () => {});
@@ -466,7 +468,8 @@ export async function publicApiTypes() {
     expectTypeOf(read?.blockedOn).toEqualTypeOf(/** @type {BlockedOn | undefined} */ (undefined));
     // A record refers to its lane: `lane`, not `name`
     expectTypeOf(read?.lane).toEqualTypeOf(/** @type {string | undefined} */ (undefined));
-    expectTypeOf(read?.failureLane).toEqualTypeOf(/** @type {string | null | undefined} */ (undefined));
+    // @ts-expect-error JobRecord has no failureLane: the definition of the process that fails the job decides
+    void read?.failureLane;
     // @ts-expect-error JobRecord has no name: its lane is `lane`
     void read?.name;
 

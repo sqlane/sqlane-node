@@ -59,8 +59,8 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {number} attempts The failed attempts so far.
  * @property {number} maxAttempts
  * @property {number} stalls
- * @property {number} maxStalls
- * @property {string | null} failureLane
+ * @property {number} maxStalls Below `stalls`: its last stall was past its max, so its claim fails it, without its
+ *     limits and its rate limits.
  * @property {Date} enqueuedAt
  * @property {Date} runAt Its due time, as stored: its place in line.
  * @property {Date} startedAt The database time of the claim, as stored in `started_at`; also the time of its new slots.
@@ -160,23 +160,31 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {unknown} payload Null: its payload is missing.
  * @property {number} attempt
  * @property {number} maxAttempts
- * @property {string} failureLane Its failure lane.
  * @property {import('../error_json.js').ErrorJson} error
  */
 
 /**
- * Builds the failure job: its options from its definition, else the defaults; no failure lane of its own.
- * @typedef {(failed: FailedJob) => import('../new_job.js').NewJob} FailureJobBuilder
+ * The failure job of a job that fails for good, by the definition of its lane in the process that fails it.
+ * @typedef {object} FailureJobBuilder
+ * @property {string | null} lane Its failure lane; null: none.
+ * @property {(failed: FailedJob) => import('../new_job.js').NewJob} build Its options from the definition of the
+ *     failure lane, else the defaults; no failure lane of its own.
  */
 
-/** @typedef {{ added: import('../new_job.js').NewJob } | { notAdded: unknown }} FailureJobResult */
+/**
+ * @typedef {{ added: import('../new_job.js').NewJob } | { notAdded: unknown, failureLane: string }} FailureJobResult
+ */
 
 /**
- * The result of the recovery of a stale job. `attempt` and `runMs` describe the run that stalled: its attempt (1 for
- * the first run), and the time since it started.
- * @typedef {{ result: null, failureResult: null }
- *     | { result: 'released' | 'failed', failureResult: FailureJobResult | null, attempt: number, runMs: number }}
- *     StaleJobResult
+ * The result of the recovery of a stale job. `attempt`: the attempt of the run that stalled (1 for the first run).
+ * @typedef {{ result: null } | { result: 'released', attempt: number }} StaleJobResult
+ */
+
+/**
+ * @typedef {object} FailParams
+ * @property {import('../error_json.js').ErrorJson} error
+ * @property {FailureJobBuilder} failureJob
+ * @property {boolean} attemptUsed False: a job past its `maxStalls`, failed at its claim, without a run.
  */
 
 /**
@@ -205,18 +213,17 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  *     the jobs that it completed.
  * @property {(job: OwnedJob, params: { delayMs: number, error: import('../error_json.js').ErrorJson })
  *     => Promise<boolean>} retryJob
- * @property {(
- *     job: OwnedJob,
- *     params: { error: import('../error_json.js').ErrorJson, buildFailureJob: FailureJobBuilder },
- * ) => Promise<{ changed: boolean, failureResult: FailureJobResult | null }>} failJob
+ * @property {(job: OwnedJob, params: FailParams)
+ *     => Promise<{ changed: boolean, failureResult: FailureJobResult | null }>} failJob
  * @property {(job: OwnedJob, params: { delayMs: number, lingerMs: number }) => Promise<boolean>} releaseJob
  * @property {(job: OwnedJob, params: RateLimitedParams) => Promise<RateLimitedResult>} rateLimited The handler threw a
  *     RateLimitedError on global rate keys of the job: their next start is `retryAfter` from now at the earliest, the
  *     job is blocked on the first of them, without an attempt used; its slots are freed.
  * @property {(limit: number) => Promise<RecoveryWork>} findRecoveryWork One read, with no lock: the stale jobs, and
  *     the parts of the sweep that have work.
- * @property {(id: string, params: { leaseMs: number, buildFailureJob: FailureJobBuilder })
- *     => Promise<StaleJobResult>} recoverStaleJob
+ * @property {(id: string, params: { leaseMs: number }) => Promise<StaleJobResult>} recoverStaleJob One more stall:
+ *     the job is pending again, its slots linger for one lease. Past its `maxStalls`, it keeps its due time, so it is
+ *     due at once, in its place in line: its next claim fails it.
  * @property {(limit: number, parts?: SweepParts) => Promise<SweepResult>} sweepSlots Deletes the ended lingers and
  *     the orphan slots, then unblocks the jobs blocked on keys with room, and on rate keys whose next start is due:
  *     the `parts` only (default: all). No part: no transaction. A deadlock, a serialization failure or a 1020 runs it

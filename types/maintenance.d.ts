@@ -21,14 +21,12 @@ export type Maintenance = {
  * @param {(func: () => void, delayMs: number) => NodeJS.Timeout} params.setTimer An unref'd timer.
  * @param {(event: import('./types.js').SqlaneEvent) => void} params.emit
  * @param {(operation: string, error: unknown) => void} params.reportError
- * @param {{ failed: number }} params.counts The results, counted for drain().
- * @param {import('./failure_lanes.js').FailureLanes} params.failureLanes
  * @param {(key: string, delayMs: number) => void} params.armRateWake The timer of a rate key with blocked jobs.
  * @param {() => void} params.wake A wake of all lanes of this process.
  * @param {import('./hint_channel.js').HintChannel} params.hintChannel
  * @returns {Maintenance}
  */
-export declare function createMaintenance({ store, running, timings: t, cleanup, state, setTimer, emit, reportError, counts, failureLanes, armRateWake, wake, hintChannel, }: {
+export declare function createMaintenance({ store, running, timings: t, cleanup, state, setTimer, emit, reportError, armRateWake, wake, hintChannel, }: {
     store: import('./store/store.js').Store;
     running: ReadonlyMap<string, import('./job_runs.js').RunningJob>;
     timings: {
@@ -41,10 +39,6 @@ export declare function createMaintenance({ store, running, timings: t, cleanup,
     setTimer: (func: () => void, delayMs: number) => NodeJS.Timeout;
     emit: (event: import('./types.js').SqlaneEvent) => void;
     reportError: (operation: string, error: unknown) => void;
-    counts: {
-        failed: number;
-    };
-    failureLanes: import('./failure_lanes.js').FailureLanes;
     armRateWake: (key: string, delayMs: number) => void;
     wake: () => void;
     hintChannel: import('./hint_channel.js').HintChannel;
