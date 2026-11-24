@@ -4,8 +4,11 @@
 
 The worker of a process is a **runner** of its own: `createRunner(sqlane)` mounts handlers (`defineHandler`) and
 schedules (`defineSchedule`), at any time, and `sqlane` acts on the database for every process. A producer creates no
-runner. The failure job of a job comes from the definition of its lane in the process that
-fails it, and a job past its `maxStalls` fails at its next claim, in a process that handles its lane.
+runner. The failure job of a job comes from the definition of its lane in the process that fails it, and a job past its
+`maxStalls` fails at its next claim, in a process that handles its lane. A lane or a schedule can be paused in every
+process, in the database: `sqlane.lanes.pauseGlobally()`, `sqlane.schedules.pauseGlobally()`. To upgrade, stop the 9.x
+processes, run `schema.migrate()` (it applies `0010_pause`), then deploy: see the
+[guide](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/10.md).
 
 ```js
 import { createRunner, createSqlane, defineHandler, defineLane, defineSchedule } from '@sqlane/core';
@@ -24,7 +27,7 @@ Breaking changes:
 - A new migration, `0010_pause` (tagged 10.0.0): run `schema.migrate()` before the first `runner.start()` of 10.0.
   `runner.start()` and `runner.drain()` reject with a `ConfigError` until it is applied (a database that is down at
   `start()`: it resolves, emits `error`, and claims nothing until the check passes). `schema.migrate()` is unaffected.
-
+  A rollback to 9.0.0 drops the global pauses.
 - `sqlane.lanes.add(lane, handler)` is now `runner.mount([defineHandler(lane, handler)])`, and
   `sqlane.schedule(lane, options)` is `runner.mount([defineSchedule(lane, { key, ...options })])`. A mount works before
   `start()` and after it (it claims and fires at once); `mount.unmount()` removes it. `sqlane.start()`, `drain()` and

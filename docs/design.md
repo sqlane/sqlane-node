@@ -69,7 +69,9 @@ reasons behind the shape of the API.
   schedule says when one is added (`defineSchedule`), next to its lane. They are frozen values, with no instance.
 - **Two scopes.** `sqlane` (`createSqlane`) acts on the database, for every process; the runner (`createRunner`) acts on
   this process: its mounts, its local pauses, `start`, `drain`, `close`. A producer creates no runner, so a web process
-  cannot start a worker by mistake. A runner takes only a sqlane of its own copy of the package.
+  cannot start a worker by mistake. A runner takes only a sqlane of its own copy of the package. The pauses say their
+  scope in their names: `runner.pauseLocally` (memory, this process, sync) and `sqlane.lanes.pauseGlobally` (a row,
+  every process, async).
 - **Mounts at runtime.** A runner mounts and unmounts handlers and schedules at any time, so a process can change
   what it runs (a feature flag, a tenant, a test) without a restart. A claim and a fire keep the parts they began with;
   a job that runs keeps its handler, and counts toward the lane, by name, after an unmount.
@@ -113,7 +115,7 @@ reasons behind the shape of the API.
 
 ## Data
 
-Each table prefix (default `sqlane_`) has six tables: the five tables below and `sqlane_migrations`. The names of
+Each table prefix (default `sqlane_`) has seven tables: the six tables below and `sqlane_migrations`. The names of
 the tables and columns use snake_case. All times come from the database clock (`UTC_TIMESTAMP(3)` on MySQL,
 `clock_timestamp()` on PostgreSQL), so clock skew between processes does not matter. Schedules compute their slots in
 the process, but they decide each slot with the database clock ([Schedules](#schedules)).
@@ -184,6 +186,11 @@ theoretical arrival time, in microseconds of the database clock (`UTC_TIMESTAMP(
 inserts a missing row at the current time. A row whose `tat` has passed is the same as no row, so the sweep of the stall
 recovery deletes them in batches, with SKIP LOCKED: the keys of a limit per client do not pile up.
 
+### `sqlane_paused_lanes`
+
+`lane` (PK; the type and the collation of `sqlane_jobs.lane`), `paused_at` (`ts(3)`). One row per globally paused lane
+([Global pauses](#global-pauses)); no row: not paused. The claims read it by its primary key.
+
 ### `sqlane_schedules`
 
 | Column                     | Type              | Notes                                                                                         |
@@ -194,10 +201,11 @@ recovery deletes them in batches, with SKIP LOCKED: the keys of a limit per clie
 | `last_slot_at`             | ts(3)             | The cursor: the last decided slot. It only moves forward. Slots at or before it never run.    |
 | `last_job_id`              | varchar(255) null | The job of the last enqueued slot. `overlap: 'skip'` reads it.                                |
 | `created_at`, `updated_at` | ts(3)             |                                                                                               |
+| `paused_at`                | ts(3) null        | The global pause of the schedule: no process fires it. Null: not paused.                      |
 
 One small row per schedule, and no secondary index: each access is by primary key, or reads the whole table
-(`schedules.list`). An app without schedules never touches it. sqlane never deletes a row: services that share the table
-each know only their own schedules.
+(`schedules.list`). An app without schedules never touches it. sqlane deletes a row only at `schedules.remove()`:
+services that share the table each know only their own schedules.
 
 ### Migrations
 
@@ -209,18 +217,19 @@ migration, with `applied_at`.
 between dialects, so the tags do too. Order is id order, and the tags never decrease with the ids (a unit test checks
 it).
 
-| Migration                 | PostgreSQL | MySQL | MariaDB |
-| ------------------------- | ---------- | ----- | ------- |
-| `0001_initial`            | 0.1.0      | 0.1.0 | 2.0.0   |
-| `0002_pending_order`      | 3.0.0      | -     | -       |
-| `0002_job_keys`           | -          | 3.0.0 | 3.0.0   |
-| `0003_job_keys`           | 3.0.0      | -     | -       |
-| `0004_schedules`          | 4.0.0      | 4.0.0 | 4.0.0   |
-| `0005_concurrency_limits` | 6.0.0      | 6.0.0 | 6.0.0   |
-| `0006_concurrency_slots`  | 6.0.0      | 6.0.0 | 6.0.0   |
-| `0007_rate_limits`        | 6.0.0      | 6.0.0 | 6.0.0   |
-| `0008_job_list`           | 7.1.0      | 7.1.0 | 7.1.0   |
-| `0009_lanes`              | 9.0.0      | 9.0.0 | 9.0.0   |
+| Migration                 | PostgreSQL | MySQL  | MariaDB |
+| ------------------------- | ---------- | ------ | ------- |
+| `0001_initial`            | 0.1.0      | 0.1.0  | 2.0.0   |
+| `0002_pending_order`      | 3.0.0      | -      | -       |
+| `0002_job_keys`           | -          | 3.0.0  | 3.0.0   |
+| `0003_job_keys`           | 3.0.0      | -      | -       |
+| `0004_schedules`          | 4.0.0      | 4.0.0  | 4.0.0   |
+| `0005_concurrency_limits` | 6.0.0      | 6.0.0  | 6.0.0   |
+| `0006_concurrency_slots`  | 6.0.0      | 6.0.0  | 6.0.0   |
+| `0007_rate_limits`        | 6.0.0      | 6.0.0  | 6.0.0   |
+| `0008_job_list`           | 7.1.0      | 7.1.0  | 7.1.0   |
+| `0009_lanes`              | 9.0.0      | 9.0.0  | 9.0.0   |
+| `0010_pause`              | 10.0.0     | 10.0.0 | 10.0.0  |
 
 A migration merged before its release is tagged with the version that its changeset gives: the next minor, or the next
 major. If the release turns out higher, because a major is cut after it, the tag stays lower than the real release.
@@ -232,9 +241,9 @@ This is harmless: every pin at or above the real version includes it, and it cou
   recorded, in id order. By default it applies every known migration.
 - `schema.rollback({ targetVersion })` reverts the recorded migrations tagged above `targetVersion`, newest first: the
   down statements of each, then the delete of its record. It rejects when a recorded migration is unknown to this
-  version, because its down is not in this code. Every migration tagged after 6.0.0 has a down: today `0008_job_list`
-  and `0009_lanes`, then every new one. A down that drops a column or a table loses its data; its comment and the
-  changelog say so.
+  version, because its down is not in this code. Every migration tagged after 6.0.0 has a down: today `0008_job_list`,
+  `0009_lanes` and `0010_pause`, then every new one. A down that drops a column or a table loses its data; its comment
+  and the changelog say so.
 - `targetVersion` goes from `6.0.0` up to the higher of the installed version and the highest tag. `0005` and `0006`
   turned the mutex keys of 5.x into concurrency slots, which have no faithful reverse, so `6.0.0` is the floor.
 - `schema.drop()` drops every table that sqlane created under the prefix in any version, `IF EXISTS`: the current
@@ -330,6 +339,15 @@ their columns follow the rename. A rename changes only the metadata: no row is c
   queries that come after it wait for it. Run `schema.migrate()` with no open transaction on the jobs table: the 8.x
   processes stopped.
 
+`0010_pause` creates `<prefix>paused_lanes` and adds `<prefix>schedules.paused_at` (nullable, no default: metadata
+only, no row is written). PostgreSQL runs both in the transaction of the migration. MySQL adds the column in a step of
+its own that runs only while the catalog lacks the column (it has no `ADD COLUMN IF NOT EXISTS`), so a cut run runs
+again; MariaDB has `IF NOT EXISTS`. The down drops both, with the pauses in them: the paused lanes and schedules run
+again. `runner.start()` and `runner.drain()` read the records of the migrations once per runner and reject without
+`0010_pause`: every claim and fire reads its table or its column. The check is not in the server check that
+`schema.migrate()` shares, which must work on a schema without it. A read of the pauses on a schema without it (a
+missing table or column: `42P01`, `42703`, `1146`, `1054`) is a `ConfigError` that asks for `schema.migrate()`.
+
 ### Versions
 
 sqlane follows semantic versioning, and its schema follows these rules.
@@ -405,7 +423,7 @@ loop while started
   lanes = handled lanes, not paused here, with a free slot (under each of its local limits and the runner's cap),
     and quota in each of their local rate limits
   if no lanes: wait for a wake, or the poll
-  probe: the next run_at of each lane that has pending jobs (one statement)
+  probe: the next run_at of each lane that has pending jobs and no global pause (one statement)
   if nothing due: wait until the next run_at (at most the poll interval) or a wake
   turn = the due lanes, the lowest running / weight first, at most 4 per free slot and 4 per free slot of each of
     their local limits; the others at the next turn
@@ -837,9 +855,11 @@ and the hint subscription. It never ends the app's pool.
 
 `drain({ timeout, includeDelayed })` claims and runs jobs until none is left, without `start()`:
 
-- Only the lanes this instance added, and only the due jobs. Pending jobs of other lanes are not waited for.
+- Only the lanes this instance added, and only the due jobs. Pending jobs of other lanes are not waited for, nor those
+  of a paused lane (local or global): its probe skips them, so a drain ends.
 - `includeDelayed: true` also runs the delayed jobs and the retries in backoff at once (each round makes the pending
-  jobs of the mounted lanes due now): for tests like "fails 3 times, then the failure job runs".
+  jobs of the mounted lanes due now, but those of the globally paused lanes): for tests like "fails 3 times, then the
+  failure job runs".
 - Returns counts: `completed`, `retried` (failed attempts that were retried), `failed` (jobs that failed for good).
   On timeout it rejects with `DrainTimeoutError`.
 - It waits for the timers of the rate keys on which it blocked jobs, when they are due before the timeout, but not for
@@ -865,7 +885,8 @@ slots:
    MariaDB). The same statement reads the database clock.
 2. It decides each slot in JS, with that database time: a slot wins if it is after the row's cursor (`last_slot_at`)
    and it is on time (the database time minus the slot is at most 1 minute), or it is a late catch-up. A slot more
-   than 1 s ahead of the database time is deferred.
+   than 1 s ahead of the database time is deferred. A slot of a paused row (`paused_at`) is decided, not fired: no job,
+   no event, and the cursor stays.
 3. With `overlap: 'skip'`, it reads the status of the last job of each winner.
 4. It inserts the jobs of all winners, of all lanes, in one statement on PostgreSQL, with one NOTIFY per lane. On
    MySQL and MariaDB, it uses the enqueue insert. On-time jobs get `runAt` = their due time (the slot, plus the
@@ -875,7 +896,9 @@ slots:
 A row that another process holds is skipped, never waited for: it is **busy**. About 1 s later, the process reads the
 cursor with one plain `SELECT`. If the cursor moved, the slot is taken. If not, the holder rolled back or still holds
 the row, and the process fires again, with a backoff of up to 60 s. A row that stays locked longer than 1 minute logs
-a warning. A missing row (after a manual `DELETE`) is inserted again by an on-time slot only.
+a warning. A missing row (after `schedules.remove()`) is inserted again by an on-time slot only, not paused. The busy
+fires of the later slots of the schedule do not put the pending recheck off: a schedule faster than the recheck would
+never read its row again.
 
 **Why at most one job per slot.** A slot is decided only while the transaction holds the row lock, and the lock pass
 reads the latest committed row. The cursor and the jobs commit together, so a crash leaves neither. The cursor
@@ -911,6 +934,70 @@ from 5 s to 60 s.
 **Why no leader, and no chained pending job.** A leader adds a moving part, and the row lock already picks one
 process per slot. A future pending job per schedule (as BullMQ does) would make every probe read one index entry per
 scheduled lane, and it breaks when that job is deleted or a deploy changes the spec.
+
+### Global pauses
+
+`sqlane.lanes.pauseGlobally(lane)` writes a row of `<prefix>paused_lanes` (an upsert that keeps the first `paused_at`);
+`resumeGlobally` deletes it. Every statement that chooses a lane skips the paused ones, with a filter
+`NOT EXISTS (SELECT 1 FROM <prefix>paused_lanes WHERE lane = …)`:
+
+- the probe; the search of candidates; the claim by ids; the claim of due jobs (on PostgreSQL its `request` CTE, which
+  its next due times read too); the oldest blocked job of a key, which a newer job waits behind (in the search, in the
+  claim, in `unblock` for the room of a concurrency key, in `unblockRates` for the settings of a rate key), and the
+  blocked jobs that the unblocks make pending; `makeDue` of `drain({ includeDelayed })`.
+- Not the sweep's scan of the keys with blocked jobs: it reads keys, not lanes, and the unblocks that it calls skip
+  the paused lanes.
+
+So a paused lane's jobs stay where they are: pending, blocked, or running to their end. Its blocked jobs take no room
+of a shared key, and never hold the jobs of other lanes behind them as the head of a key.
+
+**A subquery, never a join.** The filter reads the primary key of a table of a few rows, at most one row per check.
+Where the lane is a parameter, the subquery is uncorrelated: the database runs it once per statement on PostgreSQL (the
+claim of one lane), once per `UNION ALL` branch on MySQL and MariaDB (one branch per lane). Where several lanes' rows
+are read (the heads of the keys, the claim by ids), it is correlated on the row's lane. A join would change the plans
+of the hot statements, and could lock the rows of the pauses in a locking read.
+
+**MySQL and MariaDB: the paused lanes of the probe.** Each subquery in a statement costs its planning, at each call
+(MySQL plans each statement, also when the subquery never runs). So the reads of the blocked jobs (the heads of the
+keys in the search and the claim, the reads of `unblock` and `unblockRates`) and the search of candidates take the
+paused lanes that the last probe of the process read: none (the usual case) adds nothing to the statement; some add
+`lane NOT IN (…)`, and the search leaves their lanes out. A pause after the probe holds from the next one: a blocked
+job of its lane can head a key for one turn, or take the room of one unblock on a shared key, until the next release or
+sweep of the key. The list stands for one poll interval; after it (a closed runner, an idle one between two drains), and
+after a resume in this process, until the next probe, the reads keep the subquery, as a process that has not probed
+(without a runner) does. Above 50 paused lanes, the subquery too: no list of 50 parameters in each branch of a
+`UNION ALL`. The claims keep the subquery in any case: a lane whose claims stay full is claimed again without a
+probe.
+
+**MySQL and MariaDB keep the loose index scan of the probe.** A filter on the lane in its `GROUP BY` scan would end the
+loose index scan (`Using index for group-by`). The probe instead returns the paused lanes in the same statement
+(`… UNION ALL SELECT lane, NULL FROM <prefix>paused_lanes`), and drops them in JS. The claim of due jobs reads its next
+due times with the same probe. A `HAVING NOT EXISTS (…)` on the groups keeps the loose index scan too, and costs
+less in an idle probe, but it does not tell the paused lanes to the reads below.
+
+**No new index.** Without paused lanes, each filter is one probe of an empty primary key. A paused lane with many due
+jobs costs nothing: the probe and the claims skip it before they read its jobs. The cost is in the heads of the keys:
+an index scan on `(blocked_on, run_at, id)` (`jobs_blocked`) walks past the blocked jobs of the paused lanes that come
+before the first one of another lane, one check of `paused_lanes` each. An index with the lane would not help: the
+head is by key and time across lanes. A paused lane with many blocked jobs on a key that other lanes share is the case
+of `paused_lane_blocked` in `bench:statements`.
+
+**The resume.** Of a lane that was paused only. It reads the keys of the blocked jobs of the lane (a scan of the
+blocked jobs: a resume is rare). The concurrency keys are unblocked as far as they have room; the rate keys
+get the timer of the runner of this process when it is started or draining (an unblock now, then the next ones while
+blocked jobs are left), else one unblock, the rest left to the sweep. Then the runner of this process wakes, and the
+hint goes to the others, whether this process can start the lane or not. With a connection, all this runs after its
+commit, when the adapter can tell. Else (a raw client in a transaction) it runs at once, as an enqueue does: the runner
+of this process re-probes until it sees the lane, the hint makes the others re-probe, and the unblocks run again 1 s
+and 5 s later, after the commit can have happened.
+
+**Schedules.** `sqlane.schedules.pauseGlobally()` sets `paused_at` of the row; with no row, it inserts one, paused, with
+its cursor at now and the spec of the definition (a placeholder, `unknown`, from an id: no timing reads it, so
+`schedules.list()` shows no next slot, and the first fire writes the spec). The fire decides the slots of a paused row
+without firing them; the scheduler of each process moves on to the next slot, as for a lost one. The resume clears
+`paused_at` and moves the cursor to now (`GREATEST`, so a cursor ahead stays): the slots of the pause are lost, never
+caught up. A resume of a row that is not paused changes nothing, so it cannot drop a due slot. `runSlot()` ignores the
+pause.
 
 ### Bulk operations
 
@@ -1087,10 +1174,13 @@ The source files in `src/` have snake_case names. These are the main ones:
   `schema.getMigrationStatus()` and `schema.findSchemaProblems()`; `version.js` reads the installed version and
   compares versions.
 - `server_check.js` checks the server at the first `start()` or `schema.migrate()`: the database of `dialect`, its
-  version, and the `sql_mode` of MySQL and MariaDB.
+  version, and the `sql_mode` of MySQL and MariaDB. `create_runner.js` checks the migrations at `start()` and
+  `drain()`.
 - `cron.js` parses cron expressions and finds their slots, `time_zone.js` reads wall-clock times from `Intl`,
   `schedule.js` checks the options of a schedule and computes its slots, and `scheduler.js` runs the timer and the
   fires of the schedules. `schedule_list.js` implements `schedules.list()`, `run_slot.js` `schedules.runSlot()`.
+- `global_pauses.js` implements the global pauses of `sqlane.lanes` and `sqlane.schedules`, `schedules.remove()` and
+  `lanes.stats()`; `store/pauses.js` holds their SQL, and the filter of the claims.
 - `errors.js` defines the error classes.
 - `store/` holds the SQL of each dialect behind one store interface.
 - `schema/` holds the schema of each dialect, as tagged migrations, and `expected.js`, what they create.

@@ -27,6 +27,9 @@ explains how sqlane works and why.
 - [Schedules](#schedules)
 - [`schedules.list`](#scheduleslist)
 - [`schedules.runSlot`](#schedulesrunslot)
+- [`schedules.pauseGlobally` and `resumeGlobally`](#schedulespauseglobally-and-resumeglobally)
+- [`schedules.remove`](#schedulesremove)
+- [`lanes.pauseGlobally` and `resumeGlobally`](#lanespauseglobally-and-resumeglobally)
 - [`runner.pauseLocally`](#runnerpauselocally)
 - [`runner.getStatus`](#runnergetstatus)
 - [`runner.start`](#runnerstart)
@@ -78,8 +81,8 @@ lane is `failureLane`.
 The API has two scopes, and each method acts in one of them:
 
 - **`sqlane`** (from `createSqlane` of `@sqlane/core`) acts on the database, for every process: `enqueue`, `jobs`,
-  `lanes.stats`, `schedules`, `schema`. Its methods are async. A producer, a web process, a script or an admin tool
-  needs nothing else.
+  `lanes` (their counts, and their pauses in every process), `schedules`, `schema`. Its methods are async. A producer, a
+  web process, a script or an admin tool needs nothing else.
 - **`runner`** (from `createRunner` of `@sqlane/core`) acts on this process: what it runs (`mount`), what it holds back
   (`pauseLocally`), what runs here (`getStatus`), and `start`, `drain` and `close`. Its methods change memory only, at
   once, but `start`, `drain` and `close`. A process without a runner claims no job and fires no schedule.
@@ -87,7 +90,10 @@ The API has two scopes, and each method acts in one of them:
 The definitions (`defineLane`, `defineHandler`, `defineSchedule`, `defineConcurrencyLimit`, `defineRateLimit`) are
 frozen values with no instance: create them at module load.
 
-A lane runs in a process while a handler of the lane is mounted in its runner, and no local pause holds it.
+A lane runs in a process while a handler of the lane is mounted in its runner, no local pause holds it
+([`runner.pauseLocally`](#runnerpauselocally)), and no global pause holds it
+([`lanes.pauseGlobally`](#lanespauseglobally-and-resumeglobally)). The names say the scope: `pauseLocally` pauses this
+process, `pauseGlobally` every process.
 
 ## Durations
 
@@ -819,8 +825,10 @@ A slot run by hand (`schedules.runSlot`) has no jitter. A change of `jitter` alo
 - A late catch-up needs the stored spec to equal the spec of the process. So moving `0 3 * * *` to `0 5 * * *` does
   not run the 05:00 slot of today at once. The specs are normalized, so `MON-FRI` and `1-5` are the same spec.
 - A change of `payload`, `overlap` or `missed` applies from the next slot.
-- A schedule that you remove from code stops. Its row stays, and sqlane never deletes it. `schedules.list()` lists it
-  with its last slot. Delete it with `DELETE FROM sqlane_schedules WHERE id = '…'`.
+- A schedule that you remove from code stops. Its row stays: `schedules.list()` lists it with its last slot. Delete it
+  with [`schedules.remove`](#schedulesremove); the rows of the keyless schedules of 9.x too.
+- To stop a schedule in every process without a deploy, pause it:
+  [`schedules.pauseGlobally`](#schedulespauseglobally-and-resumeglobally).
 
 ### The clock
 
@@ -847,24 +855,27 @@ scheduler, so the scheduler adds no second job for that slot.
 ## `schedules.list`
 
 `sqlane.schedules.list` lists the schedules of the table: the database, for every process. A schedule is listed once
-a started runner has mounted it. `sqlane.schedules` is a frozen object of the sqlane. It needs no runner.
+a started runner has mounted it, or a pause has created its row. `sqlane.schedules` is a frozen object of the sqlane.
+It needs no runner.
 
 ```ts
 sqlane.schedules.list(): Promise<ScheduleInfo[]>
 ```
 
-| Field        | Type               | Description                                                                                                                                                                             |
-| ------------ | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`         | `string`           | `<lane>:<key>`.                                                                                                                                                                         |
-| `lane`       | `string`           | The lane.                                                                                                                                                                               |
-| `spec`       | `string`           | The stored spec, for example `cron 0 3 * * * Europe/Berlin` or `every 900000`.                                                                                                          |
-| `nextAt`     | `Date` or `null`   | The next slot, by the stored spec and the database clock. `null` for a spec that this version cannot read.                                                                              |
-| `nextRunAt`  | `Date` or `null`   | When the job of the next slot will be due: `nextAt` plus its jitter, for a schedule mounted in this process with the stored spec. For another schedule, it is `nextAt`, without jitter. |
-| `lastSlotAt` | `Date`             | The last decided slot; for a new schedule, the time a runner first started it.                                                                                                          |
-| `lastJobId`  | `string` or `null` | The job that the last enqueued slot added.                                                                                                                                              |
+| Field            | Type               | Description                                                                                                                                                                             |
+| ---------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`             | `string`           | `<lane>:<key>`.                                                                                                                                                                         |
+| `lane`           | `string`           | The lane.                                                                                                                                                                               |
+| `spec`           | `string`           | The stored spec, for example `cron 0 3 * * * Europe/Berlin` or `every 900000`. `unknown` for a schedule paused by its id before a runner fired it.                                      |
+| `nextAt`         | `Date` or `null`   | The next slot, by the stored spec and the database clock. `null` while the schedule is paused, or for a spec that this version cannot read.                                             |
+| `nextRunAt`      | `Date` or `null`   | When the job of the next slot will be due: `nextAt` plus its jitter, for a schedule mounted in this process with the stored spec. For another schedule, it is `nextAt`, without jitter. |
+| `lastSlotAt`     | `Date`             | The last decided slot; for a new schedule, the time a runner first started it, or the time of the pause that created its row.                                                           |
+| `lastJobId`      | `string` or `null` | The job that the last enqueued slot added.                                                                                                                                              |
+| `pausedGlobally` | `boolean`          | [`schedules.pauseGlobally`](#schedulespauseglobally-and-resumeglobally) paused it: no process fires it.                                                                                 |
 
 Sorted by id. After a deploy that changes a spec, `spec` shows the old one until the first slot of the new spec. Without
-schedules and without the table, it resolves to `[]`.
+schedules and without the table, it resolves to `[]`. On a schema without the migration `0010_pause`, it rejects with a
+`ConfigError`: run `schema.migrate()`.
 
 ## `schedules.runSlot`
 
@@ -892,10 +903,109 @@ await sqlane.schedules.runSlot(nightly);
 await runner.drain();
 ```
 
+`runSlot` ignores a [global pause](#schedulespauseglobally-and-resumeglobally) of the schedule.
+
+## `schedules.pauseGlobally` and `resumeGlobally`
+
+`sqlane.schedules.pauseGlobally` stops a schedule in every process: no runner fires it, until
+`sqlane.schedules.resumeGlobally`.
+
+```ts
+sqlane.schedules.pauseGlobally(schedule: ScheduleDefinition | string, options?: { connection?: C }): Promise<void>
+sqlane.schedules.resumeGlobally(schedule: ScheduleDefinition | string, options?: { connection?: C }): Promise<void>
+```
+
+| Parameter            | Type                           | Description                                                                                               |
+| -------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `schedule`           | `ScheduleDefinition \| string` | A schedule definition, or its id `<lane>:<key>`.                                                          |
+| `options.connection` | `C`                            | Your transaction, or a connection in one, of the adapter's library; or a pool. Default: the queue's pool. |
+
+- The pause is stored in the row of the schedule, so it holds across restarts and deploys, in every process. The
+  runners see it at their next slot.
+- The slots during the pause are skipped: no job, and no `schedule_fired` event. A slot that a runner was firing when
+  the pause came may still add its job.
+- `resumeGlobally` moves the cursor of the schedule to now: the slots of the pause are not caught up, whatever
+  `missed` says. The next slot after the resume fires as usual. A schedule that is not paused, or that has no row:
+  nothing changes.
+- A schedule with no row yet (never started): `pauseGlobally` creates its row, paused, with its cursor at now. So you
+  can pause a schedule before its first deploy. By its id, the row gets the spec `unknown` until its first fire after
+  the resume. A typo makes a row too: `schedules.list()` shows it, and [`schedules.remove`](#schedulesremove)
+  deletes it.
+- The jobs of the schedule that exist go on. To hold them too, pause the lane:
+  [`lanes.pauseGlobally`](#lanespauseglobally-and-resumeglobally). A paused lane's schedules go on firing, and their
+  jobs wait pending.
+- Both are idempotent: a second pause keeps the time of the first.
+
+They reject with an `InvalidOptionsError` for a schedule that is neither a definition nor an id `<lane>:<key>`, or an
+unknown option, and with a `ConfigError` on a schema without the migration `0010_pause`.
+
+```js
+await sqlane.schedules.pauseGlobally(nightly); // or 'nightly_report:nightly'
+// …
+await sqlane.schedules.resumeGlobally(nightly);
+```
+
+## `schedules.remove`
+
+`sqlane.schedules.remove` deletes the row of a schedule: its cursor, its last job and its pause.
+
+```ts
+sqlane.schedules.remove(schedule: ScheduleDefinition | string, options?: { connection?: C }): Promise<{ removed: boolean }>
+```
+
+Use it for a schedule deleted from the code, for the row of a typo, and for the rows of the keyless schedules of 9.x,
+whose id is `<lane>`. `removed` is `false` when there was no row. A schedule that a started runner still mounts gets its
+row back at its next fire, fresh: not paused, with its cursor at that slot. It rejects with an `InvalidOptionsError` for
+a schedule that is neither a definition nor an id `<lane>:<key>` or `<lane>`.
+
+```js
+await sqlane.schedules.remove('nightly_report'); // a keyless schedule of 9.x
+```
+
+## `lanes.pauseGlobally` and `resumeGlobally`
+
+`sqlane.lanes.pauseGlobally` stops the claims of a lane in every process: no runner claims its jobs, until
+`sqlane.lanes.resumeGlobally`.
+
+```ts
+sqlane.lanes.pauseGlobally(lane: LaneDefinition | string, options?: { connection?: C }): Promise<void>
+sqlane.lanes.resumeGlobally(lane: LaneDefinition | string, options?: { connection?: C }): Promise<void>
+```
+
+| Parameter            | Type                       | Description                                                                                               |
+| -------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `lane`               | `LaneDefinition \| string` | A lane definition, or the name of a lane. A lane with no job yet is fine.                                 |
+| `options.connection` | `C`                        | Your transaction, or a connection in one, of the adapter's library; or a pool. Default: the queue's pool. |
+
+- The pause is stored in the database, so it holds across restarts and deploys, in every process. The runners see it
+  at their next poll, or at a hint. `drain()` sees it at its next round.
+- The running jobs finish. The enqueues go on, and so do the schedules of the lane: their jobs wait pending. The stall
+  recovery, the retries and the cleanup go on.
+- The blocked jobs of a paused lane stay blocked, and take no room of a key that other lanes share: the jobs of the
+  other lanes on the key run. On MySQL and MariaDB, for one poll after the pause, one of them can still take the room
+  of an unblock, until the next release of the key.
+- `resumeGlobally` makes the blocked jobs of the lane pending again, as far as their keys have room or quota, wakes the
+  runner of this process, and sends the [hint](#hint) (if any) to the others. With a `connection`, the lane runs again
+  within seconds of the commit.
+- A paused lane still counts in [`lanes.stats`](#lanesstats): its `due` and its `oldestDueAgeMs` grow. An alert on
+  them should skip the entries with `pausedGlobally: true`.
+- Both are idempotent: a second pause keeps the time of the first; a resume of a lane that is not paused does nothing.
+
+They reject with an `InvalidOptionsError` for a lane that is neither a definition nor a name, or an unknown option, and
+with a `ConfigError` on a schema without the migration `0010_pause`. To pause a lane in this process only, use
+[`runner.pauseLocally`](#runnerpauselocally).
+
+```js
+await sqlane.lanes.pauseGlobally(report); // an incident: no process runs it
+// …
+await sqlane.lanes.resumeGlobally(report);
+```
+
 ## `runner.pauseLocally`
 
 `runner.pauseLocally(lane)` makes this process stop claiming the jobs of the lane; `runner.resumeLocally(lane)` claims
-them again, at once.
+them again, at once. To pause a lane in every process, use
+[`lanes.pauseGlobally`](#lanespauseglobally-and-resumeglobally).
 
 ```ts
 runner.pauseLocally(lane: LaneDefinition | string): void
@@ -905,7 +1015,8 @@ runner.resumeLocally(lane: LaneDefinition | string): void
 The pause is in memory, by lane name, for the life of the runner: it works before the lane is mounted, and it holds
 across an unmount and a mount. The running jobs finish; the schedules of the lane go on, and its jobs wait pending; the
 enqueues of the lane in this process send the hint to the others. Both are sync and idempotent. A pause during
-`drain()` applies to the jobs that it claims next.
+`drain()` applies to the jobs that it claims next. Both throw an `InvalidOptionsError` for a lane that is neither a
+definition nor a name.
 
 ## `runner.getStatus`
 
@@ -927,13 +1038,15 @@ a schedule, a definition or an id (a string with `:`): it is mounted here. An un
 runner.start(): Promise<void>
 ```
 
-After `start()`, the runner claims and runs the due jobs of the mounted lanes that no pause holds. It also renews
-leases, recovers stalled jobs and, if `cleanup` is on, deletes expired jobs. It fires the mounted [schedules](#schedules).
-A second call does nothing, and concurrent calls share one start. The mounts after it claim and fire at once.
+After `start()`, the runner claims and runs the due jobs of the mounted lanes that no pause holds, local or global. It
+also renews leases, recovers stalled jobs and, if `cleanup` is on, deletes expired jobs. It fires the mounted
+[schedules](#schedules) that no global pause holds. A second call does nothing, and concurrent calls share one start.
+The mounts after it claim and fire at once.
 
-With schedules, `start` adds their rows to the table first. It rejects with a `ConfigError` if the table of the
-schedules is missing: run `schema.migrate()`. If the database is down, `start` resolves anyway, emits an `error` event,
-and adds the rows when the database is back. A rejected `start` can be called again.
+`start` needs the migration `0010_pause`: it rejects with a `ConfigError` until it is applied (run `schema.migrate()`).
+With schedules, it adds their rows to the table first. If the database is down, `start` resolves anyway, emits an
+`error` event, claims nothing until it can check the migrations, and adds the rows when the database is back. A
+rejected `start` can be called again.
 
 The first `start()` or `schema.migrate()` of a sqlane checks the server: it rejects with a `ConfigError` if the
 server is not the database of the adapter's `dialect`, is below the supported version, or has a `sql_mode` that sqlane
@@ -949,9 +1062,9 @@ resolves anyway and emits an `error` event. `start` rejects with a `ConfigError`
 runner.drain(options?: DrainOptions): Promise<DrainResult>
 ```
 
-`drain` only runs the lanes mounted in this runner that no pause holds, and only the jobs that are due. It does not
-wait for jobs of other lanes. It does not fire schedules: in tests, run a slot with
-[`sqlane.schedules.runSlot`](#schedulesrunslot).
+`drain` only runs the lanes mounted in this runner that no pause holds, local or global, and only the jobs that are due.
+It does not wait for jobs of other lanes, nor for the jobs of a paused lane. It does not fire schedules: in tests, run a
+slot with [`sqlane.schedules.runSlot`](#schedulesrunslot). Like `start`, it needs the migration `0010_pause`.
 
 | Option           | Type       | Default | Description                                                                               |
 | ---------------- | ---------- | ------- | ----------------------------------------------------------------------------------------- |
@@ -969,8 +1082,9 @@ wait for jobs of other lanes. It does not fire schedules: in tests, run a slot w
 `drain` also waits for the jobs that a rate limit holds back in this runner, when their next start comes before
 the `timeout`. A `RateLimitedError` that sends a job back to wait is not counted.
 
-`drain` rejects with a `ConfigError` after `start()` or while another `drain()` runs; a mount or an unmount during it
-throws one too. It rejects with an `InvalidOptionsError` for a bad `timeout`, and with a `ClosedError` after `close()`.
+`drain` rejects with a `ConfigError` after `start()`, while another `drain()` runs, or without the migration
+`0010_pause`; a mount or an unmount during it throws one too. It rejects with an `InvalidOptionsError` for a bad
+`timeout`, and with a `ClosedError` after `close()`.
 
 ```js
 await orderReport('report-1');
@@ -1037,7 +1151,8 @@ is not the database of the adapter's `dialect`, is below the supported version, 
 not support: the first `schema.migrate()` or `start()` of an instance checks it
 ([server check](adapters.md#the-dialect-and-the-server-check)). After `close()`, it rejects with a `ClosedError`.
 
-9.x requires `0009_lanes`, which renames the columns of the lane. `get`, `list` and the batches of
+10.x requires `0010_pause`, the global pauses: `runner.start()` and `runner.drain()` reject without it. 9.x requires
+`0009_lanes`, which renames the columns of the lane. `get`, `list` and the batches of
 [`sqlane.jobs`](#jobs) also require the migration `0008_job_list`, an index of the jobs. The build of the index waits
 for the writes of the jobs, and they wait for it: on a large PostgreSQL table, build the index `CONCURRENTLY` first, as the
 [design](design.md#migrations) describes.
@@ -1146,7 +1261,8 @@ table of the migrations: `reverted` is empty. It holds the lock of `schema.migra
 - Each down statement is safe to run again. A rollback that was cut, by a crash or a timeout, finishes when you run it
   again.
 - A down that drops a column or a table loses its data. Today, the downs are those of `0008_job_list`, which drops an
-  index, and of `0009_lanes`, which renames the columns of the lane back: neither loses data.
+  index, of `0009_lanes`, which renames the columns of the lane back, and of `0010_pause`, which drops the global
+  pauses: the paused lanes and schedules run again.
 - Run it only when no process of a newer version uses the tables.
 - `'6.0.0'` is the lowest version: the migrations of 6.0 turned the mutex keys of 5.x into slots, and they have no way
   back.
@@ -1270,7 +1386,8 @@ await runner.start();
 sqlane.lanes.stats(): Promise<LaneStats[]>
 ```
 
-The list has one entry for each lane that has jobs in any status, sorted by name: every lane in the database, also the
+The list has one entry for each lane that has jobs in any status, and for each
+[globally paused](#lanespauseglobally-and-resumeglobally) lane, sorted by name: every lane in the database, also the
 lanes that no runner handles.
 
 | Field            | Type             | Description                                                                                               |
@@ -1284,16 +1401,19 @@ lanes that no runner handles.
 | `failed`         | `number`         | The failed jobs that sqlane still keeps.                                                                  |
 | `completed`      | `number`         | The completed jobs that sqlane still keeps.                                                               |
 | `oldestDueAgeMs` | `number \| null` | How long the oldest due pending job has waited, in milliseconds. It is `null` when no pending job is due. |
+| `pausedGlobally` | `boolean`        | [`lanes.pauseGlobally`](#lanespauseglobally-and-resumeglobally) paused it: no process claims its jobs.    |
 
 `pending` and `blocked` never count the same job, and `due` is a part of `pending`. A job held back by a local rate
 limit stays pending and due. `oldestDueAgeMs` ignores the blocked jobs: [`keyStats`](#key-stats) shows how long they
 wait. `failed` and `completed` count the rows until cleanup deletes them, which can be later than their retention. A
-growing `oldestDueAgeMs` usually means that no process runs the lane, or that the workers cannot keep up. A growing
-`blocked` can mean that a rate limit is below the rate of the enqueues, or that a key is held too long.
+growing `oldestDueAgeMs` usually means that no process runs the lane, or that the workers cannot keep up. A paused
+lane's `due` and `oldestDueAgeMs` grow too: skip `pausedGlobally` in such an alert. A growing `blocked` can mean that a
+rate limit is below the rate of the enqueues, or that a key is held too long.
 
-It is one statement, without locks, on the queue's pool, and it works before `start()` and after `close()`. On every
-dialect it reads every row that sqlane keeps, so its cost grows with the throughput times the retentions: mind the
-interval of your metric scrape.
+It is two statements, without locks, on the queue's pool (the counts, and the paused lanes), and it works before
+`start()` and after `close()`. On every dialect it reads every row that sqlane keeps, so its cost grows with the
+throughput times the retentions: mind the interval of your metric scrape. On a schema without the migration
+`0010_pause`, it rejects with a `ConfigError`.
 
 ## `jobs`
 
@@ -1794,7 +1914,7 @@ Every event except `error` and `schedule_fired` has these fields:
 | `failure_job_not_added` | `failureLane`, `error`                                    | The job failed for good, but the database refused to add its failure job.                                                                                                                                                                                                                                                                             |
 | `cancelled`             | None                                                      | `jobs.cancel` cancelled the job, after the commit of a transaction of sqlane's own. `attempt` is the attempt that would have run next.                                                                                                                                                                                                                |
 | `error`                 | `operation`, `error`                                      | An internal operation failed, for example a poll or a hint. `operation` names it. sqlane also logs it. A deadlock, serialization failure or `ER_CHECKREAD` (1020) of the dispatcher is retried at once, up to 3 times, before it is reported; a lock wait timeout is reported at once.                                                                |
-| `schedule_fired`        | `scheduleId`, `lane`, `scheduledAt`, `late`, `jobId`      | A slot of a [schedule](#schedules) was decided. Only the process that decided it emits it, so the cluster gets one event per slot. `late` is true for a catch-up. `jobId` is `null` when `overlap: 'skip'` skipped the slot. It has no `attempt`.                                                                                                     |
+| `schedule_fired`        | `scheduleId`, `lane`, `scheduledAt`, `late`, `jobId`      | A slot of a [schedule](#schedules) was decided. Only the process that decided it emits it, so the cluster gets one event per slot. `late` is true for a catch-up. `jobId` is `null` when `overlap: 'skip'` skipped the slot. It has no `attempt`. A slot of a globally paused schedule emits none.                                                    |
 
 `durationMs` is the run time of the handler in milliseconds. `error` is the thrown value, of type `unknown`.
 

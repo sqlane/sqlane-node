@@ -348,6 +348,7 @@ process.once('SIGTERM', () => sqlane.close({ deadline: '30s' })); // stops the r
 - The [examples folder](https://github.com/sqlane/sqlane-node/tree/main/examples) has more examples.
 - The [changelog](https://github.com/sqlane/sqlane-node/blob/main/CHANGELOG.md) lists what changed in each version. The
   migration guides show how to upgrade your code to a new major version:
+    - [9.x → 10.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/10.md)
     - [8.x → 9.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/9.md)
     - [7.x → 8.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/8.md)
     - [6.x → 7.0](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/7.md)

@@ -76,7 +76,7 @@ export interface SqlaneLanes<C = any> {
      * lane with no job yet is fine: pause it before its first deploy. Idempotent.
      * @param lane A lane definition, or the name of a lane.
      * @param options `connection`: your transaction, or a pool (default: the queue's pool).
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanespausegloballyand-resumeglobally | lanes.pauseGlobally}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanespauseglobally-and-resumeglobally | lanes.pauseGlobally}
      */
     pauseGlobally(lane: LaneDefinition | string, options?: PauseGloballyOptions<C>): Promise<void>;
     /**
@@ -85,7 +85,7 @@ export interface SqlaneLanes<C = any> {
      * adapter can tell; else at once. A lane that is not paused: nothing to resume. Idempotent.
      * @param lane A lane definition, or the name of a lane.
      * @param options `connection`: your transaction, or a pool (default: the queue's pool).
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanespausegloballyand-resumeglobally | lanes.resumeGlobally}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanespauseglobally-and-resumeglobally | lanes.resumeGlobally}
      */
     resumeGlobally(lane: LaneDefinition | string, options?: PauseGloballyOptions<C>): Promise<void>;
     /**
@@ -196,7 +196,7 @@ export interface SqlaneSchedules<C = any> {
      * (pause before the first deploy; the row of a typo shows in `list()`, and `remove()` deletes it). Idempotent.
      * @param schedule A schedule definition, or its id `<lane>:<key>`.
      * @param options `connection`: your transaction, or a pool (default: the queue's pool).
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulespausegloballyand-resumeglobally | schedules.pauseGlobally}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulespauseglobally-and-resumeglobally | schedules.pauseGlobally}
      */
     pauseGlobally(schedule: ScheduleDefinition<any> | string, options?: PauseGloballyOptions<C>): Promise<void>;
     /**
@@ -204,7 +204,7 @@ export interface SqlaneSchedules<C = any> {
      * caught up. A schedule that is not paused, or with no row: nothing changes. Idempotent.
      * @param schedule A schedule definition, or its id `<lane>:<key>`.
      * @param options `connection`: your transaction, or a pool (default: the queue's pool).
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulespausegloballyand-resumeglobally | schedules.resumeGlobally}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulespauseglobally-and-resumeglobally | schedules.resumeGlobally}
      */
     resumeGlobally(schedule: ScheduleDefinition<any> | string, options?: PauseGloballyOptions<C>): Promise<void>;
     /**

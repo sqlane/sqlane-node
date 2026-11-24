@@ -386,6 +386,7 @@ export default defineConfig({
             'public.sqlane_schedules',
             'public.sqlane_concurrency_slots',
             'public.sqlane_rate_limits',
+            'public.sqlane_paused_lanes',
             'public.sqlane_migrations',
         ],
     },
