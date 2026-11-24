@@ -59,6 +59,7 @@ export type Logger = import('./types.js').Logger;
 export type MigrateOptions = import('./types.js').MigrateOptions;
 export type RollbackOptions = import('./types.js').RollbackOptions;
 export type RunSlotOptions<C = any> = import('./types.js').RunSlotOptions<C>;
+export type PauseGloballyOptions<C = any> = import('./types.js').PauseGloballyOptions<C>;
 export type DropOptions = import('./types.js').DropOptions;
 export type MigrationStatus = import('./types.js').MigrationStatus;
 export type SchemaProblem = import('./types.js').SchemaProblem;
@@ -176,6 +177,10 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /** @typedef {import('./types.js').RollbackOptions} RollbackOptions */
 /**
  * @typedef {import('./types.js').RunSlotOptions<C>} RunSlotOptions
+ * @template [C=any]
+ */
+/**
+ * @typedef {import('./types.js').PauseGloballyOptions<C>} PauseGloballyOptions
  * @template [C=any]
  */
 /** @typedef {import('./types.js').DropOptions} DropOptions */

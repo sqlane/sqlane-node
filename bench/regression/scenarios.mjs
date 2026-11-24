@@ -239,6 +239,47 @@ export const SCENARIOS = [
         },
     },
     {
+        name: 'paused_lane_blocked',
+        unit: 'job of a lane that shares a global limit of 1 with a paused lane of 1000 blocked jobs, 100 jobs',
+        timing: ROUNDS,
+        async run({ lib, create, createRunner, pool, measure }) {
+            const shared = lib.defineConcurrencyLimit({ name: 'shared', max: 1 });
+            const [running, paused] = definitions(lib, 2, {
+                globalConcurrencyLimits: () => [shared],
+                timeout: '1m',
+            });
+            const sqlane = create();
+            const runner = createRunner(sqlane, { localMaxConcurrency: 1 });
+
+            handleAll(lib, runner, [running, paused]);
+            await sqlane.schema.migrate();
+            await sqlane.lanes.pauseGlobally(paused);
+            const items = Array.from({ length: 1000 }, (_, index) => ({ payload: { index } }));
+
+            await sqlane.enqueueMany(pool, paused, items);
+            // Blocked on the key, as the claims left them before the pause: each unblock of the key reads past them.
+            // The same SQL on every dialect, on the default prefix
+            await pool.query(`UPDATE sqlane_jobs SET status = 'blocked', blocked_on = 'shared' WHERE lane = '${
+                paused.name}'`);
+
+            for (let index = 0; index < 100; index++) {
+                await sqlane.enqueue(pool, running, { index });
+            }
+
+            const stats = await measure(async () => {
+                const { completed } = await runner.drain({ timeout: '60s' });
+
+                if (completed !== 100) {
+                    throw new Error(`paused_lane_blocked: ${completed} of 100 jobs completed`);
+                }
+            });
+
+            await sqlane.close();
+
+            return { operations: 100, stats };
+        },
+    },
+    {
         name: 'schedule',
         unit: 'slot of 1000 `every: \'10s\'` schedules, in one process that adds none of their lanes',
         async run({ lib, create, createRunner, measure }) {

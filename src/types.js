@@ -356,16 +356,27 @@
  */
 
 /**
+ * The options of `sqlane.lanes.pauseGlobally()`, `resumeGlobally()`, and of `sqlane.schedules.pauseGlobally()`,
+ * `resumeGlobally()` and `remove()`.
+ * @template [C=any]
+ * @typedef {object} PauseGloballyOptions
+ * @property {C | undefined} [connection] Your transaction, or a connection in one, of the adapter's library; or a
+ *     pool. Default: the queue's pool.
+ */
+
+/**
  * @typedef {object} ScheduleInfo
  * @property {string} id `<lane>:<key>`.
  * @property {string} lane The lane.
- * @property {string} spec The stored spec, e.g. `cron 0 3 * * * Europe/Berlin` or `every 900000`.
- * @property {Date | null} nextAt The next slot, by the stored spec and the database clock. Null: no next slot, or a
- *     spec that this version cannot read.
+ * @property {string} spec The stored spec, e.g. `cron 0 3 * * * Europe/Berlin` or `every 900000`. `unknown`: paused by
+ *     its id before any runner mounted it; its first fire writes it.
+ * @property {Date | null} nextAt The next slot, by the stored spec and the database clock. Null: no next slot, a spec
+ *     that this version cannot read, or paused.
  * @property {Date | null} nextRunAt When the job of the next slot will be due: `nextAt` plus its jitter, for a
  *     schedule mounted in this process with the stored spec; else `nextAt`, without jitter.
  * @property {Date} lastSlotAt The last decided slot.
  * @property {string | null} lastJobId The job of the last enqueued slot.
+ * @property {boolean} pausedGlobally `schedules.pauseGlobally()` paused it: no process fires it.
  */
 
 /**
@@ -543,6 +554,8 @@
  * @property {number} failed The failed jobs that sqlane still keeps.
  * @property {number} completed The completed jobs that sqlane still keeps.
  * @property {number | null} oldestDueAgeMs How long the oldest due pending job has waited, in ms. Null: no job is due.
+ *     A paused lane counts too: filter on `pausedGlobally` in alerts.
+ * @property {boolean} pausedGlobally `lanes.pauseGlobally()` paused it: no process claims its jobs.
  */
 
 /**

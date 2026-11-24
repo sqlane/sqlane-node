@@ -5,6 +5,11 @@ import { toJobInput } from './postgres_enqueue.js';
 /** Rows per statement of the registration */
 const CHUNK_SIZE = 500;
 const NOW_MS = 'floor(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint';
+/**
+ * @param {string} column
+ * @returns {string} Its epoch ms.
+ */
+const epochMs = column => `floor(EXTRACT(EPOCH FROM ${column}) * 1000)::bigint`;
 
 /** @typedef {import('../types.js').Executor} Executor */
 /** @typedef {import('./fire_slots.js').ScheduleRow} ScheduleRow */
@@ -20,6 +25,7 @@ function toScheduleRow(row) {
         spec: String(row.spec),
         lastSlotMs: Number(row.last_slot_ms),
         lastJobId: row.last_job_id === null ? null : String(row.last_job_id),
+        pausedAtMs: row.paused_at_ms === null ? null : Number(row.paused_at_ms),
     };
 }
 
@@ -83,8 +89,8 @@ const STATEMENTS = {
     },
     lockRows: async (executor, p, ids) => {
         const rows = await executor.query(`
-            SELECT id, lane, spec, last_job_id,
-                   floor(EXTRACT(EPOCH FROM last_slot_at) * 1000)::bigint AS last_slot_ms, ${NOW_MS} AS db_now_ms
+            SELECT id, lane, spec, last_job_id, ${epochMs('last_slot_at')} AS last_slot_ms,
+                   ${epochMs('paused_at')} AS paused_at_ms, ${NOW_MS} AS db_now_ms
               FROM ${p}schedules WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE SKIP LOCKED
         `, [ids]);
 
@@ -127,8 +133,8 @@ const STATEMENTS = {
 export async function readSchedules(executor, p, ids, now) {
     const sentAt = now();
     const rows = await executor.query(`
-        SELECT s.id, s.lane, s.spec, s.last_job_id,
-               floor(EXTRACT(EPOCH FROM s.last_slot_at) * 1000)::bigint AS last_slot_ms, ${NOW_MS} AS db_now_ms
+        SELECT s.id, s.lane, s.spec, s.last_job_id, ${epochMs('s.last_slot_at')} AS last_slot_ms,
+               ${epochMs('s.paused_at')} AS paused_at_ms, ${NOW_MS} AS db_now_ms
           FROM (SELECT 1) AS one
           LEFT JOIN ${p}schedules AS s ON $1::text[] IS NULL OR s.id = ANY($1::text[])
          ORDER BY s.id

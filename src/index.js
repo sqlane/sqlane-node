@@ -132,6 +132,10 @@ export {
  * @typedef {import('./types.js').RunSlotOptions<C>} RunSlotOptions
  * @template [C=any]
  */
+/**
+ * @typedef {import('./types.js').PauseGloballyOptions<C>} PauseGloballyOptions
+ * @template [C=any]
+ */
 /** @typedef {import('./types.js').DropOptions} DropOptions */
 /** @typedef {import('./types.js').MigrationStatus} MigrationStatus */
 /** @typedef {import('./types.js').SchemaProblem} SchemaProblem */

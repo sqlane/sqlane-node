@@ -58,6 +58,10 @@ describe('decideSlot', () => {
             row({ lastSlotMs: 5 }),
             'late',
         ],
+        ['a slot of a paused schedule', candidate(), row({ pausedAtMs: NOW - 5000 }), 'paused'],
+        ['a slot of a paused schedule, at its cursor', candidate(), row({ pausedAtMs: 1, lastSlotMs: NOW }), 'paused'],
+        ['a slot of a paused schedule, ahead', candidate({ slot: NOW + 1001 }), row({ pausedAtMs: 1 }), 'deferred'],
+        ['a slot of a schedule not paused', candidate(), row({ pausedAtMs: null }), 'on_time'],
     ])('%s: %s', (_, slot, scheduleRow, expected) => {
         expect(decideSlot(slot, scheduleRow, NOW, LIMITS)).toBe(expected);
     });

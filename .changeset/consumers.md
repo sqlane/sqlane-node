@@ -37,13 +37,24 @@ Breaking changes:
 - The local settings of a lane (`localConcurrencyLimits`, `localRateLimits`, `fairShareWeight`) move from `defineLane` to
   `defineHandler`: they are per process. `defineLane` rejects them, and a failure lane with a failure lane of its own.
 - A schedule needs a `key`: its id is `<lane>:<key>`, and the job id of a slot `<lane>:schedule:<key>:<ISO>`. The rows of
-  the keyless schedules of 9.x stay in `<prefix>schedules`: delete them by hand. The enqueue option `slot` is now
+  the keyless schedules of 9.x stay in `<prefix>schedules`: delete them with `sqlane.schedules.remove('<lane>')`. The
+  enqueue option `slot` is now
   `sqlane.schedules.runSlot(schedule, { at, connection })`: the slot of the spec (by default the latest one up to now),
   with the payload of the schedule; no runner needed.
-- `schedules.list()` lists the rows of the table only: a schedule is listed once a started runner has mounted it.
-  `nextAt` comes from the stored spec; `nextRunAt` has the jitter only for a schedule mounted in this process with the
-  stored spec. `ScheduleInfo.registered` is gone:
-  `runner.getStatus(schedule)`; `lastSlotAt` is never null.
+- `schedules.list()` lists the rows of the table only: a schedule is listed once a started runner has mounted it, or a
+  pause has created its row. `nextAt` comes from the stored spec; `nextRunAt` has the jitter only for a schedule mounted
+  in this process with the stored spec. `ScheduleInfo.registered` is gone: `runner.getStatus(schedule)`; `lastSlotAt`
+  is never null.
+- New: the global pauses, stored in the database, for every process. `sqlane.lanes.pauseGlobally(lane, { connection })`
+  / `resumeGlobally(...)`: no runner claims the jobs of the lane (a definition or a name, with or without jobs); its
+  enqueues and schedules go on, its running jobs finish, and its blocked jobs take no room of a key that other lanes
+  share; the resume unblocks them and sends the hint. `sqlane.schedules.pauseGlobally(schedule, { connection })` /
+  `resumeGlobally(...)`: no runner fires the schedule (a definition or an id `<lane>:<key>`; no row yet: a paused one);
+  its slots during the pause are skipped, without an event; the resume moves its cursor to now.
+  `sqlane.schedules.remove(schedule)` deletes its row → `{ removed }`. `LaneStats.pausedGlobally` (a paused lane with no
+  job is listed too; it still counts in `due` and `oldestDueAgeMs`), `ScheduleInfo.pausedGlobally` (`nextAt` null
+  while paused). Type `PauseGloballyOptions`. `runner.pauseLocally()` and `resumeLocally()` reject a name that no lane
+  can have (`InvalidOptionsError`).
 - New: `runner.pauseLocally(lane)` / `resumeLocally(lane)` (this process claims none of its jobs, for the life of the
   runner), `runner.getStatus(lane | schedule)`. Types `LaneHandler`, `HandlerOptions`, `ScheduleDefinition`,
   `ScheduleOptions` (now with a required `key`), `ScheduleSettings`, `Runner`, `RunnerOptions`, `Mount`,

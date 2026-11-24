@@ -191,10 +191,17 @@ describe('the rules of a runner', () => {
         expect(() => otherRunner.mount([daily])).toThrow(ClosedError);
     });
 
-    test('pauseLocally() of a value that is not a lane: an InvalidOptionsError', () => {
+    test.each([
+        ['a number', 3],
+        ['a name with an uppercase letter', 'Report'],
+        ['the id of a schedule', 'report:daily'],
+    ])('pauseLocally() and resumeLocally() of %s: an InvalidOptionsError', (_, lane) => {
         const runner = createRunner(createSqlane({ adapter: fakeAdapter() }));
 
-        expect(() => runner.pauseLocally(/** @type {any} */ (3))).toThrow(InvalidOptionsError);
+        expect(() => runner.pauseLocally(/** @type {any} */ (lane))).toThrow(InvalidOptionsError);
+        expect(() => runner.resumeLocally(/** @type {any} */ (lane))).toThrow(
+            'resumeLocally(): the lane must be a lane definition or a name matching',
+        );
     });
 });
 

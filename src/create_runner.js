@@ -10,6 +10,7 @@ import { createScheduler } from './scheduler.js';
 import { internalsOf } from './sqlane_internals.js';
 import { recordedIds } from './store/schema_reads.js';
 import { isMissingTableError } from './transient_error.js';
+import { checkedLaneName } from './lane_names.js';
 import { checkInteger, checkObject, isPlainObject, NAME_REGEXP } from './validate.js';
 
 /** @typedef {import('./sqlane.js').Runner} Runner */
@@ -259,6 +260,7 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
         onCommitted: worker.onCommitted,
         canStartNow: worker.canStartNow,
         wake: worker.wakeLanes,
+        armRateWake: worker.armRateWake,
         isBusy: () => starting || drainChecking || worker.isBusy(),
         close,
         schedules: scheduler.entries,
@@ -277,21 +279,6 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
         isStarting: () => starting,
         isDraining: () => drainChecking || worker.isDraining(),
     };
-}
-
-/**
- * @param {unknown} lane
- * @param {string} where
- * @returns {string} The name of the lane.
- */
-function laneNameOf(lane, where) {
-    const name = isPlainObject(lane) ? lane.name : lane;
-
-    if (typeof name !== 'string') {
-        throw new InvalidOptionsError(`${where}: the lane must be a lane definition or a lane name`);
-    }
-
-    return name;
 }
 
 /**
@@ -351,10 +338,10 @@ export function createRunner(sqlane, options = {}) {
             });
         },
         pauseLocally: (lane) => {
-            worker.pauseLocally(laneNameOf(lane, 'pauseLocally()'));
+            worker.pauseLocally(checkedLaneName(lane, 'pauseLocally()'));
         },
         resumeLocally: (lane) => {
-            worker.resumeLocally(laneNameOf(lane, 'resumeLocally()'));
+            worker.resumeLocally(checkedLaneName(lane, 'resumeLocally()'));
         },
         getStatus: /** @type {Runner['getStatus']} */ (/** @type {unknown} */ ((
             /** @type {unknown} */ target,
@@ -365,7 +352,12 @@ export function createRunner(sqlane, options = {}) {
                 return { mounted: scheduler.has(id) };
             }
 
-            const name = laneNameOf(target, 'getStatus()');
+            // A name that no lane can have: not mounted (a typo)
+            const name = isPlainObject(target) ? target.name : target;
+
+            if (typeof name !== 'string') {
+                throw new InvalidOptionsError('getStatus(): the lane must be a lane definition or a name');
+            }
 
             return {
                 mounted: NAME_REGEXP.test(name) && registry.getEntry(name) !== undefined,

@@ -8,6 +8,7 @@ const CHUNK_SIZE = 500;
 const EPOCH = '\'1970-01-01\'';
 const NOW_MS = `TIMESTAMPDIFF(MICROSECOND, ${EPOCH}, UTC_TIMESTAMP(3)) DIV 1000`;
 const LAST_SLOT_MS = `TIMESTAMPDIFF(MICROSECOND, ${EPOCH}, s.last_slot_at) DIV 1000`;
+const PAUSED_AT_MS = `TIMESTAMPDIFF(MICROSECOND, ${EPOCH}, s.paused_at) DIV 1000`;
 
 /** @typedef {import('../types.js').Executor} Executor */
 /** @typedef {import('./fire_slots.js').ScheduleRow} ScheduleRow */
@@ -37,6 +38,7 @@ function toScheduleRow(row) {
         spec: String(row.spec),
         lastSlotMs: Number(row.last_slot_ms),
         lastJobId: row.last_job_id === null ? null : String(row.last_job_id),
+        pausedAtMs: row.paused_at_ms === null ? null : Number(row.paused_at_ms),
     };
 }
 
@@ -52,7 +54,8 @@ const STATEMENTS = {
     lockRows: async (executor, p, ids) => {
         // FORCE INDEX: a locking read has no semi-consistent read, a scan would lock other rows
         const rows = await executor.query(`
-            SELECT s.id, s.lane, s.spec, s.last_job_id, ${LAST_SLOT_MS} AS last_slot_ms, ${NOW_MS} AS db_now_ms
+            SELECT s.id, s.lane, s.spec, s.last_job_id, ${LAST_SLOT_MS} AS last_slot_ms,
+                   ${PAUSED_AT_MS} AS paused_at_ms, ${NOW_MS} AS db_now_ms
               FROM ${p}schedules s FORCE INDEX (PRIMARY)
              WHERE s.id IN (${placeholders(ids)}) ORDER BY s.id FOR UPDATE SKIP LOCKED
         `, ids);
@@ -104,7 +107,8 @@ const STATEMENTS = {
 export async function readSchedules(executor, p, ids, now) {
     const sentAt = now();
     const rows = await executor.query(`
-        SELECT s.id, s.lane, s.spec, s.last_job_id, ${LAST_SLOT_MS} AS last_slot_ms, ${NOW_MS} AS db_now_ms
+        SELECT s.id, s.lane, s.spec, s.last_job_id, ${LAST_SLOT_MS} AS last_slot_ms, ${PAUSED_AT_MS} AS paused_at_ms,
+               ${NOW_MS} AS db_now_ms
           FROM (SELECT 1 AS one) AS one
           LEFT JOIN ${p}schedules s ON ${ids === null ? 'TRUE' : `s.id IN (${placeholders(ids)})`}
          ORDER BY s.id

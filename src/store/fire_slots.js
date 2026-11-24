@@ -26,6 +26,7 @@ const enqueueToken = createMonotonicUlid();
  * @property {string} spec
  * @property {number} lastSlotMs The cursor: the last decided slot.
  * @property {string | null} lastJobId
+ * @property {number | null} [pausedAtMs] When `schedules.pauseGlobally()` paused it. Null or none: not paused.
  */
 
 /**
@@ -42,7 +43,7 @@ const enqueueToken = createMonotonicUlid();
  * @property {string} lane
  * @property {number} slot
  * @property {boolean} late
- * @property {'enqueued' | 'skipped' | 'lost' | 'dropped'} outcome
+ * @property {'enqueued' | 'skipped' | 'lost' | 'dropped' | 'paused'} outcome
  * @property {string | null} jobId The job of the slot: null unless enqueued.
  * @property {boolean} created The job was added by this fire: false when it existed already.
  */
@@ -101,11 +102,16 @@ const enqueueToken = createMonotonicUlid();
  * @param {ScheduleRow} row
  * @param {number} dbNowMs
  * @param {{ graceMs: number, futureMs: number }} limits
- * @returns {'deferred' | 'lost' | 'on_time' | 'late' | 'dropped'}
+ * @returns {'deferred' | 'paused' | 'lost' | 'on_time' | 'late' | 'dropped'} `paused`: the schedule is paused, in
+ *     every process: decided, not fired, and its cursor stays (its resume moves it).
  */
 export function decideSlot(candidate, row, dbNowMs, { graceMs, futureMs }) {
     if (candidate.due > dbNowMs + futureMs) {
         return 'deferred';
+    }
+
+    if ((row.pausedAtMs ?? null) !== null) {
+        return 'paused';
     }
 
     if (row.lastSlotMs >= candidate.slot) {

@@ -191,6 +191,11 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  */
 
 /**
+ * The counts of a lane with jobs: `lanes.stats()` adds its pause.
+ * @typedef {Omit<import('../types.js').LaneStats, 'pausedGlobally'>} LaneCounts
+ */
+
+/**
  * The store. Wherever a claim chooses a lane (the probe, the search of candidates, the claims, the heads of the keys,
  * the unblocks, `makeDue`), it skips the paused lanes (`<p>paused_lanes`, pauses.js); the sweep's scan of the keys
  * does not.
@@ -244,7 +249,7 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  *     passed: the same as no row. SKIP LOCKED.
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
  * @property {(lanes: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
- * @property {() => Promise<import('../types.js').LaneStats[]>} getStats
+ * @property {() => Promise<LaneCounts[]>} getStats The counts of each lane with jobs.
  * @property {(id: string) => Promise<import('../types.js').JobRecord | null>} getJob A plain read, no lock.
  * @property {(params: import('./job_reads.js').ListParams) => Promise<{ jobs: import('../types.js').JobRecord[],
  *     last: { enqueuedAtMs: number, id: string } | null }>} listJobs A plain read, no lock.

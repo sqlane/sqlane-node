@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { resolveDefaults } from './defaults.js';
 import { parseCron } from './cron.js';
+import { ConfigError } from './errors.js';
+import { PLACEHOLDER_SPEC } from './global_pauses.js';
 import { defineLane } from './define_lane.js';
 import { checkSchedule, dueOf } from './schedule.js';
 import { listSchedules } from './schedule_list.js';
@@ -94,7 +96,7 @@ function fakeStore(now) {
 
             if (decision === 'deferred') {
                 result.deferred.push(candidate.id);
-            } else if (decision === 'lost' || decision === 'dropped') {
+            } else if (decision === 'lost' || decision === 'dropped' || decision === 'paused') {
                 result.decided.push({ ...candidate, late, outcome: decision, jobId: null, created: false });
             } else {
                 const skip = candidate.overlap === 'skip' && row.lastJobId !== null && database.unfinished.has(row.lastJobId);
@@ -580,6 +582,28 @@ describe('the clock of the database', () => {
     });
 });
 
+describe('paused rows', () => {
+    test('a slot of a paused row is decided, not fired: no job, no event; the next slot is tried at its time',
+        async () => {
+            const { database, start, events } = started({ schedules: [['tick', { every: '1m' }]] });
+
+            await start();
+
+            const row = /** @type {ScheduleRow} */ (database.rows.get('tick:k'));
+
+            database.rows.set('tick:k', { ...row, pausedAtMs: Date.now() });
+            await vi.advanceTimersByTimeAsync(3 * MINUTE_MS);
+
+            expect(firedSlots(database)).toStrictEqual([
+                ['tick:k@2026-06-01T12:01:00.000Z'],
+                ['tick:k@2026-06-01T12:02:00.000Z'],
+                ['tick:k@2026-06-01T12:03:00.000Z'],
+            ]);
+            expect(database.jobs).toStrictEqual([]);
+            expect(events).toStrictEqual([]);
+        });
+});
+
 describe('busy rows', () => {
     test('a busy row is read again after 1 s: the holder took the slot', async () => {
         const { database, start, events } = started({ schedules: [['tick', { every: '1m' }]] });
@@ -625,6 +649,46 @@ describe('busy rows', () => {
         expect(database.fires.map(({ candidates }) => candidates[0].insertMissing)).toStrictEqual([undefined, true]);
         expect(database.jobs).toStrictEqual(['tick:schedule:k:2026-06-01T12:01:00.000Z']);
     });
+
+    test('a row paused while busy: the recheck reads it paused, and drops the slot: no fire again', async () => {
+        const { database, start, events } = started({ schedules: [['tick', { every: '1m' }]] });
+
+        await start();
+        database.locked.add('tick:k');
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+
+        const row = /** @type {ScheduleRow} */ (database.rows.get('tick:k'));
+
+        database.rows.set('tick:k', { ...row, pausedAtMs: Date.now() });
+        database.locked.delete('tick:k');
+        await vi.advanceTimersByTimeAsync(10 * SECOND_MS);
+
+        expect(database.reads).toStrictEqual([['tick:k']]);
+        expect(database.fires).toHaveLength(1);
+        expect(database.jobs).toStrictEqual([]);
+        expect(events).toStrictEqual([]);
+    });
+
+    test('a missing row of a schedule each second, whose fires take 5 ms: the next slots do not put its recheck off',
+        async () => {
+            const { database, start } = started({ schedules: [['tick', { every: '1s' }]] });
+
+            await start();
+            database.rows.delete('tick:k');
+            database.failFire = (params) => {
+                const result = database.fire(params);
+
+                // The fire took 5 ms: the clock is past its slot when the scheduler applies it
+                vi.setSystemTime(Date.now() + 5);
+
+                return result;
+            };
+            await vi.advanceTimersByTimeAsync(5 * SECOND_MS);
+
+            expect(database.reads).toHaveLength(1);
+            expect(database.rows.has('tick:k')).toBe(true);
+            expect(database.jobs.length).toBeGreaterThanOrEqual(3);
+        });
 
     test('a row that stays busy: the rechecks back off, up to 60 s, and warn once past the grace', async () => {
         const { database, start, logger } = started({ schedules: [['daily', { cron: '0 0 * * *' }]] });
@@ -835,6 +899,7 @@ describe('add and list', () => {
                 nextRunAt: new Date('2026-06-01T12:00:01.000Z'),
                 lastSlotAt: new Date(5),
                 lastJobId: 'gone:x',
+                pausedGlobally: false,
             },
         ]);
     });
@@ -845,6 +910,32 @@ describe('add and list', () => {
         database.failRead = Object.assign(new Error('no table'), { code: '42P01' });
 
         await expect(list()).resolves.toStrictEqual([]);
+    });
+
+    test('a table without the pause of 0010 (a missing column): a ConfigError', async () => {
+        const { list, database } = setup({ schedules: [] });
+
+        database.failRead = Object.assign(new Error('no column'), { code: 'ER_BAD_FIELD_ERROR', errno: 1054 });
+
+        await expect(list()).rejects.toThrow(new ConfigError(
+            'schedules.list(): the schema is not migrated: run schema.migrate()',
+        ));
+    });
+
+    test('a paused schedule, and a row that a pause created from an id: pausedGlobally, no next slot', async () => {
+        const { list, database } = setup({ schedules: [] });
+
+        database.rows.set('a:k', {
+            id: 'a:k', lane: 'a', spec: 'every 1000', lastSlotMs: 5, lastJobId: null, pausedAtMs: 5,
+        });
+        database.rows.set('b:k', {
+            id: 'b:k', lane: 'b', spec: PLACEHOLDER_SPEC, lastSlotMs: 5, lastJobId: null, pausedAtMs: null,
+        });
+
+        await expect(list()).resolves.toMatchObject([
+            { id: 'a:k', spec: 'every 1000', nextAt: null, nextRunAt: null, pausedGlobally: true },
+            { id: 'b:k', spec: 'unknown', nextAt: null, nextRunAt: null, pausedGlobally: false },
+        ]);
     });
 });
 

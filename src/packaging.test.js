@@ -61,8 +61,9 @@ test('the core, src/create_sqlane.js, reaches only the modules of the allowlist:
     expect(reached).toStrictEqual([
         'concurrency_keys.js', 'create_sqlane.js', 'cron.js', 'defaults.js', 'define_concurrency_limit.js',
         'define_rate_limit.js', 'define_schedule.js', 'duration.js', 'enqueue.js', 'error_json.js', 'errors.js',
-        'gcra.js', 'hint_channel.js', 'jobs_api.js', 'jobs_bulk.js', 'local_settings.js', 'migrations.js', 'new_job.js',
-        'payload.js', 'rate_keys.js', 'rate_limit_shape.js', 'run_slot.js', 'schedule.js', 'schedule_list.js',
+        'gcra.js', 'global_pauses.js', 'hint_channel.js', 'jobs_api.js', 'jobs_bulk.js', 'lane_names.js',
+        'local_settings.js', 'migrations.js', 'new_job.js', 'payload.js', 'rate_keys.js', 'rate_limit_shape.js',
+        'run_slot.js', 'schedule.js', 'schedule_list.js',
         'schema/expected.js', 'schema/mariadb.js', 'schema/mysql.js', 'schema/postgres.js', 'schema_status.js',
         'server_check.js', 'sqlane_internals.js', 'store/fire_slots.js', 'store/job_reads.js', 'store/job_writes.js',
         'store/key_stats.js', 'store/mariadb_enqueue.js', 'store/mariadb_final.js', 'store/mariadb_schedules.js',

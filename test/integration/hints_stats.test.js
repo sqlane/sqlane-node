@@ -160,6 +160,7 @@ test('lanes.stats: the counts of each name', async () => {
             failed: 0,
             completed: 0,
             oldestDueAgeMs: expect.any(Number),
+            pausedGlobally: false,
         },
         {
             name: 'b',
@@ -171,6 +172,7 @@ test('lanes.stats: the counts of each name', async () => {
             failed: 1,
             completed: 2,
             oldestDueAgeMs: null,
+            pausedGlobally: false,
         },
     ]);
     expect(stats[0].oldestDueAgeMs).toBeGreaterThanOrEqual(50_000);
@@ -195,6 +197,7 @@ test('lanes.stats: a name with only completed jobs has an entry', async () => {
         failed: 0,
         completed: 1,
         oldestDueAgeMs: null,
+        pausedGlobally: false,
     }]);
 });
 

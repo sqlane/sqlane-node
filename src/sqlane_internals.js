@@ -9,6 +9,8 @@ import { ConfigError } from './errors.js';
  * @property {(lanes: string[]) => void} onCommitted An enqueue in this process committed.
  * @property {(lane: string) => boolean} canStartNow The lane is handled here, not paused, and has a free slot: no hint.
  * @property {(lanes: string[]) => void} wake Jobs of the lanes are due: an unblock.
+ * @property {(key: string, delayMs: number) => void} armRateWake The timer of a rate key: an unblock of its jobs in
+ *     `delayMs`, then the next ones while blocked jobs are left. Idle: at its next start() or drain().
  * @property {() => boolean} isBusy Started, starting, draining or closing: its queries run.
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
  * @property {() => ReadonlyMap<string, import('./schedule.js').ScheduleEntry>} schedules Its schedules, by id.

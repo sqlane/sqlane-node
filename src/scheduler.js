@@ -144,6 +144,7 @@ function advance(entry, slot, dbNow) {
  * @property {number} delayMs
  * @property {number} since Local time of the first busy result.
  * @property {boolean} warned
+ * @property {boolean} [fired] Its fire runs: a busy result of it backs off. Busy fires of later slots keep its time.
  */
 
 /**
@@ -569,7 +570,15 @@ export function createScheduler({
             const entry = entryOf(id);
             const candidate = /** @type {SlotCandidate} */ (byId.get(id));
             const known = rechecks.get(id);
-            const delayMs = known ? Math.min(known.delayMs * 2, t.maxRecheckMs) : t.recheckMs;
+            // A recheck still to come keeps its time: the busy fire of a later slot (a schedule faster than the
+            // recheck) would put it off at each slot, and a missing row would never come back. A recheck that came
+            // back busy backs off
+            const waiting = known !== undefined && !known.fired;
+            let delayMs = t.recheckMs;
+
+            if (known) {
+                delayMs = waiting ? known.delayMs : Math.min(known.delayMs * 2, t.maxRecheckMs);
+            }
 
             if (!entry) {
                 continue;
@@ -578,8 +587,9 @@ export function createScheduler({
             const recheck = known ?? { candidate, entry, at: 0, delayMs, since: localNow, warned: false };
 
             recheck.candidate = { ...candidate, insertMissing: false };
-            recheck.at = localNow + delayMs;
+            recheck.at = waiting ? known.at : localNow + delayMs;
             recheck.delayMs = delayMs;
+            recheck.fired = false;
 
             if (!recheck.warned && localNow - recheck.since > t.graceMs) {
                 recheck.warned = true;
@@ -610,6 +620,7 @@ export function createScheduler({
             // A recheck that comes back deferred waits for its slot: no read and fire in a loop
             if (recheck) {
                 recheck.at = localNow + Math.max(waitMs, MIN_DEFER_MS);
+                recheck.fired = false;
             }
 
             // The deferred slot stays tracked
@@ -634,6 +645,7 @@ export function createScheduler({
 
             if (recheck) {
                 recheck.at = localNow + entry.retryDelayMs;
+                recheck.fired = false;
             }
         }
 
@@ -672,7 +684,8 @@ export function createScheduler({
         /** @type {SlotCandidate[]} */
         const again = [];
 
-        for (const { candidate, entry } of due) {
+        for (const known of due) {
+            const { candidate, entry } = known;
             const row = rowsById.get(candidate.id);
 
             if (entries.get(candidate.id) !== entry) {
@@ -680,13 +693,15 @@ export function createScheduler({
                 continue;
             }
 
-            if (row && row.lastSlotMs >= candidate.slot) {
-                // The holder took the slot: the usual case
+            if (row && (row.lastSlotMs >= candidate.slot || (row.pausedAtMs ?? null) !== null)) {
+                // The holder took the slot: the usual case. Or the schedule is paused: decided, not fired (its entry
+                // moved on at the busy fire)
                 rechecks.delete(candidate.id);
             } else if (!row && dbNowMs - candidate.due > t.graceMs) {
                 // A late slot never creates a row
                 rechecks.delete(candidate.id);
             } else {
+                known.fired = true;
                 again.push({ ...candidate, insertMissing: !row });
             }
         }

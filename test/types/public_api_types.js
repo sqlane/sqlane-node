@@ -460,6 +460,7 @@ export async function publicApiTypes() {
     expectTypeOf(schedule.nextAt).toEqualTypeOf(/** @type {Date | null} */ (null));
     expectTypeOf(schedule.nextRunAt).toEqualTypeOf(/** @type {Date | null} */ (null));
     expectTypeOf(schedule.lastJobId).toEqualTypeOf(/** @type {string | null} */ (null));
+    expectTypeOf(schedule.pausedGlobally).toBeBoolean();
 
     // sqlane.jobs: without a declared type the payload is any; the types are exported
     const read = await sqlane.jobs.get('build_report:r1');
@@ -561,6 +562,23 @@ export async function publicApiTypes() {
     expectTypeOf(stats.blocked).toBeNumber();
     expectTypeOf(stats.completed).toBeNumber();
     expectTypeOf(stats.oldestDueAgeMs).toEqualTypeOf(/** @type {number | null} */ (null));
+    expectTypeOf(stats.pausedGlobally).toBeBoolean();
+
+    // The global pauses: a lane by definition or name, a schedule by definition or id; a connection
+    /** @type {import('@sqlane/core').PauseGloballyOptions} */
+    const pauseOptions = { connection: undefined };
+
+    expectTypeOf(await sqlane.lanes.pauseGlobally(syncOrder, pauseOptions)).toBeVoid();
+    expectTypeOf(await sqlane.lanes.resumeGlobally('build_report')).toBeVoid();
+    expectTypeOf(await sqlane.schedules.pauseGlobally('build_report:daily')).toBeVoid();
+    expectTypeOf(await sqlane.schedules.resumeGlobally('build_report:daily', {})).toBeVoid();
+    expectTypeOf(await sqlane.schedules.remove('build_report')).toEqualTypeOf(/** @type {{ removed: boolean }} */ ({
+        removed: true,
+    }));
+    // @ts-expect-error a lane is a definition or a name
+    await sqlane.lanes.pauseGlobally(7);
+    // @ts-expect-error pauseGlobally() takes options, not a duration
+    await sqlane.lanes.pauseGlobally('build_report', '1h');
     // @ts-expect-error stats() is lanes.stats()
     void sqlane.jobs.stats;
 
@@ -580,7 +598,7 @@ export async function publicApiTypes() {
         keyStats: anyMethod,
     };
     /** @type {import('@sqlane/core').SqlaneLanes} */
-    const lanesMock = { stats: anyMethod };
+    const lanesMock = { stats: anyMethod, pauseGlobally: anyMethod, resumeGlobally: anyMethod };
 
     void mockWithoutKeyStats;
     void mock;

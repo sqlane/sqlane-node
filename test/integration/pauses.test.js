@@ -1,11 +1,11 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { chooseRows } from '../../src/fair_share.js';
-import { createSqlane, defineConcurrencyLimit, defineRateLimit } from '../../src/index.js';
+import { ConfigError, createSqlane, defineConcurrencyLimit, defineLane, defineRateLimit } from '../../src/index.js';
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
-import { handle, runnerOf, testLane } from '../support/runners.js';
+import { handle, runnerOf, schedule, testLane } from '../support/runners.js';
 
 /** @typedef {import('../../src/store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
@@ -344,12 +344,13 @@ const FAR_CURSOR_SQL = {
 };
 
 /**
- * Waits up to 3 s for the condition.
+ * Waits for the condition, up to a timeout.
  * @param {() => boolean} condition
+ * @param {number} [timeoutMs]
  * @returns {Promise<void>}
  */
-async function waitUntil(condition) {
-    const deadline = Date.now() + 3000;
+async function waitUntil(condition, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
 
     // oxlint-disable-next-line no-await-in-loop -- polls
     while (!condition() && Date.now() < deadline) {
@@ -698,4 +699,405 @@ describe('a paused lane in a runner', () => {
             await waitUntil(() => ran.length > 0);
             expect(ran).toStrictEqual([job.id]);
         });
+});
+
+/**
+ * A sqlane on tables of its own, migrated, with fast timers, its events, and a hint that records what it publishes.
+ * @param {Record<string, unknown>} [options] On top: `pollInterval` (default `'100ms'`).
+ * @param {string} [prefix] The tables of another instance.
+ * @returns {Promise<{ p: string, sqlane: Sqlane, events: import('../../src/types.js').SqlaneEvent[],
+ *     published: string[] }>}
+ */
+async function freshSqlane(options = {}, prefix = undefined) {
+    let p = prefix;
+
+    if (p === undefined) {
+        prefixCount++;
+        p = `${database.tablePrefix}${prefixCount}_`;
+    }
+
+    /** @type {import('../../src/types.js').SqlaneEvent[]} */
+    const events = [];
+    /** @type {string[]} */
+    const published = [];
+    const sqlane = createSqlane(/** @type {any} */ ({
+        adapter: testAdapter.adapter,
+        tablePrefix: p,
+        pollInterval: '100ms',
+        onEvent: (/** @type {import('../../src/types.js').SqlaneEvent} */ event) => events.push(event),
+        hint: {
+            publish: async (/** @type {string} */ _channel, /** @type {string} */ message) => {
+                published.push(message);
+            },
+            subscribe: async () => async () => {},
+        },
+        timings: { leaseMs: 5000, renewIntervalMs: 500, recoveryIntervalMs: 500 },
+        ...options,
+    }));
+
+    instances.push(sqlane);
+    await sqlane.schema.migrate();
+
+    return { p, sqlane, events, published };
+}
+
+/**
+ * @param {import('../../src/types.js').SqlaneEvent[]} events
+ * @returns {number} The fires of schedules.
+ */
+const firesOf = events => events.filter(event => event.type === 'schedule_fired').length;
+
+/**
+ * @param {string} p
+ * @returns {Promise<string[]>} The ids of the jobs, sorted.
+ */
+async function jobIds(p) {
+    return (await database.query(`SELECT id FROM ${p}jobs ORDER BY id`)).map(row => String(row.id));
+}
+
+describe('sqlane.lanes.pauseGlobally() and resumeGlobally()', () => {
+    test('a paused lane: drain() runs none of its jobs, the other lanes run; stats() tells it, a paused lane without '
+        + 'jobs too', async () => {
+        const { p, sqlane } = await freshSqlane();
+        const lane = testLane('paused');
+        /** @type {string[]} */
+        const ran = [];
+        const runner = runnerOf(sqlane);
+
+        await sqlane.lanes.pauseGlobally(lane);
+        await sqlane.lanes.pauseGlobally('not_deployed');
+        await sqlane.lanes.pauseGlobally(lane);
+
+        const paused = await sqlane.enqueue(testAdapter.pool, lane, {});
+        const other = await sqlane.enqueue(testAdapter.pool, testLane('other'), {});
+
+        runner.mount([handle(lane, ({ job }) => {
+            ran.push(job.id);
+        }), handle('other', ({ job }) => {
+            ran.push(job.id);
+        })]);
+        await expect(runner.drain()).resolves.toStrictEqual({ completed: 1, retried: 0, failed: 0 });
+        expect(ran).toStrictEqual([other.id]);
+        await expect(sqlane.lanes.stats()).resolves.toMatchObject([
+            { name: 'not_deployed', pending: 0, due: 0, oldestDueAgeMs: null, pausedGlobally: true },
+            { name: 'other', completed: 1, pausedGlobally: false },
+            { name: 'paused', pending: 1, due: 1, pausedGlobally: true },
+        ]);
+
+        await sqlane.lanes.resumeGlobally('paused');
+        await sqlane.lanes.resumeGlobally('paused');
+        await expect(runner.drain()).resolves.toStrictEqual({ completed: 1, retried: 0, failed: 0 });
+        expect(ran).toStrictEqual([other.id, paused.id]);
+        await expect(sqlane.lanes.stats()).resolves.toMatchObject([
+            { name: 'not_deployed', pausedGlobally: true },
+            { name: 'other', pausedGlobally: false },
+            { name: 'paused', completed: 1, pausedGlobally: false },
+        ]);
+        await expect(statuses(p)).resolves.toStrictEqual({ [paused.id]: 'completed', [other.id]: 'completed' });
+    });
+
+    test('resume: the started runner of this process claims at once, and the hint goes to the others though this '
+        + 'process can start the lane', async () => {
+        // No poll in the test: only a wake claims
+        const { sqlane, published } = await freshSqlane({ pollInterval: '1h' });
+        /** @type {string[]} */
+        const ran = [];
+        const runner = runnerOf(sqlane);
+
+        runner.mount([handle('woken', ({ job }) => {
+            ran.push(job.id);
+        })]);
+        await sqlane.lanes.pauseGlobally('woken');
+        await runner.start();
+
+        const job = await sqlane.enqueue(testAdapter.pool, testLane('woken'), {});
+
+        await sleep(300);
+        expect(ran).toStrictEqual([]);
+        // This process could start it: the enqueue sent no hint
+        expect(published).toStrictEqual([]);
+
+        await sqlane.lanes.resumeGlobally('woken');
+        expect(published).toStrictEqual(['woken']);
+        await waitUntil(() => ran.length > 0);
+        expect(ran).toStrictEqual([job.id]);
+    });
+
+    test('pause and resume in a transaction: they hold from its commit; a rollback undoes them', async () => {
+        const { sqlane } = await freshSqlane();
+        const connection = await testAdapter.connect();
+
+        try {
+            await connection.begin();
+            await sqlane.lanes.pauseGlobally('tx', { connection: connection.raw });
+            await expect(sqlane.lanes.stats()).resolves.toStrictEqual([]);
+            await connection.commit();
+            await expect(sqlane.lanes.stats()).resolves.toMatchObject([{ name: 'tx', pausedGlobally: true }]);
+
+            await connection.begin();
+            await sqlane.lanes.resumeGlobally('tx', { connection: connection.raw });
+            await connection.rollback();
+            await expect(sqlane.lanes.stats()).resolves.toMatchObject([{ name: 'tx', pausedGlobally: true }]);
+        } finally {
+            connection.release();
+        }
+    });
+
+    test('resume: the jobs of the lane blocked on a concurrency key with room are pending again; without a runner',
+        async () => {
+            const { p, sqlane } = await freshSqlane();
+            const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+            const job = await sqlane.enqueue(testAdapter.pool, testLane('keyed'), {}, {
+                globalConcurrencyLimits: [order.key(1)],
+            });
+
+            await block(p, 'order:1', [job.id]);
+            await sqlane.lanes.pauseGlobally('keyed');
+            // A sweep or a release while paused: the job stays blocked
+            await expect(createStore(testAdapter.adapter, p).unblock(['order:1'])).resolves.toStrictEqual([]);
+
+            await sqlane.lanes.resumeGlobally('keyed');
+            await expect(statuses(p)).resolves.toStrictEqual({ [job.id]: 'pending' });
+        });
+
+    test('drain(), resume, drain(): the resume unblocks the blocked jobs of the lane, though the last probe of this '
+        + 'process saw it paused', async () => {
+        // A poll interval of an hour: the paused lanes of the probe of drain() stand until the resume
+        const { p, sqlane } = await freshSqlane({ pollInterval: '1h' });
+        const api = defineRateLimit({ name: 'api', max: 10, per: '1s', burst: 10 });
+        const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+        const lane = defineLane({ name: 'probed', timeout: '1m' });
+        const rated = await sqlane.enqueue(testAdapter.pool, lane, {}, { globalRateLimits: [api] });
+        const keyed = await sqlane.enqueue(testAdapter.pool, lane, {}, { globalConcurrencyLimits: [order.key(1)] });
+        const runner = runnerOf(sqlane);
+
+        runner.mount([handle(lane, () => {})]);
+        await block(p, '@api', [rated.id]);
+        await block(p, 'order:1', [keyed.id]);
+        await sqlane.lanes.pauseGlobally(lane);
+        await expect(runner.drain()).resolves.toStrictEqual({ completed: 0, retried: 0, failed: 0 });
+
+        await sqlane.lanes.resumeGlobally(lane);
+        await expect(statuses(p)).resolves.toStrictEqual({ [rated.id]: 'pending', [keyed.id]: 'pending' });
+        await expect(runner.drain()).resolves.toStrictEqual({ completed: 2, retried: 0, failed: 0 });
+    });
+
+    test('resume: the jobs of the lane blocked on a rate key with quota are pending again; with a runner not started',
+        async () => {
+            const { p, sqlane } = await freshSqlane();
+            const api = defineRateLimit({ name: 'api', max: 10, per: '1s', burst: 10 });
+            const job = await sqlane.enqueue(testAdapter.pool, testLane('idle_rated'), {}, { globalRateLimits: [api] });
+
+            runnerOf(sqlane).mount([handle('idle_rated', () => {})]);
+            await block(p, '@api', [job.id]);
+            await sqlane.lanes.pauseGlobally('idle_rated');
+            await sqlane.lanes.resumeGlobally('idle_rated');
+            await expect(statuses(p)).resolves.toStrictEqual({ [job.id]: 'pending' });
+        });
+
+    test('resume in a transaction of a connection whose commit the adapter cannot tell: after the commit, the started '
+        + 'runner runs the lane and its blocked jobs, without a poll', async () => {
+        // No poll, no sweep in the test: only the resume makes the lane run
+        const { p, sqlane } = await freshSqlane({
+            pollInterval: '1h',
+            timings: { leaseMs: 5000, renewIntervalMs: 500, recoveryIntervalMs: 600_000 },
+        });
+        const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+        const lane = defineLane({ name: 'tx_resumed', timeout: '1m' });
+        const plain = await sqlane.enqueue(testAdapter.pool, lane, {});
+        const keyed = await sqlane.enqueue(testAdapter.pool, lane, {}, { globalConcurrencyLimits: [order.key(1)] });
+        /** @type {string[]} */
+        const ran = [];
+        const runner = runnerOf(sqlane);
+        const connection = await testAdapter.connect();
+
+        runner.mount([handle(lane, ({ job }) => {
+            ran.push(job.id);
+        })]);
+        await block(p, 'order:1', [keyed.id]);
+        await sqlane.lanes.pauseGlobally(lane);
+        await runner.start();
+
+        try {
+            await connection.begin();
+            await sqlane.lanes.resumeGlobally(lane, { connection: connection.raw });
+            await sleep(100);
+            await connection.commit();
+        } finally {
+            connection.release();
+        }
+
+        await waitUntil(() => ran.length === 2);
+        expect(ran.toSorted()).toStrictEqual([plain.id, keyed.id].toSorted());
+    }, 10_000);
+
+    test('resume: the jobs of the lane blocked on a rate key with quota are pending again; without a runner',
+        async () => {
+            const { p, sqlane } = await freshSqlane();
+            const api = defineRateLimit({ name: 'api', max: 10, per: '1s', burst: 10 });
+            const job = await sqlane.enqueue(testAdapter.pool, testLane('rated'), {}, { globalRateLimits: [api] });
+
+            await block(p, '@api', [job.id]);
+            await sqlane.lanes.pauseGlobally('rated');
+            await sqlane.lanes.resumeGlobally('rated');
+            await expect(statuses(p)).resolves.toStrictEqual({ [job.id]: 'pending' });
+        });
+
+    test('resume: the blocked jobs of the lane run, by the runner of this process: drain(), and started', async () => {
+        const { p, sqlane } = await freshSqlane();
+        const api = defineRateLimit({ name: 'api', max: 10, per: '1s', burst: 10 });
+        const order = defineConcurrencyLimit({ name: 'order', max: 1 });
+        const lane = defineLane({ name: 'limited', timeout: '1m' });
+        const rated = await sqlane.enqueue(testAdapter.pool, lane, {}, { globalRateLimits: [api] });
+        const keyed = await sqlane.enqueue(testAdapter.pool, lane, {}, { globalConcurrencyLimits: [order.key(1)] });
+        /** @type {string[]} */
+        const ran = [];
+        const runner = runnerOf(sqlane);
+
+        runner.mount([handle(lane, ({ job }) => {
+            ran.push(job.id);
+        })]);
+        await block(p, '@api', [rated.id]);
+        await block(p, 'order:1', [keyed.id]);
+        await sqlane.lanes.pauseGlobally(lane);
+        await sqlane.lanes.resumeGlobally(lane);
+        await expect(runner.drain()).resolves.toStrictEqual({ completed: 2, retried: 0, failed: 0 });
+        expect(ran.toSorted()).toStrictEqual([rated.id, keyed.id].toSorted());
+
+        // Started: the rate key's timer unblocks at once
+        const later = await sqlane.enqueue(testAdapter.pool, lane, {}, { globalRateLimits: [api] });
+
+        await sqlane.lanes.pauseGlobally(lane);
+        await block(p, '@api', [later.id]);
+        await runner.start();
+        await sqlane.lanes.resumeGlobally(lane);
+        await waitUntil(() => ran.length > 2);
+        expect(ran.at(-1)).toBe(later.id);
+    });
+
+    test('a schema of 9.0: a ConfigError that asks for schema.migrate()', async () => {
+        prefixCount++;
+
+        const p = `${database.tablePrefix}${prefixCount}_`;
+        const sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: p });
+        const message = 'the schema is not migrated: run schema.migrate()';
+
+        instances.push(sqlane);
+        await sqlane.schema.migrate({ targetVersion: '9.0.0' });
+        await sqlane.enqueue(testAdapter.pool, testLane('a'), {});
+        await expect(sqlane.lanes.pauseGlobally('a')).rejects.toThrow(`lanes.pauseGlobally(): ${message}`);
+        await expect(sqlane.lanes.resumeGlobally('a')).rejects.toThrow(ConfigError);
+        await expect(sqlane.lanes.stats()).rejects.toThrow(`lanes.stats(): ${message}`);
+        await expect(sqlane.schedules.pauseGlobally('a:k')).rejects.toThrow(`schedules.pauseGlobally(): ${message}`);
+        await expect(sqlane.schedules.resumeGlobally('a:k')).rejects.toThrow(ConfigError);
+        await expect(sqlane.schedules.list()).rejects.toThrow(`schedules.list(): ${message}`);
+        // The keyless rows of 9.x: removed before the migration too
+        await expect(sqlane.schedules.remove('a')).resolves.toStrictEqual({ removed: false });
+    });
+});
+
+// The schedules fire each second: their tests wait for a few slots
+describe('sqlane.schedules.pauseGlobally(), resumeGlobally() and remove()', { timeout: 15_000 }, () => {
+    test('a paused schedule: no process fires it, no event; list() tells it; resume: it fires from now, no catch-up',
+        async () => {
+            const tick = schedule('ticked', { every: '1s' });
+            const first = await freshSqlane();
+            const second = await freshSqlane({}, first.p);
+
+            runnerOf(first.sqlane).mount([tick]);
+            runnerOf(second.sqlane).mount([tick]);
+            await first.sqlane.schedules.pauseGlobally(tick);
+            await Promise.all([runnerOf(first.sqlane).start(), runnerOf(second.sqlane).start()]);
+            await sleep(2500);
+            expect(firesOf(first.events) + firesOf(second.events)).toBe(0);
+            await expect(jobIds(first.p)).resolves.toStrictEqual([]);
+            await expect(first.sqlane.schedules.list()).resolves.toMatchObject([
+                { id: 'ticked:k', spec: 'every 1000', nextAt: null, nextRunAt: null, pausedGlobally: true },
+            ]);
+
+            const resumedAt = Date.now();
+
+            await second.sqlane.schedules.resumeGlobally('ticked:k');
+            await waitUntil(() => firesOf(first.events) + firesOf(second.events) > 0);
+
+            const [listed] = await first.sqlane.schedules.list();
+
+            expect(listed).toMatchObject({ pausedGlobally: false, nextAt: expect.any(Date) });
+            // The slots of the pause are not caught up: each job is of a slot after the resume, but the one in progress
+            const slots = (await jobIds(first.p)).map(id => Date.parse(id.slice(id.lastIndexOf(':schedule:k:') + 12)));
+
+            expect(slots.length).toBeGreaterThan(0);
+            expect(Math.min(...slots)).toBeGreaterThanOrEqual(resumedAt - 1000);
+        });
+
+    test('the schedules of a paused lane go on: their jobs wait pending', async () => {
+        const { p, sqlane, events } = await freshSqlane();
+
+        runnerOf(sqlane).mount([schedule('quiet', { every: '1s' }), handle('quiet', () => {})]);
+        await sqlane.lanes.pauseGlobally('quiet');
+        await runnerOf(sqlane).start();
+        await waitUntil(() => firesOf(events) > 0);
+        await sleep(300);
+
+        const [job] = await jobIds(p);
+
+        await expect(statuses(p)).resolves.toMatchObject({ [job]: 'pending' });
+    });
+
+    test('paused by its id before the first deploy: a row with the placeholder spec, then mounted, it does not fire; '
+        + 'resumed, its first fire writes its spec', async () => {
+        const { p, sqlane, events } = await freshSqlane();
+
+        await sqlane.schedules.pauseGlobally('early:k');
+        await expect(sqlane.schedules.list()).resolves.toMatchObject([
+            { id: 'early:k', lane: 'early', spec: 'unknown', nextAt: null, pausedGlobally: true },
+        ]);
+
+        runnerOf(sqlane).mount([schedule('early', { every: '1s' })]);
+        await runnerOf(sqlane).start();
+        await sleep(2200);
+        expect(firesOf(events)).toBe(0);
+        await expect(sqlane.schedules.list()).resolves.toMatchObject([{ spec: 'unknown', pausedGlobally: true }]);
+
+        await sqlane.schedules.resumeGlobally('early:k');
+        await waitUntil(() => firesOf(events) > 0);
+        await expect(sqlane.schedules.list()).resolves.toMatchObject([{ spec: 'every 1000', pausedGlobally: false }]);
+        await expect(jobIds(p)).resolves.toHaveLength(1);
+    });
+
+    test('resume of a schedule that is not paused, or with no row: nothing changes', async () => {
+        const { sqlane } = await freshSqlane();
+        const daily = schedule('daily', { cron: '0 6 * * *' });
+
+        await sqlane.schedules.resumeGlobally(daily);
+        await expect(sqlane.schedules.list()).resolves.toStrictEqual([]);
+        await sqlane.schedules.pauseGlobally(daily);
+        await sqlane.schedules.resumeGlobally(daily);
+
+        const [before] = await sqlane.schedules.list();
+
+        await sqlane.schedules.resumeGlobally(daily);
+        await expect(sqlane.schedules.list()).resolves.toStrictEqual([before]);
+    });
+
+    test('runSlot() ignores the pause', async () => {
+        const { sqlane } = await freshSqlane();
+        const hourly = schedule('hourly', { every: '1h' });
+
+        await sqlane.schedules.pauseGlobally(hourly);
+        await expect(sqlane.schedules.runSlot(hourly)).resolves.toMatchObject({ created: true });
+    });
+
+    test('remove: the row goes; a schedule still mounted gets it back at its next fire, not paused', async () => {
+        const { sqlane, events } = await freshSqlane();
+        const tick = schedule('removed', { every: '1s' });
+
+        await sqlane.schedules.pauseGlobally(tick);
+        runnerOf(sqlane).mount([tick]);
+        await runnerOf(sqlane).start();
+        await expect(sqlane.schedules.remove(tick)).resolves.toStrictEqual({ removed: true });
+        await expect(sqlane.schedules.remove('removed:k')).resolves.toStrictEqual({ removed: false });
+        await waitUntil(() => firesOf(events) > 0);
+        await expect(sqlane.schedules.list()).resolves.toMatchObject([{ id: 'removed:k', pausedGlobally: false }]);
+    });
 });

@@ -755,7 +755,7 @@ export async function makeDue(executor, p, lanes) {
  * The counts per lane, for alerts such as "queue stuck". It reads every row kept, of every status.
  * @param {Executor} executor
  * @param {string} p
- * @returns {Promise<import('../types.js').LaneStats[]>}
+ * @returns {Promise<import('./store.js').LaneCounts[]>}
  */
 export async function getStats(executor, p) {
     const rows = await executor.query(`
