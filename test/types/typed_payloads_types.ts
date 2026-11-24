@@ -2,6 +2,7 @@
 import mysql from 'mysql2/promise';
 import { expectTypeOf } from 'vitest';
 import {
+    createRunner,
     createSqlane,
     defineConcurrencyLimit,
     defineHandler,
@@ -9,10 +10,19 @@ import {
     defineRateLimit,
     defineSchedule,
 } from '@sqlane/core';
-import type { Handler, HandlerPayload, LaneHandler, ScheduleDefinition, ScheduleOptions } from '@sqlane/core';
+import type {
+    Handler,
+    HandlerPayload,
+    LaneHandler,
+    LaneRunStatus,
+    Mount,
+    Runner,
+    RunnerOptions,
+    ScheduleDefinition,
+    ScheduleOptions,
+    ScheduleRunStatus,
+} from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
-import { createRunner } from '@sqlane/core/runner';
-import type { LaneRunStatus, Mount, Runner, RunnerOptions, ScheduleRunStatus } from '@sqlane/core/runner';
 
 type Report = { reportId: string; pages?: number };
 
@@ -132,7 +142,7 @@ export async function typedPayloadsTypes() {
 
     defineSchedule(buildReport, weekly);
 
-    // The runner of this process: @sqlane/core/runner
+    // The runner of this process
     const runnerOptions: RunnerOptions = { localMaxConcurrency: 5 };
     const runner: Runner = createRunner(sqlane, runnerOptions);
     const mount = runner.mount([reportHandler, daily, defineHandler(untyped, () => {})]);

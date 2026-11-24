@@ -9,11 +9,12 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 /**
  * @typedef {object} Context
- * @property {any} lib The module of sqlane: `createSqlane`, `defineLane`, `defineHandler`, `defineSchedule`.
+ * @property {any} lib The module of sqlane: `createSqlane`, `createRunner`, `defineLane`, `defineHandler`,
+ *     `defineSchedule`.
  * @property {(options?: Record<string, unknown>) => any} create A sqlane instance on the scenario's database, with
  *     these options on top of its adapter.
- * @property {(sqlane: any, options?: Record<string, unknown>) => any} createRunner The runner of an instance: the
- *     module `@sqlane/core/runner` of the same source tree.
+ * @property {(sqlane: any, options?: Record<string, unknown>) => any} createRunner The runner of an instance:
+ *     `createRunner` of the same source tree.
  * @property {any} pool The pool of the scenario's database, for `enqueue`.
  * @property {(func: () => Promise<void>) => Promise<StatementStats>} measure Clears the statistics, runs `func`, and
  *     reads them.

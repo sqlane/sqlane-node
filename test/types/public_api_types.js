@@ -3,6 +3,7 @@ import mysql from 'mysql2/promise';
 import { Pool } from 'pg';
 import { expectTypeOf } from 'vitest';
 import {
+    createRunner,
     createSqlane,
     defineConcurrencyLimit,
     defineHandler,
@@ -25,7 +26,6 @@ import { postgresJsAdapter } from '@sqlane/core/adapter-postgres-js';
 import { prismaAdapter } from '@sqlane/core/adapter-prisma';
 import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
 import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm';
-import { createRunner } from '@sqlane/core/runner';
 
 /**
  * @returns {Promise<any>} A method of a mock.

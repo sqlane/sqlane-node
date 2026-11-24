@@ -7,8 +7,7 @@ import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 import mysql from 'mysql2/promise';
-import { createSqlane, defineConcurrencyLimit, defineHandler, defineLane } from '@sqlane/core';
-import { createRunner } from '@sqlane/core/runner';
+import { createRunner, createSqlane, defineConcurrencyLimit, defineHandler, defineLane } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
 const url = process.env.DATABASE_URL ?? 'mysql://root@127.0.0.1:13306/app';

@@ -7,8 +7,7 @@ import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Pool } from 'pg';
-import { createSqlane, defineConcurrencyLimit, defineHandler, defineLane } from '@sqlane/core';
-import { createRunner } from '@sqlane/core/runner';
+import { createRunner, createSqlane, defineConcurrencyLimit, defineHandler, defineLane } from '@sqlane/core';
 import { pgAdapter } from '@sqlane/core/adapter-pg';
 
 const url = process.env.DATABASE_URL ?? 'postgres://postgres@127.0.0.1:15432/app';

@@ -1,3 +1,4 @@
+export { createRunner } from './create_runner.js';
 export { createSqlane } from './create_sqlane.js';
 export { defineConcurrencyLimit } from './define_concurrency_limit.js';
 export { defineHandler } from './define_handler.js';

@@ -2,14 +2,13 @@
 '@sqlane/core': major
 ---
 
-The worker of a process is a **runner** of its own: `createRunner(sqlane)` of `@sqlane/core/runner` mounts handlers
-(`defineHandler`) and schedules (`defineSchedule`), at any time, and `sqlane` acts on the database for every process. A
-producer never loads the runner. The failure job of a job comes from the definition of its lane in the process that
+The worker of a process is a **runner** of its own: `createRunner(sqlane)` mounts handlers (`defineHandler`) and
+schedules (`defineSchedule`), at any time, and `sqlane` acts on the database for every process. A producer creates no
+runner. The failure job of a job comes from the definition of its lane in the process that
 fails it, and a job past its `maxStalls` fails at its next claim, in a process that handles its lane.
 
 ```js
-import { createSqlane, defineHandler, defineLane, defineSchedule } from '@sqlane/core';
-import { createRunner } from '@sqlane/core/runner';
+import { createRunner, createSqlane, defineHandler, defineLane, defineSchedule } from '@sqlane/core';
 
 const report = defineLane({ name: 'report', maxAttempts: 3 }); // what a job is: producers import it
 const nightly = defineSchedule(report, { key: 'nightly', cron: '0 3 * * *' }); // next to its lane

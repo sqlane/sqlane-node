@@ -40,9 +40,8 @@ own `Pool`, and `dialect` is `'mysql'` or `'mariadb'`.
 
 ```js
 import mysql from 'mysql2/promise';
-import { createSqlane, defineHandler, defineLane } from '@sqlane/core';
+import { createRunner, createSqlane, defineHandler, defineLane } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
-import { createRunner } from '@sqlane/core/runner';
 
 // Shared by producers and workers
 export const buildReport = defineLane({

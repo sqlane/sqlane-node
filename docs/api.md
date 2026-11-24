@@ -55,7 +55,7 @@ explains how sqlane works and why.
 | Lane              | The jobs that share a name, for example `build_report`; their default options come from the lane definition. The lanes share the table and the runners, with [fair sharing](#how-free-slots-are-shared) between them. A lane is not a priority, and sqlane has no other queue object. It is unrelated to the `lanes` of 4.x, which became local concurrency limits in 5.0. |
 | Lane definition   | The name and the options of a lane: what a job is. You create it with `defineLane`. Producers and workers import the same definition.                                                                                                                                                                                                                                      |
 | Handler           | How a process runs the jobs of a lane: its function, and the settings of the lane in that process. You create it with `defineHandler`, and a runner mounts it.                                                                                                                                                                                                             |
-| Runner            | The part of a process that runs jobs and fires schedules: `createRunner` of `@sqlane/core/runner`. A producer has none.                                                                                                                                                                                                                                                    |
+| Runner            | The part of a process that runs jobs and fires schedules: `createRunner`. A producer has none.                                                                                                                                                                                                                                                                             |
 | Concurrency limit | The most jobs that run at once. A handler lists it as a local limit, which each runner counts, or a lane definition as a global limit, which the whole cluster counts per key. You create it with `defineConcurrencyLimit`.                                                                                                                                                |
 | Rate limit        | The most job starts in a period. A handler lists it as a local limit, which each runner counts, or a lane definition as a global limit, which the whole cluster counts per key. You create it with `defineRateLimit`.                                                                                                                                                      |
 | Fair share weight | The share of the free slots that a lane gets, against the other due lanes: `fairShareWeight`, default 1.                                                                                                                                                                                                                                                                   |
@@ -80,10 +80,9 @@ The API has two scopes, and each method acts in one of them:
 - **`sqlane`** (from `createSqlane` of `@sqlane/core`) acts on the database, for every process: `enqueue`, `jobs`,
   `lanes.stats`, `schedules`, `schema`. Its methods are async. A producer, a web process, a script or an admin tool
   needs nothing else.
-- **`runner`** (from `createRunner` of `@sqlane/core/runner`) acts on this process: what it runs (`mount`), what it
-  holds back (`pauseLocally`), what runs here (`getStatus`), and `start`, `drain` and `close`. Its methods change memory
-  only, at once, but `start`, `drain` and `close`. A process without a runner never loads the dispatcher, the scheduler
-  or the leases.
+- **`runner`** (from `createRunner` of `@sqlane/core`) acts on this process: what it runs (`mount`), what it holds back
+  (`pauseLocally`), what runs here (`getStatus`), and `start`, `drain` and `close`. Its methods change memory only, at
+  once, but `start`, `drain` and `close`. A process without a runner claims no job and fires no schedule.
 
 The definitions (`defineLane`, `defineHandler`, `defineSchedule`, `defineConcurrencyLimit`, `defineRateLimit`) are
 frozen values with no instance: create them at module load.
@@ -281,11 +280,10 @@ const sqlane = createSqlane({
 
 ## `createRunner`
 
-`createRunner` creates the runner of this process over a sqlane. It is in its own module, so that a producer never
-loads it.
+`createRunner` creates the runner of this process over a sqlane. A producer creates none.
 
 ```ts
-import { createRunner } from '@sqlane/core/runner';
+import { createRunner } from '@sqlane/core';
 
 createRunner(sqlane: Sqlane<any>, options?: RunnerOptions): Runner
 ```
@@ -300,7 +298,7 @@ runner per sqlane: a second `createRunner` of one sqlane throws a `ConfigError`,
 `@sqlane/core` did not create. After `sqlane.close()`, it throws a `ClosedError`.
 
 ```js
-import { createRunner } from '@sqlane/core/runner';
+import { createRunner } from '@sqlane/core';
 
 const runner = createRunner(sqlane, { localMaxConcurrency: 20 });
 
@@ -988,7 +986,9 @@ const { completed, failed } = await runner.drain({ includeDelayed: true });
 ## `runner.close` and `sqlane.close`
 
 `runner.close` stops the runner of this process and waits for the running handlers. `sqlane.close` closes the runner
-of the sqlane, if any, with these options, then the hint of the sqlane.
+of the sqlane, if any, with these options, then stops publishing hints and unsubscribes from the hint (the result of
+its `subscribe`): hints not yet published are dropped, and the jobs that they were for run at the next poll. It never
+ends your pools.
 
 ```ts
 runner.close(options?: CloseOptions): Promise<void>
@@ -1574,7 +1574,7 @@ handle unknown ones.
 - `cancelled`, for each cancelled job, after the commit of a transaction that sqlane owns (without `connection`, or
   with a pool). Not in your transaction: sqlane cannot know for sure that you committed.
 - A retried job wakes the runners as an enqueued one does: this process at once, the others by the hint (not after
-  `sqlane.close()`, which stops the hint channel; with the `notify` option, the NOTIFY is part of the transaction), and
+  `sqlane.close()`, which stops publishing hints; with the `notify` option, the NOTIFY is part of the transaction), and
   by their next poll.
 - `retry` and `remove` emit no event.
 

@@ -1,7 +1,13 @@
 // Scenarios: a worker: handlers with local limits and weights; retry, rate limited and failure job; schedules; graceful
 // shutdown.
-import { defineConcurrencyLimit, defineHandler, FatalJobError, RateLimitedError, RetryJobError } from '@sqlane/core';
-import { createRunner } from '@sqlane/core/runner';
+import {
+    createRunner,
+    defineConcurrencyLimit,
+    defineHandler,
+    FatalJobError,
+    RateLimitedError,
+    RetryJobError,
+} from '@sqlane/core';
 import { buildReport, mailApi, nightly, reportFailed, sendEmail, syncOrder, tenantSyncs } from './jobs.js';
 import { sqlane } from './sqlane.js';
 

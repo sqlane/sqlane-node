@@ -34,9 +34,8 @@ Node.js 22.12+ · ESM · TypeScript types · zero dependencies · npm provenance
 ```ts
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import { createSqlane, defineHandler, defineLane } from '@sqlane/core';
+import { createRunner, createSqlane, defineHandler, defineLane } from '@sqlane/core';
 import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
-import { createRunner } from '@sqlane/core/runner';
 import { orders } from './schema.js';
 
 const url = process.env.DATABASE_URL;
@@ -315,15 +314,14 @@ export async function placeOrder(total: number) {
 }
 ```
 
-**4. Handle jobs, start the runner, close on shutdown.** The runner of a process (`@sqlane/core/runner`) runs the
-handlers that it mounts; a process that only enqueues never loads it. Pass the handler's `signal` to APIs that accept
+**4. Handle jobs, start the runner, close on shutdown.** The runner of a process (`createRunner`) runs the handlers
+that it mounts; a process that only enqueues creates none. Pass the handler's `signal` to APIs that accept
 one, such as `fetch`: it aborts on a timeout or a shutdown. A handler must stop when it aborts: one that runs on past its lease can
 exceed a concurrency limit ([guarantees](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#guarantees)).
 
 ```ts
 // worker.ts
-import { defineHandler } from '@sqlane/core';
-import { createRunner } from '@sqlane/core/runner';
+import { createRunner, defineHandler } from '@sqlane/core';
 import { sendReceipt } from './jobs.js';
 import { sqlane } from './sqlane.js';
 

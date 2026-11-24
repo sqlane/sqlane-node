@@ -45,7 +45,7 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 | **Lane**              | The jobs that share a name, e.g. `build_report`, with the default options of its definition. It is also the "queue": there is no separate queue. Lanes share the table and the workers, with fair sharing between them; a lane is not a priority. |
 | **Lane definition**   | The name and the options of a lane. Producers and workers import it.                                                                                                                                                                              |
 | **Handler**           | How a process runs the jobs of a lane: its function and its local settings (`defineHandler`). Only runners mount handlers.                                                                                                                        |
-| **Runner**            | The part of a process that runs jobs and fires schedules (`@sqlane/core/runner`). Producers have none.                                                                                                                                            |
+| **Runner**            | The part of a process that runs jobs and fires schedules (`createRunner`). Producers have none.                                                                                                                                                   |
 | **Concurrency limit** | The most jobs that run at once: local (per process, in memory) or global (per key, in the cluster).                                                                                                                                               |
 | **Rate limit**        | The most job starts per period: local (per process, in memory) or global (per key, in the cluster).                                                                                                                                               |
 | **Fair share weight** | A lane's share of the free slots against the other due lanes.                                                                                                                                                                                     |
@@ -67,10 +67,9 @@ reasons behind the shape of the API.
 - **Definition apart from the handler.** Producers import a small lane definition, not the handler and its
   dependencies. A lane says what a job is (`defineLane`); a handler says how a process runs it (`defineHandler`); a
   schedule says when one is added (`defineSchedule`), next to its lane. They are frozen values, with no instance.
-- **Two scopes, two modules.** `sqlane` (`@sqlane/core`) acts on the database, for every process; the runner
-  (`@sqlane/core/runner`) acts on this process: its mounts, its local pauses, `start`, `drain`, `close`. A producer
-  imports the first only, and never loads the dispatcher, the scheduler or the leases: it pays for no worker code, and
-  a web process cannot start a worker by mistake. The runner reaches the internals of its sqlane through a map of the
+- **Two scopes.** `sqlane` (`createSqlane`) acts on the database, for every process; the runner (`createRunner`) acts
+  on this process: its mounts, its local pauses, `start`, `drain`, `close`. A producer creates no runner, so a web
+  process cannot start a worker by mistake. The runner reaches the internals of its sqlane through a map of the
   package, so a sqlane of another copy of the package is refused at once.
 - **Mounts at runtime.** A runner mounts and unmounts handlers and schedules at any time, so a process can change
   what it runs (a feature flag, a tenant, a test) without a restart. A claim and a fire keep the parts they began with;
@@ -1067,8 +1066,8 @@ The source files in `src/` have snake_case names. These are the main ones:
 
 - `create_sqlane.js` is the facade of `@sqlane/core`: the database side (enqueue, jobs, schedules, schemas, the hint,
   the events) and a slot for the runner. `sqlane_internals.js` keeps its internals, for its runner only.
-- `create_runner.js` is the facade of `@sqlane/core/runner`: the runner of a process, over a sqlane. `mounts.js`
-  checks and adds the mounts. `src/index.js` imports none of the runner side.
+- `create_runner.js` is the facade of the runner of a process, over a sqlane. `mounts.js` checks and adds the mounts.
+  `create_sqlane.js` imports none of the runner side: only `create_runner.js` does (`src/packaging.test.js`).
 - `define_lane.js`, `define_handler.js` and `define_schedule.js` define the lanes, the handlers and the schedules.
 - `registry.js` keeps the handled lanes: their handlers, weights and local limits, and the running counts by lane.
 - `fair_share.js` shares the free slots between the lanes: `fill()`, `rankNames()`, `chooseRows()`, and `replayTie()` for the choices made in SQL.

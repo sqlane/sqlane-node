@@ -220,7 +220,7 @@ export interface SqlaneSchedules<C = any> {
 /**
  * A sqlane, made by `createSqlane()`: the database side, one per process. It enqueues jobs, and reads and changes the
  * jobs, the schedules and the tables, for every process. A process that runs jobs adds a runner over it:
- * `createRunner()` of `@sqlane/core/runner`.
+ * `createRunner()`.
  * @template C The connections that `enqueue` accepts: those of the adapter's driver or ORM.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md | API reference}
  */
@@ -262,8 +262,10 @@ export interface Sqlane<C> {
     ): Promise<EnqueueResult[]>;
 
     /**
-     * Closes the runner of this sqlane, if any (see `runner.close()`), with these options, then the hint. It never
-     * ends your pools: close them after it. The enqueues still work after it, without a hint.
+     * Closes the runner of this sqlane, if any (see `runner.close()`), with these options, then stops publishing hints
+     * and unsubscribes from the hint (the result of its `subscribe`): hints not yet published are dropped, and their
+     * jobs run at the next poll. It never ends your pools: close them after it. The enqueues still work after it,
+     * without a hint.
      * @param options `deadline` (default `'30s'`); `mode`: `'release'` (default) puts unfinished jobs back in the
      *     queue without using an attempt; `exitsBy`: the latest time the process exits.
      * @returns Resolves when the runner is closed: its handlers have settled or the deadline has passed. It never
@@ -301,7 +303,7 @@ export interface Mount {
 }
 
 /**
- * The runner of this process, made by `createRunner()` of `@sqlane/core/runner`: it runs the handlers and fires the
+ * The runner of this process, made by `createRunner()`: it runs the handlers and fires the
  * schedules that it mounts. Its methods act on this process: memory, sync, but `start`, `drain` and `close`. The
  * methods of the sqlane act on the database, for every process.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runner | Runner}
