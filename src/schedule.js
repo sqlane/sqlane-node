@@ -74,14 +74,15 @@ export function slotDedupeKeyOf(key, slotMs) {
 }
 
 /**
- * Checks the options of `schedule()`.
+ * Checks the options of a schedule.
  * @param {unknown} lane A lane definition or a name.
  * @param {unknown} options
+ * @param {string} [caller] The caller, for the errors. Default: `schedule`.
  * @returns {ScheduleEntry} Without its definition and its next slot.
  */
-export function checkSchedule(lane, options) {
+export function checkSchedule(lane, options, caller = 'schedule') {
     const name = isPlainObject(lane) ? lane.name : lane;
-    const where = `schedule(${JSON.stringify(name)})`;
+    const where = `${caller}(${JSON.stringify(name)})`;
     const scope = { where, ErrorClass: ConfigError };
 
     if (typeof name !== 'string' || !NAME_REGEXP.test(name)) {

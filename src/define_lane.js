@@ -1,13 +1,12 @@
-import { isConcurrencyLimit } from './define_concurrency_limit.js';
-import { isRateLimit } from './define_rate_limit.js';
 import { ConfigError } from './errors.js';
+import { checkLocalSettings } from './local_settings.js';
 import { checkFailureLane, checkOptionFields, checkObject, NAME_REGEXP } from './validate.js';
 
 const LANE_OPTION_NAMES = [
     'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'failureLane', 'fairShareWeight',
     'localConcurrencyLimits', 'globalConcurrencyLimits', 'localRateLimits', 'globalRateLimits',
 ];
-export const MAX_WEIGHT = 1000;
+export { MAX_WEIGHT } from './local_settings.js';
 
 /**
  * Defines a lane and its options. Producers and workers import the definition. `defineLane<{ reportId: string }>(…)`
@@ -42,39 +41,11 @@ export function defineLane(options) {
         checkFailureLane(options.failureLane, name, scope);
     }
 
-    const weight = options.fairShareWeight;
-
-    if (weight !== undefined && (!Number.isSafeInteger(weight) || weight < 1 || weight > MAX_WEIGHT)) {
-        throw new ConfigError(`${where}: "fairShareWeight" must be an integer from 1 to ${MAX_WEIGHT}`);
-    }
-
-    const local = options.localConcurrencyLimits;
-
-    if (local !== undefined && (!Array.isArray(local) || !local.every(isConcurrencyLimit))) {
-        throw new ConfigError(`${where}: "localConcurrencyLimits" must be an array of limits from defineConcurrencyLimit()`);
-    }
-
-    if (local && new Set(local.map(limit => limit.name)).size !== local.length) {
-        throw new ConfigError(`${where}: "localConcurrencyLimits" names a limit twice`);
-    }
-
-    const localRate = options.localRateLimits;
-
-    // Keyless: each instance counts its starts in memory, with no key to tell apart
-    if (localRate !== undefined && (!Array.isArray(localRate) || !localRate.every(isRateLimit))) {
-        throw new ConfigError(
-            `${where}: "localRateLimits" must be an array of limits from defineRateLimit(), without key() or cost()`,
-        );
-    }
-
-    if (localRate && new Set(localRate.map(limit => limit.name)).size !== localRate.length) {
-        throw new ConfigError(`${where}: "localRateLimits" names a limit twice`);
-    }
+    const settings = checkLocalSettings(options, where);
 
     return Object.freeze({
         ...options,
-        ...(local && { localConcurrencyLimits: Object.freeze([...local]) }),
-        ...(localRate && { localRateLimits: Object.freeze([...localRate]) }),
+        ...settings,
         ...(options.backoff && { backoff: Object.freeze({ ...options.backoff }) }),
         ...(options.retention && { retention: Object.freeze({ ...options.retention }) }),
     });

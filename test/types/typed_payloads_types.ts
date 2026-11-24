@@ -1,8 +1,15 @@
 // Type tests of declared payloads, as a TypeScript app writes them: checked by tsc (pnpm typecheck), never run.
 import mysql from 'mysql2/promise';
 import { expectTypeOf } from 'vitest';
-import { createSqlane, defineConcurrencyLimit, defineLane, defineRateLimit } from '@sqlane/core';
-import type { Handler, HandlerPayload } from '@sqlane/core';
+import {
+    createSqlane,
+    defineConcurrencyLimit,
+    defineHandler,
+    defineLane,
+    defineRateLimit,
+    defineSchedule,
+} from '@sqlane/core';
+import type { Handler, HandlerPayload, LaneHandler, ScheduleDefinition, ScheduleOptions } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
 type Report = { reportId: string; pages?: number };
@@ -79,6 +86,48 @@ export async function typedPayloadsTypes() {
     expectTypeOf(read?.payload).toEqualTypeOf<Report | undefined>();
 
     type Page = HandlerPayload<typeof buildReport>;
+
+    // defineHandler: the payload typed by the lane; a lane name is not a lane
+    const reportHandler = defineHandler(buildReport, ({ payload }) => {
+        expectTypeOf(payload).toEqualTypeOf<Report>();
+    }, { fairShareWeight: 2, localConcurrencyLimits: [reportLimit] });
+
+    expectTypeOf(reportHandler).toEqualTypeOf<LaneHandler<Report>>();
+    defineHandler(buildReport, handler);
+    defineHandler(untyped, ({ payload }) => {
+        expectTypeOf(payload).toBeAny();
+    });
+    // @ts-expect-error a lane name is not a lane definition
+    defineHandler('build_report', () => {});
+    // @ts-expect-error the handler of a Report lane gets a Report
+    defineHandler(buildReport, ({ payload }: { payload: { id: number } }) => payload.id);
+    // @ts-expect-error not an option of a handler
+    defineHandler(buildReport, handler, { maxAttempts: 3 });
+
+    // defineSchedule: the key is required; the payload typed by the lane, and required with a type
+    const daily = defineSchedule(buildReport, { key: 'daily', cron: '0 6 * * *', payload: { reportId: 'r1' } });
+
+    expectTypeOf(daily).toEqualTypeOf<ScheduleDefinition<Report>>();
+    expectTypeOf(daily.id).toEqualTypeOf<string>();
+    defineSchedule(untyped, { key: 'tick', every: '1m' });
+    defineSchedule(untyped, { key: 'tick', every: '1m', payload: { any: [1] } });
+    // @ts-expect-error the key is required
+    defineSchedule(untyped, { every: '1m' });
+    // @ts-expect-error the payload of a Report lane is required
+    defineSchedule(buildReport, { key: 'a', every: '1m' });
+    // @ts-expect-error the payload is a Report
+    defineSchedule(buildReport, { key: 'a', every: '1m', payload: { pages: 2 } });
+    // @ts-expect-error a lane name is not a lane definition
+    defineSchedule('build_report', { key: 'a', every: '1m' });
+    // @ts-expect-error cron or every, not both
+    defineSchedule(untyped, { key: 'a', every: '1m', cron: '* * * * *' });
+    // @ts-expect-error a payload that is not JSON
+    defineSchedule(untyped, { key: 'a', every: '1m', payload: { at: new Date() } });
+
+    // Options built apart, in a variable of the exported type
+    const weekly: ScheduleOptions<Report> = { key: 'weekly', cron: '0 6 * * 1', payload: { reportId: 'w' } };
+
+    defineSchedule(buildReport, weekly);
 
     expectTypeOf<Page>().toEqualTypeOf<Report>();
 }

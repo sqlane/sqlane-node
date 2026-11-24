@@ -1,4 +1,4 @@
-export declare const MAX_WEIGHT = 1000;
+export { MAX_WEIGHT } from './local_settings.js';
 /**
  * Defines a lane and its options. Producers and workers import the definition. `defineLane<{ reportId: string }>(…)`
  * declares the payload: `enqueue`, `lanes.add`, `globalConcurrencyLimits` and `globalRateLimits` then check it.

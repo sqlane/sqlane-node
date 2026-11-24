@@ -435,16 +435,16 @@ export async function publicApiTypes() {
 
     sqlane.schedule(syncOrder, perOrder);
     /** @type {import('@sqlane/core').ScheduleOptions} */
-    const untyped = { cron: '0 3 * * *', payload: { any: 'json' } };
+    const untyped = { key: 'nightly', cron: '0 3 * * *', payload: { any: 'json' } };
 
     sqlane.schedule('sync_order', untyped);
     /** @type {import('@sqlane/core').ScheduleOptions<{ orderId: number }>} */
     // @ts-expect-error with a payload type, the payload is required
-    const withoutPayload = { every: '1h' };
+    const withoutPayload = { key: 'a', every: '1h' };
 
     void withoutPayload;
     /** @type {import('@sqlane/core').ScheduleOptions<{ orderId: string }>} */
-    const otherPayload = { every: '1h', payload: { orderId: '1' } };
+    const otherPayload = { key: 'other', every: '1h', payload: { orderId: '1' } };
 
     // @ts-expect-error the payload type of the options is not the one of the definition
     sqlane.schedule(syncOrder, otherPayload);

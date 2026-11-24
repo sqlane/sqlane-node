@@ -88,12 +88,13 @@ export declare function isSlotTime(ms: number): boolean;
  */
 export declare function slotDedupeKeyOf(key: string | null | undefined, slotMs: number): string;
 /**
- * Checks the options of `schedule()`.
+ * Checks the options of a schedule.
  * @param {unknown} lane A lane definition or a name.
  * @param {unknown} options
+ * @param {string} [caller] The caller, for the errors. Default: `schedule`.
  * @returns {ScheduleEntry} Without its definition and its next slot.
  */
-export declare function checkSchedule(lane: unknown, options: unknown): ScheduleEntry;
+export declare function checkSchedule(lane: unknown, options: unknown, caller?: string): ScheduleEntry;
 /**
  * @param {ScheduleEntry} entry
  * @param {number} afterMs

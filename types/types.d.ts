@@ -255,6 +255,25 @@ export type HandlerContext<P = any> = {
     signal: AbortSignal;
 };
 export type Handler<P = any> = (context: HandlerContext<P>) => unknown;
+export type HandlerOptions = {
+    /**
+     * 1–1000. The lane's share of the free slots of the runner. Default: 1.
+     */
+    fairShareWeight?: number;
+    /**
+     * Limits that each runner counts for its own jobs. A
+     * job starts only while every one of them has room.
+     */
+    localConcurrencyLimits?: readonly ConcurrencyLimit[];
+    /**
+     * Rate limits that each runner counts for its own starts: keyless.
+     */
+    localRateLimits?: readonly RateLimit[];
+};
+export type LaneHandler<P = any> = Readonly<{
+    lane: LaneDefinition<P>;
+    handler: Handler<P>;
+} & HandlerOptions>;
 export type ConcurrencyLimitOptions = {
     /**
      * Matches `^[a-z][a-z0-9_.-]{0,127}$`.
@@ -473,11 +492,42 @@ export type ScheduleBaseOptions = {
      */
     jitter?: Duration;
 };
-export type ScheduleOptions<P = any> = ScheduleBaseOptions & ScheduleTiming & (IsAny<P> extends true ? {
+export type ScheduleSettings = {
+    /**
+     * Tells the schedules of a lane apart, in their id `<lane>:<key>`: 1–64 printable ASCII
+     * characters.
+     */
+    key: string;
+    /**
+     * A slot that no process enqueued within 1 minute. Default: `'once'`: the
+     * latest missed slot runs once, within the catch-up reach.
+     */
+    missed?: 'once' | 'skip';
+    /**
+     * Default: `'allow'`. `'skip'`: a slot adds no job while the previous job of
+     * the schedule is pending or running.
+     */
+    overlap?: 'allow' | 'skip';
+    /**
+     * Up to `'1d'`; below `every`. Each slot runs at a fixed offset after it, below the
+     * jitter and below the next slot: the runs of many schedules spread out.
+     */
+    jitter?: Duration;
+};
+export type ScheduleOptions<P = any> = ScheduleSettings & ScheduleTiming & (IsAny<P> extends true ? {
     payload?: P;
 } : {
     payload: P;
 });
+export type ScheduleDefinition<P = any> = Readonly<{
+    id: string;
+    lane: LaneDefinition<P>;
+    key: string;
+    payload: P;
+    missed: 'once' | 'skip';
+    overlap: 'allow' | 'skip';
+    jitter?: Duration;
+} & ScheduleTiming>;
 export type SchedulePayload<J, P> = [DeclaredPayload<J>] extends [never] ? {
     payload?: P & NoInfer<Jsonable<P>>;
 } : {
@@ -1279,6 +1329,19 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * @typedef {(context: HandlerContext<P>) => unknown} Handler
  */
 /**
+ * The settings of a lane in the process that runs it: the options of `defineHandler()`.
+ * @typedef {object} HandlerOptions
+ * @property {number} [fairShareWeight] 1–1000. The lane's share of the free slots of the runner. Default: 1.
+ * @property {readonly ConcurrencyLimit[]} [localConcurrencyLimits] Limits that each runner counts for its own jobs. A
+ *     job starts only while every one of them has room.
+ * @property {readonly RateLimit[]} [localRateLimits] Rate limits that each runner counts for its own starts: keyless.
+ */
+/**
+ * The result of `defineHandler()`: how a process runs the jobs of a lane. Frozen.
+ * @template [P=any] The payload of the lane.
+ * @typedef {Readonly<{ lane: LaneDefinition<P>, handler: Handler<P> } & HandlerOptions>} LaneHandler
+ */
+/**
  * @typedef {object} ConcurrencyLimitOptions
  * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
  * @property {number} max 1–1000. The most jobs that hold the limit at once.
@@ -1390,11 +1453,37 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  *     jitter and below the next slot: the runs of many schedules spread out.
  */
 /**
- * The options of `schedule()`. With a payload type, `payload` is required: a variable of this type passes to
- * `schedule()` with a definition of that payload type.
+ * The settings of `defineSchedule()`, with its timing and payload.
+ * @typedef {object} ScheduleSettings
+ * @property {string} key Tells the schedules of a lane apart, in their id `<lane>:<key>`: 1–64 printable ASCII
+ *     characters.
+ * @property {'once' | 'skip'} [missed] A slot that no process enqueued within 1 minute. Default: `'once'`: the
+ *     latest missed slot runs once, within the catch-up reach.
+ * @property {'allow' | 'skip'} [overlap] Default: `'allow'`. `'skip'`: a slot adds no job while the previous job of
+ *     the schedule is pending or running.
+ * @property {Duration} [jitter] Up to `'1d'`; below `every`. Each slot runs at a fixed offset after it, below the
+ *     jitter and below the next slot: the runs of many schedules spread out.
+ */
+/**
+ * The options of `defineSchedule()`. With a payload type, `payload` is required: a variable of this type passes to
+ * `defineSchedule()` with a definition of that payload type.
  * @template [P=any] The payload of each job. Default: `{}`.
- * @typedef {ScheduleBaseOptions & ScheduleTiming & (IsAny<P> extends true ? { payload?: P } : { payload: P })}
+ * @typedef {ScheduleSettings & ScheduleTiming & (IsAny<P> extends true ? { payload?: P } : { payload: P })}
  *     ScheduleOptions
+ */
+/**
+ * The result of `defineSchedule()`: a cron or an interval that adds a job of its lane at each slot. Frozen, its
+ * payload too.
+ * @template [P=any] The payload of each job.
+ * @typedef {Readonly<{
+ *     id: string,
+ *     lane: LaneDefinition<P>,
+ *     key: string,
+ *     payload: P,
+ *     missed: 'once' | 'skip',
+ *     overlap: 'allow' | 'skip',
+ *     jitter?: Duration,
+ * } & ScheduleTiming>} ScheduleDefinition `id`: `<lane>:<key>`.
  */
 /**
  * The payload of a schedule, with `ScheduleOptions`: required and checked when the definition declares one, else any

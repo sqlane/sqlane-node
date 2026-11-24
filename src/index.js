@@ -2,8 +2,10 @@
 
 export { createSqlane } from './create_sqlane.js';
 export { defineConcurrencyLimit } from './define_concurrency_limit.js';
+export { defineHandler } from './define_handler.js';
 export { defineLane } from './define_lane.js';
 export { defineRateLimit } from './define_rate_limit.js';
+export { defineSchedule } from './define_schedule.js';
 export {
     ClosedError,
     ConfigError,
@@ -79,10 +81,15 @@ export {
  * @typedef {import('./types.js').HandlerPayload<J>} HandlerPayload
  * @template J
  */
+/** @typedef {import('./types.js').HandlerOptions} HandlerOptions */
 /** @typedef {import('./types.js').Hint} Hint */
 /** @typedef {import('./types.js').JobDefaults} JobDefaults */
 /**
  * @typedef {import('./types.js').LaneDefinition<P>} LaneDefinition
+ * @template [P=any]
+ */
+/**
+ * @typedef {import('./types.js').LaneHandler<P>} LaneHandler
  * @template [P=any]
  */
 /** @typedef {import('./types.js').JobError} JobError */
@@ -126,10 +133,15 @@ export {
  * @template [C=any]
  */
 /** @typedef {import('./types.js').ScheduleFiredEvent} ScheduleFiredEvent */
+/**
+ * @typedef {import('./types.js').ScheduleDefinition<P>} ScheduleDefinition
+ * @template [P=any]
+ */
 /** @typedef {import('./types.js').ScheduleInfo} ScheduleInfo */
 /**
  * @typedef {import('./types.js').ScheduleOptions<P>} ScheduleOptions
  * @template [P=any]
  */
+/** @typedef {import('./types.js').ScheduleSettings} ScheduleSettings */
 /** @typedef {import('./types.js').SlotOptions} SlotOptions */
 /** @typedef {import('./types.js').SqlaneEvent} SqlaneEvent */
