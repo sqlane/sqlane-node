@@ -21,6 +21,10 @@ await runner.start();
 
 Breaking changes:
 
+- A new migration, `0010_pause` (tagged 10.0.0): run `schema.migrate()` before the first `runner.start()` of 10.0.
+  `runner.start()` and `runner.drain()` reject with a `ConfigError` until it is applied (a database that is down at
+  `start()`: it resolves, emits `error`, and claims nothing until the check passes). `schema.migrate()` is unaffected.
+
 - `sqlane.lanes.add(lane, handler)` is now `runner.mount([defineHandler(lane, handler)])`, and
   `sqlane.schedule(lane, options)` is `runner.mount([defineSchedule(lane, { key, ...options })])`. A mount works before
   `start()` and after it (it claims and fires at once); `mount.unmount()` removes it. `sqlane.start()`, `drain()` and

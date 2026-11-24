@@ -5,8 +5,8 @@ import { migrationsOf } from '../../../src/migrations.js';
 import { runnerOf, schedule } from '../../support/runners.js';
 
 /**
- * The schedules through an adapter: start() without the table of the schedules asks for schema.migrate() (the error of
- * the driver, wrapped by the ORM), then a slot adds its job.
+ * The schedules through an adapter: start() without the table of the migrations asks for schema.migrate() (the error
+ * of the driver, wrapped by the ORM), and so does start() on a database of 3.x; then a slot adds its job.
  * @param {import('../../../src/types.js').Sqlane<any>} sqlane Migrated, not started.
  * @param {string} p Its table prefix.
  * @param {import('../../support/test_database.js').TestDatabaseConnection} database
@@ -20,6 +20,15 @@ export async function checkSchedules(sqlane, p, database) {
         .map(step => (typeof step === 'string' ? step : step.sql))
         .filter(sql => sql.startsWith(`ALTER TABLE ${p}jobs `));
 
+    runnerOf(sqlane).mount([schedule('tick', { every: '1s' })]);
+
+    // No table of the migrations: the error of the driver, through the ORM
+    await database.query(`ALTER TABLE ${p}migrations RENAME TO ${p}migrations_away`);
+    await expect(runnerOf(sqlane).start()).rejects.toThrow(ConfigError);
+    await expect(runnerOf(sqlane).start())
+        .rejects.toThrow(`start(): the table ${p}migrations is missing: run schema.migrate()`);
+    await database.query(`ALTER TABLE ${p}migrations_away RENAME TO ${p}migrations`);
+
     // As a database of 3.x: no table of the schedules, the columns of the jobs before 0009_lanes
     await database.query(`DROP TABLE ${p}schedules`);
 
@@ -28,12 +37,12 @@ export async function checkSchedules(sqlane, p, database) {
         await database.query(sql);
     }
 
-    await database.query(`DELETE FROM ${p}migrations WHERE id IN ('0004_schedules', '0009_lanes')`);
-    runnerOf(sqlane).mount([schedule('tick', { every: '1s' })]);
+    await database.query(`DELETE FROM ${p}migrations WHERE id IN ('0004_schedules', '0009_lanes', '0010_pause')`);
 
-    await expect(runnerOf(sqlane).start()).rejects.toThrow(ConfigError);
-    await expect(runnerOf(sqlane).start()).rejects.toThrow(`start(): the table ${p}schedules is missing: run schema.migrate()`);
-    await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: ['0004_schedules', '0009_lanes'] });
+    await expect(runnerOf(sqlane).start())
+        .rejects.toThrow('start(): the migration 0010_pause is not applied: run schema.migrate()');
+    await expect(sqlane.schema.migrate())
+        .resolves.toStrictEqual({ applied: ['0004_schedules', '0009_lanes', '0010_pause'] });
     await runnerOf(sqlane).start();
 
     const deadline = Date.now() + 5000;

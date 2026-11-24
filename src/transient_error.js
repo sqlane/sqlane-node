@@ -10,6 +10,10 @@ const TRANSIENT_KINDS = new Set(['TransactionWriteConflict']);
 const MISSING_TABLE_CODES = new Set(['42P01', 'ER_NO_SUCH_TABLE', 'P2021']);
 const MISSING_TABLE_ERRNOS = new Set([1146]);
 const MISSING_TABLE_KINDS = new Set(['TableDoesNotExist']);
+/** PostgreSQL: undefined column. MySQL, MariaDB: unknown column. Prisma: the column does not exist. */
+const MISSING_COLUMN_CODES = new Set(['42703', 'ER_BAD_FIELD_ERROR', 'P2022']);
+const MISSING_COLUMN_ERRNOS = new Set([1054]);
+const MISSING_COLUMN_KINDS = new Set(['ColumnNotFound']);
 /**
  * The database cannot be reached: sockets, PostgreSQL connection errors and shutdowns, too many connections, Prisma
  * connection errors and pool timeouts.
@@ -104,6 +108,19 @@ export function isMissingTableError(error) {
         codes: MISSING_TABLE_CODES,
         errnos: MISSING_TABLE_ERRNOS,
         kinds: MISSING_TABLE_KINDS,
+    }));
+}
+
+/**
+ * A column is missing: a migration has not run.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isMissingColumnError(error) {
+    return someError(error, fields => matches(fields, {
+        codes: MISSING_COLUMN_CODES,
+        errnos: MISSING_COLUMN_ERRNOS,
+        kinds: MISSING_COLUMN_KINDS,
     }));
 }
 

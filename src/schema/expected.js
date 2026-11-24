@@ -15,6 +15,7 @@
 
 const LIMITS = '0005_concurrency_limits';
 const LANES = '0009_lanes';
+const PAUSE = '0010_pause';
 const ASCII = ' collate ascii_bin';
 
 /** @type {Record<string, ExpectedTable>} MySQL; MariaDB with its JSON as `longtext` */
@@ -72,6 +73,7 @@ const MYSQL = {
             ['last_job_id', `varchar(255)${ASCII}`, false],
             ['created_at', 'datetime(3)', true],
             ['updated_at', 'datetime(3)', true],
+            ['paused_at', 'datetime(3)', false, PAUSE],
         ],
         indexes: [['PRIMARY', 'unique (id)']],
     },
@@ -91,6 +93,11 @@ const MYSQL = {
         migration: '0007_rate_limits',
         columns: [['limit_key', `varchar(255)${ASCII}`, true], ['tat', 'datetime(6)', true]],
         indexes: [['PRIMARY', 'unique (limit_key)'], ['rate_limits_tat', '(tat)']],
+    },
+    paused_lanes: {
+        migration: PAUSE,
+        columns: [['lane', `varchar(128)${ASCII}`, true], ['paused_at', 'datetime(3)', true]],
+        indexes: [['PRIMARY', 'unique (lane)']],
     },
 };
 
@@ -166,6 +173,7 @@ const POSTGRES = {
             ['last_job_id', `${VARCHAR}(255)${C}`, false],
             ['created_at', TIME, true],
             ['updated_at', TIME, true],
+            ['paused_at', TIME, false, PAUSE],
         ],
         indexes: [['schedules_pkey', 'unique (id)']],
     },
@@ -185,6 +193,11 @@ const POSTGRES = {
         migration: '0007_rate_limits',
         columns: [['limit_key', `${VARCHAR}(255)${C}`, true], ['tat', 'timestamp(6) with time zone', true]],
         indexes: [['rate_limits_pkey', 'unique (limit_key)'], ['rate_limits_tat', '(tat)']],
+    },
+    paused_lanes: {
+        migration: PAUSE,
+        columns: [['lane', `${VARCHAR}(128)${C}`, true], ['paused_at', TIME, true]],
+        indexes: [['paused_lanes_pkey', 'unique (lane)']],
     },
 };
 

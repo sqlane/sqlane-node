@@ -10,11 +10,13 @@ import { baseVersion, compareVersions, installedVersion, parseVersion } from './
 /** @typedef {import('./types.js').Executor} Executor */
 
 /**
- * A statement of a migration: plain SQL, or SQL that runs only if an index or a column exists, by the catalog when the
- * step runs (MySQL has no `DROP KEY IF EXISTS` and no `RENAME COLUMN IF EXISTS`): a cut run runs again.
+ * A statement of a migration: plain SQL, or SQL that runs only if an index or a column exists, or only if a column is
+ * missing, by the catalog when the step runs (MySQL has no `DROP KEY IF EXISTS`, no `RENAME COLUMN IF EXISTS` and no
+ * `ADD COLUMN IF NOT EXISTS`): a cut run runs again.
  * @typedef {string
  *     | { ifIndexExists: [table: string, index: string], sql: string }
- *     | { ifColumnExists: [table: string, column: string], sql: string }} Step
+ *     | { ifColumnExists: [table: string, column: string], sql: string }
+ *     | { unlessColumnExists: [table: string, column: string], sql: string }} Step
  */
 
 /**
@@ -28,7 +30,8 @@ import { baseVersion, compareVersions, installedVersion, parseVersion } from './
 
 /** Every table that sqlane created in any version: `drop()` drops those that exist, in this order */
 const ALL_TABLES = [
-    'jobs', 'payloads', 'schedules', 'concurrency_slots', 'rate_limits', 'mutexes', 'job_keys', 'migrations',
+    'jobs', 'payloads', 'schedules', 'concurrency_slots', 'rate_limits', 'paused_lanes', 'mutexes', 'job_keys',
+    'migrations',
 ];
 
 /**
@@ -109,11 +112,26 @@ function checkLockTimeout(lockTimeout, where) {
 async function runStep(executor, step) {
     if (typeof step === 'string') {
         await executor.query(step, []);
-    } else if ('ifIndexExists' in step
-        ? await indexExists(executor, ...step.ifIndexExists)
-        : await columnExists(executor, ...step.ifColumnExists)) {
+    } else if (await shouldRun(executor, step)) {
         await executor.query(step.sql, []);
     }
+}
+
+/**
+ * @param {Executor} executor
+ * @param {Exclude<Step, string>} step
+ * @returns {Promise<boolean>} Its condition holds, by the catalog now.
+ */
+async function shouldRun(executor, step) {
+    if ('ifIndexExists' in step) {
+        return indexExists(executor, ...step.ifIndexExists);
+    }
+
+    if ('ifColumnExists' in step) {
+        return columnExists(executor, ...step.ifColumnExists);
+    }
+
+    return !await columnExists(executor, ...step.unlessColumnExists);
 }
 
 /**
