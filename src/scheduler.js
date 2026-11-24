@@ -118,13 +118,21 @@ function advance(entry, slot, dbNow) {
 
 /**
  * @typedef {object} Scheduler
- * @property {(entry: ScheduleEntry) => void} add Throws a ConfigError for a second schedule with the same id.
+ * @property {(entry: ScheduleEntry) => void} add Throws a ConfigError for a second schedule with the same id. Once
+ *     started, the entry registers at once (or with the registration that retries), then fires.
+ * @property {(entry: ScheduleEntry) => void} remove Fires the entry no more, if it is still the one of its id. A fire
+ *     in flight completes with it.
+ * @property {(id: string) => boolean} has
+ * @property {(entry: ScheduleEntry, where: string) => void} check Builds a test job of the entry: a ConfigError for a
+ *     payload or limits that its fires would refuse.
  * @property {() => void} prepare At start(): resolves the definitions, and builds a test job of each schedule.
  * @property {() => Promise<ScheduleRead>} register Inserts the missing rows, reads them all.
- * @property {(read: ScheduleRead | null) => void} start Arms the timer. Null: the registration failed; it retries.
+ * @property {(read: ScheduleRead | null) => void} start Arms the timer. Null: no registration, as no schedule was
+ *     there, or a failed one (`reportFailure()`), which retries with a backoff. The entries that the registration did
+ *     not include register at once.
  * @property {() => void} startRegistering Registers now, then arms the timer: start() did not register (the check of
  *     the server did not run).
- * @property {() => Promise<void>} stop Clears the timer, waits for the fire in flight.
+ * @property {() => Promise<void>} stop Clears the timer, waits for the steps in flight.
  * @property {() => Promise<import('./types.js').ScheduleInfo[]>} list
  * @property {(error: unknown) => void} reportFailure The registration of start() failed: logged as the fires are.
  * @property {() => number} size
@@ -134,6 +142,7 @@ function advance(entry, slot, dbNow) {
  * A slot that another transaction held: read again later.
  * @typedef {object} Recheck
  * @property {SlotCandidate} candidate
+ * @property {ScheduleEntry} entry The entry of the busy fire: its recheck is for it only.
  * @property {number} at Local time.
  * @property {number} delayMs
  * @property {number} since Local time of the first busy result.
@@ -179,10 +188,20 @@ export function createScheduler({
     let lastSkewWarnAt = -Infinity;
     let started = false;
     let stopped = false;
-    /** @type {NodeJS.Timeout | null} */
+    /** @type {NodeJS.Timeout | null} The one timer: the next tick */
     let timer = null;
-    /** @type {Promise<void> | null} */
-    let current = null;
+    /** @type {Promise<void>} The steps (registrations, ticks) run one after the other: the last one */
+    let current = Promise.resolve();
+    /** The steps queued or running: the last one arms the timer */
+    let queued = 0;
+    /** @type {Set<string>} The entries to register: added after the start, or whose registration failed */
+    const pending = new Set();
+    /** The local time of the next try of a failed registration */
+    let registerRetryAt = 0;
+    /** The registration of start() failed: its start() backs off */
+    let registrationFailed = false;
+    /** @type {Set<ScheduleEntry>} The entries of the registration of start() */
+    let registeredAtStart = new Set();
     /** The fires fail: the first failure is logged as an error, the next ones as debug, until a fire succeeds */
     let failing = false;
     let registerDelayMs = 0;
@@ -285,12 +304,12 @@ export function createScheduler({
     }
 
     /**
+     * @param {ScheduleEntry} entry The entry of the fire, as it was when the fire began.
      * @param {SlotCandidate} candidate
      * @param {boolean} late Due now; on time: due at the slot.
      * @returns {import('./new_job.js').NewJob}
      */
-    function buildJob(candidate, late) {
-        const entry = /** @type {ScheduleEntry} */ (entries.get(candidate.id));
+    function buildJob(entry, candidate, late) {
         const at = new Date(candidate.slot);
         const slot = entry.key === null ? { at } : { at, key: entry.key };
         /** @type {import('./types.js').EnqueueOptions} */
@@ -339,12 +358,17 @@ export function createScheduler({
 
     /**
      * @param {SlotCandidate[]} chunk
+     * @param {ReadonlyMap<string, ScheduleEntry>} captured The entries of the fire.
      * @returns {Promise<FireResult>}
      */
-    function fireOnce(chunk) {
+    function fireOnce(chunk, captured) {
         return store.fireSlots({
             candidates: chunk,
-            buildJob,
+            buildJob: (candidate, late) => buildJob(
+                /** @type {ScheduleEntry} */ (captured.get(candidate.id)),
+                candidate,
+                late,
+            ),
             notifyChannel,
             now,
             graceMs: t.graceMs,
@@ -356,21 +380,22 @@ export function createScheduler({
      * Fires a chunk. A transient error retries it once; a connection error fails it; another error splits it.
      * @param {SlotCandidate[]} chunk
      * @param {FireOutcome} outcome Filled in.
+     * @param {ReadonlyMap<string, ScheduleEntry>} captured The entries of the fire.
      * @returns {Promise<boolean>} False: the database cannot be reached: the rest is not tried.
      */
-    async function fireChunk(chunk, outcome) {
+    async function fireChunk(chunk, outcome, captured) {
         /** @type {FireResult} */
         let result;
 
         try {
             try {
-                result = await fireOnce(chunk);
+                result = await fireOnce(chunk, captured);
             } catch (error) {
                 if (!isTransientDbError(error) || stopped) {
                     throw error;
                 }
 
-                result = await fireOnce(chunk);
+                result = await fireOnce(chunk, captured);
             }
         } catch (error) {
             if (isConnectionError(error)) {
@@ -409,7 +434,7 @@ export function createScheduler({
             const middle = Math.ceil(chunk.length / 2);
             const halves = [chunk.slice(0, middle), chunk.slice(middle)];
 
-            return fireInTurn(halves, outcome);
+            return fireInTurn(halves, outcome, captured);
         }
 
         recovered();
@@ -426,9 +451,10 @@ export function createScheduler({
      * Fires the chunks one after the other. After a stop, or a connection error, the rest fails without a try.
      * @param {SlotCandidate[][]} chunks
      * @param {FireOutcome} outcome Filled in.
+     * @param {ReadonlyMap<string, ScheduleEntry>} captured The entries of the fire.
      * @returns {Promise<boolean>} False: stopped, or the database cannot be reached.
      */
-    async function fireInTurn(chunks, outcome) {
+    async function fireInTurn(chunks, outcome, captured) {
         for (const [index, chunk] of chunks.entries()) {
             if (stopped) {
                 outcome.failed.push(...chunks.slice(index).flat());
@@ -437,7 +463,7 @@ export function createScheduler({
             }
 
             // oxlint-disable-next-line no-await-in-loop -- one transaction at a time
-            if (!(await fireChunk(chunk, outcome))) {
+            if (!(await fireChunk(chunk, outcome, captured))) {
                 outcome.failed.push(...chunks.slice(index + 1).flat());
 
                 return false;
@@ -448,11 +474,26 @@ export function createScheduler({
     }
 
     /**
-     * Fires the candidates in chunks of `batch`, in id order, and applies the results.
-     * @param {SlotCandidate[]} candidates
+     * Fires the candidates in chunks of `batch`, in id order, and applies the results. A candidate of a removed
+     * schedule is left out.
+     * @param {SlotCandidate[]} given
      * @returns {Promise<void>}
      */
-    async function fire(candidates) {
+    async function fire(given) {
+        // The entries as the fire begins: a schedule removed during it completes with its entry
+        /** @type {Map<string, ScheduleEntry>} */
+        const captured = new Map();
+
+        for (const candidate of given) {
+            const entry = entries.get(candidate.id);
+
+            if (entry) {
+                captured.set(candidate.id, entry);
+            }
+        }
+
+        const candidates = given.filter(candidate => captured.has(candidate.id));
+
         if (!candidates.length) {
             return;
         }
@@ -467,16 +508,27 @@ export function createScheduler({
             chunks.push(sorted.slice(start, start + t.batch));
         }
 
-        await fireInTurn(chunks, outcome);
-        apply(candidates, outcome);
+        await fireInTurn(chunks, outcome, captured);
+        apply(candidates, outcome, captured);
     }
 
     /**
      * @param {SlotCandidate[]} candidates
      * @param {FireOutcome} outcome
+     * @param {ReadonlyMap<string, ScheduleEntry>} captured The entries of the fire: an entry removed or replaced since
+     *     is not updated.
      */
-    function apply(candidates, outcome) {
+    function apply(candidates, outcome, captured) {
         const byId = new Map(candidates.map(candidate => [candidate.id, candidate]));
+        /**
+         * @param {string} id
+         * @returns {ScheduleEntry | undefined} The entry of the fire, if it is still the one of its schedule.
+         */
+        const entryOf = (id) => {
+            const entry = entries.get(id);
+
+            return entry && entry === captured.get(id) ? entry : undefined;
+        };
         const localNow = now();
         const dbNow = dbTime();
         /** @type {Set<string>} */
@@ -491,18 +543,17 @@ export function createScheduler({
         }
 
         for (const decided of outcome.decided) {
-            const entry = entries.get(decided.id);
+            const entry = entryOf(decided.id);
 
             rechecks.delete(decided.id);
             failingIds.delete(decided.id);
 
-            if (!entry) {
-                continue;
+            // A schedule removed during the fire: its slot is decided all the same
+            if (entry) {
+                entry.retryDelayMs = 0;
+                retryAt.delete(entry.id);
+                entry.nextAt = advance(entry, decided.slot, dbNow);
             }
-
-            entry.retryDelayMs = 0;
-            retryAt.delete(entry.id);
-            entry.nextAt = advance(entry, decided.slot, dbNow);
 
             if (decided.created) {
                 createdLanes.add(decided.lane);
@@ -521,7 +572,7 @@ export function createScheduler({
         }
 
         for (const id of outcome.busy) {
-            const entry = entries.get(id);
+            const entry = entryOf(id);
             const candidate = /** @type {SlotCandidate} */ (byId.get(id));
             const known = rechecks.get(id);
             const delayMs = known ? Math.min(known.delayMs * 2, t.maxRecheckMs) : t.recheckMs;
@@ -530,7 +581,7 @@ export function createScheduler({
                 continue;
             }
 
-            const recheck = known ?? { candidate, at: 0, delayMs, since: localNow, warned: false };
+            const recheck = known ?? { candidate, entry, at: 0, delayMs, since: localNow, warned: false };
 
             recheck.candidate = { ...candidate, insertMissing: false };
             recheck.at = localNow + delayMs;
@@ -550,7 +601,7 @@ export function createScheduler({
 
         for (const id of outcome.deferred) {
             const candidate = /** @type {SlotCandidate} */ (byId.get(id));
-            const entry = entries.get(id);
+            const entry = entryOf(id);
             const dbNowMs = outcome.dbNowMs ?? dbNow;
             const waitMs = candidate.due - dbNowMs;
             // The entry waits for its earliest tracked slot, not for the deferred one: after a forward step of the
@@ -574,7 +625,7 @@ export function createScheduler({
         }
 
         for (const candidate of outcome.failed) {
-            const entry = entries.get(candidate.id);
+            const entry = entryOf(candidate.id);
 
             if (!entry) {
                 continue;
@@ -627,8 +678,13 @@ export function createScheduler({
         /** @type {SlotCandidate[]} */
         const again = [];
 
-        for (const { candidate } of due) {
+        for (const { candidate, entry } of due) {
             const row = rowsById.get(candidate.id);
+
+            if (entries.get(candidate.id) !== entry) {
+                // Removed during the read, maybe added again: the candidate of the old entry is gone with it
+                continue;
+            }
 
             if (row && row.lastSlotMs >= candidate.slot) {
                 // The holder took the slot: the usual case
@@ -645,14 +701,16 @@ export function createScheduler({
     }
 
     async function tick() {
-        timer = null;
-
         if (stopped) {
             return;
         }
 
         t.onWake?.();
         checkStep();
+
+        if (pending.size && registerRetryAt <= now()) {
+            await registerPending();
+        }
 
         const due = [...rechecks.values()].filter(known => known.at <= now());
 
@@ -689,17 +747,19 @@ export function createScheduler({
     }
 
     function arm() {
-        if (stopped) {
+        if (stopped || !started) {
             return;
         }
 
-        if (timer) {
-            clearTimeout(timer);
-        }
+        clearTimer();
 
         const localNow = now();
         const dbNow = dbTime();
         let delayMs = t.maxSleepMs;
+
+        if (pending.size) {
+            delayMs = Math.min(delayMs, registerRetryAt - localNow);
+        }
 
         for (const entry of entries.values()) {
             const retry = retryAt.get(entry.id);
@@ -716,31 +776,53 @@ export function createScheduler({
         }
 
         timer = setTimeout(() => {
-            current = run(tick);
+            timer = null;
+            enqueue(tick);
         }, Math.max(delayMs, 0));
         timer.unref();
     }
 
-    /**
-     * Runs a step, then arms the timer. A step never rejects.
-     * @param {() => Promise<void>} step
-     * @returns {Promise<void>}
-     */
-    async function run(step) {
-        try {
-            await step();
-        } catch (error) {
-            logger?.error({ error }, 'sqlane: the scheduler failed');
+    function clearTimer() {
+        if (timer) {
+            clearTimeout(timer);
+            timer = null;
         }
+    }
 
-        arm();
+    /**
+     * Runs a step after the steps before it; the last step arms the timer. A step never rejects.
+     * @param {() => Promise<void>} step
+     */
+    function enqueue(step) {
+        const previous = current;
+
+        clearTimer();
+        queued++;
+        current = (async () => {
+            await previous;
+
+            try {
+                if (!stopped) {
+                    await step();
+                }
+            } catch (error) {
+                logger?.error({ error }, 'sqlane: the scheduler failed');
+            } finally {
+                queued--;
+            }
+
+            if (queued === 0) {
+                arm();
+            }
+        })();
     }
 
     /**
      * @param {ScheduleRead} read
+     * @param {readonly ScheduleEntry[]} batch The entries of the registration.
      * @returns {Promise<void>}
      */
-    async function startWith(read) {
+    async function startWith(read, batch) {
         sample(read.clock);
 
         const nowMs = dbTime();
@@ -748,7 +830,7 @@ export function createScheduler({
         /** @type {SlotCandidate[]} */
         const candidates = [];
 
-        for (const entry of entries.values()) {
+        for (const entry of batch) {
             let slot;
 
             if (entry.jitterMs) {
@@ -774,43 +856,48 @@ export function createScheduler({
     }
 
     /**
-     * The registration failed at start(): retried with a backoff.
+     * Registers the pending entries, then fires their due slots. A failure retries with a backoff.
      * @returns {Promise<void>}
      */
-    async function retryRegister() {
-        timer = null;
+    async function registerPending() {
+        const batch = [...pending].map(id => /** @type {ScheduleEntry} */ (entries.get(id)));
 
-        if (stopped) {
+        if (!batch.length || stopped) {
             return;
         }
 
+        /** @type {ScheduleRead} */
+        let read;
+
         try {
-            const read = await store.registerSchedules([...entries.values()], now);
-
-            registerDelayMs = 0;
-            failing = false;
-
-            if (!stopped) {
-                await startWith(read);
-            }
-
-            arm();
+            read = await store.registerSchedules(batch, now);
         } catch (error) {
             logFailure(error, []);
-            armRegister();
+            backOffRegistration();
+
+            return;
+        }
+
+        registerDelayMs = 0;
+        registerRetryAt = 0;
+        failing = false;
+
+        // An entry removed or replaced during the registration: not this one
+        const registered = batch.filter(entry => entries.get(entry.id) === entry);
+
+        for (const entry of registered) {
+            pending.delete(entry.id);
+        }
+
+        if (!stopped) {
+            await startWith(read, registered);
         }
     }
 
-    function armRegister() {
-        if (stopped) {
-            return;
-        }
-
+    /** The next try of the registration: after a backoff that doubles */
+    function backOffRegistration() {
         registerDelayMs = Math.min(registerDelayMs ? registerDelayMs * 2 : t.retryMs, t.maxRetryMs);
-        timer = setTimeout(() => {
-            current = retryRegister();
-        }, registerDelayMs);
-        timer.unref();
+        registerRetryAt = now() + registerDelayMs;
     }
 
     /**
@@ -822,6 +909,23 @@ export function createScheduler({
         return entry.jitterMs ? pendingSlots(entry, dbTime()).nextAt : nextSlot(entry, dbTime());
     }
 
+    /**
+     * @param {ScheduleEntry} entry
+     * @param {string} where
+     */
+    function check(entry, where) {
+        try {
+            buildJob(entry, candidateOf(entry, 0), true);
+        } catch (error) {
+            if (error instanceof InvalidOptionsError || error instanceof PayloadTooLargeError
+                || error instanceof InvalidConcurrencyLimitError) {
+                throw new ConfigError(`${where}: ${error.message}`, { cause: error });
+            }
+
+            throw error;
+        }
+    }
+
     return {
         add: (entry) => {
             if (entries.has(entry.id)) {
@@ -829,7 +933,31 @@ export function createScheduler({
             }
 
             entries.set(entry.id, entry);
+
+            if (started && !stopped) {
+                pending.add(entry.id);
+
+                // Not while a failed registration backs off: its next try takes this entry too
+                if (registerRetryAt <= now()) {
+                    enqueue(registerPending);
+                }
+            }
         },
+        remove: (entry) => {
+            const { id } = entry;
+
+            if (entries.get(id) !== entry) {
+                return;
+            }
+
+            entries.delete(id);
+            pending.delete(id);
+            rechecks.delete(id);
+            retryAt.delete(id);
+            failingIds.delete(id);
+        },
+        has: id => entries.has(id),
+        check,
         prepare: () => {
             for (const entry of entries.values()) {
                 const where = `schedule(${JSON.stringify(entry.id)})`;
@@ -845,54 +973,72 @@ export function createScheduler({
                     throw new ConfigError(`${where}: the lane "${entry.lane}" is not in "lanes" and not added`);
                 }
 
-                try {
-                    buildJob(candidateOf(entry, 0), true);
-                } catch (error) {
-                    if (error instanceof InvalidOptionsError || error instanceof PayloadTooLargeError
-                        || error instanceof InvalidConcurrencyLimitError) {
-                        throw new ConfigError(`${where}: ${error.message}`, { cause: error });
-                    }
-
-                    throw error;
-                }
+                check(entry, where);
             }
         },
-        register: () => store.registerSchedules([...entries.values()], now),
+        register: () => {
+            const batch = [...entries.values()];
+
+            registeredAtStart = new Set(batch);
+
+            return store.registerSchedules(batch, now);
+        },
         reportFailure: (error) => {
+            registrationFailed = true;
             logFailure(error, [...entries.values()]);
         },
         start: (read) => {
-            if (stopped || started || !entries.size) {
+            if (stopped || started) {
                 return;
             }
 
             started = true;
 
-            if (read === null) {
+            // The entries that start() did not register: none was registered (no schedule then), or they came during
+            // its registration
+            const registered = read === null ? new Set() : registeredAtStart;
+            const batch = [...entries.values()].filter(entry => registered.has(entry));
+
+            for (const entry of entries.values()) {
+                if (!registered.has(entry)) {
+                    pending.add(entry.id);
+                }
+            }
+
+            if (read === null && registrationFailed) {
                 failing = true;
-                armRegister();
+                backOffRegistration();
+                arm();
 
                 return;
             }
 
-            current = run(() => startWith(read));
+            if (batch.length) {
+                enqueue(() => startWith(/** @type {ScheduleRead} */ (read), batch));
+            }
+
+            if (pending.size) {
+                enqueue(registerPending);
+            }
         },
         startRegistering: () => {
-            if (stopped || started || !entries.size) {
+            if (stopped || started) {
                 return;
             }
 
             started = true;
-            current = retryRegister();
+
+            for (const id of entries.keys()) {
+                pending.add(id);
+            }
+
+            if (pending.size) {
+                enqueue(registerPending);
+            }
         },
         stop: async () => {
             stopped = true;
-
-            if (timer) {
-                clearTimeout(timer);
-                timer = null;
-            }
-
+            clearTimer();
             await current;
         },
         list: async () => {
@@ -917,7 +1063,7 @@ export function createScheduler({
             return ids.map((id) => {
                 const row = rowsById.get(id);
                 const entry = entries.get(id);
-                const nextAt = entry && (started ? entry.nextAt : nextBeforeStart(entry));
+                const nextAt = entry && (started && !pending.has(id) ? entry.nextAt : nextBeforeStart(entry));
                 const known = entry !== undefined && nextAt !== null && nextAt !== undefined;
 
                 return {

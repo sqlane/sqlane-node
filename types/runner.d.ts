@@ -94,9 +94,29 @@ export type Runner = {
      */
     unblockKeys: (keys: string[]) => Promise<void>;
     /**
-     * The lane is added in this process and has a free slot.
+     * The lane is handled in this process, not paused, and has a free
+     * slot.
      */
     canStartNow: (lane: string) => boolean;
+    /**
+     * Lanes handled from now on (a mount): claimed at once
+     * when started.
+     */
+    added: (entries: readonly HandlerEntry[]) => void;
+    /**
+     * Lanes no longer handled (an unmount). A claim in
+     * flight and the jobs that run keep their handler.
+     */
+    removed: (entries: readonly HandlerEntry[]) => void;
+    /**
+     * This process claims no job of the lane, until resumeLocally().
+     */
+    pauseLocally: (lane: string) => void;
+    /**
+     * Claims the lane again, at once.
+     */
+    resumeLocally: (lane: string) => void;
+    isPausedLocally: (lane: string) => boolean;
 };
 /** @typedef {'idle' | 'started' | 'draining' | 'closing' | 'closed'} RunnerState */
 /**
@@ -130,7 +150,15 @@ export type Runner = {
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
  * @property {(keys: string[]) => Promise<void>} unblockKeys Makes due the jobs blocked on keys with room, wakes and
  *     hints them. Never rejects: a failure is an `error` event (operation `unblock`).
- * @property {(lane: string) => boolean} canStartNow The lane is added in this process and has a free slot.
+ * @property {(lane: string) => boolean} canStartNow The lane is handled in this process, not paused, and has a free
+ *     slot.
+ * @property {(entries: readonly HandlerEntry[]) => void} added Lanes handled from now on (a mount): claimed at once
+ *     when started.
+ * @property {(entries: readonly HandlerEntry[]) => void} removed Lanes no longer handled (an unmount). A claim in
+ *     flight and the jobs that run keep their handler.
+ * @property {(lane: string) => void} pauseLocally This process claims no job of the lane, until resumeLocally().
+ * @property {(lane: string) => void} resumeLocally Claims the lane again, at once.
+ * @property {(lane: string) => boolean} isPausedLocally
  */
 /**
  * @param {RunnerParams} params
