@@ -2,6 +2,7 @@ import { resolveDefaults } from './defaults.js';
 import { createEnqueuer } from './enqueue.js';
 import { createHintChannel } from './hint_channel.js';
 import { ClosedError, ConfigError } from './errors.js';
+import { createGlobalPauses } from './global_pauses.js';
 import { dropTables, rollbackMigrations, runMigrations } from './migrations.js';
 import { findSchemaProblems, getMigrationStatus } from './schema_status.js';
 import { DEFAULT_MAX_PAYLOAD_BYTES } from './payload.js';
@@ -108,7 +109,7 @@ export function createSqlane(options) {
     const testTimings = /** @type {{ timings?: Record<string, any> }} */ (options).timings ?? {};
     // Undocumented, for the tests of sqlane: in place of the version of package.json
     const { installedVersion } = /** @type {{ installedVersion?: string }} */ (options);
-    const store = createStore(adapter, tablePrefix, logger);
+    const store = createStore(adapter, tablePrefix, logger, { pausedSeenMs: pollIntervalMs });
     /** @type {import('./sqlane_internals.js').AttachedRunner | null} The runner of this process, if any */
     let attached = null;
     let closed = false;
@@ -186,6 +187,15 @@ export function createSqlane(options) {
         }
     }
 
+    const pauses = createGlobalPauses({
+        store,
+        adapter,
+        attached: () => attached,
+        hintChannel,
+        unblockKeys,
+        reportError,
+        isClosed: () => closed,
+    });
     const runSlot = createRunSlot({
         enqueuer,
         defaults,
@@ -277,9 +287,7 @@ export function createSqlane(options) {
 
             return results;
         },
-        lanes: Object.freeze({
-            stats: () => store.getStats(),
-        }),
+        lanes: Object.freeze({ ...pauses.lanes }),
         // The runner closes at once: its mounts and start() then throw, and the deadline counts from the call. Then
         // the hint stops.
         close: (closeOptions) => {
@@ -339,6 +347,7 @@ export function createSqlane(options) {
         schedules: Object.freeze({
             list: () => listSchedules({ store, local: attached?.schedules() ?? new Map() }),
             runSlot,
+            ...pauses.schedules,
         }),
     };
 

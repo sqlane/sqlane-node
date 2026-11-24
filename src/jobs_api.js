@@ -1,7 +1,8 @@
 // sqlane.jobs: the checks of the arguments and the cursors of the lists. The SQL is in store/job_reads.js.
 import { inspect } from 'node:util';
 import { InvalidOptionsError } from './errors.js';
-import { checkObject, isPlainObject, NAME_REGEXP, PRINTABLE_ID_REGEXP } from './validate.js';
+import { checkedLaneName } from './lane_names.js';
+import { checkObject, NAME_REGEXP, PRINTABLE_ID_REGEXP } from './validate.js';
 
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 
@@ -153,12 +154,7 @@ export function createJobsApi(store, bulk) {
                 'options',
                 scope,
             );
-            const lane = isPlainObject(given) ? given.name : given;
-
-            if (typeof lane !== 'string' || !NAME_REGEXP.test(lane)) {
-                throw new InvalidOptionsError(`jobs.list: "lane" must be a lane definition or a name matching ${
-                    NAME_REGEXP}`);
-            }
+            const lane = checkedLaneName(given, 'jobs.list', '"lane"');
 
             const statuses = statusesOf(status, 'jobs.list');
 

@@ -179,6 +179,23 @@ export function postgresMigrations(p) {
                 `ALTER TABLE ${p}schedules RENAME COLUMN lane TO job_name`,
             ],
         },
+        {
+            // 10.0: the global pauses. A row of paused_lanes holds its lane in every process; a schedule with a
+            // paused_at fires in none. Its down drops both: the paused lanes and schedules run again.
+            id: '0010_pause',
+            version: '10.0.0',
+            statements: [
+                `CREATE TABLE IF NOT EXISTS ${p}paused_lanes (
+                    lane varchar(128) COLLATE "C" NOT NULL PRIMARY KEY,
+                    paused_at timestamptz(3) NOT NULL
+                )`,
+                `ALTER TABLE ${p}schedules ADD COLUMN IF NOT EXISTS paused_at timestamptz(3)`,
+            ],
+            down: [
+                `DROP TABLE IF EXISTS ${p}paused_lanes`,
+                `ALTER TABLE ${p}schedules DROP COLUMN IF EXISTS paused_at`,
+            ],
+        },
     ];
 }
 

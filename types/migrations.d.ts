@@ -5,6 +5,9 @@ export type Step = string | {
 } | {
     ifColumnExists: [table: string, column: string];
     sql: string;
+} | {
+    unlessColumnExists: [table: string, column: string];
+    sql: string;
 };
 export type Migration = {
     /**

@@ -6,6 +6,7 @@ import {
 import { isRateKey } from '../rate_keys.js';
 import { isTransientDbError } from '../transient_error.js';
 import { STALLED_ERROR } from '../error_json.js';
+import { notPaused, pausedFilter } from './pauses.js';
 import { createMonotonicUlid } from '../ulid.js';
 import { insertJobsMysql } from './mysql_enqueue.js';
 import { rateLimitsTable } from './mysql_worker.js';
@@ -404,15 +405,18 @@ export async function recoverStaleJob(executor, p, id, { leaseMs }) {
 
 /**
  * Makes the jobs blocked on the keys pending again, the oldest first: on each key, as many as it has room for, by the
- * max of its oldest blocked job. A read first; the writes in a transaction, only when a key has room.
+ * max of its oldest blocked job. The jobs of paused lanes stay blocked, and take no room: they are not read. A read
+ * first; the writes in a transaction, only when a key has room.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
- * @param {<T>(func: (executor: Executor) => Promise<T>) => Promise<T>} [inTransaction] Runs the writes. Default: on
- *     `executor`, which is in a transaction already.
+ * @param {{ inTransaction?: <T>(func: (executor: Executor) => Promise<T>) => Promise<T>,
+ *     paused?: readonly string[] | null }} [options] `inTransaction` runs the writes; default: on `executor`, which is
+ *     in a transaction already. `paused`: the paused lanes of the last probe (`pausedFilter`); null: none seen.
  * @returns {Promise<string[]>} The lanes of the jobs that it made pending.
  */
-export async function unblock(executor, p, keys, inTransaction = func => func(executor)) {
+export async function unblock(executor, p, keys, { inTransaction = func => func(executor), paused = null } = {}) {
+    const filter = pausedFilter(p, 'j.lane', paused);
     // The oldest blocked job of each key: its keys and maxes; and the held slots of the key
     /**
      * @param {string} column
@@ -421,7 +425,8 @@ export async function unblock(executor, p, keys, inTransaction = func => func(ex
      */
     const ofOldest = column => `(
         SELECT CAST(j.${column} AS CHAR) FROM ${p}jobs j FORCE INDEX (${p}jobs_blocked)
-         WHERE j.status = 'blocked' AND j.blocked_on = f.limit_key ORDER BY j.status, j.blocked_on, j.run_at, j.id LIMIT 1
+         WHERE j.status = 'blocked' AND j.blocked_on = f.limit_key${filter.sql}
+         ORDER BY j.status, j.blocked_on, j.run_at, j.id LIMIT 1
     )`;
     const heads = await executor.query(`
         SELECT h.limit_key, h.limit_keys, h.limit_maxes,
@@ -433,7 +438,7 @@ export async function unblock(executor, p, keys, inTransaction = func => func(ex
                 )) AS f
           ) AS h
          WHERE h.limit_keys IS NOT NULL
-    `, [JSON.stringify([...new Set(keys)])]);
+    `, [...filter.params, ...filter.params, JSON.stringify([...new Set(keys)])]);
     const rooms = heads.map((row) => {
         /** @type {string[]} */
         const limitKeys = JSON.parse(String(row.limit_keys));
@@ -448,21 +453,22 @@ export async function unblock(executor, p, keys, inTransaction = func => func(ex
         return [];
     }
 
-    return inTransaction(transaction => unblockRooms(transaction, p, rooms));
+    return inTransaction(transaction => unblockRooms(transaction, p, rooms, filter));
 }
 
 /**
  * @param {Executor} executor In a transaction.
  * @param {string} p
  * @param {{ key: string, room: number }[]} rooms
+ * @param {{ sql: string, params: string[] }} filter Of the paused lanes (`pausedFilter`).
  * @returns {Promise<string[]>} The lanes of the jobs that it made pending.
  */
-async function unblockRooms(executor, p, rooms) {
+async function unblockRooms(executor, p, rooms, filter) {
     const picked = await executor.query(rooms.map(() => `(
-        SELECT id, lane FROM ${p}jobs FORCE INDEX (${p}jobs_blocked)
-         WHERE status = 'blocked' AND blocked_on = ? ORDER BY run_at, id LIMIT ?
+        SELECT j.id, j.lane FROM ${p}jobs j FORCE INDEX (${p}jobs_blocked)
+         WHERE j.status = 'blocked' AND j.blocked_on = ?${filter.sql} ORDER BY j.run_at, j.id LIMIT ?
            FOR UPDATE SKIP LOCKED
-    )`).join(' UNION ALL '), rooms.flatMap(({ key, room }) => [key, room]));
+    )`).join(' UNION ALL '), rooms.flatMap(({ key, room }) => [key, ...filter.params, room]));
 
     if (!picked.length) {
         return [];
@@ -495,7 +501,8 @@ function rateLimitOf(key, row) {
 /**
  * Makes the jobs blocked on the rate keys pending again, the oldest first: on each key, as many as its quota allows
  * now, each job by its own settings (gcra.js, `admitQueue`), at most RATE_UNBLOCK_BATCH. It does not take the quota:
- * the claim does, and blocks again a job that another one got ahead of. A read of the oldest blocked job of each key,
+ * the claim does, and blocks again a job that another one got ahead of. The jobs of paused lanes stay blocked: they
+ * are not read. A read of the oldest blocked job of each key,
  * with the debt of the key: by its settings, `most` jobs fit. Then, only when a job may start, a transaction: the
  * `most + 1` oldest jobs of the key, locked, and the update of the prefix that fits. So the reads are as long as the
  * prefix, not as the queue. A job of other settings after the first `most` waits for the next unblock, at once, like
@@ -508,7 +515,8 @@ function rateLimitOf(key, row) {
  *     that it made pending; the keys on which it found blocked jobs.
  */
 export async function unblockRates(executor, p, keys, options = {}) {
-    const { inTransaction = func => func(executor), floors = new Map() } = options;
+    const { inTransaction = func => func(executor), floors = new Map(), paused = null } = options;
+    const filter = pausedFilter(p, 'j.lane', paused);
     const unique = [...new Set(keys)];
     const heads = (await executor.query(unique.map(() => `(
         SELECT j.blocked_on AS limit_key, e.max_starts, e.per_us, e.burst, e.cost,
@@ -517,9 +525,9 @@ export async function unblockRates(executor, p, keys, options = {}) {
                     WHERE r.limit_key = j.blocked_on
                ), 0) AS debt_us
           FROM ${p}jobs j FORCE INDEX (${p}jobs_blocked), ${rateLimitsTable('j.rate_limits')}
-         WHERE j.status = 'blocked' AND j.blocked_on = ? AND e.limit_key = j.blocked_on
+         WHERE j.status = 'blocked' AND j.blocked_on = ? AND e.limit_key = j.blocked_on${filter.sql}
          ORDER BY j.run_at, j.id LIMIT 1
-    )`).join(' UNION ALL '), unique)).map((row) => {
+    )`).join(' UNION ALL '), unique.flatMap(key => [key].concat(filter.params)))).map((row) => {
         const key = String(row.limit_key);
         const head = rateLimitOf(key, row);
         const debtUs = Math.max(Number(row.debt_us), floors.get(key) ?? 0);
@@ -529,7 +537,7 @@ export async function unblockRates(executor, p, keys, options = {}) {
     });
     const open = heads.filter(({ most }) => most > 0);
     const { lanes, admissions } = open.length
-        ? await inTransaction(transaction => admitLocked(transaction, p, open))
+        ? await inTransaction(transaction => admitLocked(transaction, p, open, filter))
         : { lanes: [], admissions: new Map() };
     /** @type {import('./postgres_final.js').RateUnblock[]} */
     const waits = [];
@@ -562,20 +570,21 @@ export async function unblockRates(executor, p, keys, options = {}) {
  * @param {Executor} executor In a transaction.
  * @param {string} p
  * @param {{ key: string, debtUs: number, most: number }[]} keys
+ * @param {{ sql: string, params: string[] }} filter Of the paused lanes (`pausedFilter`).
  * @returns {Promise<{ lanes: string[], admissions: Map<string, import('../gcra.js').RateAdmission> }>} The lanes of the
  *     jobs that it made pending; the admission of each key with jobs locked.
  */
-async function admitLocked(executor, p, keys) {
+async function admitLocked(executor, p, keys, filter) {
     // OF j: MySQL does not lock the rows of a JSON_TABLE (ER_DUPLICATE_TABLE_LOCK)
     const rows = await executor.query(keys.map(() => `(
         SELECT j.blocked_on AS limit_key, j.id, j.lane,
                TIMESTAMPDIFF(MICROSECOND, '1970-01-01', j.run_at) AS run_at_us,
                e.max_starts, e.per_us, e.burst, e.cost
           FROM ${p}jobs j FORCE INDEX (${p}jobs_blocked), ${rateLimitsTable('j.rate_limits')}
-         WHERE j.status = 'blocked' AND j.blocked_on = ? AND e.limit_key = j.blocked_on
+         WHERE j.status = 'blocked' AND j.blocked_on = ? AND e.limit_key = j.blocked_on${filter.sql}
          ORDER BY j.run_at, j.id LIMIT ?
            FOR UPDATE OF j SKIP LOCKED
-    )`).join(' UNION ALL '), keys.flatMap(({ key, most }) => [key, most + 1]));
+    )`).join(' UNION ALL '), keys.flatMap(({ key, most }) => [key, ...filter.params, most + 1]));
     /** @type {Map<string, Record<string, unknown>[]>} */
     const queues = new Map();
 
@@ -751,7 +760,7 @@ export async function deleteExpiredJobs(executor, p, limit) {
 }
 
 /**
- * For drain({ includeDelayed }): the pending jobs of the lanes are due now.
+ * For drain({ includeDelayed }): the pending jobs of the lanes are due now, but those of the paused lanes.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} lanes
@@ -763,8 +772,9 @@ export async function makeDue(executor, p, lanes) {
     }
 
     await executor.run(`
-        UPDATE ${p}jobs SET run_at = ${NOW}
-         WHERE status = 'pending' AND lane IN (${placeholders(lanes.length)}) AND run_at > ${NOW}
+        UPDATE ${p}jobs j SET j.run_at = ${NOW}
+         WHERE j.status = 'pending' AND j.lane IN (${placeholders(lanes.length)}) AND j.run_at > ${NOW}
+           AND ${notPaused(p, 'j.lane')}
     `, lanes);
 }
 
@@ -772,7 +782,7 @@ export async function makeDue(executor, p, lanes) {
  * The counts per lane, for alerts such as "queue stuck". It reads every row kept, of every status.
  * @param {Executor} executor
  * @param {string} p
- * @returns {Promise<import('../types.js').LaneStats[]>}
+ * @returns {Promise<import('./store.js').LaneCounts[]>}
  */
 export async function getStats(executor, p) {
     const rows = await executor.query(`

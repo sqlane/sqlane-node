@@ -40,4 +40,8 @@ export async function exactOptionalTypes() {
     const tick = defineSchedule(defineLane({ name: 'tick' }), { key: 'a', every: '1m' });
 
     await sqlane.schedules.runSlot(tick, { at: undefined, connection: undefined });
+
+    // The global pauses: a connection set to undefined counts as absent
+    await sqlane.lanes.pauseGlobally('tick', { connection: undefined });
+    await sqlane.schedules.remove(tick, { connection: undefined });
 }

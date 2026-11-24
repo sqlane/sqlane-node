@@ -30,6 +30,10 @@ function recordingSqlane({ afterCommit } = {}) {
                 return [{ version: 'PostgreSQL 18.6 on x86_64' }];
             }
 
+            if (sql === 'SELECT id FROM sqlane_migrations') {
+                return [{ id: '0010_pause' }];
+            }
+
             if (!sql.includes('INSERT')) {
                 return [];
             }

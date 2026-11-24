@@ -81,6 +81,8 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
  * @property {(keys: string[]) => Promise<void>} unblockKeys Makes due the jobs blocked on keys with room, wakes and
  *     hints them. Never rejects: a failure is an `error` event (operation `unblock`).
+ * @property {(key: string, delayMs: number) => void} armRateWake The timer of a rate key: an unblock of its jobs in
+ *     `delayMs`, then the next ones while blocked jobs are left. Idle: at the next start() or drain().
  * @property {(lane: string) => boolean} canStartNow The lane is handled in this process, not paused, and has a free
  *     slot.
  * @property {(entries: readonly HandlerEntry[]) => void} added Lanes handled from now on (a mount): claimed at once
@@ -674,6 +676,7 @@ export function createRunner({
         isBusy: () => state === 'started' || state === 'draining' || state === 'closing',
         emit,
         unblockKeys,
+        armRateWake,
         canStartNow: (lane) => {
             const entry = registry.getEntry(lane);
 

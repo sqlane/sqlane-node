@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import {
     isConnectionError,
     isLockTimeoutError,
+    isMissingColumnError,
     isMissingTableError,
     isQuickRetryError,
     isTransientDbError,
@@ -66,6 +67,30 @@ test.each([
 ])('a missing table through %s', (_, error) => {
     expect(isMissingTableError(error)).toBe(true);
     expect(isConnectionError(error)).toBe(false);
+});
+
+test.each([
+    ['pg', { code: '42703' }],
+    ['mysql2', { code: 'ER_BAD_FIELD_ERROR', errno: 1054 }],
+    ['mariadb', { code: 'ER_BAD_FIELD_ERROR', errno: 1054, sqlState: '42S22' }],
+    ['Prisma', { code: 'P2022' }],
+    ['Prisma, a raw query on MySQL', { code: 'P2010', meta: { code: '1054' } }],
+    ['Prisma, its driver adapter', { code: 'P2010', meta: { driverAdapterError: { cause: { kind: 'ColumnNotFound' } } } }],
+    ['Sequelize', { name: 'SequelizeDatabaseError', original: { code: '42703' }, parent: { code: '42703' } }],
+    ['TypeORM', { name: 'QueryFailedError', driverError: { errno: 1054 } }],
+    ['a cause', new Error('list failed', { cause: { code: '42703' } })],
+])('a missing column through %s', (_, error) => {
+    expect(isMissingColumnError(error)).toBe(true);
+    expect(isMissingTableError(error)).toBe(false);
+    expect(isConnectionError(error)).toBe(false);
+});
+
+test.each([
+    ['a missing table', { code: '42P01' }],
+    ['a duplicate key', { code: 'ER_DUP_ENTRY', errno: 1062 }],
+    ['a plain error', new Error('boom')],
+])('%s is not a missing column', (_, error) => {
+    expect(isMissingColumnError(error)).toBe(false);
 });
 
 test.each([

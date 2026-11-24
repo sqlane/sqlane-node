@@ -1,4 +1,4 @@
-import type { BulkOptions, BulkResult, CloseOptions, DrainOptions, DrainResult, DropOptions, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, HandlerPayload, JobFilter, JobPage, JobRecord, JobSelector, KeyStatsOptions, KeyStatsPage, LaneDefinition, LaneHandler, LaneRunStatus, LaneStats, ListJobsOptions, MigrateOptions, MigrationStatus, RetryOptions, RollbackOptions, RunSlotOptions, ScheduleDefinition, ScheduleInfo, ScheduleRunStatus, SchemaProblems } from './types.js';
+import type { BulkOptions, BulkResult, CloseOptions, DrainOptions, DrainResult, DropOptions, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, HandlerPayload, JobFilter, JobPage, JobRecord, JobSelector, KeyStatsOptions, KeyStatsPage, LaneDefinition, LaneHandler, LaneRunStatus, LaneStats, ListJobsOptions, MigrateOptions, MigrationStatus, PauseGloballyOptions, RetryOptions, RollbackOptions, RunSlotOptions, ScheduleDefinition, ScheduleInfo, ScheduleRunStatus, SchemaProblems } from './types.js';
 /**
  * The tables of sqlane: `sqlane.schema`. Each migration is tagged with the lowest version of sqlane that ships it.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate | schema}
@@ -65,15 +65,35 @@ export interface SqlaneSchema {
 /**
  * The lanes in the database: `sqlane.lanes`. A lane is the jobs that share a name; their default options come from its
  * definition. A runner runs a lane in a process: `runner.mount([defineHandler(lane, fn)])`.
+ * @template C The connections that the pauses accept as `connection`: those of the adapter.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesstats | lanes}
  */
-export interface SqlaneLanes {
+export interface SqlaneLanes<C = any> {
+    /**
+     * Pauses a lane in every process: no runner claims its jobs, from its next poll (or hint). Stored in the
+     * database: it holds across restarts and deploys, until `resumeGlobally()`. The running jobs finish; enqueues and
+     * schedules go on, and their jobs wait pending. Its blocked jobs take no room of a key that other lanes share. A
+     * lane with no job yet is fine: pause it before its first deploy. Idempotent.
+     * @param lane A lane definition, or the name of a lane.
+     * @param options `connection`: your transaction, or a pool (default: the queue's pool).
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanespauseglobally-and-resumeglobally | lanes.pauseGlobally}
+     */
+    pauseGlobally(lane: LaneDefinition | string, options?: PauseGloballyOptions<C>): Promise<void>;
+    /**
+     * Resumes a lane that `pauseGlobally()` paused: its blocked jobs are unblocked as far as their keys allow, this
+     * process wakes, and the hint (if configured) wakes the others. With a `connection`, after its commit, when the
+     * adapter can tell; else at once. A lane that is not paused: nothing to resume. Idempotent.
+     * @param lane A lane definition, or the name of a lane.
+     * @param options `connection`: your transaction, or a pool (default: the queue's pool).
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanespauseglobally-and-resumeglobally | lanes.resumeGlobally}
+     */
+    resumeGlobally(lane: LaneDefinition | string, options?: PauseGloballyOptions<C>): Promise<void>;
     /**
      * Counts the jobs of each lane, for monitoring and alerts. A growing `oldestDueAgeMs` usually means that no
      * process runs the lane, or that the workers can't keep up; a growing `blocked`, that a key of a global limit
      * holds its jobs back (see `jobs.keyStats`). It reads every row kept: mind the interval of a metric scrape.
-     * @returns One entry per lane with jobs in any status, sorted by name. The failed and completed jobs count until
-     *     the cleanup deletes them.
+     * @returns One entry per lane with jobs in any status, and per globally paused lane, sorted by name. The failed and
+     *     completed jobs count until the cleanup deletes them.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesstats | lanes.stats}
      */
     stats(): Promise<LaneStats[]>;
@@ -151,8 +171,9 @@ export interface SqlaneJobs<C = any> {
 export interface SqlaneSchedules<C = any> {
     /**
      * Lists the schedules of the table, sorted by id: their next slot by their stored spec. No runner needed. A
-     * schedule is listed once a started runner has mounted it.
-     * @returns The schedules: their spec, their next slot, their last slot and their last job.
+     * schedule is listed once a started runner has mounted it, or a pause has created its row.
+     * @returns The schedules: their spec, their next slot (none while paused), their last slot, their last job, and
+     *     whether they are paused.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#scheduleslist | schedules.list}
      */
     list(): Promise<ScheduleInfo[]>;
@@ -169,6 +190,34 @@ export interface SqlaneSchedules<C = any> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulesrunslot | schedules.runSlot}
      */
     runSlot(schedule: ScheduleDefinition<any>, options?: RunSlotOptions<C>): Promise<EnqueueResult>;
+    /**
+     * Pauses a schedule in every process: no runner fires it; its slots during the pause are skipped, with no event.
+     * Stored in its row: it holds across restarts and deploys. No row yet: creates it, paused, with its cursor at now
+     * (pause before the first deploy; the row of a typo shows in `list()`, and `remove()` deletes it). Idempotent.
+     * @param schedule A schedule definition, or its id `<lane>:<key>`.
+     * @param options `connection`: your transaction, or a pool (default: the queue's pool).
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulespauseglobally-and-resumeglobally | schedules.pauseGlobally}
+     */
+    pauseGlobally(schedule: ScheduleDefinition<any> | string, options?: PauseGloballyOptions<C>): Promise<void>;
+    /**
+     * Resumes a schedule that `pauseGlobally()` paused: its cursor moves to now, so the slots of the pause are not
+     * caught up. A schedule that is not paused, or with no row: nothing changes. Idempotent.
+     * @param schedule A schedule definition, or its id `<lane>:<key>`.
+     * @param options `connection`: your transaction, or a pool (default: the queue's pool).
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulespauseglobally-and-resumeglobally | schedules.resumeGlobally}
+     */
+    resumeGlobally(schedule: ScheduleDefinition<any> | string, options?: PauseGloballyOptions<C>): Promise<void>;
+    /**
+     * Deletes the row of a schedule: its cursor and its pause. For a schedule deleted from the code, a typo, or a
+     * keyless schedule of 9.x. A schedule still mounted in a started runner gets its row back at its next fire, fresh.
+     * @param schedule A schedule definition, or its id: `<lane>:<key>`, or `<lane>` for a keyless schedule of 9.x.
+     * @param options `connection`: your transaction, or a pool (default: the queue's pool).
+     * @returns `removed`: a row was deleted.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulesremove | schedules.remove}
+     */
+    remove(schedule: ScheduleDefinition<any> | string, options?: PauseGloballyOptions<C>): Promise<{
+        removed: boolean;
+    }>;
 }
 /**
  * A sqlane, made by `createSqlane()`: the database side, one per process. It enqueues jobs, and reads and changes the
@@ -214,11 +263,11 @@ export interface Sqlane<C> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerclose-and-sqlaneclose | close}
      */
     close(options?: CloseOptions): Promise<void>;
-    /** The lanes: count the jobs of each lane. */
-    readonly lanes: SqlaneLanes;
+    /** The lanes: count the jobs of each lane; pause and resume a lane in every process. */
+    readonly lanes: SqlaneLanes<C>;
     /** The jobs in the database: read them; retry, cancel or remove them in bulk. */
     readonly jobs: SqlaneJobs<C>;
-    /** The schedules: list them; run a slot by hand. */
+    /** The schedules: list them; run a slot by hand; pause, resume or remove one in every process. */
     readonly schedules: SqlaneSchedules<C>;
     /** The `sqlane_*` tables: create, update, roll back or drop them; check them. */
     readonly schema: SqlaneSchema;

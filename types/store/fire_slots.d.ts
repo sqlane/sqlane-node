@@ -33,6 +33,10 @@ export type ScheduleRow = {
      */
     lastSlotMs: number;
     lastJobId: string | null;
+    /**
+     * When `schedules.pauseGlobally()` paused it. Null or none: not paused.
+     */
+    pausedAtMs?: number | null;
 };
 export type ClockSample = {
     dbNowMs: number;
@@ -44,7 +48,7 @@ export type DecidedSlot = {
     lane: string;
     slot: number;
     late: boolean;
-    outcome: 'enqueued' | 'skipped' | 'lost' | 'dropped';
+    outcome: 'enqueued' | 'skipped' | 'lost' | 'dropped' | 'paused';
     /**
      * The job of the slot: null unless enqueued.
      */
@@ -162,6 +166,7 @@ export type Winner = {
  * @property {string} spec
  * @property {number} lastSlotMs The cursor: the last decided slot.
  * @property {string | null} lastJobId
+ * @property {number | null} [pausedAtMs] When `schedules.pauseGlobally()` paused it. Null or none: not paused.
  */
 /**
  * A sample of the database clock: the local time before and after the statement that read it.
@@ -176,7 +181,7 @@ export type Winner = {
  * @property {string} lane
  * @property {number} slot
  * @property {boolean} late
- * @property {'enqueued' | 'skipped' | 'lost' | 'dropped'} outcome
+ * @property {'enqueued' | 'skipped' | 'lost' | 'dropped' | 'paused'} outcome
  * @property {string | null} jobId The job of the slot: null unless enqueued.
  * @property {boolean} created The job was added by this fire: false when it existed already.
  */
@@ -229,12 +234,13 @@ export type Winner = {
  * @param {ScheduleRow} row
  * @param {number} dbNowMs
  * @param {{ graceMs: number, futureMs: number }} limits
- * @returns {'deferred' | 'lost' | 'on_time' | 'late' | 'dropped'}
+ * @returns {'deferred' | 'paused' | 'lost' | 'on_time' | 'late' | 'dropped'} `paused`: the schedule is paused, in
+ *     every process: decided, not fired, and its cursor stays (its resume moves it).
  */
 export declare function decideSlot(candidate: SlotCandidate, row: ScheduleRow, dbNowMs: number, { graceMs, futureMs }: {
     graceMs: number;
     futureMs: number;
-}): 'deferred' | 'lost' | 'on_time' | 'late' | 'dropped';
+}): 'deferred' | 'paused' | 'lost' | 'on_time' | 'late' | 'dropped';
 /**
  * Locks the rows of the candidates, decides each slot, inserts the jobs of the winners and moves their cursors. Call it
  * in a queue transaction.

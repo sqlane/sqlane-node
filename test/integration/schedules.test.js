@@ -459,7 +459,7 @@ describe('start()', () => {
 
         await expect(runnerOf(sqlane).start()).rejects.toThrow(ConfigError);
         await expect(runnerOf(sqlane).start())
-            .rejects.toThrow(`start(): the table ${p}schedules is missing: run schema.migrate()`);
+            .rejects.toThrow(`start(): the table ${p}migrations is missing: run schema.migrate()`);
     });
 
     test('a database that is down: start() resolves, reports the error, and registers when it is back', async () => {

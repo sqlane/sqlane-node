@@ -4,8 +4,11 @@
 
 The worker of a process is a **runner** of its own: `createRunner(sqlane)` mounts handlers (`defineHandler`) and
 schedules (`defineSchedule`), at any time, and `sqlane` acts on the database for every process. A producer creates no
-runner. The failure job of a job comes from the definition of its lane in the process that
-fails it, and a job past its `maxStalls` fails at its next claim, in a process that handles its lane.
+runner. The failure job of a job comes from the definition of its lane in the process that fails it, and a job past its
+`maxStalls` fails at its next claim, in a process that handles its lane. A lane or a schedule can be paused in every
+process, in the database: `sqlane.lanes.pauseGlobally()`, `sqlane.schedules.pauseGlobally()`. To upgrade, stop the 9.x
+processes, run `schema.migrate()` (it applies `0010_pause`), then deploy: see the
+[guide](https://github.com/sqlane/sqlane-node/blob/main/docs/migrations/10.md).
 
 ```js
 import { createRunner, createSqlane, defineHandler, defineLane, defineSchedule } from '@sqlane/core';
@@ -21,6 +24,10 @@ await runner.start();
 
 Breaking changes:
 
+- A new migration, `0010_pause` (tagged 10.0.0): run `schema.migrate()` before the first `runner.start()` of 10.0.
+  `runner.start()` and `runner.drain()` reject with a `ConfigError` until it is applied (a database that is down at
+  `start()`: it resolves, emits `error`, and claims nothing until the check passes). `schema.migrate()` is unaffected.
+  A rollback to 9.0.0 drops the global pauses.
 - `sqlane.lanes.add(lane, handler)` is now `runner.mount([defineHandler(lane, handler)])`, and
   `sqlane.schedule(lane, options)` is `runner.mount([defineSchedule(lane, { key, ...options })])`. A mount works before
   `start()` and after it (it claims and fires at once); `mount.unmount()` removes it. `sqlane.start()`, `drain()` and
@@ -33,13 +40,24 @@ Breaking changes:
 - The local settings of a lane (`localConcurrencyLimits`, `localRateLimits`, `fairShareWeight`) move from `defineLane` to
   `defineHandler`: they are per process. `defineLane` rejects them, and a failure lane with a failure lane of its own.
 - A schedule needs a `key`: its id is `<lane>:<key>`, and the job id of a slot `<lane>:schedule:<key>:<ISO>`. The rows of
-  the keyless schedules of 9.x stay in `<prefix>schedules`: delete them by hand. The enqueue option `slot` is now
+  the keyless schedules of 9.x stay in `<prefix>schedules`: delete them with `sqlane.schedules.remove('<lane>')`. The
+  enqueue option `slot` is now
   `sqlane.schedules.runSlot(schedule, { at, connection })`: the slot of the spec (by default the latest one up to now),
   with the payload of the schedule; no runner needed.
-- `schedules.list()` lists the rows of the table only: a schedule is listed once a started runner has mounted it.
-  `nextAt` comes from the stored spec; `nextRunAt` has the jitter only for a schedule mounted in this process with the
-  stored spec. `ScheduleInfo.registered` is gone:
-  `runner.getStatus(schedule)`; `lastSlotAt` is never null.
+- `schedules.list()` lists the rows of the table only: a schedule is listed once a started runner has mounted it, or a
+  pause has created its row. `nextAt` comes from the stored spec; `nextRunAt` has the jitter only for a schedule mounted
+  in this process with the stored spec. `ScheduleInfo.registered` is gone: `runner.getStatus(schedule)`; `lastSlotAt`
+  is never null.
+- New: the global pauses, stored in the database, for every process. `sqlane.lanes.pauseGlobally(lane, { connection })`
+  / `resumeGlobally(...)`: no runner claims the jobs of the lane (a definition or a name, with or without jobs); its
+  enqueues and schedules go on, its running jobs finish, and its blocked jobs take no room of a key that other lanes
+  share; the resume unblocks them and sends the hint. `sqlane.schedules.pauseGlobally(schedule, { connection })` /
+  `resumeGlobally(...)`: no runner fires the schedule (a definition or an id `<lane>:<key>`; no row yet: a paused one);
+  its slots during the pause are skipped, without an event; the resume moves its cursor to now.
+  `sqlane.schedules.remove(schedule)` deletes its row → `{ removed }`. `LaneStats.pausedGlobally` (a paused lane with no
+  job is listed too; it still counts in `due` and `oldestDueAgeMs`), `ScheduleInfo.pausedGlobally` (`nextAt` null
+  while paused). Type `PauseGloballyOptions`. `runner.pauseLocally()` and `resumeLocally()` reject a name that no lane
+  can have (`InvalidOptionsError`).
 - New: `runner.pauseLocally(lane)` / `resumeLocally(lane)` (this process claims none of its jobs, for the life of the
   runner), `runner.getStatus(lane | schedule)`. Types `LaneHandler`, `HandlerOptions`, `ScheduleDefinition`,
   `ScheduleOptions` (now with a required `key`), `ScheduleSettings`, `Runner`, `RunnerOptions`, `Mount`,

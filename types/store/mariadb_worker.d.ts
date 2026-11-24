@@ -24,14 +24,15 @@ export declare const LIMIT_WINDOW_SIZE = 500;
 export declare const rateLimitsTable: (json: string) => string;
 /**
  * The SQL of the probe. `GROUP BY status, lane`: the whole index prefix, else MariaDB does not use a loose index
- * scan.
+ * scan. Then the paused lanes, with a null delay: the probe drops them (a filter in the scan would end the loose
+ * index scan).
  * @param {string} p
  * @param {number} [laneCount] The lanes of the probe, as parameters; none: all lanes.
  * @returns {string}
  */
 export declare function probeSql(p: string, laneCount?: number): string;
 /**
- * The next due time of each given lane with pending jobs; null, or many lanes: of each lane. One index dive
+ * The next due time of each given lane with pending jobs, not paused; null, or many lanes: of each lane. One index dive
  * per lane (loose index scan).
  * @param {Executor} executor
  * @param {string} p
@@ -40,6 +41,17 @@ export declare function probeSql(p: string, laneCount?: number): string;
  */
 export declare function probe(executor: Executor, p: string, lanes: string[] | null): Promise<ProbeRow[]>;
 /**
+ * The probe, with the paused lanes that it read.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[] | null} lanes
+ * @returns {Promise<{ rows: ProbeRow[], paused: string[] | null }>} `paused`: null when no statement ran.
+ */
+export declare function probePaused(executor: Executor, p: string, lanes: string[] | null): Promise<{
+    rows: ProbeRow[];
+    paused: string[] | null;
+}>;
+/**
  * The due jobs of lanes with global limits, oldest first: at most `limit` of each lane whose keys have room, and those
  * with a full key, which the claim blocks. A key is full when its held slots reach the max of the job, or a rate key
  * has no quota left for it after the older jobs of the search. Without `withRates`, the search leaves out the rate
@@ -47,10 +59,15 @@ export declare function probe(executor: Executor, p: string, lanes: string[] | n
  * @param {Executor} executor
  * @param {string} p
  * @param {Map<string, number>} limitsByLane
- * @param {boolean} withRates
+ * @param {{ withRates: boolean, paused?: readonly string[] | null }} options `paused`: the paused lanes of the last
+ *     probe (`pausedFilter`): their lanes are left out, without a check in SQL. Null: no probe yet, each lane is
+ *     checked.
  * @returns {Promise<import('./store.js').FoundCandidatesOf>}
  */
-export declare function findCandidates(executor: Executor, p: string, limitsByLane: Map<string, number>, withRates: boolean): Promise<import('./store.js').FoundCandidatesOf>;
+export declare function findCandidates(executor: Executor, p: string, limitsByLane: Map<string, number>, { withRates, paused }: {
+    withRates: boolean;
+    paused?: readonly string[] | null;
+}): Promise<import('./store.js').FoundCandidatesOf>;
 /**
  * Claims due jobs among the candidates, and blocks those with a full key. Call it in a queue transaction. The order of
  * the locks: the jobs, the rows of their rate keys, then their slots; the tat of a rate key moves only for the jobs
@@ -60,7 +77,7 @@ export declare function findCandidates(executor: Executor, p: string, limitsByLa
  * @param {ClaimParams} params
  * @returns {Promise<import('./store.js').ClaimResult>}
  */
-export declare function claim(executor: Executor, p: string, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick }: ClaimParams): Promise<import('./store.js').ClaimResult>;
+export declare function claim(executor: Executor, p: string, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, pausedLanes, }: ClaimParams): Promise<import('./store.js').ClaimResult>;
 /**
  * The prefix of the claim statement of claimDue. With `innodb_snapshot_isolation` (MariaDB 10.11.8, 11.0.6, 11.1.5,
  * 11.2.4, 11.4.2 and later; ON by default since 11.6.2), a locking read of a row that the statement's read view does

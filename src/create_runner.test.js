@@ -7,13 +7,31 @@ import { defineSchedule } from './define_schedule.js';
 import { ClosedError, ConfigError, InvalidOptionsError } from './errors.js';
 
 /**
- * An adapter over a PostgreSQL 18 with no rows: every statement gives none.
+ * An adapter over a PostgreSQL 18 with no rows: every statement gives none, but the version of the server and the
+ * recorded migrations.
+ * @param {object} [options]
+ * @param {string[] | null} [options.migrations] The ids in `sqlane_migrations`; null: no such table. Default:
+ *     `0010_pause` only, the one that the runner reads.
  * @returns {import('./types.js').Adapter<any>}
  */
-function fakeAdapter() {
+function fakeAdapter({ migrations = ['0010_pause'] } = {}) {
     /** @type {import('./types.js').Executor} */
     const executor = {
-        query: async sql => (sql === 'SELECT VERSION() AS version' ? [{ version: 'PostgreSQL 18.6 on x86_64' }] : []),
+        query: async (sql) => {
+            if (sql === 'SELECT VERSION() AS version') {
+                return [{ version: 'PostgreSQL 18.6 on x86_64' }];
+            }
+
+            if (sql === 'SELECT id FROM sqlane_migrations') {
+                if (!migrations) {
+                    throw Object.assign(new Error('relation "sqlane_migrations" does not exist'), { code: '42P01' });
+                }
+
+                return migrations.map(id => ({ id }));
+            }
+
+            return [];
+        },
         run: async () => 0,
     };
 
@@ -173,12 +191,196 @@ describe('the rules of a runner', () => {
         expect(() => otherRunner.mount([daily])).toThrow(ClosedError);
     });
 
-    test('pauseLocally() of a value that is not a lane: an InvalidOptionsError', () => {
+    test.each([
+        ['a number', 3],
+        ['a name with an uppercase letter', 'Report'],
+        ['the id of a schedule', 'report:daily'],
+    ])('pauseLocally() and resumeLocally() of %s: an InvalidOptionsError', (_, lane) => {
         const runner = createRunner(createSqlane({ adapter: fakeAdapter() }));
 
-        expect(() => runner.pauseLocally(/** @type {any} */ (3))).toThrow(InvalidOptionsError);
+        expect(() => runner.pauseLocally(/** @type {any} */ (lane))).toThrow(InvalidOptionsError);
+        expect(() => runner.resumeLocally(/** @type {any} */ (lane))).toThrow(
+            'resumeLocally(): the lane must be a lane definition or a name matching',
+        );
     });
 });
+
+describe('the migrations: 0010_pause is required', () => {
+    test('applied: start() and drain() read the records once per runner', async () => {
+        const adapter = fakeAdapter();
+        const sent = recordSql(adapter);
+        const runner = createRunner(createSqlane({ adapter }));
+
+        await runner.drain({ timeout: '1s' });
+        await runner.drain({ timeout: '1s' });
+        await runner.start();
+        expect(sent.filter(sql => sql === 'SELECT id FROM sqlane_migrations')).toHaveLength(1);
+        await runner.close({ deadline: 0 });
+    });
+
+    test.each([
+        ['not recorded', ['0009_lanes'], 'start(): the migration 0010_pause is not applied: run schema.migrate()'],
+        ['no table of the migrations', null, 'start(): the table sqlane_migrations is missing: run schema.migrate()'],
+    ])('%s: start() rejects with a ConfigError, and claims nothing; again at the next call', async (
+        _,
+        migrations,
+        message,
+    ) => {
+        const adapter = fakeAdapter({ migrations });
+        const sent = recordSql(adapter);
+        const runner = createRunner(createSqlane({ adapter }));
+
+        runner.mount([defineHandler(report, () => {}), daily]);
+        await expect(runner.start()).rejects.toThrow(new ConfigError(message));
+        await expect(runner.start()).rejects.toThrow(ConfigError);
+        expect(sent.filter(sql => /FOR UPDATE|sqlane_schedules|sqlane_jobs/u.test(sql))).toStrictEqual([]);
+        await runner.close({ deadline: 0 });
+    });
+
+    test('drain() rejects with a ConfigError before any claim', async () => {
+        const adapter = fakeAdapter({ migrations: ['0009_lanes'] });
+        const sent = recordSql(adapter);
+        const runner = createRunner(createSqlane({ adapter }));
+
+        runner.mount([defineHandler(report, () => {})]);
+        await expect(runner.drain()).rejects.toThrow(new ConfigError(
+            'drain(): the migration 0010_pause is not applied: run schema.migrate()',
+        ));
+        expect(sent.filter(sql => sql.includes('sqlane_jobs'))).toStrictEqual([]);
+    });
+
+    test('the database down at start(): start() resolves; the check before the first turn gives the ConfigError, an '
+        + '`error` event, and no claim', async () => {
+        const adapter = fakeAdapter({ migrations: ['0009_lanes'] });
+        const sent = recordSql(adapter);
+        const database = downAtFirst(adapter);
+
+        /** @type {import('./types.js').SqlaneEvent[]} */
+        const events = [];
+        const runner = createRunner(createSqlane({ adapter, pollInterval: '100ms', onEvent: event => events.push(event) }));
+
+        runner.mount([defineHandler(report, () => {}), daily]);
+        await runner.start();
+        database.up();
+        await vi.waitFor(() => {
+            expect(events).toContainEqual(expect.objectContaining({
+                type: 'error',
+                operation: 'server_check',
+                error: new ConfigError('start(): the migration 0010_pause is not applied: run schema.migrate()'),
+            }));
+        }, { timeout: 3000 });
+        expect(sent.filter(sql => /FOR UPDATE|sqlane_schedules|sqlane_jobs/u.test(sql))).toStrictEqual([]);
+        await runner.close({ deadline: 0 });
+    });
+
+    test('drain() after close() or with a bad timeout: its error, before the read of the migrations', async () => {
+        const adapter = fakeAdapter();
+        const sent = recordSql(adapter);
+        const runner = createRunner(createSqlane({ adapter }));
+
+        await expect(runner.drain({ timeout: /** @type {any} */ ('soon') })).rejects.toThrow(new InvalidOptionsError(
+            'drain(): "timeout" must be a duration',
+        ));
+        await runner.close({ deadline: 0 });
+        await expect(runner.drain()).rejects.toThrow(new ClosedError('drain() after close()'));
+        expect(sent).toStrictEqual([]);
+    });
+
+    test('while drain() reads the migrations: it counts as draining', async () => {
+        const adapter = fakeAdapter();
+        const held = holdMigrationsRead(adapter);
+        const sqlane = createSqlane({ adapter });
+        const runner = createRunner(sqlane);
+        const mount = runner.mount([defineHandler(report, () => {})]);
+        const draining = runner.drain({ timeout: '1s' });
+
+        expect(() => runner.mount([daily])).toThrow(new ConfigError(
+            'mount() during drain(): mount and unmount before drain() or after it',
+        ));
+        expect(() => mount.unmount()).toThrow(ConfigError);
+        await expect(runner.start()).rejects.toThrow(new ConfigError(
+            'start() during drain(): start the runner after drain()',
+        ));
+        await expect(runner.drain()).rejects.toThrow(new ConfigError(
+            'drain() runs without start(), and one at a time',
+        ));
+        await expect(sqlane.schema.rollback({ targetVersion: '9.0.0' })).rejects.toThrow(
+            'schema.rollback() while started or draining',
+        );
+        held.release();
+        await expect(draining).resolves.toStrictEqual({ completed: 0, retried: 0, failed: 0 });
+        expect(() => mount.unmount()).not.toThrow();
+    });
+
+    test('schema.migrate() does not read it: a sqlane on a 9.0 schema migrates', async () => {
+        const adapter = fakeAdapter({ migrations: ['0009_lanes'] });
+        const sqlane = createSqlane({ adapter });
+
+        createRunner(sqlane);
+        await expect(sqlane.schema.migrate()).resolves.toMatchObject({ applied: expect.any(Array) });
+    });
+});
+
+/**
+ * Holds the read of the migrations until `release()`.
+ * @param {import('./types.js').Adapter<any>} adapter
+ * @returns {{ release: () => void }}
+ */
+function holdMigrationsRead(adapter) {
+    const held = Promise.withResolvers();
+    const { query } = adapter.queue;
+
+    adapter.queue.query = async (sql, params) => {
+        await (sql === 'SELECT id FROM sqlane_migrations' ? held.promise : null);
+
+        return query(sql, params);
+    };
+
+    return { release: () => held.resolve(undefined) };
+}
+
+/**
+ * The queue of the adapter fails with a refused connection, until `up()`.
+ * @param {import('./types.js').Adapter<any>} adapter
+ * @returns {{ up: () => void }}
+ */
+function downAtFirst(adapter) {
+    const { query } = adapter.queue;
+    const refused = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    /** @type {() => Promise<void>} */
+    let answer = () => Promise.reject(refused);
+
+    adapter.queue.query = async (sql, params) => {
+        await answer();
+
+        return query(sql, params);
+    };
+
+    return {
+        up: () => {
+            answer = () => Promise.resolve();
+        },
+    };
+}
+
+/**
+ * Records the SQL that the adapter's queue gets.
+ * @param {import('./types.js').Adapter<any>} adapter
+ * @returns {string[]}
+ */
+function recordSql(adapter) {
+    /** @type {string[]} */
+    const sent = [];
+    const { query } = adapter.queue;
+
+    adapter.queue.query = async (sql, params) => {
+        sent.push(sql);
+
+        return query(sql, params);
+    };
+
+    return sent;
+}
 
 describe('getStatus', () => {
     test('a lane: mounted, paused here, its running jobs; a typo: not mounted', () => {

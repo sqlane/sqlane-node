@@ -1,6 +1,7 @@
 // `sqlane.schedules.list()`: the rows of the schedules, with their next slot by their stored spec. Pure but for the
 // read: it needs no runner, and lists the database only.
 import { parseCron } from './cron.js';
+import { schemaErrorOf } from './global_pauses.js';
 import { dueOf, nextSlot, pendingSlots } from './schedule.js';
 import { isMissingTableError } from './transient_error.js';
 
@@ -65,9 +66,9 @@ export async function listSchedules({ store, local }) {
         ({ rows } = read);
         nowMs = read.clock.dbNowMs;
     } catch (error) {
-        // No table yet: no rows
+        // No table yet: no rows. The table without the pause of 0010: a ConfigError
         if (!isMissingTableError(error)) {
-            throw error;
+            throw schemaErrorOf('schedules.list()', error);
         }
     }
 
@@ -76,8 +77,11 @@ export async function listSchedules({ store, local }) {
         const entry = local.get(id);
         // The jitter is not stored: known for a schedule of this process only, of the stored spec
         const same = entry !== undefined && entry.spec === spec;
+        const pausedGlobally = (row.pausedAtMs ?? null) !== null;
         const timing = same ? entry.timing : timingOfSpec(spec);
-        const next = timing && nextOf({ id, timing, jitterMs: same ? entry.jitterMs : 0, dueCache: null }, nowMs);
+        // Paused: no next slot until the resume
+        const next = !pausedGlobally && timing
+            && nextOf({ id, timing, jitterMs: same ? entry.jitterMs : 0, dueCache: null }, nowMs);
 
         return {
             id,
@@ -87,6 +91,7 @@ export async function listSchedules({ store, local }) {
             nextRunAt: next ? new Date(next.nextRunAt) : null,
             lastSlotAt: new Date(row.lastSlotMs),
             lastJobId: row.lastJobId,
+            pausedGlobally,
         };
     });
 }

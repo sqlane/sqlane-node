@@ -107,19 +107,25 @@ export declare function recoverStaleJob(executor: Executor, p: string, id: strin
 }): Promise<import('./store.js').StaleJobResult>;
 /**
  * Makes the jobs blocked on the keys pending again, the oldest first: on each key, as many as it has room for, by the
- * max of its oldest blocked job. A read first; the writes in a transaction, only when a key has room.
+ * max of its oldest blocked job. The jobs of paused lanes stay blocked, and take no room: they are not read. A read
+ * first; the writes in a transaction, only when a key has room.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
- * @param {<T>(func: (executor: Executor) => Promise<T>) => Promise<T>} [inTransaction] Runs the writes. Default: on
- *     `executor`, which is in a transaction already.
+ * @param {{ inTransaction?: <T>(func: (executor: Executor) => Promise<T>) => Promise<T>,
+ *     paused?: readonly string[] | null }} [options] `inTransaction` runs the writes; default: on `executor`, which is
+ *     in a transaction already. `paused`: the paused lanes of the last probe (`pausedFilter`); null: none seen.
  * @returns {Promise<string[]>} The lanes of the jobs that it made pending.
  */
-export declare function unblock(executor: Executor, p: string, keys: string[], inTransaction?: <T>(func: (executor: Executor) => Promise<T>) => Promise<T>): Promise<string[]>;
+export declare function unblock(executor: Executor, p: string, keys: string[], { inTransaction, paused }?: {
+    inTransaction?: <T>(func: (executor: Executor) => Promise<T>) => Promise<T>;
+    paused?: readonly string[] | null;
+}): Promise<string[]>;
 /**
  * Makes the jobs blocked on the rate keys pending again, the oldest first: on each key, as many as its quota allows
  * now, each job by its own settings (gcra.js, `admitQueue`), at most RATE_UNBLOCK_BATCH. It does not take the quota:
- * the claim does, and blocks again a job that another one got ahead of. A read of the oldest blocked job of each key,
+ * the claim does, and blocks again a job that another one got ahead of. The jobs of paused lanes stay blocked: they
+ * are not read. A read of the oldest blocked job of each key,
  * with the debt of the key: by its settings, `most` jobs fit. Then, only when a job may start, a transaction: the
  * `most + 1` oldest jobs of the key, locked, and the update of the prefix that fits. So the reads are as long as the
  * prefix, not as the queue. A job of other settings after the first `most` waits for the next unblock, at once, like
@@ -166,7 +172,7 @@ export declare function deleteIdleRateKeys(executor: Executor, p: string, limit:
  */
 export declare function deleteExpiredJobs(executor: Executor, p: string, limit: number): Promise<number>;
 /**
- * For drain({ includeDelayed }): the pending jobs of the lanes are due now.
+ * For drain({ includeDelayed }): the pending jobs of the lanes are due now, but those of the paused lanes.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} lanes
@@ -177,6 +183,6 @@ export declare function makeDue(executor: Executor, p: string, lanes: string[]):
  * The counts per lane, for alerts such as "queue stuck". It reads every row kept, of every status.
  * @param {Executor} executor
  * @param {string} p
- * @returns {Promise<import('../types.js').LaneStats[]>}
+ * @returns {Promise<import('./store.js').LaneCounts[]>}
  */
-export declare function getStats(executor: Executor, p: string): Promise<import('../types.js').LaneStats[]>;
+export declare function getStats(executor: Executor, p: string): Promise<import('./store.js').LaneCounts[]>;

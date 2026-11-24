@@ -19,7 +19,9 @@ the counts are what each job with a rate key pays, not the timer that unblocks t
 
 **`pnpm bench:statements`** runs them as fixed sequences of public calls (`bench/regression/scenarios.mjs`) on each
 supported version in a container, and counts the statements, the rows and the blocks from the database's own
-statistics (`pg_stat_statements`, `performance_schema`). CI fails when a count leaves the range of
+statistics (`pg_stat_statements`, `performance_schema`). It runs one more: `paused_lane_blocked`, a lane that shares a
+key with a globally paused lane of 1000 blocked jobs, so each unblock of the key reads past them (its setup blocks
+them with one `UPDATE`). CI fails when a count leaves the range of
 `bench/regression/snapshot.json`, with a margin of 2% for statements and 20% for rows and blocks; one more statement
 per operation leaves it in every scenario. A change of a hot path that adds or removes statements on purpose updates
 the snapshot: `pnpm bench:statements:update` runs each scenario 10 times and keeps the range (about 20 minutes).

@@ -18,9 +18,9 @@ export async function checkSchemaChanges(sqlane, p) {
 
 /** What `checkSchemaChanges` gives on a migrated prefix */
 export const SCHEMA_CHANGES = {
-    reverted: ['0009_lanes', '0008_job_list'],
-    applied: ['0008_job_list', '0009_lanes'],
+    reverted: ['0010_pause', '0009_lanes', '0008_job_list'],
+    applied: ['0008_job_list', '0009_lanes', '0010_pause'],
     status: { ok: true, missingRequired: [], missingOptional: [], unknownApplied: [] },
     problems: { ok: true, problems: [] },
-    dropped: ['jobs', 'payloads', 'schedules', 'concurrency_slots', 'rate_limits', 'migrations'],
+    dropped: ['jobs', 'payloads', 'schedules', 'concurrency_slots', 'rate_limits', 'paused_lanes', 'migrations'],
 };

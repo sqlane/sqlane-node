@@ -1,5 +1,6 @@
 // The worker side of the store on PostgreSQL: probe, candidates, claim. Times are computed in SQL.
 import { incrementsOf, splitByRate } from '../gcra.js';
+import { notPaused } from './pauses.js';
 
 /** @typedef {import('../types.js').Executor} Executor */
 /** @typedef {import('./store.js').ProbeRow} ProbeRow */
@@ -54,7 +55,7 @@ export const rateLimitsOf = json => `(
 ) AS e`;
 
 /**
- * The next due time of each given lane with pending jobs: one index probe per lane.
+ * The next due time of each given lane with pending jobs, not paused: one index probe per lane.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} lanes
@@ -69,15 +70,16 @@ async function probeLanes(executor, p, lanes) {
              SELECT run_at FROM ${p}jobs
               WHERE status = 'pending' AND lane = request.name ORDER BY run_at LIMIT 1
          ) AS next
+         WHERE ${notPaused(p, 'request.name')}
     `, [lanes]);
 
     return rows.map(row => ({ name: String(row.lane), delayMs: Number(row.delay_ms) }));
 }
 
 /**
- * The next due time of each given lane with pending jobs; null: of each lane. PostgreSQL has no loose index
+ * The next due time of each given lane with pending jobs, not paused; null: of each lane. PostgreSQL has no loose index
  * scan: for all lanes, a recursive CTE skips from one pending lane to the next on the partial index, two index probes
- * per pending lane.
+ * per pending lane (a paused lane: one, and its row in `<p>paused_lanes`).
  * @param {Executor} executor
  * @param {string} p
  * @param {string[] | null} lanes
@@ -102,7 +104,7 @@ export async function probe(executor, p, lanes) {
                    SELECT j.run_at FROM ${p}jobs j
                     WHERE j.status = 'pending' AND j.lane = lanes.lane ORDER BY j.run_at LIMIT 1
                ) - clock_timestamp()) * 1000)::bigint AS delay_ms
-          FROM lanes WHERE lanes.lane IS NOT NULL
+          FROM lanes WHERE lanes.lane IS NOT NULL AND ${notPaused(p, 'lanes.lane')}
     `, []);
 
     return rows.map(row => ({ name: String(row.lane), delayMs: Number(row.delay_ms) }));
@@ -116,10 +118,10 @@ export async function probe(executor, p, lanes) {
  * @param {Executor} executor
  * @param {string} p
  * @param {Map<string, number>} limitsByLane
- * @param {boolean} withRates
+ * @param {{ withRates: boolean, paused?: readonly string[] | null }} options `paused`: MySQL and MariaDB only.
  * @returns {Promise<import('./store.js').FoundCandidatesOf>}
  */
-export async function findCandidates(executor, p, limitsByLane, withRates) {
+export async function findCandidates(executor, p, limitsByLane, { withRates }) {
     const lanes = [...limitsByLane.keys()];
 
     if (!lanes.length) {
@@ -159,7 +161,8 @@ function candidatesSql(p, withRates) {
               FROM (SELECT DISTINCT limit_key FROM wr) AS k
               LEFT JOIN ${p}rate_limits r ON r.limit_key = k.limit_key
               LEFT JOIN LATERAL (
-                  SELECT b.run_at, b.id FROM ${p}jobs b WHERE b.status = 'blocked' AND b.blocked_on = k.limit_key
+                  SELECT b.run_at, b.id FROM ${p}jobs b
+                   WHERE b.status = 'blocked' AND b.blocked_on = k.limit_key AND ${notPaused(p, 'b.lane')}
                    ORDER BY b.run_at, b.id LIMIT 1
               ) AS head ON true
         ),
@@ -175,6 +178,7 @@ function candidatesSql(p, withRates) {
     return `
         WITH request AS (
             SELECT * FROM unnest(${arrayParam(1, 'text')}, ${arrayParam(2, 'integer')}) AS request(name, max_jobs)
+             WHERE ${notPaused(p, 'request.name')}
         ),
         w AS (
             SELECT due.*, request.max_jobs FROM request
@@ -299,7 +303,8 @@ async function readRateKeys(executor, p, keys) {
         SELECT r.limit_key, ${debtUs('r.tat')} AS debt_us, head.id AS head_id, ${epochMs('head.run_at')} AS head_run_at_ms
           FROM ${p}rate_limits r
           LEFT JOIN LATERAL (
-              SELECT b.id, b.run_at FROM ${p}jobs b WHERE b.status = 'blocked' AND b.blocked_on = r.limit_key
+              SELECT b.id, b.run_at FROM ${p}jobs b
+               WHERE b.status = 'blocked' AND b.blocked_on = r.limit_key AND ${notPaused(p, 'b.lane')}
                ORDER BY b.run_at, b.id LIMIT 1
           ) AS head ON true
          WHERE r.limit_key = ANY(${arrayParam(1, 'text')})
@@ -352,9 +357,10 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
                ${epochMs('created_at')} AS created_at_ms,
                ${epochMs('run_at')} AS run_at_ms,
                (EXTRACT(EPOCH FROM clock_timestamp() - run_at) * 1000)::bigint AS waited_ms`;
-    const pending = `FROM ${p}jobs
-         WHERE id = ANY(${arrayParam(1, 'text')}) AND status = 'pending' AND run_at <= clock_timestamp()
-         ORDER BY run_at, id
+    const pending = `FROM ${p}jobs j
+         WHERE j.id = ANY(${arrayParam(1, 'text')}) AND j.status = 'pending' AND j.run_at <= clock_timestamp()
+           AND ${notPaused(p, 'j.lane')}
+         ORDER BY j.run_at, j.id
            FOR UPDATE SKIP LOCKED`;
     // With the rows of the rate keys of the jobs, once each, in order: "C" sorts their ASCII as JavaScript does
     const locked = (await executor.query(withRates
@@ -620,6 +626,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
             -- Typed here: only the walk reads it
             SELECT $7::bigint[] AS rooms
         ),
+        -- The requested lanes that no pause holds: the claim and the next due times read them
         request AS (
             SELECT r.name, r.max_jobs, r.running, r.weight, r.limits::integer[] AS limits, r.tie
               FROM unnest(
@@ -627,6 +634,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
                        ${arrayParam(4, 'integer')}, ${arrayParam(5, 'text')}, ${arrayParam(6, 'integer')}
                    )
                 AS r(name, max_jobs, running, weight, limits, tie)
+             WHERE ${notPaused(p, 'r.name')}
         ),
         locked_all AS (
             SELECT due.id, due.run_at, due.limited, request.name, request.limits, request.tie, request.running,
@@ -662,7 +670,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
         next AS (
             SELECT request.name AS lane,
                    (EXTRACT(EPOCH FROM n.run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
-              FROM unnest(${arrayParam(1, 'text')}) AS request(name)
+              FROM request
              CROSS JOIN LATERAL (
                  SELECT run_at FROM ${p}jobs
                   WHERE status = 'pending' AND lane = request.name AND id NOT IN (SELECT id FROM picked)
@@ -716,7 +724,7 @@ async function claimDueOfLane(executor, p, { name, limit, lockToken, lockedBy, l
     const [row] = await executor.query(`
         WITH locked AS (
             SELECT id, ${LIMITED} AS limited FROM ${p}jobs
-             WHERE status = 'pending' AND lane = $1 AND run_at <= clock_timestamp()
+             WHERE status = 'pending' AND lane = $1 AND run_at <= clock_timestamp() AND ${notPaused(p, '$1')}
              ORDER BY run_at, id LIMIT $2
                FOR UPDATE SKIP LOCKED
         ),
@@ -740,6 +748,7 @@ async function claimDueOfLane(executor, p, { name, limit, lockToken, lockedBy, l
                (
                    SELECT (EXTRACT(EPOCH FROM run_at - clock_timestamp()) * 1000)::bigint FROM ${p}jobs
                     WHERE status = 'pending' AND lane = $1 AND id NOT IN (SELECT id FROM picked)
+                      AND ${notPaused(p, '$1')}
                     ORDER BY run_at LIMIT 1
                ) AS next_delay_ms,
                (SELECT bool_or(limited) FROM locked) AS limited

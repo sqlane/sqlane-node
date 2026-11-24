@@ -89,7 +89,7 @@ test.runIf(isMysqlFamily)('unblock of a full key with 2,000 blocked jobs: a few 
 
 test.runIf(isMysqlFamily)('the search of candidates with rates, behind a key with 2,000 blocked jobs: a few index entries',
     async () => {
-        const reads = await indexReads(executor => WORKER.findCandidates(executor, p, new Map([['rated', 10]]), true));
+        const reads = await indexReads(executor => WORKER.findCandidates(executor, p, new Map([['rated', 10]]), { withRates: true }));
 
         expect(reads).toBeLessThan(FEW);
     });

@@ -194,6 +194,24 @@ export function mariadbMigrations(p) {
                 },
             ],
         },
+        {
+            // 10.0: the global pauses. A row of paused_lanes holds its lane in every process; a schedule with a
+            // paused_at fires in none. Its down drops both: the paused lanes and schedules run again.
+            id: '0010_pause',
+            version: '10.0.0',
+            statements: [
+                `CREATE TABLE IF NOT EXISTS ${p}paused_lanes (
+                    lane VARCHAR(128) ${ASCII} NOT NULL,
+                    paused_at DATETIME(3) NOT NULL,
+                    PRIMARY KEY (lane)
+                ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_bin`,
+                `ALTER TABLE ${p}schedules ADD COLUMN IF NOT EXISTS paused_at DATETIME(3) NULL`,
+            ],
+            down: [
+                `DROP TABLE IF EXISTS ${p}paused_lanes`,
+                `ALTER TABLE ${p}schedules DROP COLUMN IF EXISTS paused_at`,
+            ],
+        },
     ];
 }
 

@@ -11,6 +11,7 @@ import * as mysqlWorker from './mysql_worker.js';
 import * as postgresFinal from './postgres_final.js';
 import * as postgresSchedules from './postgres_schedules.js';
 import * as postgresWorker from './postgres_worker.js';
+import { createPauseStore } from './pauses.js';
 import { isRateKey } from '../rate_keys.js';
 import { isQuickRetryError, isUnknownSystemVariableError } from '../transient_error.js';
 
@@ -81,6 +82,8 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  *     and the quota of each rate key, with the picked ones.
  * @property {boolean} [withRates] The candidates may have rate keys (their lanes are known to): PostgreSQL locks the
  *     rows of the rate keys in the statement that locks the jobs. Without, a statement of its own, if they have some.
+ * @property {readonly string[] | null} [pausedLanes] MySQL and MariaDB: the paused lanes of the last probe, for the
+ *     heads of the rate keys (`pausedFilter`). Set by the store.
  */
 
 /** @typedef {import('../gcra.js').RateWait} RateWait */
@@ -188,9 +191,23 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  */
 
 /**
- * @typedef {object} Store
+ * The counts of a lane with jobs: `lanes.stats()` adds its pause.
+ * @typedef {Omit<import('../types.js').LaneStats, 'pausedGlobally'>} LaneCounts
+ */
+
+/**
+ * The store. Wherever a claim chooses a lane (the probe, the search of candidates, the claims, the heads of the keys,
+ * the unblocks, `makeDue`), it skips the paused lanes (`<p>paused_lanes`, pauses.js); the sweep's scan of the keys
+ * does not.
+ * @typedef {StoreMethods & import('./pauses.js').PauseStore & { forgetPausedLanes: () => void }} Store The paused
+ *     lanes of the last probe stand for the reads of the blocked jobs until `forgetPausedLanes()` (a resume: its delete
+ *     may not have committed) or for `pausedSeenMs`.
+ */
+
+/**
+ * @typedef {object} StoreMethods
  * @property {(lanes: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given lane with
- *     pending jobs; null: of each lane. It may give other lanes too.
+ *     pending jobs, not paused; null: of each lane. It may give other lanes too.
  * @property {(limitsByLane: Map<string, number>, ratedLanes?: Set<string>) => Promise<FoundCandidates>} findCandidates
  *     Of lanes with global limits: their oldest due jobs, at most 500 per lane. `ratedLanes`: the lanes that may have
  *     jobs with rate keys (`findCandidates` below); none: each search has the rate keys.
@@ -232,7 +249,7 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  *     passed: the same as no row. SKIP LOCKED.
  * @property {(limit: number) => Promise<number>} deleteExpiredJobs
  * @property {(lanes: string[]) => Promise<void>} makeDue For drain({ includeDelayed }).
- * @property {() => Promise<import('../types.js').LaneStats[]>} getStats
+ * @property {() => Promise<LaneCounts[]>} getStats The counts of each lane with jobs.
  * @property {(id: string) => Promise<import('../types.js').JobRecord | null>} getJob A plain read, no lock.
  * @property {(params: import('./job_reads.js').ListParams) => Promise<{ jobs: import('../types.js').JobRecord[],
  *     last: { enqueuedAtMs: number, id: string } | null }>} listJobs A plain read, no lock.
@@ -291,9 +308,11 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @param {import('../types.js').Adapter<any>} adapter
  * @param {string} tablePrefix Checked.
  * @param {import('../types.js').Logger} [logger]
+ * @param {{ pausedSeenMs?: number }} [options] `pausedSeenMs`: how long the paused lanes of a probe stand for the
+ *     reads of the blocked jobs (MySQL and MariaDB). Default: 5 s, the default poll interval.
  * @returns {Store}
  */
-export function createStore(adapter, tablePrefix, logger) {
+export function createStore(adapter, tablePrefix, logger, { pausedSeenMs = 5000 } = {}) {
     const { sql, final, schedules } = {
         mysql: { sql: mysqlWorker, final: mysqlFinal, schedules: mysqlSchedules },
         mariadb: { sql: mariadbWorker, final: mariadbFinal, schedules: mariadbSchedules },
@@ -310,6 +329,16 @@ export function createStore(adapter, tablePrefix, logger) {
     const p = tablePrefix;
     // MariaDB: false once the server rejects `innodb_snapshot_isolation` (a version without it)
     let snapshotIsolationOff = true;
+    /**
+     * MySQL and MariaDB: the paused lanes that the last probe read, for the reads of the blocked jobs (`pausedFilter`).
+     * Null until a probe, and `pausedSeenMs` after it, or after a resume in this process: the reads check in SQL. So a
+     * process that no longer probes (closed, idle between drains, without a runner) does not use an old list.
+     * @type {string[] | null}
+     */
+    let pausedSeen = null;
+    let pausedSeenAt = 0;
+    /** @returns {string[] | null} The paused lanes of a recent probe; null: none recent. */
+    const pausedRecently = () => (Date.now() - pausedSeenAt <= pausedSeenMs ? pausedSeen : null);
 
     /**
      * The search of candidates has the rate keys only for a lane in `ratedLanes`: by its definition, or seen here. The
@@ -325,7 +354,10 @@ export function createStore(adapter, tablePrefix, logger) {
      */
     async function findCandidates(worker, limitsByLane, ratedLanes) {
         const withRates = !ratedLanes || [...limitsByLane.keys()].some(lane => ratedLanes.has(lane));
-        const found = await worker.findCandidates(adapter.queue, p, limitsByLane, withRates);
+        const found = await worker.findCandidates(adapter.queue, p, limitsByLane, {
+            withRates,
+            paused: pausedRecently(),
+        });
 
         if (withRates || !found.ratedLanes.length) {
             return { startable: found.startable, full: found.full };
@@ -335,7 +367,10 @@ export function createStore(adapter, tablePrefix, logger) {
             ratedLanes?.add(lane);
         }
 
-        const again = await worker.findCandidates(adapter.queue, p, limitsByLane, true);
+        const again = await worker.findCandidates(adapter.queue, p, limitsByLane, {
+            withRates: true,
+            paused: pausedRecently(),
+        });
 
         return { startable: again.startable, full: again.full };
     }
@@ -399,9 +434,26 @@ export function createStore(adapter, tablePrefix, logger) {
         : params => inQueue(executor => sql.claimDue(executor, p, params));
 
     return {
-        probe: lanes => sql.probe(adapter.queue, tablePrefix, lanes),
+        probe: async (lanes) => {
+            if (adapter.dialect === 'postgres') {
+                return postgresWorker.probe(adapter.queue, p, lanes);
+            }
+
+            const { rows, paused } = await (adapter.dialect === 'mysql' ? mysqlWorker : mariadbWorker)
+                .probePaused(adapter.queue, p, lanes);
+
+            if (paused) {
+                pausedSeen = paused;
+                pausedSeenAt = Date.now();
+            }
+
+            return rows;
+        },
         findCandidates: (limitsByLane, ratedLanes) => findCandidates(sql, limitsByLane, ratedLanes),
-        claim: params => adapter.queueTransaction(executor => sql.claim(executor, tablePrefix, params)),
+        claim: params => adapter.queueTransaction(executor => sql.claim(executor, tablePrefix, {
+            ...params,
+            pausedLanes: pausedRecently(),
+        })),
         claimDue: (params) => {
             // Each lane once: MySQL and MariaDB lock the rows of each request, so a lane requested twice would claim
             // its jobs twice. The first request of a lane counts
@@ -456,7 +508,7 @@ export function createStore(adapter, tablePrefix, logger) {
             // One statement on PostgreSQL; on MySQL and MariaDB, a read, then a transaction only when a key has room
             return adapter.dialect === 'postgres'
                 ? postgresFinal.unblock(adapter.queue, p, slotKeys)
-                : final.unblock(adapter.queue, p, slotKeys, inQueue);
+                : final.unblock(adapter.queue, p, slotKeys, { inTransaction: inQueue, paused: pausedRecently() });
         },
         unblockRates: async (keys, floors) => {
             if (!keys.length) {
@@ -466,7 +518,11 @@ export function createStore(adapter, tablePrefix, logger) {
             // One statement on PostgreSQL; on MySQL and MariaDB, a read, then a transaction only when a job may start
             const { lanes, waits } = adapter.dialect === 'postgres'
                 ? await postgresFinal.unblockRates(adapter.queue, p, keys, { floors })
-                : await final.unblockRates(adapter.queue, p, keys, { inTransaction: inQueue, floors });
+                : await final.unblockRates(adapter.queue, p, keys, {
+                        inTransaction: inQueue,
+                        floors,
+                        paused: pausedRecently(),
+                    });
 
             return { lanes, waits: waits.map(({ key, delayMs, debtUs, left }) => ({ key, delayMs, debtUs, left })) };
         },
@@ -481,5 +537,9 @@ export function createStore(adapter, tablePrefix, logger) {
         registerSchedules: (entries, now) => schedules.registerSchedules(adapter.queue, p, entries, now),
         readSchedules: (ids, now) => schedules.readSchedules(adapter.queue, p, ids, now),
         fireSlots: params => inQueue(executor => schedules.fireSlots(executor, p, params)),
+        ...createPauseStore(adapter, p),
+        forgetPausedLanes: () => {
+            pausedSeen = null;
+        },
     };
 }

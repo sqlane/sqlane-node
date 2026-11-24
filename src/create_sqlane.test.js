@@ -27,6 +27,7 @@ test.each([
  * @param {boolean} [options.allowUnsupportedDbVersion]
  * @param {boolean} [options.allowUnsupportedDbConfiguration]
  * @param {string} [options.sqlMode] What `@@SESSION.sql_mode` returns. Default: the default of MySQL 8.4.
+ * @param {string[]} [options.migrations] The ids in `sqlane_migrations`. Default: `0010_pause`, which start() needs.
  * @returns {{ adapter: import('./types.js').Adapter<any>, statements: string[], versionQueries: () => number }}
  */
 function fakeAdapter({
@@ -37,6 +38,7 @@ function fakeAdapter({
     allowUnsupportedDbConfiguration = false,
     sqlMode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,'
         + 'NO_ENGINE_SUBSTITUTION',
+    migrations = ['0010_pause'],
 } = {}) {
     /** @type {string[]} */
     const statements = [];
@@ -52,6 +54,10 @@ function fakeAdapter({
 
             if (sql === 'SELECT @@SESSION.sql_mode AS sql_mode') {
                 return [{ sql_mode: sqlMode }];
+            }
+
+            if (sql === 'SELECT id FROM sqlane_migrations') {
+                return migrations.map(id => ({ id }));
             }
 
             if (!sql.includes('schedules')) {
@@ -120,16 +126,17 @@ describe('schedules and start()', () => {
         expect(() => runnerOf(sqlane).mount([schedule(job, { every: '1m' })])).toThrow(/the schedule "keyed:k"/);
     });
 
-    test('a missing table: start() throws a ConfigError that says to run schema.migrate(), and can be called again', async () => {
-        const { adapter, statements } = fakeAdapter({ missingTable: true });
+    test('a schema of 9.0: start() throws a ConfigError that says to run schema.migrate(), before any statement on '
+        + 'the schedules, and can be called again', async () => {
+        const { adapter, statements } = fakeAdapter({ migrations: ['0009_lanes'] });
         const sqlane = createSqlane({ adapter });
 
         runnerOf(sqlane).mount([schedule('tick', { every: '1m' })]);
 
         await expect(runnerOf(sqlane).start())
-            .rejects.toThrow('start(): the table sqlane_schedules is missing: run schema.migrate()');
+            .rejects.toThrow('start(): the migration 0010_pause is not applied: run schema.migrate()');
         await expect(runnerOf(sqlane).start()).rejects.toThrow(ConfigError);
-        expect(statements).toHaveLength(2);
+        expect(statements).toStrictEqual([]);
         await sqlane.close({ deadline: 0 });
     });
 

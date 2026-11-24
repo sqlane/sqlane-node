@@ -162,6 +162,10 @@ export type Recheck = {
      */
     since: number;
     warned: boolean;
+    /**
+     * Its fire runs: a busy result of it backs off. Busy fires of later slots keep its time.
+     */
+    fired?: boolean;
 };
 export type FireOutcome = {
     decided: import('./store/fire_slots.js').DecidedSlot[];
@@ -213,6 +217,7 @@ export type FireOutcome = {
  * @property {number} delayMs
  * @property {number} since Local time of the first busy result.
  * @property {boolean} warned
+ * @property {boolean} [fired] Its fire runs: a busy result of it backs off. Busy fires of later slots keep its time.
  */
 /**
  * @typedef {object} FireOutcome

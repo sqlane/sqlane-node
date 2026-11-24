@@ -17,7 +17,8 @@ import {
 } from './store/job_writes.js';
 import { isRateKey } from './rate_keys.js';
 import { isQuickRetryError } from './transient_error.js';
-import { checkObject, isPlainObject, NAME_REGEXP } from './validate.js';
+import { checkedLaneName } from './lane_names.js';
+import { checkObject } from './validate.js';
 
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 /** @typedef {import('./types.js').BulkIgnoredJob} BulkIgnoredJob */
@@ -169,12 +170,7 @@ function idsOf(jobIds, where) {
  * @returns {{ lane: string, statuses: readonly JobStatus[] }}
  */
 function filterOf(operation, given, status, where) {
-    const lane = isPlainObject(given) ? given.name : given;
-
-    if (typeof lane !== 'string' || !NAME_REGEXP.test(lane)) {
-        throw new InvalidOptionsError(`${where}: "lane" must be a lane definition or a name matching ${
-            NAME_REGEXP}`);
-    }
+    const lane = checkedLaneName(given, where, '"lane"');
 
     const accepted = ACCEPTED[operation];
     const statuses = statusesOf(status, where) ?? accepted;

@@ -16,6 +16,11 @@ export type AttachedRunner = {
      */
     wake: (lanes: string[]) => void;
     /**
+     * The timer of a rate key: an unblock of its jobs in
+     * `delayMs`, then the next ones while blocked jobs are left. Idle: at its next start() or drain().
+     */
+    armRateWake: (key: string, delayMs: number) => void;
+    /**
      * Started, starting, draining or closing: its queries run.
      */
     isBusy: () => boolean;

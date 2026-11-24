@@ -1,13 +1,16 @@
 // The runner of a process: the handlers and schedules that it mounts, and start(), drain() and close(). It runs over a
 // sqlane: its database, its hint and its events. See docs/design.md.
 import { isScheduleDefinition } from './define_schedule.js';
+import { parseDuration } from './duration.js';
 import { ClosedError, ConfigError, InvalidOptionsError } from './errors.js';
 import { createMounts } from './mounts.js';
 import { createRegistry } from './registry.js';
 import { createRunner as createWorker } from './runner.js';
 import { createScheduler } from './scheduler.js';
 import { internalsOf } from './sqlane_internals.js';
+import { recordedIds } from './store/schema_reads.js';
 import { isMissingTableError } from './transient_error.js';
+import { checkedLaneName } from './lane_names.js';
 import { checkInteger, checkObject, isPlainObject, NAME_REGEXP } from './validate.js';
 
 /** @typedef {import('./sqlane.js').Runner} Runner */
@@ -18,6 +21,36 @@ import { checkInteger, checkObject, isPlainObject, NAME_REGEXP } from './validat
 
 const RUNNER_OPTION_NAMES = ['localMaxConcurrency', 'logger'];
 
+/** The latest migration that the claims and the scheduler need: their statements read its table and column */
+const REQUIRED_MIGRATION = '0010_pause';
+
+/**
+ * Reads the records of the migrations: the required one must be there.
+ * @param {import('./sqlane_internals.js').SqlaneInternals} core
+ * @param {string} where The caller, for the errors.
+ * @returns {Promise<void>} Rejects with a `ConfigError` when it is missing, or with the error of the read.
+ */
+async function checkMigrations(core, where) {
+    const p = core.tablePrefix;
+    let recorded;
+
+    try {
+        recorded = await recordedIds(core.adapter.queue, p);
+    } catch (error) {
+        if (isMissingTableError(error)) {
+            throw new ConfigError(`${where}: the table ${p}migrations is missing: run schema.migrate()`, {
+                cause: error,
+            });
+        }
+
+        throw error;
+    }
+
+    if (!recorded.has(REQUIRED_MIGRATION)) {
+        throw new ConfigError(`${where}: the migration ${REQUIRED_MIGRATION} is not applied: run schema.migrate()`);
+    }
+}
+
 /**
  * Builds the runner of a sqlane, and attaches it.
  * @param {import('./sqlane_internals.js').SqlaneInternals} core
@@ -25,10 +58,12 @@ const RUNNER_OPTION_NAMES = ['localMaxConcurrency', 'logger'];
  * @returns {{ mounts: import('./mounts.js').Mounts, worker: ReturnType<typeof createWorker>,
  *     registry: import('./registry.js').Registry, scheduler: import('./scheduler.js').Scheduler,
  *     start: () => Promise<void>, close: (options?: import('./types.js').CloseOptions) => Promise<void>,
- *     isStarting: () => boolean }} `isStarting`: a start() runs, its check of the server or its registration.
+ *     checkDrain: () => Promise<void>, isStarting: () => boolean, isDraining: () => boolean }} `isStarting`: a
+ *     start() runs, its check of the server or its registration. `checkDrain`: the check of the migrations of
+ *     drain(), during which `isDraining`.
  */
 function buildRunner(core, { localMaxConcurrency, logger }) {
-    const { store, defaults, hintChannel, tablePrefix, testTimings } = core;
+    const { store, defaults, hintChannel, testTimings } = core;
     const registry = createRegistry({ defaultTimeoutMs: defaults.timeoutMs });
     const worker = createWorker({
         store,
@@ -61,6 +96,37 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
     let starting = false;
     /** @type {Promise<void> | null} */
     let closePromise = null;
+    /** @type {Promise<void> | null} The check of the migrations: once per runner, again after a failure */
+    let migrationsChecked = null;
+    /** drain() checks the migrations: it counts as draining already */
+    let drainChecking = false;
+
+    /**
+     * Checks that the required migration is applied, once: then the calls share the result.
+     * @param {string} where The caller, for the errors.
+     * @returns {Promise<void>}
+     */
+    function checkMigrationsOnce(where) {
+        migrationsChecked ??= (async () => {
+            try {
+                await checkMigrations(core, where);
+            } catch (error) {
+                migrationsChecked = null;
+                throw error;
+            }
+        })();
+
+        return migrationsChecked;
+    }
+
+    /**
+     * The check of start(): the server (shared with `schema.migrate()`), then the migrations (start only).
+     * @returns {Promise<void>}
+     */
+    async function checkStart() {
+        await core.checkServerOnce('start()');
+        await checkMigrationsOnce('start()');
+    }
 
     /**
      * Registers the schedules, then starts the worker and the scheduler. Nothing runs before the worker starts: a
@@ -72,7 +138,7 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
         let serverCheck = null;
 
         try {
-            await core.checkServerOnce('start()');
+            await checkStart();
         } catch (error) {
             if (error instanceof ConfigError) {
                 throw error;
@@ -81,7 +147,7 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
             // The database is down: start anyway. The dispatcher checks again before its first turn, and claims
             // nothing before the check passes; the schedules register once it passes
             core.reportError('server_check', error);
-            serverCheck = () => core.checkServerOnce('start()');
+            serverCheck = checkStart;
         }
 
         /** @type {import('./store/store.js').ScheduleRead | null} */
@@ -93,13 +159,6 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
             try {
                 read = await scheduler.register();
             } catch (error) {
-                if (isMissingTableError(error)) {
-                    throw new ConfigError(
-                        `start(): the table ${tablePrefix}schedules is missing: run schema.migrate()`,
-                        { cause: error },
-                    );
-                }
-
                 // The database is down: start anyway, the registration retries
                 scheduler.reportFailure(error);
             }
@@ -177,35 +236,49 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
         return closePromise;
     }
 
+    /**
+     * The check of drain(), before the worker drains: meanwhile, it counts as draining.
+     * @returns {Promise<void>}
+     */
+    async function checkDrain() {
+        if (drainChecking) {
+            throw new ConfigError('drain() runs without start(), and one at a time');
+        }
+
+        drainChecking = true;
+
+        try {
+            await checkMigrationsOnce('drain()');
+        } finally {
+            drainChecking = false;
+        }
+    }
+
     /** @type {import('./sqlane_internals.js').AttachedRunner} */
     const attached = {
         onEnqueued: worker.onEnqueued,
         onCommitted: worker.onCommitted,
         canStartNow: worker.canStartNow,
         wake: worker.wakeLanes,
-        isBusy: () => starting || worker.isBusy(),
+        armRateWake: worker.armRateWake,
+        isBusy: () => starting || drainChecking || worker.isBusy(),
         close,
         schedules: scheduler.entries,
     };
 
     core.attach(attached);
 
-    return { mounts, worker, registry, scheduler, start, close, isStarting: () => starting };
-}
-
-/**
- * @param {unknown} lane
- * @param {string} where
- * @returns {string} The name of the lane.
- */
-function laneNameOf(lane, where) {
-    const name = isPlainObject(lane) ? lane.name : lane;
-
-    if (typeof name !== 'string') {
-        throw new InvalidOptionsError(`${where}: the lane must be a lane definition or a lane name`);
-    }
-
-    return name;
+    return {
+        mounts,
+        worker,
+        registry,
+        scheduler,
+        start,
+        close,
+        checkDrain,
+        isStarting: () => starting,
+        isDraining: () => drainChecking || worker.isDraining(),
+    };
 }
 
 /**
@@ -232,6 +305,7 @@ export function createRunner(sqlane, options = {}) {
 
     const built = buildRunner(core, { localMaxConcurrency, logger });
     const { worker, mounts, registry, scheduler } = built;
+    const { isDraining } = built;
 
     /**
      * @param {string} method
@@ -241,7 +315,7 @@ export function createRunner(sqlane, options = {}) {
             throw new ClosedError(`${method} after close()`);
         }
 
-        if (worker.isDraining()) {
+        if (isDraining()) {
             throw new ConfigError(`${method} during drain(): mount and unmount before drain() or after it`);
         }
     }
@@ -264,10 +338,10 @@ export function createRunner(sqlane, options = {}) {
             });
         },
         pauseLocally: (lane) => {
-            worker.pauseLocally(laneNameOf(lane, 'pauseLocally()'));
+            worker.pauseLocally(checkedLaneName(lane, 'pauseLocally()'));
         },
         resumeLocally: (lane) => {
-            worker.resumeLocally(laneNameOf(lane, 'resumeLocally()'));
+            worker.resumeLocally(checkedLaneName(lane, 'resumeLocally()'));
         },
         getStatus: /** @type {Runner['getStatus']} */ (/** @type {unknown} */ ((
             /** @type {unknown} */ target,
@@ -278,7 +352,12 @@ export function createRunner(sqlane, options = {}) {
                 return { mounted: scheduler.has(id) };
             }
 
-            const name = laneNameOf(target, 'getStatus()');
+            // A name that no lane can have: not mounted (a typo)
+            const name = isPlainObject(target) ? target.name : target;
+
+            if (typeof name !== 'string') {
+                throw new InvalidOptionsError('getStatus(): the lane must be a lane definition or a name');
+            }
 
             return {
                 mounted: NAME_REGEXP.test(name) && registry.getEntry(name) !== undefined,
@@ -287,7 +366,7 @@ export function createRunner(sqlane, options = {}) {
             };
         })),
         start: async () => {
-            if (worker.isDraining()) {
+            if (isDraining()) {
                 throw new ConfigError('start() during drain(): start the runner after drain()');
             }
 
@@ -297,6 +376,17 @@ export function createRunner(sqlane, options = {}) {
             if (worker.isStarted() || built.isStarting()) {
                 throw new ConfigError('drain() after start(): drain() is for tests, without start()');
             }
+
+            // The errors of drain() itself first: the read of the migrations comes after them
+            if (worker.isClosed()) {
+                throw new ClosedError('drain() after close()');
+            }
+
+            if (parseDuration(drainOptions?.timeout ?? '10s') === null) {
+                throw new InvalidOptionsError('drain(): "timeout" must be a duration');
+            }
+
+            await built.checkDrain();
 
             return worker.drain(drainOptions);
         },

@@ -2,8 +2,10 @@ import { expect, test } from 'vitest';
 import { migrationsOf, rollbackMigrations, runMigrations } from './migrations.js';
 import { compareVersions, parseVersion } from './version.js';
 
-/** The migrations of 6.0, of the rate limits, of the lists of jobs and of the lanes */
-const SIX = ['0005_concurrency_limits', '0006_concurrency_slots', '0007_rate_limits', '0008_job_list', '0009_lanes'];
+/** The migrations of 6.0, of the rate limits, of the lists of jobs, of the lanes and of the pauses */
+const SIX = [
+    '0005_concurrency_limits', '0006_concurrency_slots', '0007_rate_limits', '0008_job_list', '0009_lanes', '0010_pause',
+];
 
 /**
  * @param {import('./migrations.js').Step} step
@@ -181,14 +183,21 @@ function mysqlRecorder(dialect, applied, columns) {
 
 const LANES_CONTEXT = { installedVersion: '9.0.0' };
 
+/**
+ * @param {string} dialect
+ * @returns {string[]} The ids of the dialect up to 0008_job_list: 0009_lanes and the next ones missing.
+ */
+const upToJobList = dialect => migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_')
+    .map(({ id }) => id).filter(id => id < '0009');
+
 test.each(['mysql', 'mariadb'])('%s: a cut 0009_lanes (jobs renamed, not the schedules) runs again: its ALTER of the '
     + 'schedules only, checked after the step before', async (dialect) => {
-    const known = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_').map(({ id }) => id);
-    const { adapter, sent } = mysqlRecorder(/** @type {import('./types.js').Dialect} */ (dialect), known.slice(0, -1), [
-        'q_jobs.lane', 'q_schedules.job_name',
-    ]);
+    const { adapter, sent } = mysqlRecorder(/** @type {import('./types.js').Dialect} */ (dialect), upToJobList(
+        dialect,
+    ), ['q_jobs.lane', 'q_schedules.job_name']);
 
-    await expect(runMigrations(adapter, 'q_', {}, LANES_CONTEXT)).resolves.toStrictEqual(['0009_lanes']);
+    await expect(runMigrations(adapter, 'q_', { targetVersion: '9.0.0' }, LANES_CONTEXT))
+        .resolves.toStrictEqual(['0009_lanes']);
 
     const alters = sent.filter(sql => sql.startsWith('ALTER TABLE'));
 
@@ -204,12 +213,11 @@ test.each(['mysql', 'mariadb'])('%s: a cut 0009_lanes (jobs renamed, not the sch
 
 test.each(['mysql', 'mariadb'])('%s: 0009_lanes renames the columns and the index of the jobs in one ALTER, then '
     + 'those of the schedules', async (dialect) => {
-    const known = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_').map(({ id }) => id);
-    const { adapter, sent } = mysqlRecorder(/** @type {import('./types.js').Dialect} */ (dialect), known.slice(0, -1), [
-        'q_jobs.job_name', 'q_schedules.job_name',
-    ]);
+    const { adapter, sent } = mysqlRecorder(/** @type {import('./types.js').Dialect} */ (dialect), upToJobList(
+        dialect,
+    ), ['q_jobs.job_name', 'q_schedules.job_name']);
 
-    await runMigrations(adapter, 'q_', {}, LANES_CONTEXT);
+    await runMigrations(adapter, 'q_', { targetVersion: '9.0.0' }, LANES_CONTEXT);
 
     expect(sent.filter(sql => sql.startsWith('ALTER TABLE')).map(sql => sql.replaceAll(/\s+/gu, ' '))).toStrictEqual([
         'ALTER TABLE q_jobs RENAME COLUMN job_name TO lane, RENAME COLUMN failure_job TO failure_lane, '
@@ -220,7 +228,8 @@ test.each(['mysql', 'mariadb'])('%s: 0009_lanes renames the columns and the inde
 
 test.each(['mysql', 'mariadb'])('%s: a cut rollback of 0009_lanes (jobs renamed back, not the schedules) runs again',
     async (dialect) => {
-        const known = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_').map(({ id }) => id);
+        const known = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_')
+            .map(({ id }) => id).filter(id => id !== '0010_pause');
         const { adapter, sent } = mysqlRecorder(/** @type {import('./types.js').Dialect} */ (dialect), known, [
             'q_jobs.job_name', 'q_schedules.lane',
         ]);
@@ -249,4 +258,70 @@ test('postgres: 0009_lanes renames the columns in the transaction of the migrati
             'ALTER TABLE q_schedules RENAME COLUMN lane TO job_name',
         ],
     });
+});
+
+test.each([
+    {
+        dialect: 'mysql',
+        table: 'lane VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL',
+        time: 'paused_at DATETIME(3) NOT NULL',
+        column: { unlessColumnExists: ['q_schedules', 'paused_at'],
+            sql: 'ALTER TABLE q_schedules ADD COLUMN paused_at DATETIME(3) NULL' },
+        dropColumn: { ifColumnExists: ['q_schedules', 'paused_at'], sql: 'ALTER TABLE q_schedules DROP COLUMN paused_at' },
+    },
+    {
+        dialect: 'mariadb',
+        table: 'lane VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL',
+        time: 'paused_at DATETIME(3) NOT NULL',
+        column: 'ALTER TABLE q_schedules ADD COLUMN IF NOT EXISTS paused_at DATETIME(3) NULL',
+        dropColumn: 'ALTER TABLE q_schedules DROP COLUMN IF EXISTS paused_at',
+    },
+    {
+        dialect: 'postgres',
+        table: 'lane varchar(128) COLLATE "C" NOT NULL PRIMARY KEY',
+        time: 'paused_at timestamptz(3) NOT NULL',
+        column: 'ALTER TABLE q_schedules ADD COLUMN IF NOT EXISTS paused_at timestamptz(3)',
+        dropColumn: 'ALTER TABLE q_schedules DROP COLUMN IF EXISTS paused_at',
+    },
+])('$dialect: 0010_pause (10.0.0): the paused lanes, by lane as the jobs have it, and the pause of a schedule; its '
+    + 'down drops both', ({ dialect, table, time, column, dropColumn }) => {
+    const pause = /** @type {import('./migrations.js').Migration} */ (migrationsOf(
+        /** @type {import('./types.js').Dialect} */ (dialect),
+        'q_',
+    ).at(-1));
+    const [create, addColumn] = pause.statements;
+
+    expect(pause.id).toBe('0010_pause');
+    expect(pause.version).toBe('10.0.0');
+    expect(pause.statements).toHaveLength(2);
+    expect(create).toMatch(/^CREATE TABLE IF NOT EXISTS q_paused_lanes \(/);
+    expect(stepSql(create).replaceAll(/\s+/gu, ' ')).toContain(table);
+    expect(stepSql(create).replaceAll(/\s+/gu, ' ')).toContain(time);
+    expect(addColumn).toStrictEqual(column);
+    expect(pause.down).toStrictEqual(['DROP TABLE IF EXISTS q_paused_lanes', dropColumn]);
+});
+
+test.each([
+    { dialect: 'mysql', alters: [] },
+    { dialect: 'mariadb', alters: ['ALTER TABLE q_schedules ADD COLUMN IF NOT EXISTS paused_at DATETIME(3) NULL'] },
+])('$dialect: a cut 0010_pause (the table and the column there, no record) runs again: MySQL checks the column, '
+    + 'MariaDB adds it IF NOT EXISTS', async ({ dialect, alters }) => {
+    const known = migrationsOf(/** @type {import('./types.js').Dialect} */ (dialect), 'q_').map(({ id }) => id);
+    const { adapter, sent } = mysqlRecorder(/** @type {import('./types.js').Dialect} */ (dialect), known.slice(0, -1), [
+        'q_schedules.paused_at',
+    ]);
+
+    await expect(runMigrations(adapter, 'q_', {}, LANES_CONTEXT)).resolves.toStrictEqual(['0010_pause']);
+    expect(sent.filter(sql => sql.startsWith('ALTER TABLE'))).toStrictEqual(alters);
+    expect(sent).toContain('INSERT INTO q_migrations (id, applied_at) VALUES (?, UTC_TIMESTAMP(3))');
+});
+
+test('mysql: a cut rollback of 0010_pause (the column dropped, the record kept) runs again', async () => {
+    const known = migrationsOf('mysql', 'q_').map(({ id }) => id);
+    const { adapter, sent } = mysqlRecorder('mysql', known, []);
+
+    await expect(rollbackMigrations(adapter, 'q_', { targetVersion: '9.0.0' }, LANES_CONTEXT))
+        .resolves.toStrictEqual(['0010_pause']);
+    expect(sent.filter(sql => /^(?:ALTER|DROP) /u.test(sql))).toStrictEqual(['DROP TABLE IF EXISTS q_paused_lanes']);
+    expect(sent).toContain('DELETE FROM q_migrations WHERE id = ?');
 });
