@@ -163,7 +163,7 @@ async function failedJobs(p, name, payloads, options = {}) {
     })]);
 
     const items = /** @type {any[]} */ (payloads.map(payload => ({ payload, options })));
-    const results = await sqlane.enqueueMany(testAdapter.pool, name, items);
+    const results = await sqlane.enqueueMany(testAdapter.pool, testLane(name), items);
 
     await runnerOf(sqlane).drain();
     await sqlane.close();
@@ -332,15 +332,6 @@ describe('jobs.retry()', () => {
         });
         await expect(sqlane.jobs.retry({ lane: 'ping', status: 'completed' })).rejects
             .toBeInstanceOf(InvalidOptionsError);
-    });
-
-    test('a job of a name that no process handles, with unknownLanes reject: retried', async () => {
-        const { sqlane, p } = await fresh();
-        const [id] = await failedJobs(p, 'elsewhere', [{}]);
-        const { sqlane: strictOne } = sqlaneOn(p, { unknownLanes: 'reject' });
-
-        await expect(strictOne.jobs.retry({ jobIds: [id] })).resolves.toMatchObject({ affectedCount: 1 });
-        await expect(sqlane.jobs.get(id)).resolves.toMatchObject({ status: 'pending' });
     });
 
     test('the retried jobs wake a started worker; the hint goes out from a process that cannot start them; no event',
@@ -953,16 +944,15 @@ describe('schedules', () => {
         await expect(nextSlot()).resolves.toMatch(/^slow:schedule:/);
     }, 30_000);
 
-    test('after a remove, a manual enqueue of its slot adds a new job', async () => {
+    test('after a remove, a slot run by hand again adds a new job', async () => {
         const { sqlane } = await fresh();
         const at = new Date('2026-01-01T00:00:00.000Z');
-        const { id } = await sqlane.enqueue(testAdapter.pool, testLane('nightly'), {}, { slot: { at }, delay: '1h' });
+        const nightly = schedule('nightly', { cron: '0 0 * * *' });
+        const { id } = await sqlane.schedules.runSlot(nightly, { at });
 
-        await expect(sqlane.enqueue(testAdapter.pool, testLane('nightly'), {}, { slot: { at } })).resolves
-            .toMatchObject({ created: false });
+        await expect(sqlane.schedules.runSlot(nightly, { at })).resolves.toMatchObject({ created: false });
         await sqlane.jobs.remove({ jobIds: [id] });
-        await expect(sqlane.enqueue(testAdapter.pool, testLane('nightly'), {}, { slot: { at } })).resolves
-            .toMatchObject({ id, created: true });
+        await expect(sqlane.schedules.runSlot(nightly, { at })).resolves.toMatchObject({ id, created: true });
     });
 });
 

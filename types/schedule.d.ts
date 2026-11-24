@@ -11,11 +11,11 @@ export type Timing = {
 };
 export type ScheduleEntry = {
     /**
-     * The lane, or `<lane>:<key>`.
+     * `<lane>:<key>`.
      */
     id: string;
     lane: string;
-    key: string | null;
+    key: string;
     timing: Timing;
     /**
      * Normalized: stored in its row.
@@ -25,9 +25,9 @@ export type ScheduleEntry = {
     missed: 'once' | 'skip';
     overlap: 'allow' | 'skip';
     /**
-     * Set by the scheduler at start().
+     * The definition of the lane: its jobs get its options.
      */
-    definition: import('./types.js').LaneDefinition | null;
+    definition: import('./types.js').LaneDefinition;
     /**
      * In memory. Null: no slot within the runtime horizon.
      */
@@ -55,15 +55,15 @@ export type ScheduleEntry = {
 /**
  * A schedule of this process.
  * @typedef {object} ScheduleEntry
- * @property {string} id The lane, or `<lane>:<key>`.
+ * @property {string} id `<lane>:<key>`.
  * @property {string} lane
- * @property {string | null} key
+ * @property {string} key
  * @property {Timing} timing
  * @property {string} spec Normalized: stored in its row.
  * @property {unknown} payload
  * @property {'once' | 'skip'} missed
  * @property {'allow' | 'skip'} overlap
- * @property {import('./types.js').LaneDefinition | null} definition Set by the scheduler at start().
+ * @property {import('./types.js').LaneDefinition} definition The definition of the lane: its jobs get its options.
  * @property {number | null} nextAt In memory. Null: no slot within the runtime horizon.
  * @property {number} retryDelayMs 0, or the backoff after a failed fire.
  * @property {number} jitterMs 0: no jitter.
@@ -80,21 +80,19 @@ export declare function isSlotKey(key: unknown): boolean;
  */
 export declare function isSlotTime(ms: number): boolean;
 /**
- * The dedupe key of a slot (the job id without its name): the scheduler and the `slot` enqueue option build the same
- * one.
- * @param {string | null | undefined} key
+ * The dedupe key of a slot (the job id without its name): the scheduler and `schedules.runSlot()` build the same one.
+ * @param {string} key
  * @param {number} slotMs
  * @returns {string}
  */
-export declare function slotDedupeKeyOf(key: string | null | undefined, slotMs: number): string;
+export declare function slotDedupeKeyOf(key: string, slotMs: number): string;
 /**
- * Checks the options of a schedule.
- * @param {unknown} lane A lane definition or a name.
+ * Checks the options of `defineSchedule()`.
+ * @param {import('./types.js').LaneDefinition} lane
  * @param {unknown} options
- * @param {string} [caller] The caller, for the errors. Default: `schedule`.
- * @returns {ScheduleEntry} Without its definition and its next slot.
+ * @returns {ScheduleEntry} Without its next slot.
  */
-export declare function checkSchedule(lane: unknown, options: unknown, caller?: string): ScheduleEntry;
+export declare function checkSchedule(lane: import('./types.js').LaneDefinition, options: unknown): ScheduleEntry;
 /**
  * @param {ScheduleEntry} entry
  * @param {number} afterMs
@@ -114,7 +112,8 @@ export declare function latestSlot(entry: ScheduleEntry, atMs: number): number |
  */
 export declare function previousSlot(entry: ScheduleEntry, slotMs: number): number | null;
 /**
- * The slot of a job, from its id. Only the scheduler and the `slot` enqueue option make such ids.
+ * The slot of a job, from its id. Only the scheduler and `schedules.runSlot()` make such ids; the jobs of the keyless
+ * schedules of 9.x have them without a key.
  * @param {string} jobId The id of a job: `<lane>:<dedupeKey>`, or a ULID.
  * @returns {Date | null} Null: not the job of a slot.
  */

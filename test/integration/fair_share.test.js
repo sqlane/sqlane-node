@@ -4,7 +4,7 @@ import { createSqlane, defineConcurrencyLimit, defineLane } from '../../src/inde
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
-import { handle, runnerOf } from '../support/runners.js';
+import { handle, runnerOf, testLane } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 
@@ -152,7 +152,7 @@ function holdingHandlers() {
  * @returns {Promise<void>}
  */
 async function enqueue(sqlane, name, count) {
-    await sqlane.enqueueMany(testAdapter.pool, name, Array.from({ length: count }, () => ({ payload: {} })));
+    await sqlane.enqueueMany(testAdapter.pool, testLane(name), Array.from({ length: count }, () => ({ payload: {} })));
 }
 
 /**
@@ -196,7 +196,7 @@ describe('the worked examples', () => {
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 8 });
         const jobs = holdingHandlers();
 
-        runnerOf(sqlane).mount([handle(defineLane({ name: 'a', fairShareWeight: 3 }), jobs.handler('a'))]);
+        runnerOf(sqlane).mount([handle('a', jobs.handler('a'), { fairShareWeight: 3 })]);
         runnerOf(sqlane).mount([handle('b', jobs.handler('b'))]);
         await enqueue(sqlane, 'a', 20);
         await enqueue(sqlane, 'b', 20);
@@ -291,9 +291,9 @@ describe('the worked examples', () => {
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 10 });
         const jobs = holdingHandlers();
 
-        runnerOf(sqlane).mount([handle(defineLane({ name: 't', fairShareWeight: 2, localConcurrencyLimits: [tOnly, heavy] }), jobs.handler('t'))]);
-        runnerOf(sqlane).mount([handle(defineLane({ name: 'r', localConcurrencyLimits: [heavy] }), jobs.handler('r'))]);
-        runnerOf(sqlane).mount([handle(defineLane({ name: 'e', fairShareWeight: 3 }), jobs.handler('e'))]);
+        runnerOf(sqlane).mount([handle('t', jobs.handler('t'), { fairShareWeight: 2, localConcurrencyLimits: [tOnly, heavy] })]);
+        runnerOf(sqlane).mount([handle('r', jobs.handler('r'), { localConcurrencyLimits: [heavy] })]);
+        runnerOf(sqlane).mount([handle('e', jobs.handler('e'), { fairShareWeight: 3 })]);
 
         for (const name of ['t', 'r', 'e']) {
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues
@@ -323,7 +323,7 @@ describe('the worked examples', () => {
         const jobs = holdingHandlers();
 
         for (const name of ['a', 'b']) {
-            runnerOf(sqlane).mount([handle(defineLane({ name, localConcurrencyLimits: [one] }), jobs.handler(name))]);
+            runnerOf(sqlane).mount([handle(name, jobs.handler(name), { localConcurrencyLimits: [one] })]);
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues
             await enqueue(sqlane, name, 5);
         }
@@ -345,13 +345,12 @@ describe('the worked examples', () => {
             name: 'k',
             timeout: '10s',
             globalConcurrencyLimits: ({ payload }) => [defineConcurrencyLimit({ name: 'n', max: 1 }).key(payload.n)],
-            localConcurrencyLimits: [pair],
         });
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 10 });
         const jobs = holdingHandlers();
 
-        runnerOf(sqlane).mount([handle(defineLane({ name: 'p', localConcurrencyLimits: [pair] }), jobs.handler('p'))]);
-        runnerOf(sqlane).mount([handle(keyed, jobs.handler('k'))]);
+        runnerOf(sqlane).mount([handle('p', jobs.handler('p'), { localConcurrencyLimits: [pair] })]);
+        runnerOf(sqlane).mount([handle(keyed, jobs.handler('k'), { localConcurrencyLimits: [pair] })]);
         await enqueue(sqlane, 'p', 20);
         await sqlane.enqueueMany(testAdapter.pool, keyed, Array.from({ length: 10 }, (_, n) => ({ payload: { n } })));
         await runnerOf(sqlane).start();
@@ -532,10 +531,10 @@ describe('drain(), start()', () => {
         /** @type {string[]} */
         const started = [];
 
-        runnerOf(sqlane).mount([handle(defineLane({ name: 'a', fairShareWeight: 3 }), async () => {
+        runnerOf(sqlane).mount([handle('a', async () => {
             started.push('a');
             await sleep(50);
-        })]);
+        }, { fairShareWeight: 3 })]);
         runnerOf(sqlane).mount([handle('b', async () => {
             started.push('b');
             await sleep(50);
@@ -554,9 +553,9 @@ describe('drain(), start()', () => {
         const jobs = holdingHandlers();
 
         // l and r hold one limit each, b holds both: at most 3 of l + b and 3 of r + b
-        runnerOf(sqlane).mount([handle(defineLane({ name: 'l', localConcurrencyLimits: [left] }), jobs.handler('l'))]);
-        runnerOf(sqlane).mount([handle(defineLane({ name: 'b', localConcurrencyLimits: [left, right] }), jobs.handler('b'))]);
-        runnerOf(sqlane).mount([handle(defineLane({ name: 'r', localConcurrencyLimits: [right] }), jobs.handler('r'))]);
+        runnerOf(sqlane).mount([handle('l', jobs.handler('l'), { localConcurrencyLimits: [left] })]);
+        runnerOf(sqlane).mount([handle('b', jobs.handler('b'), { localConcurrencyLimits: [left, right] })]);
+        runnerOf(sqlane).mount([handle('r', jobs.handler('r'), { localConcurrencyLimits: [right] })]);
         runnerOf(sqlane).mount([handle(defineLane({ name: 'x' }), jobs.handler('x'))]);
 
         for (const [name, count] of [['l', 10], ['b', 10], ['r', 10], ['x', 20]]) {

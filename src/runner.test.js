@@ -33,10 +33,7 @@ const NO_RECOVERY_WORK = { stale: [], lingers: false, orphans: false, blocked: f
  * @returns {{ runner: import('./runner.js').Runner, events: import('./types.js').SqlaneEvent[] }}
  */
 function runnerWith(makeDueErrors) {
-    const registry = createRegistry({
-        lanesByName: new Map(),
-        defaultTimeoutMs: null,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     /** @type {import('./types.js').SqlaneEvent[]} */
     const events = [];
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
@@ -104,10 +101,7 @@ test('drain: another error rejects', async () => {
  * @returns {Promise<HintedRunner>}
  */
 async function runnerWithHint(hintsAfterCommit) {
-    const registry = createRegistry({
-        lanesByName: new Map(),
-        defaultTimeoutMs: null,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     // The probes and the claims of due jobs
     let lookups = 0;
     /** @type {((message: string) => void) | null} */
@@ -171,10 +165,7 @@ test.each([
 });
 
 test('hints before the commit: the re-probes of a name end with its steps, while later enqueues go on', async () => {
-    const registry = createRegistry({
-        lanesByName: new Map(),
-        defaultTimeoutMs: null,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     /** @type {string[]} The names of each probe, joined; "null": all names */
     const probed = [];
     const hints = { deliver: /** @type {(message: string) => void} */ (() => {}) };
@@ -285,10 +276,7 @@ function runnerWithHeldJobs(withKeys, {
     completeCount,
     handlerError,
 } = {}) {
-    const registry = createRegistry({
-        lanesByName: new Map(),
-        defaultTimeoutMs: null,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     const held = Promise.withResolvers();
     /** @type {string[]} */
     const started = [];
@@ -597,7 +585,7 @@ test('dispatch: completion during an awaited claim wakes a refill after that cla
 
             return { jobs: [], next: [], limited: [] };
         };
-        runner.wake();
+        runner.wakeLanes(['ping']);
         await waitFor(() => claimStarted, 1000);
 
         expect(claimStarted).toBe(true);
@@ -639,10 +627,7 @@ const LEASE_TIMINGS = { leaseMs: 800, renewIntervalMs: 200, recoveryIntervalMs: 
  * @returns {Promise<LeasedRunner>}
  */
 async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
-    const registry = createRegistry({
-        lanesByName: new Map(),
-        defaultTimeoutMs: null,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     /** @type {import('./types.js').SqlaneEvent[]} */
     const events = [];
     /** @type {{ reason: unknown, at: number }[]} */
@@ -864,10 +849,7 @@ test('lease: renewed during drain() for a handler longer than a lease', async ()
 
 test('stall recovery: the stalled event has the attempt of the run that stalled', async () => {
     const event = { type: 'stalled', jobId: 'job-9', lane: 'ping', attempt: 2 };
-    const registry = createRegistry({
-        lanesByName: new Map(),
-        defaultTimeoutMs: null,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     /** @type {import('./types.js').SqlaneEvent[]} */
     const events = [];
     let stale = [{ id: 'job-9', lane: 'ping' }];
@@ -913,10 +895,7 @@ test.each([
     work,
     deletes,
 }) => {
-    const registry = createRegistry({
-        lanesByName: new Map(),
-        defaultTimeoutMs: null,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     /** @type {unknown[]} */
     const sweeps = [];
     let deleted = 0;
@@ -971,10 +950,7 @@ test.each([
 ])('close(): $label logs a warning, and close() still closes', async ({ options }) => {
     /** @type {string[]} */
     const warnings = [];
-    const registry = createRegistry({
-        lanesByName: new Map(),
-        defaultTimeoutMs: null,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({ probe: async () => [] }));
     addLane(registry, 'ping', () => {});
 
@@ -1065,10 +1041,7 @@ function storeOfDueNames(names) {
 }
 
 test('dispatch: many due names take turns, a claim requests at most 4 names per free slot', async () => {
-    const registry = createRegistry({
-        lanesByName: new Map(),
-        defaultTimeoutMs: null,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     const names = Array.from({ length: 50 }, (_, index) => `name_${index}`);
     const { store, requestSizes } = storeOfDueNames(names);
     /** @type {string[]} */
@@ -1105,10 +1078,7 @@ test('dispatch: many due names take turns, a claim requests at most 4 names per 
 });
 
 test('the handler gets the slot of a job of a schedule as job.scheduledAt; null for other jobs', async () => {
-    const registry = createRegistry({
-        lanesByName: new Map(),
-        defaultTimeoutMs: null,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     const ids = { report: 'report:schedule:tenant:42:2026-11-11T02:00:00.000Z', ping: 'ping:my-id' };
     const { store } = storeOfDueNames(['report', 'ping']);
     const claimDue = store.claimDue;
@@ -1160,7 +1130,7 @@ test('the handler gets the slot of a job of a schedule as job.scheduledAt; null 
  * @returns {{ runner: import('./runner.js').Runner, calls: string[], requested: string[][] }}
  */
 function recordingRunner({ maxConcurrency = 4, names = 2, pointer = 0 } = {}) {
-    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     /** @type {string[]} */
     const calls = [];
     /** @type {string[][]} */
@@ -1250,7 +1220,7 @@ test('fair share: a claim requests at most 4 names per free slot, the furthest u
  *     claims: import('./store/store.js').ClaimDueParams[], release: () => void }}
  */
 function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}) {
-    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     const pair = defineConcurrencyLimit({ name: 'pair', max: groupCap });
     /** @type {import('./store/store.js').ClaimDueParams[]} */
     const claims = [];
@@ -1437,10 +1407,7 @@ test('close(): the running counts of the names and of the limits go back to 0', 
  *     logger: Record<'debug' | 'info' | 'warn' | 'error', import('vitest').Mock> }>}
  */
 async function runnerWithClaims(errors) {
-    const registry = createRegistry({
-        lanesByName: new Map(),
-        defaultTimeoutMs: null,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     /** @type {import('./types.js').SqlaneEvent[]} */
     const events = [];
     /** @type {number[]} */
@@ -1632,7 +1599,7 @@ test.each([
  * }}
  */
 function runnerWithRateKey({ waitMs, unblock = async () => ({ lanes: [], waits: [] }) }) {
-    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     const smooth = defineRateLimit({ name: 'smooth', max: 10, per: '1s' });
     /** @type {{ keys: string[], floors: Map<string, number> | undefined }[]} */
     const unblocks = [];
@@ -1826,7 +1793,7 @@ function runnerOf(registry, store, localMaxConcurrency, events = []) {
 
 test('dispatch: a probe of more than 100 names that gives the names of the claim too: each name requested once',
     async () => {
-        const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+        const registry = createRegistry({ defaultTimeoutMs: null });
         const others = Array.from({ length: 150 }, (_, at) => `n${at}`);
         /** @type {string[][]} The names of each claim */
         const claims = [];
@@ -1885,7 +1852,7 @@ test('dispatch: a probe of more than 100 names that gives the names of the claim
     });
 
 test('a claim that gives one job twice: it runs once, with an error event', async () => {
-    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     /** @type {import('./types.js').SqlaneEvent[]} */
     const events = [];
     /** @type {string[]} */
@@ -1918,7 +1885,7 @@ test('a claim that gives one job twice: it runs once, with an error event', asyn
 
 test('a job past its maxStalls fails at its claim, as fatal: no handler, no attempt used, no local quota taken; '
     + 'claimed, then failed', async () => {
-    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
     /** @type {import('./types.js').SqlaneEvent[]} */
     const events = [];
@@ -1962,7 +1929,7 @@ test('a job past its maxStalls fails at its claim, as fatal: no handler, no atte
 });
 
 test('a job that fails: its failure job by the definition of this process, and the attempt used', async () => {
-    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     /** @type {Record<string, unknown>[]} */
     const fails = [];
     const claims = [[{ ...dueJob('job-1', 'ping'), maxAttempts: 1 }]];
@@ -1994,7 +1961,7 @@ test.each([
     { stalls: 1, maxStalls: 1 },
 ])('a job at its maxStalls ($stalls of $maxStalls) runs its handler and takes the quota of its local rate limits',
     async ({ stalls, maxStalls }) => {
-        const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+        const registry = createRegistry({ defaultTimeoutMs: null });
         const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
         /** @type {string[]} */
         const started = [];
@@ -2018,7 +1985,7 @@ test.each([
     });
 
 test('a job past its maxStalls: a close() in release mode during the write of its fail does not release it', async () => {
-    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     const claims = [[{ ...dueJob('job-1', 'ping'), stalls: 1, maxStalls: 0 }]];
     /** @type {PromiseWithResolvers<void>} */
     const failWrite = Promise.withResolvers();

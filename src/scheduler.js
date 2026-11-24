@@ -107,8 +107,6 @@ function advance(entry, slot, dbNow) {
  * @property {import('./store/store.js').Store} store
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {number} maxPayloadBytes
- * @property {(lane: string) => import('./types.js').LaneDefinition | null} findDefinition
- * @property {'allow' | 'reject'} unknownLanes
  * @property {string | null} notifyChannel
  * @property {(lane: string) => void} onCreated After the commit of a fire: once per lane that got a job.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit
@@ -126,7 +124,6 @@ function advance(entry, slot, dbNow) {
  * @property {() => ReadonlyMap<string, ScheduleEntry>} entries By id.
  * @property {(entry: ScheduleEntry, where: string) => void} check Builds a test job of the entry: a ConfigError for a
  *     payload or limits that its fires would refuse.
- * @property {() => void} prepare At start(): resolves the definitions, and builds a test job of each schedule.
  * @property {() => Promise<ScheduleRead>} register Inserts the missing rows, reads them all.
  * @property {(read: ScheduleRead | null) => void} start Arms the timer. Null: no registration, as no schedule was
  *     there, or a failed one (`reportFailure()`), which retries with a backoff. The entries that the registration did
@@ -166,8 +163,6 @@ export function createScheduler({
     store,
     defaults,
     maxPayloadBytes,
-    findDefinition,
-    unknownLanes,
     notifyChannel,
     onCreated,
     emit,
@@ -919,7 +914,7 @@ export function createScheduler({
     return {
         add: (entry) => {
             if (entries.has(entry.id)) {
-                throw new ConfigError(`schedule(${JSON.stringify(entry.lane)}): the schedule "${entry.id}" exists already`);
+                throw new ConfigError(`mount(): the schedule "${entry.id}" is mounted here already`);
             }
 
             entries.set(entry.id, entry);
@@ -949,24 +944,6 @@ export function createScheduler({
         has: id => entries.has(id),
         entries: () => entries,
         check,
-        prepare: () => {
-            for (const entry of entries.values()) {
-                const where = `schedule(${JSON.stringify(entry.id)})`;
-                const known = findDefinition(entry.lane);
-
-                if (entry.definition && known && known !== entry.definition) {
-                    throw new ConfigError(`${where}: another definition of "${entry.lane}" is in "lanes" or added`);
-                }
-
-                entry.definition ??= known;
-
-                if (!entry.definition && unknownLanes === 'reject') {
-                    throw new ConfigError(`${where}: the lane "${entry.lane}" is not in "lanes" and not added`);
-                }
-
-                check(entry, where);
-            }
-        },
         register: () => {
             const batch = [...entries.values()];
 

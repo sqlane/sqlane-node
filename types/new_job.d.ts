@@ -29,9 +29,9 @@ export type NewJob = {
 export type NewJobParams = {
     lane: string;
     /**
-     * Null: an unknown name, the defaults only.
+     * Its options: over the defaults.
      */
-    definition: import('./types.js').LaneDefinition | null;
+    definition: import('./types.js').LaneDefinition;
     defaults: import('./defaults.js').ResolvedDefaults;
     payload: unknown;
     options: import('./types.js').EnqueueOptions | undefined;
@@ -42,7 +42,7 @@ export type NewJobParams = {
      */
     slot?: {
         at: number;
-        key: string | null;
+        key: string;
     };
 };
 /**

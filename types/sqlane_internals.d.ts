@@ -21,18 +21,9 @@ export type AttachedRunner = {
     isBusy: () => boolean;
     close: (options?: import('./types.js').CloseOptions) => Promise<void>;
     /**
-     * A definition that the runner
-     * knows: its handled lanes. Until 10.0, for an enqueue by name.
-     */
-    findDefinition: (lane: string) => import('./types.js').LaneDefinition | null;
-    /**
      * Its schedules, by id.
      */
     schedules: () => ReadonlyMap<string, import('./schedule.js').ScheduleEntry>;
-    /**
-     * The worker methods of the 9.x API, until 10.0.
-     */
-    legacy: import('./create_runner.js').LegacyRunner;
 };
 export type SqlaneInternals = {
     adapter: import('./types.js').Adapter<any>;
@@ -50,14 +41,6 @@ export type SqlaneInternals = {
     onEvent: ((event: import('./types.js').SqlaneEvent) => void) | undefined;
     hintChannel: import('./hint_channel.js').HintChannel;
     notifyChannel: string | null;
-    /**
-     * The old `lanes` option.
-     */
-    lanesByName: Map<string, import('./types.js').LaneDefinition>;
-    /**
-     * The old `unknownLanes` option.
-     */
-    unknownLanes: 'allow' | 'reject';
     /**
      * Wakes this process, sends the hint to the others.
      */

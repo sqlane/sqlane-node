@@ -3,9 +3,7 @@
 // belong to their name, so the jobs that still run after an unmount count toward the handler mounted next.
 import { parseDuration } from './duration.js';
 import { ConfigError } from './errors.js';
-import { hasLocalSettings } from './local_settings.js';
 import { createRateState } from './local_rates.js';
-import { isPlainObject, NAME_REGEXP } from './validate.js';
 
 /** @typedef {import('./types.js').LaneDefinition} LaneDefinition */
 /** @typedef {import('./local_rates.js').RateState} RateState */
@@ -22,7 +20,7 @@ import { isPlainObject, NAME_REGEXP } from './validate.js';
  * @typedef {object} HandlerEntry
  * @property {string} name
  * @property {number} index Its position in the order of the adds, never reused: the order of the ties.
- * @property {LaneDefinition | null} definition
+ * @property {LaneDefinition} definition
  * @property {import('./types.js').Handler} handler
  * @property {number} weight Its fairShareWeight.
  * @property {number} running The jobs of its lane that run in this process, by any handler of the lane.
@@ -35,17 +33,14 @@ import { isPlainObject, NAME_REGEXP } from './validate.js';
  * A lane to add: its handler and its settings in this process.
  * @typedef {object} EntrySpec
  * @property {string} name
- * @property {LaneDefinition | null} definition
+ * @property {LaneDefinition} definition
  * @property {import('./types.js').Handler} handler
- * @property {Readonly<import('./types.js').HandlerOptions>} settings The settings of the handler: none, or those of
- *     the definition (until 10.0, a definition may hold them too; not both).
+ * @property {Readonly<import('./types.js').HandlerOptions>} settings The settings of the handler.
  * @property {string} where For the errors.
  */
 
 /**
  * @typedef {object} Registry
- * @property {(lane: LaneDefinition | string, handler: import('./types.js').Handler, options?: unknown) => void} add
- *     The old `lanes.add()`.
  * @property {(specs: EntrySpec[]) => void} check Throws a ConfigError for a spec that `addEntries` would refuse; adds
  *     nothing.
  * @property {(specs: EntrySpec[]) => HandlerEntry[]} addEntries Checks the specs together, then adds them all.
@@ -55,20 +50,17 @@ import { isPlainObject, NAME_REGEXP } from './validate.js';
  * @property {() => HandlerEntry[]} entries In the order of the adds.
  * @property {() => number} span The indexes given so far: the span of the tie order. Never shrinks.
  * @property {(lane: string) => number} runningOf The jobs of the lane that run in this process.
- * @property {(lane: string) => LaneDefinition | null} findDefinition In `lanes`, else handled.
  * @property {() => string[]} lanesWithLimits The handled lanes whose definition has global limits, of concurrency or
  *     of rate.
  * @property {() => string[]} lanesWithRateLimits The handled lanes whose definition has global rate limits.
- * @property {() => void} validate Checks the lanes together: each failure lane resolves and has none of its own.
  */
 
 /**
  * @param {object} params
- * @param {Map<string, LaneDefinition>} params.lanesByName
  * @param {number | null} params.defaultTimeoutMs
  * @returns {Registry}
  */
-export function createRegistry({ lanesByName, defaultTimeoutMs }) {
+export function createRegistry({ defaultTimeoutMs }) {
     /** @type {Map<string, HandlerEntry>} */
     const entriesByName = new Map();
     /** @type {Map<string, LimitState>} One per limit name, for the life of the process: one max */
@@ -78,11 +70,6 @@ export function createRegistry({ lanesByName, defaultTimeoutMs }) {
     /** @type {Map<string, { running: number }>} The running jobs of each lane name, by any of its handlers */
     const laneCounts = new Map();
     let nextIndex = 0;
-
-    /** @type {Registry['findDefinition']} */
-    function findDefinition(name) {
-        return lanesByName.get(name) ?? entriesByName.get(name)?.definition ?? null;
-    }
 
     /**
      * @param {string} name
@@ -115,7 +102,7 @@ export function createRegistry({ lanesByName, defaultTimeoutMs }) {
 
                 if (known && known.max !== limit.max) {
                     throw new ConfigError(`${where}: the concurrency limit ${JSON.stringify(limit.name)} has the max `
-                        + `${limit.max} here and ${known.max} in another definition`);
+                        + `${limit.max} here and ${known.max} in another handler`);
                 }
 
                 maxes.set(limit.name, known ?? limit);
@@ -126,7 +113,7 @@ export function createRegistry({ lanesByName, defaultTimeoutMs }) {
 
                 if (known && describeRate(known) !== describeRate(limit)) {
                     throw new ConfigError(`${where}: the rate limit ${JSON.stringify(limit.name)} has `
-                        + `${describeRate(limit)} here and ${describeRate(known)} in another definition`);
+                        + `${describeRate(limit)} here and ${describeRate(known)} in another handler`);
                 }
 
                 rates.set(limit.name, known ?? limit);
@@ -139,19 +126,14 @@ export function createRegistry({ lanesByName, defaultTimeoutMs }) {
         /** @type {Set<string>} */
         const names = new Set();
 
-        for (const { name, definition, settings, where } of specs) {
+        for (const { name, definition, where } of specs) {
             if (entriesByName.has(name) || names.has(name)) {
                 throw new ConfigError(`${where}: the lane "${name}" is handled here already`);
             }
 
             names.add(name);
 
-            if (definition && hasLocalSettings(definition) && settings !== definition && hasLocalSettings(settings)) {
-                throw new ConfigError(`${where}: the local settings of the lane "${name}" are in its definition and `
-                    + 'in its handler: set them in the handler only');
-            }
-
-            if (definition?.globalConcurrencyLimits && timeoutOf(definition) === null) {
+            if (definition.globalConcurrencyLimits && timeoutOf(definition) === null) {
                 throw new ConfigError(
                     `${where}: a lane with global concurrency limits needs a timeout (in the definition or "defaults")`,
                 );
@@ -162,11 +144,11 @@ export function createRegistry({ lanesByName, defaultTimeoutMs }) {
     }
 
     /**
-     * @param {LaneDefinition | null} definition
+     * @param {LaneDefinition} definition
      * @returns {number | null}
      */
     function timeoutOf(definition) {
-        return parseDuration(definition?.timeout) ?? defaultTimeoutMs;
+        return parseDuration(definition.timeout) ?? defaultTimeoutMs;
     }
 
     /**
@@ -219,69 +201,7 @@ export function createRegistry({ lanesByName, defaultTimeoutMs }) {
         return entry;
     }
 
-    /** @type {Registry['add']} */
-    function add(lane, handler, options) {
-        const name = isPlainObject(lane) ? lane.name : lane;
-        const where = `lanes.add(${JSON.stringify(name)})`;
-
-        if (typeof name !== 'string' || !NAME_REGEXP.test(name)) {
-            throw new ConfigError(`${where}: the lane must be a lane definition or a lane name`);
-        }
-
-        if (typeof handler !== 'function') {
-            throw new ConfigError(`${where}: the handler must be a function`);
-        }
-
-        if (options !== undefined) {
-            throw new ConfigError(`${where}: lanes.add() takes no options`);
-        }
-
-        if (entriesByName.has(name)) {
-            throw new ConfigError(`${where}: the lane is added already`);
-        }
-
-        const known = lanesByName.get(name);
-        const definition = isPlainObject(lane) ? /** @type {LaneDefinition} */ (lane) : known ?? null;
-
-        if (known && definition !== known) {
-            throw new ConfigError(`${where}: another definition of "${name}" is in "lanes"`);
-        }
-
-        const spec = { name, definition, handler, settings: definition ?? {}, where };
-
-        check([spec]);
-        addChecked(spec);
-    }
-
-    /** @type {Registry['validate']} */
-    function validate() {
-        for (const entry of entriesByName.values()) {
-            const failureLane = entry.definition?.failureLane;
-
-            if (failureLane === undefined) {
-                continue;
-            }
-
-            const addWhere = `lanes.add(${JSON.stringify(entry.name)})`;
-            const known = typeof failureLane !== 'string' || lanesByName.has(failureLane) || entriesByName.has(failureLane);
-
-            if (!known) {
-                throw new ConfigError(`${addWhere}: the failure lane "${failureLane}" is not in "lanes" and not added`);
-            }
-
-            // Added by name only: no definition, so no failure lane of its own
-            const failureDefinition = typeof failureLane === 'string' ? findDefinition(failureLane) : failureLane;
-
-            if (failureDefinition?.failureLane !== undefined) {
-                throw new ConfigError(
-                    `${addWhere}: the failure lane "${failureDefinition?.name}" has a failure lane of its own`,
-                );
-            }
-        }
-    }
-
     return {
-        add,
         check,
         addEntries: (specs) => {
             check(specs);
@@ -305,14 +225,12 @@ export function createRegistry({ lanesByName, defaultTimeoutMs }) {
         entries: () => [...entriesByName.values()],
         span: () => nextIndex,
         runningOf: name => laneCounts.get(name)?.running ?? 0,
-        findDefinition,
         lanesWithLimits: () => [...entriesByName.values()]
-            .filter(entry => entry.definition?.globalConcurrencyLimits || entry.definition?.globalRateLimits)
+            .filter(entry => entry.definition.globalConcurrencyLimits || entry.definition.globalRateLimits)
             .map(entry => entry.name),
         lanesWithRateLimits: () => [...entriesByName.values()]
-            .filter(entry => entry.definition?.globalRateLimits)
+            .filter(entry => entry.definition.globalRateLimits)
             .map(entry => entry.name),
-        validate,
     };
 }
 

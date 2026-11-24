@@ -365,14 +365,14 @@ describe('concurrency', () => {
             allMeter.leave();
         };
 
-        runnerOf(sqlane).mount([handle(defineLane({ name: 'solo', localConcurrencyLimits: [solo] }), slowHandler(privateMeter))]);
-        runnerOf(sqlane).mount([handle(defineLane({ name: 'shared_a', localConcurrencyLimits: [shared] }), slowHandler(sharedMeter))]);
-        runnerOf(sqlane).mount([handle(defineLane({ name: 'shared_b', localConcurrencyLimits: [shared] }), slowHandler(sharedMeter))]);
+        runnerOf(sqlane).mount([handle('solo', slowHandler(privateMeter), { localConcurrencyLimits: [solo] })]);
+        runnerOf(sqlane).mount([handle('shared_a', slowHandler(sharedMeter), { localConcurrencyLimits: [shared] })]);
+        runnerOf(sqlane).mount([handle('shared_b', slowHandler(sharedMeter), { localConcurrencyLimits: [shared] })]);
         runnerOf(sqlane).mount([handle('free', slowHandler(concurrencyMeter()))]);
 
         for (const name of ['solo', 'shared_a', 'shared_b', 'free']) {
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues
-            await sqlane.enqueueMany(testAdapter.pool, name, Array.from({ length: 4 }, () => ({ payload: {} })));
+            await sqlane.enqueueMany(testAdapter.pool, testLane(name), [1, 2, 3, 4].map(() => ({ payload: {} })));
         }
 
         await runnerOf(sqlane).start();
@@ -411,7 +411,7 @@ describe('concurrency', () => {
         // names, which reads all names
         for (const name of names) {
             // oxlint-disable-next-line no-await-in-loop -- one enqueue after the other
-            await sqlane.enqueue(testAdapter.pool, name, {});
+            await sqlane.enqueue(testAdapter.pool, testLane(name), {});
         }
 
         await waitFor(async () => (await readJobs(p)).every(job => job.status === 'completed'), 30_000);
@@ -626,11 +626,11 @@ describe('local rate limits', () => {
         const starts = [];
 
         for (const name of ['read', 'write']) {
-            runnerOf(sqlane).mount([handle(defineLane({ name, localRateLimits: [disk] }), ({ job }) => {
+            runnerOf(sqlane).mount([handle(name, ({ job }) => {
                 starts.push({ name: job.lane, at: Date.now() });
-            })]);
+            }, { localRateLimits: [disk] })]);
             // oxlint-disable-next-line no-await-in-loop -- two names
-            await sqlane.enqueueMany(testAdapter.pool, name, [1, 2, 3].map(n => ({ payload: { n } })));
+            await sqlane.enqueueMany(testAdapter.pool, testLane(name), [1, 2, 3].map(n => ({ payload: { n } })));
         }
 
         await runnerOf(sqlane).start();
@@ -661,11 +661,11 @@ describe('local rate limits', () => {
             timings: TIMINGS,
         }));
         const hourly = defineRateLimit({ name: 'hourly', max: 1, per: '1h' });
-        const report = defineLane({ name: 'report', localRateLimits: [hourly] });
+        const report = defineLane({ name: 'report' });
 
         instances.push(other);
-        runnerOf(sqlane).mount([handle(report, () => {})]);
-        runnerOf(other).mount([handle(report, () => {})]);
+        runnerOf(sqlane).mount([handle(report, () => {}, { localRateLimits: [hourly] })]);
+        runnerOf(other).mount([handle(report, () => {}, { localRateLimits: [hourly] })]);
         await sqlane.enqueueMany(testAdapter.pool, report, [1, 2, 3].map(n => ({ payload: { n } })));
         await runnerOf(sqlane).start();
         await waitFor(async () => (await statusCounts(p)).completed === 1);
@@ -683,9 +683,9 @@ describe('local rate limits', () => {
         const { sqlane } = await freshSqlane();
         // One start each 50 ms
         const disk = defineRateLimit({ name: 'disk', max: 20, per: '1s' });
-        const scan = defineLane({ name: 'scan', localRateLimits: [disk] });
+        const scan = defineLane({ name: 'scan' });
 
-        runnerOf(sqlane).mount([handle(scan, () => {})]);
+        runnerOf(sqlane).mount([handle(scan, () => {}, { localRateLimits: [disk] })]);
         await sqlane.enqueueMany(testAdapter.pool, scan, [1, 2, 3, 4].map(n => ({ payload: { n } })));
         await expect(runnerOf(sqlane).drain()).resolves.toStrictEqual({ completed: 4, retried: 0, failed: 0 });
     });
@@ -706,9 +706,10 @@ function rateLimitedEvent(events) {
  * @param {Sqlane} sqlane
  * @param {import('../../src/types.js').LaneDefinition<any>[]} jobs
  * @param {() => Error} makeError
+ * @param {import('../../src/types.js').HandlerOptions} [settings] The local settings of the handlers.
  * @returns {{ name: string, payload: any, at: number }[]} The starts.
  */
-function throwFirst(sqlane, jobs, makeError) {
+function throwFirst(sqlane, jobs, makeError, settings = {}) {
     /** @type {{ name: string, payload: any, at: number }[]} */
     const starts = [];
 
@@ -719,7 +720,7 @@ function throwFirst(sqlane, jobs, makeError) {
             if (starts.length === 1) {
                 throw makeError();
             }
-        })]);
+        }, settings)]);
     }
 
     return starts;
@@ -804,8 +805,9 @@ describe('RateLimitedError', () => {
         const disk = defineRateLimit({ name: 'disk', max: 100, per: '1s', burst: 100 });
         const starts = throwFirst(
             sqlane,
-            ['scan', 'index'].map(name => defineLane({ name, localRateLimits: [disk] })),
+            ['scan', 'index'].map(name => testLane(name)),
             () => new RateLimitedError({ limit: disk, retryAfter: '300ms' }),
+            { localRateLimits: [disk] },
         );
 
         await runnerOf(sqlane).start();

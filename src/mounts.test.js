@@ -50,7 +50,7 @@ afterEach(async () => {
  * @returns {Harness}
  */
 function harness({ localMaxConcurrency = 10, random = () => 0 } = {}) {
-    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     /** @type {FakeJob[]} */
     const pending = [];
     /** @type {import('./store/store.js').DueRequest[][]} */
@@ -172,8 +172,6 @@ function harness({ localMaxConcurrency = 10, random = () => 0 } = {}) {
         store,
         defaults: resolveDefaults(),
         maxPayloadBytes: 1024,
-        findDefinition: registry.findDefinition,
-        unknownLanes: 'allow',
         notifyChannel: null,
         onCreated: () => {},
         emit: () => {},
@@ -378,7 +376,6 @@ describe('mount and unmount', () => {
         mount.unmount();
         mount.unmount();
         expect(scheduler.has('ping:tick')).toBe(false);
-        expect(mounts.hasSchedule('ping:tick')).toBe(false);
     });
 
     test('unmount() is idempotent; the lane can be mounted again at once, with another handler', () => {
@@ -421,16 +418,10 @@ describe('the checks of a mount: a ConfigError, and nothing is mounted', () => {
             [defineHandler(failed, () => {})],
             [defineHandler(defineLane({ name: 'pang', failureLane: defineLane({ name: 'failed' }) }), () => {})],
         ], 'two different definitions of the lane "failed"'],
-        ['a failure lane with a failure lane', () => [[
-            defineHandler(defineLane({ name: 'pang', failureLane: defineLane({ name: 'f', failureLane: 'g' }) }), () => {}),
-        ]], 'the failure lane "f" of "pang" has a failure lane of its own'],
-        ['local settings in the definition and the handler', () => [[
-            defineHandler(defineLane({ name: 'pang', fairShareWeight: 2 }), () => {}, { fairShareWeight: 3 }),
-        ]], 'are in its definition and in its handler'],
         ['two maxes of one local limit', () => [
             [defineHandler(ping, () => {}, { localConcurrencyLimits: [heavy2] })],
             [defineHandler(pong, () => {}, { localConcurrencyLimits: [heavy3] })],
-        ], 'the concurrency limit "heavy" has the max 3 here and 2 in another definition'],
+        ], 'the concurrency limit "heavy" has the max 3 here and 2 in another handler'],
         ['global limits without a timeout', () => [[defineHandler(keyed, () => {})]], 'needs a timeout'],
         ['a schedule whose job is too large', () => [[
             defineSchedule(ping, { key: 'big', every: '1m', payload: { text: 'x'.repeat(2000) } }),
@@ -544,9 +535,9 @@ describe('local pause', () => {
         await sleep(50);
         mount.unmount();
         mounts.mount([defineHandler(ping, handler)]);
-        // The wakes: an enqueue of the lane that committed, a wake of all lanes
+        // The wakes of the lane: an enqueue that committed, an unblock
         runner.onCommitted(['ping']);
-        runner.wake();
+        runner.wakeLanes(['ping']);
         await sleep(50);
         expect(calls).toStrictEqual([]);
         expect(claims.flat().filter(({ name }) => name === 'ping')).toStrictEqual([]);

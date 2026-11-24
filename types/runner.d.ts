@@ -36,7 +36,7 @@ export type RunnerParams = {
     store: import('./store/store.js').Store;
     registry: import('./registry.js').Registry;
     /**
-     * The instance's cap.
+     * The runner's cap.
      */
     localMaxConcurrency: number;
     defaults: import('./defaults.js').ResolvedDefaults;
@@ -69,7 +69,6 @@ export type Runner = {
     }) => Promise<void>;
     drain: (options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>;
     close: (options?: import('./types.js').CloseOptions) => Promise<void>;
-    wake: () => void;
     /**
      * Jobs of the lanes are due: an unblock.
      */
@@ -132,7 +131,7 @@ export type Runner = {
  * @typedef {object} RunnerParams
  * @property {import('./store/store.js').Store} store
  * @property {import('./registry.js').Registry} registry
- * @property {number} localMaxConcurrency The instance's cap.
+ * @property {number} localMaxConcurrency The runner's cap.
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {boolean} cleanup
  * @property {import('./types.js').Logger | undefined} logger
@@ -150,7 +149,6 @@ export type Runner = {
  *     and the recovery and the cleanup start once it passes.
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
- * @property {() => void} wake
  * @property {(lanes: string[]) => void} wakeLanes Jobs of the lanes are due: an unblock.
  * @property {(lanes: string[]) => void} onEnqueued An enqueue: its commit is to come.
  * @property {(lanes: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.

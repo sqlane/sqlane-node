@@ -5,7 +5,6 @@ import {
     defineLane,
     defineRateLimit,
     InvalidOptionsError,
-    UnknownLaneError,
 } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
@@ -259,17 +258,4 @@ test('a bad item adds no job of the call', async () => {
 
     await expect(sqlane.enqueueMany(testAdapter.pool, buildReport, items)).rejects.toThrow(InvalidOptionsError);
     await expect(readJob('build_report:b1')).resolves.toBeUndefined();
-});
-
-test('unknownLanes: reject: an unknown lane throws, a lane of "lanes" passes', async () => {
-    const strict = createSqlane({
-        adapter: testAdapter.adapter,
-        tablePrefix: database.tablePrefix,
-        lanes: [buildReport],
-        unknownLanes: 'reject',
-    });
-
-    await expect(strict.enqueue(testAdapter.pool, 'not_registered', {})).rejects.toThrow(UnknownLaneError);
-    await expect(strict.enqueue(testAdapter.pool, 'build_report', { reportId: 'u1' }))
-        .resolves.toMatchObject({ created: true });
 });

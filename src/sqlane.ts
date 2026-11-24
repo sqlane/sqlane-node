@@ -12,7 +12,6 @@ import type {
     EnqueueOptions,
     EnqueuePayload,
     EnqueueResult,
-    Handler,
     HandlerPayload,
     JobFilter,
     JobPage,
@@ -30,12 +29,9 @@ import type {
     RetryOptions,
     RollbackOptions,
     RunSlotOptions,
-    ScheduleBaseOptions,
     ScheduleDefinition,
     ScheduleInfo,
-    SchedulePayload,
     ScheduleRunStatus,
-    ScheduleTiming,
     SchemaProblems,
 } from './types.js';
 
@@ -102,26 +98,11 @@ export interface SqlaneSchema {
 }
 
 /**
- * The lanes: `sqlane.lanes`. A lane is the jobs that share a name; their default options come from its definition.
- * `add` runs a lane in this process, before `start()` or `drain()` only; `stats` reads every lane in the database, any
- * time, before `start()` and after `close()` too.
- * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesadd | lanes}
+ * The lanes in the database: `sqlane.lanes`. A lane is the jobs that share a name; their default options come from its
+ * definition. A runner runs a lane in a process: `runner.mount([defineHandler(lane, fn)])`.
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesstats | lanes}
  */
 export interface SqlaneLanes {
-    /**
-     * Adds a lane to this process, with the handler of its jobs: the worker runs them after `start()`, or in `drain()`.
-     *
-     * Add all the lanes before `start()`. The handler runs outside any transaction, and its return value is ignored. A
-     * throw retries the job after its backoff, until `maxAttempts`; `FatalJobError`, `RetryJobError` and
-     * `RateLimitedError` change that. Throws a `ConfigError` when the lane is added already, or when `lanes` holds
-     * another definition with this name.
-     * @param lane A lane definition or the name of a lane. The definition holds all the options of the lane.
-     * @param handler Gets `{ payload, job, signal }`. Pass `signal` to `fetch` and other APIs: it aborts on a timeout,
-     *     a lost lease or a shutdown, and the handler must then stop.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesadd | lanes.add}
-     */
-    add<J extends LaneDefinition | string>(lane: J, handler: Handler<HandlerPayload<J>>): void;
-
     /**
      * Counts the jobs of each lane, for monitoring and alerts. A growing `oldestDueAgeMs` usually means that no
      * process runs the lane, or that the workers can't keep up; a growing `blocked`, that a key of a global limit
@@ -214,8 +195,9 @@ export interface SqlaneJobs<C = any> {
  */
 export interface SqlaneSchedules<C = any> {
     /**
-     * Lists the schedules of the table and those registered in this process, sorted by id. It works before `start()`.
-     * @returns The schedules. `registered: false`: a schedule of another service, or one removed from the code.
+     * Lists the schedules of the table, sorted by id: their next slot by their stored spec. No runner needed. A
+     * schedule gets its row when a started runner registers it.
+     * @returns The schedules: their spec, their next slot, their cursor and their last job.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#scheduleslist | schedules.list}
      */
     list(): Promise<ScheduleInfo[]>;
@@ -236,8 +218,9 @@ export interface SqlaneSchedules<C = any> {
 }
 
 /**
- * A sqlane instance, made by `createSqlane()`: one per process. It enqueues jobs, runs the handlers of this process,
- * and fires its schedules.
+ * A sqlane, made by `createSqlane()`: the database side, one per process. It enqueues jobs, and reads and changes the
+ * jobs, the schedules and the tables, for every process. A process that runs jobs adds a runner over it:
+ * `createRunner()` of `@sqlane/core/runner`.
  * @template C The connections that `enqueue` accepts: those of the adapter's driver or ORM.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md | API reference}
  */
@@ -249,15 +232,13 @@ export interface Sqlane<C> {
      * A connection or a transaction client must be in a transaction: sqlane cannot always detect one. A pool: sqlane
      * runs the insert in a short transaction of its own.
      * @param connection Your transaction, or a connection in one, of the adapter's library; or a pool.
-     * @param lane A lane definition or the name of a lane. A name takes its definition from `lanes` or the added
-     *     lanes; else the job gets the instance defaults.
+     * @param lane A lane definition: it gives the job its options.
      * @param payload JSON. With a typed definition, such as `defineLane<{ orderId: number }>(…)`, its type is checked.
-     * @param options `dedupeKey` to dedupe or `slot` to run a schedule slot by hand; `delay` or `runAt`; and overrides
-     *     of the definition for this job.
+     * @param options `dedupeKey` to dedupe; `delay` or `runAt`; and overrides of the definition for this job.
      * @returns The job id, and `created: false` when a job with this id exists already: nothing was added.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue | enqueue}
      */
-    enqueue<J extends LaneDefinition | string, P>(
+    enqueue<J extends LaneDefinition, P>(
         connection: C,
         lane: J,
         payload: EnqueuePayload<J, P>,
@@ -268,62 +249,30 @@ export interface Sqlane<C> {
      * Adds several jobs of one lane in one call, with your connection, in your transaction. sqlane checks all the items
      * before it writes, so one bad item adds no job.
      * @param connection Your transaction, or a connection in one, of the adapter's library; or a pool.
-     * @param lane A lane definition or the name of a lane.
+     * @param lane A lane definition: it gives the jobs their options.
      * @param items Each a `payload` and optional `options`, as in `enqueue`.
      * @returns The results, in the order of the items. Two items with one `dedupeKey`: the first adds the job, the
      *     next get `created: false`.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueuemany | enqueueMany}
      */
-    enqueueMany<J extends LaneDefinition | string, P>(
+    enqueueMany<J extends LaneDefinition, P>(
         connection: C,
         lane: J,
         items: readonly EnqueueManyItem<J, P>[],
     ): Promise<EnqueueResult[]>;
 
     /**
-     * Adds a job at each slot of a cron in a time zone, or of a fixed interval. Each slot adds at most one job in the
-     * whole cluster, with no leader. Call it before `start()`, in each process that should fire the schedule.
-     * @param lane A lane definition or the name of a lane.
-     * @param options `cron` with an optional `timezone`, or `every`; `key` to tell several schedules of one lane apart;
-     *     `payload`, `missed`, `overlap` and `jitter`.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedule | schedule}
-     */
-    schedule<J extends LaneDefinition | string, P>(
-        lane: J,
-        options: ScheduleBaseOptions & ScheduleTiming & SchedulePayload<J, P>,
-    ): void;
-
-    /**
-     * Starts the worker of this process: it claims and runs the due jobs of the added lanes, renews leases, recovers
-     * stalled jobs, deletes expired ones and fires the schedules of this process. A second call does nothing.
-     *
-     * Rejects with a `ConfigError` for a bad schedule, a missing table, or a server that fails the check of the
-     * adapter's `dialect`. If the database is down, it resolves anyway and emits an `error` event.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#start | start}
-     */
-    start(): Promise<void>;
-
-    /**
-     * For tests: runs the due jobs of the added lanes until none is left, without `start()`. It does not fire
-     * schedules: enqueue a slot with the `slot` option instead.
-     * @param options `timeout` (default `'10s'`), and `includeDelayed` to run delayed jobs and retries at once.
-     * @returns The jobs that completed, the attempts that will be retried, and the jobs that failed for good.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#drain | drain}
-     */
-    drain(options?: DrainOptions): Promise<DrainResult>;
-
-    /**
-     * Stops the worker of this process: it claims no more jobs, waits for the running handlers until the deadline,
-     * then aborts their `signal`. It never ends your pools: close them after it.
+     * Closes the runner of this sqlane, if any (see `runner.close()`), with these options, then the hint. It never
+     * ends your pools: close them after it. The enqueues still work after it, without a hint.
      * @param options `deadline` (default `'30s'`); `mode`: `'release'` (default) puts unfinished jobs back in the
      *     queue without using an attempt; `exitsBy`: the latest time the process exits.
-     * @returns Resolves when the handlers have settled or the deadline has passed. It never rejects because of its
-     *     options.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#close | close}
+     * @returns Resolves when the runner is closed: its handlers have settled or the deadline has passed. It never
+     *     rejects because of its options.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerclose-and-sqlaneclose | close}
      */
     close(options?: CloseOptions): Promise<void>;
 
-    /** The lanes: add the lanes that this process runs, and count the jobs of each lane. */
+    /** The lanes: count the jobs of each lane. */
     readonly lanes: SqlaneLanes;
 
     /** The jobs in the database: read them; retry, cancel or remove them in bulk. */
@@ -334,13 +283,6 @@ export interface Sqlane<C> {
 
     /** The `sqlane_*` tables: create, update, roll back or drop them; check them. */
     readonly schema: SqlaneSchema;
-
-    /**
-     * Low level: makes this process check for due jobs now, instead of at the next poll. Most apps don't need it:
-     * sqlane wakes the process after an enqueue in it, and after a hint. It does nothing before `start()`.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#wake | wake}
-     */
-    wake(): void;
 }
 
 /**
@@ -415,7 +357,8 @@ export interface Runner {
      * Starts this process: it claims and runs the due jobs of the mounted lanes that no pause holds, renews leases,
      * recovers stalled jobs, deletes expired ones and fires the mounted schedules. A second call does nothing.
      *
-     * Rejects with a `ConfigError` for a missing table, or a server that fails the check of the adapter's `dialect`.
+     * Rejects with a `ConfigError` for a missing table, a server that fails the check of the adapter's `dialect`, or a
+     * call during `drain()`.
      * If the database is down, it resolves anyway, emits an `error` event, and retries.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerstart | runner.start}
      */

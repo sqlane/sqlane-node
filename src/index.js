@@ -25,7 +25,6 @@ export {
     RetryJobError,
     ShutdownError,
     SqlaneError,
-    UnknownLaneError,
 } from './errors.js';
 
 /**
@@ -155,5 +154,4 @@ export {
  * @template [P=any]
  */
 /** @typedef {import('./types.js').ScheduleSettings} ScheduleSettings */
-/** @typedef {import('./types.js').SlotOptions} SlotOptions */
 /** @typedef {import('./types.js').SqlaneEvent} SqlaneEvent */

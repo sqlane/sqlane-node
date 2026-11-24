@@ -1,4 +1,4 @@
-// The dispatcher of a process: one loop that finds the due jobs of the added lanes, claims as many as the free slots
+// The dispatcher of a process: one loop that finds the due jobs of the handled lanes, claims as many as the free slots
 // allow, by the share of their lanes, and starts them. See docs/design.md › Dispatcher: one loop per process, Claim.
 import { hostname } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -49,7 +49,7 @@ const CLAIM_LANES_PER_SLOT = 4;
  *     jobs of the lanes, by share within the free slots, and starts them. For drain(). The lanes not handled here, or
  *     paused, are left out.
  * @property {(entry: HandlerEntry) => number} freeSlots The jobs of the lane that can start now: under its local
- *     limits and the instance's cap.
+ *     limits and the runner's cap.
  * @property {() => boolean} claiming A claim runs: it may have counted the free slots before a job ended.
  */
 
@@ -57,7 +57,7 @@ const CLAIM_LANES_PER_SLOT = 4;
  * @param {object} params
  * @param {import('./store/store.js').Store} params.store
  * @param {import('./registry.js').Registry} params.registry
- * @param {number} params.localMaxConcurrency The instance's cap.
+ * @param {number} params.localMaxConcurrency The runner's cap.
  * @param {ReadonlyMap<string, unknown>} params.running The jobs that run in this process: each takes a slot.
  * @param {{ leaseMs: number, pollIntervalMs: number }} params.timings
  * @param {() => number} params.random The random start of the tie pointer.
@@ -108,7 +108,7 @@ export function createDispatcher({
     let lanesWithLimits = new Set();
     /** @type {Set<string>} The lanes whose jobs got limits from their enqueue options: kept across an unmount */
     const learnedLimits = new Set();
-    /** @type {Set<string>} The added lanes with global rate limits: their definition's, set by start(); and the
+    /** @type {Set<string>} The handled lanes with global rate limits: their definition's, set by start(); and the
      *     lanes whose jobs got rate limits from their enqueue options, seen by the search of candidates */
     let lanesWithRates = new Set();
     /** @type {HandlerEntry[]} The handled lanes with local rate limits, set by start() and the mounts */
@@ -257,10 +257,10 @@ export function createDispatcher({
 
     /**
      * @param {HandlerEntry} entry
-     * @returns {number} The jobs of the lane that can start now: under its local limits and the instance's cap.
+     * @returns {number} The jobs of the lane that can start now: under its local limits and the runner's cap.
      */
     function freeSlots(entry) {
-        // Each poll checks every added lane, and most have no limit: the check stays small enough for V8 to inline,
+        // Each poll checks every handled lane, and most have no limit: the check stays small enough for V8 to inline,
         // and the loops of limitsRoom() run only for the lanes with limits
         const room = entry.limits.length || entry.rates.length ? limitsRoom(entry) : Infinity;
 
@@ -936,11 +936,11 @@ export function createDispatcher({
         },
         added: (entries) => {
             for (const entry of entries) {
-                if (entry.definition?.globalConcurrencyLimits || entry.definition?.globalRateLimits) {
+                if (entry.definition.globalConcurrencyLimits || entry.definition.globalRateLimits) {
                     lanesWithLimits.add(entry.name);
                 }
 
-                if (entry.definition?.globalRateLimits) {
+                if (entry.definition.globalRateLimits) {
                     lanesWithRates.add(entry.name);
                 }
             }

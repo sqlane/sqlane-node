@@ -11,10 +11,7 @@ import { ConfigError } from './errors.js';
  * @property {(lanes: string[]) => void} wake Jobs of the lanes are due: an unblock.
  * @property {() => boolean} isBusy Started, starting, draining or closing: its queries run.
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
- * @property {(lane: string) => import('./types.js').LaneDefinition | null} findDefinition A definition that the runner
- *     knows: its handled lanes. Until 10.0, for an enqueue by name.
  * @property {() => ReadonlyMap<string, import('./schedule.js').ScheduleEntry>} schedules Its schedules, by id.
- * @property {import('./create_runner.js').LegacyRunner} legacy The worker methods of the 9.x API, until 10.0.
  */
 
 /**
@@ -31,8 +28,6 @@ import { ConfigError } from './errors.js';
  * @property {((event: import('./types.js').SqlaneEvent) => void) | undefined} onEvent
  * @property {import('./hint_channel.js').HintChannel} hintChannel
  * @property {string | null} notifyChannel
- * @property {Map<string, import('./types.js').LaneDefinition>} lanesByName The old `lanes` option.
- * @property {'allow' | 'reject'} unknownLanes The old `unknownLanes` option.
  * @property {(lane: string, committed: boolean) => void} wakeFor Wakes this process, sends the hint to the others.
  * @property {(operation: string, error: unknown) => void} reportError An error of an optimization: a warning.
  * @property {(where: string) => Promise<void>} checkServerOnce

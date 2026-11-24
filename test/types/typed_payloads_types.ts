@@ -37,15 +37,16 @@ export async function typedPayloadsTypes() {
     // @ts-expect-error pages is a number
     await sqlane.enqueue(pool, buildReport, { reportId: 'r1', pages: '2' });
 
-    sqlane.lanes.add(buildReport, ({ payload }) => {
+    defineHandler(buildReport, ({ payload }) => {
         expectTypeOf(payload).toEqualTypeOf<Report>();
     });
 
-    sqlane.lanes.add(buildReport, handler);
+    defineHandler(buildReport, handler);
 
-    // A typed definition in the lists of definitions
-    createSqlane({ adapter: mysql2Adapter(pool, { dialect: 'mysql' }), lanes: [buildReport, defineLane({ name: 'other' })] });
+    // A typed definition as a failure lane
     defineLane({ name: 'with_failure_lane', failureLane: buildReport });
+    // @ts-expect-error a failure lane is a definition, not a name
+    defineLane({ name: 'with_failure_name', failureLane: 'build_report' });
 
     defineLane<Report>({
         name: 'a',
@@ -70,7 +71,7 @@ export async function typedPayloadsTypes() {
     const untyped = defineLane({ name: 'untyped' });
 
     await sqlane.enqueue(pool, untyped, { anything: [1, 'a'] });
-    sqlane.lanes.add(untyped, ({ payload }) => {
+    defineHandler(untyped, ({ payload }) => {
         expectTypeOf(payload).toBeAny();
     });
 

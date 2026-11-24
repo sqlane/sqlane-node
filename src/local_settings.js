@@ -1,5 +1,5 @@
 // The settings of a lane in one process: its share of the free slots and its local limits. A handler holds them
-// (defineHandler); until 10.0, a lane definition too.
+// (defineHandler).
 import { isConcurrencyLimit } from './define_concurrency_limit.js';
 import { isRateLimit } from './define_rate_limit.js';
 import { ConfigError } from './errors.js';
@@ -57,13 +57,4 @@ export function checkLocalSettings(options, where) {
         ...(local && { localConcurrencyLimits: Object.freeze([...local]) }),
         ...(localRate && { localRateLimits: Object.freeze([...localRate]) }),
     };
-}
-
-/**
- * @param {Readonly<import('./types.js').HandlerOptions>} settings
- * @returns {boolean} One of the settings is set.
- */
-export function hasLocalSettings(settings) {
-    return settings.fairShareWeight !== undefined || settings.localConcurrencyLimits !== undefined
-        || settings.localRateLimits !== undefined;
 }

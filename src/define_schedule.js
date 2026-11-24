@@ -25,11 +25,7 @@ export function defineSchedule(lane, options) {
         throw new ConfigError(`${where}: the lane must be a lane definition, from defineLane()`);
     }
 
-    if (isPlainObject(options) && options.key === undefined) {
-        throw new ConfigError(`${where}: "key" is required: it tells the schedules of a lane apart, in their id`);
-    }
-
-    const entry = checkSchedule(lane, options, 'defineSchedule');
+    const entry = checkSchedule(lane, options);
     const given = /** @type {Record<string, unknown>} */ (options);
     let payloadJson;
 
@@ -70,11 +66,7 @@ export function isScheduleDefinition(value) {
  */
 export function scheduleEntryOf(schedule) {
     const { id: _id, lane, ...options } = schedule;
-    const entry = checkSchedule(lane, options, 'defineSchedule');
-
-    entry.definition = lane;
-
-    return entry;
+    return checkSchedule(lane, options);
 }
 
 /**

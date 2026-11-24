@@ -221,7 +221,7 @@ const failureJob = {
     lane: 'sync_failed',
     build: failed => buildNewJob({
         lane: 'sync_failed',
-        definition: null,
+        definition: defineLane({ name: 'sync_failed' }),
         defaults,
         payload: { job: failed, error: failed.error },
         options: undefined,

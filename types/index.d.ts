@@ -4,7 +4,7 @@ export { defineHandler } from './define_handler.js';
 export { defineLane } from './define_lane.js';
 export { defineRateLimit } from './define_rate_limit.js';
 export { defineSchedule } from './define_schedule.js';
-export { ClosedError, ConfigError, DrainTimeoutError, FatalJobError, IgnoredJobsError, InvalidConcurrencyLimitError, InvalidOptionsError, InvalidRateLimitError, JobCancelledError, JobTimeoutError, LeaseLostError, MigrationLockTimeoutError, MissingPayloadError, PayloadTooLargeError, RateLimitedError, RetryJobError, ShutdownError, SqlaneError, UnknownLaneError, } from './errors.js';
+export { ClosedError, ConfigError, DrainTimeoutError, FatalJobError, IgnoredJobsError, InvalidConcurrencyLimitError, InvalidOptionsError, InvalidRateLimitError, JobCancelledError, JobTimeoutError, LeaseLostError, MigrationLockTimeoutError, MissingPayloadError, PayloadTooLargeError, RateLimitedError, RetryJobError, ShutdownError, SqlaneError, } from './errors.js';
 export type Adapter<C> = import('./types.js').Adapter<C>;
 export type Sqlane<C> = import('./types.js').Sqlane<C>;
 export type SqlaneJobs<C = any> = import('./sqlane.js').SqlaneJobs<C>;
@@ -72,7 +72,6 @@ export type ScheduleDefinition<P = any> = import('./types.js').ScheduleDefinitio
 export type ScheduleInfo = import('./types.js').ScheduleInfo;
 export type ScheduleOptions<P = any> = import('./types.js').ScheduleOptions<P>;
 export type ScheduleSettings = import('./types.js').ScheduleSettings;
-export type SlotOptions = import('./types.js').SlotOptions;
 export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /**
  * @typedef {import('./types.js').Adapter<C>} Adapter
@@ -201,5 +200,4 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  * @template [P=any]
  */
 /** @typedef {import('./types.js').ScheduleSettings} ScheduleSettings */
-/** @typedef {import('./types.js').SlotOptions} SlotOptions */
 /** @typedef {import('./types.js').SqlaneEvent} SqlaneEvent */

@@ -173,14 +173,6 @@ describe('the rules of a runner', () => {
         expect(() => otherRunner.mount([daily])).toThrow(ClosedError);
     });
 
-    test('local settings in the definition of the lane and in its handler: a ConfigError', () => {
-        const runner = createRunner(createSqlane({ adapter: fakeAdapter() }));
-        const weighted = defineLane({ name: 'weighted', fairShareWeight: 2 });
-
-        expect(() => runner.mount([defineHandler(weighted, () => {}, { fairShareWeight: 3 })])).toThrow(ConfigError);
-        expect(() => runner.mount([defineHandler(weighted, () => {})])).not.toThrow();
-    });
-
     test('pauseLocally() of a value that is not a lane: an InvalidOptionsError', () => {
         const runner = createRunner(createSqlane({ adapter: fakeAdapter() }));
 

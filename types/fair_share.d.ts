@@ -1,7 +1,7 @@
 export type ShareLane = {
     name: string;
     /**
-     * Its position in the order of the lanes.add() calls: the order of the ties.
+     * Its position in the order of the mounts: the order of the ties.
      */
     index: number;
     /**

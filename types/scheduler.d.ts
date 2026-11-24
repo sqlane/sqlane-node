@@ -88,8 +88,6 @@ export type SchedulerParams = {
     store: import('./store/store.js').Store;
     defaults: import('./defaults.js').ResolvedDefaults;
     maxPayloadBytes: number;
-    findDefinition: (lane: string) => import('./types.js').LaneDefinition | null;
-    unknownLanes: 'allow' | 'reject';
     notifyChannel: string | null;
     /**
      * After the commit of a fire: once per lane that got a job.
@@ -123,10 +121,6 @@ export type Scheduler = {
      * payload or limits that its fires would refuse.
      */
     check: (entry: ScheduleEntry, where: string) => void;
-    /**
-     * At start(): resolves the definitions, and builds a test job of each schedule.
-     */
-    prepare: () => void;
     /**
      * Inserts the missing rows, reads them all.
      */
@@ -184,8 +178,6 @@ export type FireOutcome = {
  * @property {import('./store/store.js').Store} store
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {number} maxPayloadBytes
- * @property {(lane: string) => import('./types.js').LaneDefinition | null} findDefinition
- * @property {'allow' | 'reject'} unknownLanes
  * @property {string | null} notifyChannel
  * @property {(lane: string) => void} onCreated After the commit of a fire: once per lane that got a job.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit
@@ -202,7 +194,6 @@ export type FireOutcome = {
  * @property {() => ReadonlyMap<string, ScheduleEntry>} entries By id.
  * @property {(entry: ScheduleEntry, where: string) => void} check Builds a test job of the entry: a ConfigError for a
  *     payload or limits that its fires would refuse.
- * @property {() => void} prepare At start(): resolves the definitions, and builds a test job of each schedule.
  * @property {() => Promise<ScheduleRead>} register Inserts the missing rows, reads them all.
  * @property {(read: ScheduleRead | null) => void} start Arms the timer. Null: no registration, as no schedule was
  *     there, or a failed one (`reportFailure()`), which retries with a backoff. The entries that the registration did
@@ -235,4 +226,4 @@ export type FireOutcome = {
  * @param {SchedulerParams} params
  * @returns {Scheduler}
  */
-export declare function createScheduler({ store, defaults, maxPayloadBytes, findDefinition, unknownLanes, notifyChannel, onCreated, emit, logger, timings, }: SchedulerParams): Scheduler;
+export declare function createScheduler({ store, defaults, maxPayloadBytes, notifyChannel, onCreated, emit, logger, timings, }: SchedulerParams): Scheduler;

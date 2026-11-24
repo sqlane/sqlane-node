@@ -24,9 +24,6 @@ import { ConfigError } from './errors.js';
 /**
  * @typedef {object} Mounts
  * @property {(parts: unknown, where?: string) => MountHandle} mount
- * @property {(definitions: readonly LaneDefinition[], where: string) => void} checkDefinitions Throws a ConfigError
- *     when a definition has the name of another one that this process knows.
- * @property {(id: string) => boolean} hasSchedule A mounted schedule.
  */
 
 /**
@@ -34,25 +31,25 @@ import { ConfigError } from './errors.js';
  * @param {import('./registry.js').Registry} params.registry
  * @param {import('./scheduler.js').Scheduler} params.scheduler
  * @param {MountTarget} params.runner
- * @param {ReadonlyMap<string, LaneDefinition>} [params.known] Definitions known for the life of the process: the old
- *     `lanes` option.
  * @returns {Mounts}
  */
-export function createMounts({ registry, scheduler, runner, known = new Map() }) {
+export function createMounts({ registry, scheduler, runner }) {
     /** @type {Map<string, { definition: LaneDefinition, count: number }>} The definitions of the mounts, by name */
     const definitions = new Map();
-    /** @type {Set<string>} The ids of the mounted schedules */
-    const scheduleIds = new Set();
 
     /**
      * @param {string} name
      * @returns {LaneDefinition | null} The definition that this process knows by the name.
      */
     function knownDefinition(name) {
-        return definitions.get(name)?.definition ?? known.get(name) ?? registry.getEntry(name)?.definition ?? null;
+        return definitions.get(name)?.definition ?? null;
     }
 
-    /** @type {Mounts['checkDefinitions']} */
+    /**
+     * Throws a ConfigError when a definition has the name of another one that this process knows.
+     * @param {readonly LaneDefinition[]} given
+     * @param {string} where
+     */
     function checkDefinitions(given, where) {
         /** @type {Map<string, LaneDefinition>} */
         const seen = new Map();
@@ -126,35 +123,22 @@ export function createMounts({ registry, scheduler, runner, known = new Map() })
         for (const { lane } of [...handlers, ...schedules]) {
             used.push(lane);
 
-            const { failureLane } = lane;
-
-            if (typeof failureLane === 'object') {
-                if (failureLane.failureLane !== undefined) {
-                    throw new ConfigError(
-                        `${where}: the failure lane "${failureLane.name}" of "${lane.name}" has a failure lane of its own`,
-                    );
-                }
-
-                used.push(failureLane);
+            // defineLane() refuses a failure lane with a failure lane of its own
+            if (lane.failureLane) {
+                used.push(lane.failureLane);
             }
         }
 
         checkDefinitions(used, where);
 
         /** @type {import('./registry.js').EntrySpec[]} */
-        const specs = handlers.map(({ lane, handler, ...settings }) => {
-            const own = settings.fairShareWeight !== undefined || settings.localConcurrencyLimits !== undefined
-                || settings.localRateLimits !== undefined;
-
-            return {
-                name: lane.name,
-                definition: lane,
-                handler,
-                // Until 10.0, a definition may hold the local settings: they apply when the handler has none
-                settings: own ? settings : lane,
-                where: `${where}: the handler of "${lane.name}"`,
-            };
-        });
+        const specs = handlers.map(({ lane, handler, ...settings }) => ({
+            name: lane.name,
+            definition: lane,
+            handler,
+            settings,
+            where: `${where}: the handler of "${lane.name}"`,
+        }));
 
         registry.check(specs);
 
@@ -174,7 +158,6 @@ export function createMounts({ registry, scheduler, runner, known = new Map() })
         runner.added(entries);
 
         for (const entry of scheduleEntries) {
-            scheduleIds.add(entry.id);
             scheduler.add(entry);
         }
 
@@ -193,7 +176,6 @@ export function createMounts({ registry, scheduler, runner, known = new Map() })
                 runner.removed(entries);
 
                 for (const entry of scheduleEntries) {
-                    scheduleIds.delete(entry.id);
                     scheduler.remove(entry);
                 }
 
@@ -202,5 +184,5 @@ export function createMounts({ registry, scheduler, runner, known = new Map() })
         };
     }
 
-    return { mount, checkDefinitions, hasSchedule: id => scheduleIds.has(id) };
+    return { mount };
 }

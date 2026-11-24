@@ -5,7 +5,6 @@ import { ClosedError, ConfigError } from './errors.js';
 import { dropTables, rollbackMigrations, runMigrations } from './migrations.js';
 import { findSchemaProblems, getMigrationStatus } from './schema_status.js';
 import { DEFAULT_MAX_PAYLOAD_BYTES } from './payload.js';
-import { buildRunner } from './create_runner.js';
 import { createRunSlot } from './run_slot.js';
 import { listSchedules } from './schedule_list.js';
 import { checkServer } from './server_check.js';
@@ -16,39 +15,9 @@ import { createStore } from './store/store.js';
 import { checkDuration, checkInteger, checkObject, checkTablePrefix, isPlainObject } from './validate.js';
 
 const OPTION_NAMES = [
-    'adapter', 'lanes', 'localMaxConcurrency', 'defaults', 'unknownLanes', 'hint', 'logger', 'onEvent', 'tablePrefix',
-    'pollInterval', 'maxPayloadBytes', 'cleanup', 'timings', 'installedVersion',
+    'adapter', 'defaults', 'hint', 'logger', 'onEvent', 'tablePrefix', 'pollInterval', 'maxPayloadBytes', 'cleanup',
+    'timings', 'installedVersion',
 ];
-
-/**
- * @param {unknown} lanes
- * @param {import('./validate.js').Scope} scope
- * @returns {Map<string, import('./types.js').LaneDefinition>} The definitions by name.
- */
-function indexLanes(lanes, scope) {
-    if (!Array.isArray(lanes)) {
-        throw new ConfigError(`${scope.where}: "lanes" must be an array of lane definitions`);
-    }
-
-    /** @type {Map<string, import('./types.js').LaneDefinition>} */
-    const byName = new Map();
-
-    for (const lane of lanes) {
-        if (!isPlainObject(lane) || typeof lane.name !== 'string') {
-            throw new ConfigError(`${scope.where}: "lanes" must be an array of lane definitions`);
-        }
-
-        const known = byName.get(lane.name);
-
-        if (known && known !== lane) {
-            throw new ConfigError(`${scope.where}: two different definitions of "${lane.name}" in "lanes"`);
-        }
-
-        byName.set(lane.name, /** @type {import('./types.js').LaneDefinition} */ (lane));
-    }
-
-    return byName;
-}
 
 /**
  * The hint of an instance: the `hint` option, or the LISTEN/NOTIFY of a pg adapter with `notify`.
@@ -84,7 +53,8 @@ function resolveHint(adapter, hint) {
 }
 
 /**
- * Creates a sqlane instance. It connects, migrates and starts nothing.
+ * Creates a sqlane: the database side, for every process. It connects, migrates and starts nothing. A process that
+ * runs jobs adds a runner over it: `createRunner()` of `@sqlane/core/runner`.
  * @template C The connections that `enqueue` accepts, from the adapter.
  * @param {import('./types.js').SqlaneOptions<C>} options
  * @returns {import('./types.js').Sqlane<C>}
@@ -98,30 +68,16 @@ export function createSqlane(options) {
         throw new ConfigError('createSqlane: "adapter" is required');
     }
 
-    const {
-        adapter,
-        tablePrefix = 'sqlane_',
-        unknownLanes = 'allow',
-        maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES,
-    } = options;
+    const { adapter, tablePrefix = 'sqlane_', maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES, cleanup = true } = options;
 
     checkTablePrefix(tablePrefix, scope);
     checkInteger(maxPayloadBytes, '"maxPayloadBytes"', scope);
-
-    if (unknownLanes !== 'allow' && unknownLanes !== 'reject') {
-        throw new ConfigError(`createSqlane: "unknownLanes" must be 'allow' or 'reject'`);
-    }
-
-    const { localMaxConcurrency = 10, cleanup = true } = options;
-
-    checkInteger(localMaxConcurrency, '"localMaxConcurrency"', scope);
 
     if (typeof cleanup !== 'boolean') {
         throw new ConfigError('createSqlane: "cleanup" must be a boolean');
     }
 
     const pollIntervalMs = checkDuration(options.pollInterval ?? '5s', '"pollInterval"', scope, true);
-    const lanesByName = indexLanes(options.lanes ?? [], scope);
     const defaults = resolveDefaults(options.defaults);
     const hint = resolveHint(adapter, options.hint);
     const { logger, onEvent } = options;
@@ -161,8 +117,6 @@ export function createSqlane(options) {
     const enqueuer = createEnqueuer({
         adapter,
         tablePrefix,
-        findDefinition: name => lanesByName.get(name) ?? attached?.findDefinition(name) ?? null,
-        unknownLanes,
         defaults,
         maxPayloadBytes,
         notifyChannel,
@@ -290,8 +244,6 @@ export function createSqlane(options) {
         onEvent,
         hintChannel,
         notifyChannel,
-        lanesByName,
-        unknownLanes,
         wakeFor,
         reportError,
         checkServerOnce,
@@ -305,30 +257,13 @@ export function createSqlane(options) {
         },
     };
 
-    /**
-     * The runner of the 9.x worker methods: built at the first call of one of them. Until 10.0.
-     * @param {string} where The caller, for the error after close().
-     * @returns {import('./create_runner.js').LegacyRunner}
-     */
-    function legacyRunner(where) {
-        if (!attached) {
-            if (closed) {
-                throw new ClosedError(`${where} after close()`);
-            }
-
-            buildRunner(internals, { localMaxConcurrency });
-        }
-
-        return /** @type {import('./sqlane_internals.js').AttachedRunner} */ (attached).legacy;
-    }
-
     /** @type {import('./types.js').Sqlane<C>} */
     const sqlane = {
         enqueue: async (connection, lane, payload, enqueueOptions) => {
             const result = await enqueuer.enqueue(connection, lane, payload, enqueueOptions);
 
             if (result.created) {
-                onCreated(connection, typeof lane === 'string' ? lane : lane.name);
+                onCreated(connection, lane.name);
             }
 
             return result;
@@ -337,28 +272,15 @@ export function createSqlane(options) {
             const results = await enqueuer.enqueueMany(connection, lane, items);
 
             if (results.some(result => result.created)) {
-                onCreated(connection, typeof lane === 'string' ? lane : lane.name);
+                onCreated(connection, lane.name);
             }
 
             return results;
         },
         lanes: Object.freeze({
-            /**
-             * @param {import('./types.js').LaneDefinition | string} lane
-             * @param {import('./types.js').Handler} handler
-             * @param {unknown} [addOptions] None: the registry rejects any.
-             */
-            add(lane, handler, addOptions) {
-                legacyRunner('lanes.add()').add(lane, handler, addOptions);
-            },
             stats: () => store.getStats(),
         }),
-        schedule: (lane, scheduleOptions) => {
-            legacyRunner('schedule()').schedule(lane, scheduleOptions);
-        },
-        start: async () => legacyRunner('start()').start(),
-        drain: async drainOptions => legacyRunner('drain()').drain(drainOptions),
-        // The runner closes at once: lanes.add() and start() then throw, and the deadline counts from the call. Then
+        // The runner closes at once: its mounts and start() then throw, and the deadline counts from the call. Then
         // the hint stops.
         close: (closeOptions) => {
             closed = true;
@@ -418,9 +340,6 @@ export function createSqlane(options) {
             list: () => listSchedules({ store, local: attached?.schedules() ?? new Map() }),
             runSlot,
         }),
-        wake: () => {
-            attached?.legacy.wake();
-        },
     };
 
     setInternals(sqlane, internals);

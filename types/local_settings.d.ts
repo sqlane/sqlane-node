@@ -12,8 +12,3 @@ export declare function isLaneDefinition(value: unknown): value is import('./typ
  * @returns {import('./types.js').HandlerOptions} The settings that are set, with frozen copies of the limits.
  */
 export declare function checkLocalSettings(options: Record<string, unknown>, where: string): import('./types.js').HandlerOptions;
-/**
- * @param {Readonly<import('./types.js').HandlerOptions>} settings
- * @returns {boolean} One of the settings is set.
- */
-export declare function hasLocalSettings(settings: Readonly<import('./types.js').HandlerOptions>): boolean;

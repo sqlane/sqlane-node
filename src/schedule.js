@@ -15,7 +15,10 @@ export const MAX_KEY_LENGTH = 64;
 /** The prefix of the dedupe key of a slot: reserved */
 export const SLOT_PREFIX = 'schedule:';
 const OPTION_NAMES = ['cron', 'timezone', 'every', 'key', 'payload', 'missed', 'overlap', 'jitter'];
-/** The job ids of slots: `<lane>:schedule:[<key>:]<ISO>`. The ISO time is anchored at the end: a key may have `:`. */
+/**
+ * The job ids of slots: `<lane>:schedule:<key>:<ISO>`, or `<lane>:schedule:<ISO>` from a keyless schedule of 9.x. The
+ * ISO time is anchored at the end: a key may have `:`.
+ */
 const SLOT_ID_REGEXP = /^[a-z][a-z0-9_.-]*:schedule:(?:[\x20-\x7E]*:)?(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)$/;
 /** The slots that a job id can carry: `toISOString()` has 24 characters in these years */
 const MIN_SLOT_MS = Date.UTC(1970, 0, 1);
@@ -29,15 +32,15 @@ const MAX_SLOT_MS = Date.UTC(10_000, 0, 1) - 1;
 /**
  * A schedule of this process.
  * @typedef {object} ScheduleEntry
- * @property {string} id The lane, or `<lane>:<key>`.
+ * @property {string} id `<lane>:<key>`.
  * @property {string} lane
- * @property {string | null} key
+ * @property {string} key
  * @property {Timing} timing
  * @property {string} spec Normalized: stored in its row.
  * @property {unknown} payload
  * @property {'once' | 'skip'} missed
  * @property {'allow' | 'skip'} overlap
- * @property {import('./types.js').LaneDefinition | null} definition Set by the scheduler at start().
+ * @property {import('./types.js').LaneDefinition} definition The definition of the lane: its jobs get its options.
  * @property {number | null} nextAt In memory. Null: no slot within the runtime horizon.
  * @property {number} retryDelayMs 0, or the backoff after a failed fire.
  * @property {number} jitterMs 0: no jitter.
@@ -61,42 +64,42 @@ export function isSlotTime(ms) {
 }
 
 /**
- * The dedupe key of a slot (the job id without its name): the scheduler and the `slot` enqueue option build the same
- * one.
- * @param {string | null | undefined} key
+ * The dedupe key of a slot (the job id without its name): the scheduler and `schedules.runSlot()` build the same one.
+ * @param {string} key
  * @param {number} slotMs
  * @returns {string}
  */
 export function slotDedupeKeyOf(key, slotMs) {
-    const time = new Date(slotMs).toISOString();
-
-    return key ? `${SLOT_PREFIX}${key}:${time}` : `${SLOT_PREFIX}${time}`;
+    return `${SLOT_PREFIX}${key}:${new Date(slotMs).toISOString()}`;
 }
 
 /**
- * Checks the options of a schedule.
- * @param {unknown} lane A lane definition or a name.
+ * Checks the options of `defineSchedule()`.
+ * @param {import('./types.js').LaneDefinition} lane
  * @param {unknown} options
- * @param {string} [caller] The caller, for the errors. Default: `schedule`.
- * @returns {ScheduleEntry} Without its definition and its next slot.
+ * @returns {ScheduleEntry} Without its next slot.
  */
-export function checkSchedule(lane, options, caller = 'schedule') {
-    const name = isPlainObject(lane) ? lane.name : lane;
-    const where = `${caller}(${JSON.stringify(name)})`;
+export function checkSchedule(lane, options) {
+    const name = isPlainObject(lane) && typeof lane.name === 'string' ? lane.name : '';
+    const where = `defineSchedule(${JSON.stringify(name)})`;
     const scope = { where, ErrorClass: ConfigError };
 
-    if (typeof name !== 'string' || !NAME_REGEXP.test(name)) {
-        throw new ConfigError(`${where}: the lane must be a lane definition or a lane name`);
+    if (!NAME_REGEXP.test(name)) {
+        throw new ConfigError(`${where}: the lane must be a lane definition, from defineLane()`);
     }
 
     const given = checkObject(options, OPTION_NAMES, 'options', scope);
-    const { key = null, missed = 'once', overlap = 'allow' } = given;
+    const { key, missed = 'once', overlap = 'allow' } = given;
+
+    if (key === undefined) {
+        throw new ConfigError(`${where}: "key" is required: it tells the schedules of a lane apart, in their id`);
+    }
 
     if ((given.cron === undefined) === (given.every === undefined)) {
         throw new ConfigError(`${where}: "cron" or "every", exactly one`);
     }
 
-    if (key !== null && !isSlotKey(key)) {
+    if (!isSlotKey(key)) {
         throw new ConfigError(
             `${where}: "key" must have 1 to ${MAX_KEY_LENGTH} printable ASCII characters, without spaces at the ends`,
         );
@@ -122,15 +125,15 @@ export function checkSchedule(lane, options, caller = 'schedule') {
     }
 
     return {
-        id: key === null ? name : `${name}:${key}`,
+        id: `${name}:${key}`,
         lane: name,
-        key: /** @type {string | null} */ (key),
+        key: /** @type {string} */ (key),
         timing,
         spec: timing.kind === 'cron' ? `cron ${timing.cron.normalized} ${timing.timeZone}` : `every ${timing.ms}`,
         payload: given.payload === undefined ? {} : given.payload,
         missed,
         overlap,
-        definition: null,
+        definition: lane,
         nextAt: null,
         retryDelayMs: 0,
         jitterMs,
@@ -246,7 +249,8 @@ export function previousSlot(entry, slotMs) {
 }
 
 /**
- * The slot of a job, from its id. Only the scheduler and the `slot` enqueue option make such ids.
+ * The slot of a job, from its id. Only the scheduler and `schedules.runSlot()` make such ids; the jobs of the keyless
+ * schedules of 9.x have them without a key.
  * @param {string} jobId The id of a job: `<lane>:<dedupeKey>`, or a ULID.
  * @returns {Date | null} Null: not the job of a slot.
  */

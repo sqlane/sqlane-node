@@ -253,7 +253,7 @@ describe('probe', () => {
         const { p, sqlane, store } = await freshTables();
         const idle = Array.from({ length: 1000 }, (_, index) => `idle_${index}`);
 
-        await Promise.all(idle.map(name => sqlane.enqueue(testAdapter.pool, name, {})));
+        await Promise.all(idle.map(name => sqlane.enqueue(testAdapter.pool, testLane(name), {})));
         await setAllStatus(p, 'completed');
         await sqlane.enqueueMany(testAdapter.pool, testLane('busy'), [{ payload: {} }, { payload: {} }]);
 
@@ -264,7 +264,7 @@ describe('probe', () => {
         const { p, sqlane } = await freshTables();
         const items = Array.from({ length: 2000 }, (_, index) => ({ payload: {}, options: { dedupeKey: `j${index}` } }));
 
-        await Promise.all(Array.from({ length: 20 }, (_, index) => sqlane.enqueueMany(testAdapter.pool, `n${index}`, items)));
+        await Promise.all(Array.from({ length: 20 }, (_, index) => sqlane.enqueueMany(testAdapter.pool, testLane(`n${index}`), items)));
         await database.query(`ANALYZE TABLE ${p}jobs`);
 
         const [plan] = await database.query(`EXPLAIN ${probeSql(p)}`);
@@ -466,11 +466,9 @@ async function compareChoice(sqlane, store, random, round) {
     for (let index = 0; index < count; index++) {
         const name = `r${round}_${index}`;
         const due = int(5);
+        const items = Array.from({ length: due }, (_, k) => ({ payload: {}, options: { runAt: ago(100 - k) } }));
         // oxlint-disable-next-line no-await-in-loop -- the jobs of each name in order
-        const results = await sqlane.enqueueMany(testAdapter.pool, name, Array.from({ length: due }, (_, k) => ({
-            payload: {},
-            options: { runAt: ago(100 - k) },
-        })));
+        const results = await sqlane.enqueueMany(testAdapter.pool, testLane(name), items);
         const maxJobs = 1 + int(4);
 
         rows.push(...results.slice(0, maxJobs).map(result => ({ id: result.id, lane: name })));
@@ -562,7 +560,7 @@ describe('claimDue', () => {
     test('a claim that fills the free process slots does not read the next due times', async () => {
         const { sqlane, store } = await freshTables();
 
-        await Promise.all(['a', 'b', 'c'].map(name => sqlane.enqueue(testAdapter.pool, name, {}, { runAt: ago(10) })));
+        await Promise.all(['a', 'b', 'c'].map(name => sqlane.enqueue(testAdapter.pool, testLane(name), {}, { runAt: ago(10) })));
 
         const requests = ['a', 'b', 'c'].map((name, index) => request(name, 2, index));
         const full = await claimDueWithNext(store, { requests, free: 2 });
@@ -731,7 +729,7 @@ describe('claimDue', () => {
         const enqueuer = async () => {
             for (let n = 0; Date.now() < until; n++) {
                 // oxlint-disable-next-line no-await-in-loop -- one enqueue after the other
-                await sqlane.enqueue(testAdapter.pool, names[n % names.length], { n });
+                await sqlane.enqueue(testAdapter.pool, testLane(names[n % names.length]), { n });
             }
         };
         const claimer = async (/** @type {number} */ index) => {

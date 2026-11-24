@@ -5,8 +5,10 @@ import { expectTypeOf } from 'vitest';
 import {
     createSqlane,
     defineConcurrencyLimit,
+    defineHandler,
     defineLane,
     defineRateLimit,
+    defineSchedule,
     IgnoredJobsError,
     JobCancelledError,
     RateLimitedError,
@@ -23,6 +25,7 @@ import { postgresJsAdapter } from '@sqlane/core/adapter-postgres-js';
 import { prismaAdapter } from '@sqlane/core/adapter-prisma';
 import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
 import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm';
+import { createRunner } from '@sqlane/core/runner';
 
 /**
  * @returns {Promise<any>} A method of a mock.
@@ -48,10 +51,9 @@ export async function publicApiTypes() {
         name: 'build_report',
         globalConcurrencyLimits: ({ payload }) => [heavy.key(payload.reportId)],
         timeout: '1m',
-        fairShareWeight: 2,
-        localConcurrencyLimits: [heavy],
     });
-    const sqlane = createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), localMaxConcurrency: 10 });
+    const sqlane = createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }) });
+    const runner = createRunner(sqlane, { localMaxConcurrency: 10 });
 
     // enqueue: the result
     expectTypeOf(await sqlane.enqueue(connection, job, { reportId: 'r1' }))
@@ -61,6 +63,7 @@ export async function publicApiTypes() {
 
     // enqueue: the connections of the adapter
     await sqlane.enqueue(mysqlPool, job, {});
+    // @ts-expect-error a lane name is not a definition: the definition gives the job its options
     await sqlane.enqueue(connection, 'build_report', {});
     // @ts-expect-error a pg client is not a connection of the mysql2 adapter
     await sqlane.enqueue(await pgPool.connect(), job, {});
@@ -242,26 +245,28 @@ export async function publicApiTypes() {
     // @ts-expect-error no failureLane at enqueue: the definition of the process that fails the job decides
     await sqlane.enqueue(connection, job, {}, { failureLane: 'build_failed' });
 
-    // lanes.add: no options; local limits and weights are in the definition
-    sqlane.lanes.add(job, () => {});
-    sqlane.lanes.add('build_report', async () => {});
-    // @ts-expect-error lanes.add() takes no options
-    sqlane.lanes.add(job, () => {}, { maxConcurrency: 1 });
+    // Handlers: the local limits and the weight are in the handler, per process
+    runner.mount([defineHandler(job, () => {}, { fairShareWeight: 2, localConcurrencyLimits: [heavy] })]);
     // @ts-expect-error a local limit is an object from defineConcurrencyLimit()
-    defineLane({ name: 'a', localConcurrencyLimits: ['heavy'] });
-    // @ts-expect-error lanes is an array of definitions
-    createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), lanes: { heavy: { concurrency: 2 } } });
+    defineHandler(job, () => {}, { localConcurrencyLimits: ['heavy'] });
+    // @ts-expect-error the local settings are not in the definition of the lane
+    defineLane({ name: 'a', localConcurrencyLimits: [heavy] });
+    // @ts-expect-error the lanes are not options of the sqlane
+    createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), lanes: [job] });
+    // @ts-expect-error localMaxConcurrency is an option of the runner
+    createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), localMaxConcurrency: 2 });
     // @ts-expect-error maxConcurrency is not an option: localMaxConcurrency
-    createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), maxConcurrency: 2 });
+    createRunner(sqlane, { maxConcurrency: 2 });
     expectTypeOf(heavy.max).toBeNumber();
 
     /** @type {import('@sqlane/core').Sqlane<import('@sqlane/core/adapter-mysql2').Mysql2Connection>} */
     const typedSqlane = sqlane;
 
-    typedSqlane.lanes.add('typed', () => {});
+    // @ts-expect-error lanes.add() is now runner.mount([defineHandler(…)])
+    void typedSqlane.lanes.add;
 
-    // lanes.add: the context
-    sqlane.lanes.add(job, ({ payload: jobPayload, job: info, signal }) => {
+    // The handler context
+    defineHandler(job, ({ payload: jobPayload, job: info, signal }) => {
         expectTypeOf(jobPayload).toBeAny();
         expectTypeOf(info.attempt).toBeNumber();
         expectTypeOf(info.enqueuedAt).toEqualTypeOf(new Date());
@@ -293,14 +298,9 @@ export async function publicApiTypes() {
     await sqlane.enqueueMany(connection, syncOrder, [{ payload: { orderId: 1 } }, { payload: { orderId: 2 } }]);
     // @ts-expect-error orderId is a number, in enqueueMany too
     await sqlane.enqueueMany(connection, syncOrder, [{ payload: { orderId: '1' } }]);
-    sqlane.lanes.add(syncOrder, ({ payload: order }) => {
+    defineHandler(syncOrder, ({ payload: order }) => {
         expectTypeOf(order.orderId).toBeNumber();
         expectTypeOf(order.note).toEqualTypeOf(/** @type {string | undefined} */ (undefined));
-    });
-    // By name: the payload is not known
-    await sqlane.enqueue(connection, 'sync_order', { anything: true });
-    sqlane.lanes.add('sync_order', ({ payload: anything }) => {
-        expectTypeOf(anything).toBeAny();
     });
 
     // A declared payload must be JSON
@@ -343,7 +343,6 @@ export async function publicApiTypes() {
     defineLane({
         name: 'sync_repo',
         globalRateLimits: ({ payload: repo }) => [sms, sms.cost(2), github.key(repo.tokenId)],
-        localRateLimits: [sms],
         globalConcurrencyLimits: () => [heavy],
         timeout: '1m',
     });
@@ -375,8 +374,8 @@ export async function publicApiTypes() {
     // createSqlane: the options
     // @ts-expect-error the adapter is required
     createSqlane({});
-    // @ts-expect-error an unknown unknownLanes value
-    createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), unknownLanes: 'warn' });
+    // @ts-expect-error unknownLanes is gone: enqueue takes a definition
+    createSqlane({ adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }), unknownLanes: 'reject' });
     createSqlane({
         adapter: mysql2Adapter(mysqlPool, { dialect: 'mysql' }),
         onEvent: (event) => {
@@ -405,39 +404,41 @@ export async function publicApiTypes() {
 
     expectTypeOf(failure.error.code).toEqualTypeOf(/** @type {string | undefined} */ (undefined));
 
-    // wake: no name, it probes all the added lanes
-    sqlane.wake();
-    // @ts-expect-error wake() takes no name
-    sqlane.wake('build_report');
+    // @ts-expect-error wake() is gone: the enqueues and the hints wake the runner
+    void sqlane.wake;
 
-    // schedule: a cron in a zone, or an interval; jitter on both
-    sqlane.schedule(job, { cron: '0 3 * * *', timezone: 'Europe/Berlin', missed: 'skip', overlap: 'skip', jitter: '5m' });
-    sqlane.schedule('build_report', { every: '15m', key: 'tenant-42', payload: { tenantId: 42 }, jitter: '1m' });
+    // defineSchedule: a key, a cron in a zone or an interval; jitter on both
+    defineSchedule(job, {
+        key: 'nightly', cron: '0 3 * * *', timezone: 'Europe/Berlin', missed: 'skip', overlap: 'skip', jitter: '5m',
+    });
+    defineSchedule(job, { key: 'tenant-42', every: '15m', payload: { tenantId: 42 }, jitter: '1m' });
     // @ts-expect-error cron or every, not both
-    sqlane.schedule(job, { cron: '* * * * *', every: '1m' });
+    defineSchedule(job, { key: 'a', cron: '* * * * *', every: '1m' });
     // @ts-expect-error a timezone is only for cron
-    sqlane.schedule(job, { every: '1m', timezone: 'UTC' });
+    defineSchedule(job, { key: 'a', every: '1m', timezone: 'UTC' });
     // @ts-expect-error cron or every is required
-    sqlane.schedule(job, { key: 'a' });
+    defineSchedule(job, { key: 'a' });
     // @ts-expect-error an unknown missed value
-    sqlane.schedule(job, { every: '1m', missed: 'all' });
+    defineSchedule(job, { key: 'a', every: '1m', missed: 'all' });
     // @ts-expect-error a payload is JSON
-    sqlane.schedule(job, { every: '1m', payload: { at: new Date() } });
-    sqlane.schedule(syncOrder, { every: '1h', payload: { orderId: 1 } });
+    defineSchedule(job, { key: 'a', every: '1m', payload: { at: new Date() } });
+    defineSchedule(syncOrder, { key: 'a', every: '1h', payload: { orderId: 1 } });
     // @ts-expect-error a declared payload is required
-    sqlane.schedule(syncOrder, { every: '1m' });
+    defineSchedule(syncOrder, { key: 'a', every: '1m' });
     // @ts-expect-error a declared payload is checked
-    sqlane.schedule(syncOrder, { every: '1m', payload: { orderId: '1' } });
+    defineSchedule(syncOrder, { key: 'a', every: '1m', payload: { orderId: '1' } });
+    // @ts-expect-error schedule() is now runner.mount([defineSchedule(…)])
+    void sqlane.schedule;
 
     // Options built apart, in a variable of the exported type
     /** @type {import('@sqlane/core').ScheduleOptions<{ orderId: number, note?: string }>} */
     const perOrder = { every: '1h', key: 'order-1', payload: { orderId: 1 } };
 
-    sqlane.schedule(syncOrder, perOrder);
+    defineSchedule(syncOrder, perOrder);
     /** @type {import('@sqlane/core').ScheduleOptions} */
     const untyped = { key: 'nightly', cron: '0 3 * * *', payload: { any: 'json' } };
 
-    sqlane.schedule('sync_order', untyped);
+    defineSchedule(defineLane({ name: 'untyped' }), untyped);
     /** @type {import('@sqlane/core').ScheduleOptions<{ orderId: number }>} */
     // @ts-expect-error with a payload type, the payload is required
     const withoutPayload = { key: 'a', every: '1h' };
@@ -447,7 +448,7 @@ export async function publicApiTypes() {
     const otherPayload = { key: 'other', every: '1h', payload: { orderId: '1' } };
 
     // @ts-expect-error the payload type of the options is not the one of the definition
-    sqlane.schedule(syncOrder, otherPayload);
+    defineSchedule(syncOrder, otherPayload);
 
     /** @type {import('@sqlane/core').SqlaneSchedules} */
     const schedules = sqlane.schedules;
@@ -579,7 +580,7 @@ export async function publicApiTypes() {
         keyStats: anyMethod,
     };
     /** @type {import('@sqlane/core').SqlaneLanes} */
-    const lanesMock = { add: anyMethod, stats: anyMethod };
+    const lanesMock = { stats: anyMethod };
 
     void mockWithoutKeyStats;
     void mock;
@@ -612,7 +613,7 @@ export async function publicApiTypes() {
     );
 
     // The slot of a job of a schedule
-    sqlane.lanes.add(job, ({ job: info }) => {
+    defineHandler(job, ({ job: info }) => {
         expectTypeOf(info.scheduledAt).toEqualTypeOf(/** @type {Date | null} */ (null));
     });
     /** @type {import('@sqlane/core').JobInfo} */
@@ -659,18 +660,15 @@ export async function publicApiTypes() {
     void claimedWithoutEnqueuedAt;
     void claimedWithoutStartedAt;
     void claimedEvent;
-    sqlane.lanes.add(job, ({ job: info }) => {
+    defineHandler(job, ({ job: info }) => {
         expectTypeOf(info.runAt).toEqualTypeOf(new Date());
         expectTypeOf(info.startedAt).toEqualTypeOf(new Date());
     });
 
-    // enqueue: a slot run by hand
+    // A slot run by hand: schedules.runSlot(), not an enqueue option
+    // @ts-expect-error the slot option of 9.x is gone
     await sqlane.enqueue(connection, job, {}, { slot: { at: new Date(), key: 'tenant-42' } });
-    await sqlane.enqueue(connection, job, {}, { slot: { at: new Date() }, delay: '1m' });
-    // @ts-expect-error slot or dedupeKey, not both
-    await sqlane.enqueue(connection, job, {}, { slot: { at: new Date() }, dedupeKey: 'x' });
-    // @ts-expect-error slot.at is a Date
-    await sqlane.enqueue(connection, job, {}, { slot: { at: '2026-01-01' } });
+    await sqlane.schedules.runSlot(defineSchedule(job, { key: 'tenant-42', every: '1h' }), { at: new Date(), connection });
 
     // The event of a slot
     createSqlane({
@@ -692,7 +690,10 @@ export async function publicApiTypes() {
 
     // close, drain
     await sqlane.close({ deadline: '30s', mode: 'release', exitsBy: '1m' });
+    await runner.close({ deadline: '30s' });
     // @ts-expect-error an unknown close mode
     await sqlane.close({ mode: 'kill' });
-    expectTypeOf(await sqlane.drain()).toEqualTypeOf({ completed: 0, retried: 0, failed: 0 });
+    expectTypeOf(await runner.drain()).toEqualTypeOf({ completed: 0, retried: 0, failed: 0 });
+    // @ts-expect-error drain() is a method of the runner
+    void sqlane.drain;
 }

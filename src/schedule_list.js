@@ -1,5 +1,5 @@
 // `sqlane.schedules.list()`: the rows of the schedules, with their next slot by their stored spec. Pure but for the
-// read: it needs no runner.
+// read: it needs no runner, and lists the database only.
 import { parseCron } from './cron.js';
 import { dueOf, nextSlot, pendingSlots } from './schedule.js';
 import { isMissingTableError } from './transient_error.js';
@@ -50,8 +50,8 @@ function nextOf(entry, nowMs) {
 /**
  * @param {object} params
  * @param {import('./store/store.js').Store} params.store
- * @param {ReadonlyMap<string, ScheduleEntry>} params.local The schedules of the runner of this process: those
- *     without a row yet are listed too, and their jitter gives `nextRunAt`.
+ * @param {ReadonlyMap<string, ScheduleEntry>} params.local The schedules of the runner of this process: their jitter
+ *     gives `nextRunAt`, for a row of their spec. The jitter is not stored: without it, `nextRunAt` is `nextAt`.
  * @returns {Promise<import('./types.js').ScheduleInfo[]>}
  */
 export async function listSchedules({ store, local }) {
@@ -71,13 +71,9 @@ export async function listSchedules({ store, local }) {
         }
     }
 
-    const rowsById = new Map(rows.map(row => [row.id, row]));
-    const ids = [...new Set([...rowsById.keys(), ...local.keys()])].toSorted();
-
-    return ids.map((id) => {
-        const row = rowsById.get(id);
+    return rows.toSorted((a, b) => (a.id < b.id ? -1 : 1)).map((row) => {
+        const { id, spec } = row;
         const entry = local.get(id);
-        const spec = row?.spec ?? /** @type {ScheduleEntry} */ (entry).spec;
         // The jitter is not stored: known for a schedule of this process only, of the stored spec
         const same = entry !== undefined && entry.spec === spec;
         const timing = same ? entry.timing : timingOfSpec(spec);
@@ -85,13 +81,12 @@ export async function listSchedules({ store, local }) {
 
         return {
             id,
-            lane: row?.lane ?? /** @type {ScheduleEntry} */ (entry).lane,
+            lane: row.lane,
             spec,
-            registered: Boolean(entry),
             nextAt: next ? new Date(next.nextAt) : null,
             nextRunAt: next ? new Date(next.nextRunAt) : null,
-            lastSlotAt: row ? new Date(row.lastSlotMs) : null,
-            lastJobId: row?.lastJobId ?? null,
+            lastSlotAt: new Date(row.lastSlotMs),
+            lastJobId: row.lastJobId,
         };
     });
 }

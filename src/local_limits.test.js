@@ -33,7 +33,7 @@ const disk = defineRateLimit({ name: 'disk', max: 2, per: '1s', burst: 2 });
 
 /** @returns {import('./registry.js').Registry} plain, two names in `lane`, and one with `disk` */
 function registryOf() {
-    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ defaultTimeoutMs: null });
 
     addLane(registry, 'plain', async () => {});
     addLane(registry, 'a', async () => {}, { localConcurrencyLimits: [lane] });

@@ -555,7 +555,6 @@ handlers. To give the handlers a context, such as a logger, call `start()` insid
 - A lane is handled here already, or twice in the parts.
 - A schedule id is mounted here already, or twice in the parts.
 - Two different definitions have one name, among the mounted lanes (of handlers and schedules) and their failure lanes.
-- A failure lane has a failure lane of its own.
 - Two local limits with one name have different maxes in this runner; two local rate limits with one name have
   different settings. One local limit name has one max for the life of the runner.
 - A definition has `globalConcurrencyLimits`, but no timeout is set in the definition or `defaults`.
@@ -829,7 +828,7 @@ A slot run by hand (`schedules.runSlot`) has no jitter. A change of `jitter` alo
   not run the 05:00 slot of today at once. The specs are normalized, so `MON-FRI` and `1-5` are the same spec.
 - A change of `payload`, `overlap` or `missed` applies from the next slot.
 - A schedule that you remove from code stops. Its row stays, and sqlane never deletes it. `schedules.list()` lists it
-  with `registered: false` in each process. Delete it with `DELETE FROM sqlane_schedules WHERE id = '…'`.
+  with its last slot. Delete it with `DELETE FROM sqlane_schedules WHERE id = '…'`.
 
 ### The clock
 
@@ -855,26 +854,24 @@ scheduler, so the scheduler adds no second job for that slot.
 
 ## `schedules.list`
 
-`sqlane.schedules.list` lists the schedules of the table, and those mounted in this process without a row yet.
-`sqlane.schedules` is a frozen object of the sqlane. It needs no runner.
+`sqlane.schedules.list` lists the schedules of the table: the database, for every process. A schedule gets its row
+when a started runner registers it. `sqlane.schedules` is a frozen object of the sqlane. It needs no runner.
 
 ```ts
 sqlane.schedules.list(): Promise<ScheduleInfo[]>
 ```
 
-| Field        | Type               | Description                                                                                                                                                                                       |
-| ------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`         | `string`           | `<lane>:<key>`.                                                                                                                                                                                   |
-| `lane`       | `string`           | The lane.                                                                                                                                                                                         |
-| `spec`       | `string`           | The stored spec, for example `cron 0 3 * * * Europe/Berlin` or `every 900000`.                                                                                                                    |
-| `registered` | `boolean`          | The schedule is mounted in the runner of this process.                                                                                                                                            |
-| `nextAt`     | `Date` or `null`   | The next slot, by the stored spec and the database clock. `null` for a spec that this version cannot read.                                                                                        |
-| `nextRunAt`  | `Date` or `null`   | The time the job of the next slot will be due: `nextAt` plus its jitter. The jitter is not stored: it is known for a schedule mounted in this process only; for another, `nextRunAt` is `nextAt`. |
-| `lastSlotAt` | `Date` or `null`   | The last decided slot. It is `null` before the first one.                                                                                                                                         |
-| `lastJobId`  | `string` or `null` | The job that the last enqueued slot added.                                                                                                                                                        |
+| Field        | Type               | Description                                                                                                                                                                                                                                |
+| ------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`         | `string`           | `<lane>:<key>`.                                                                                                                                                                                                                            |
+| `lane`       | `string`           | The lane.                                                                                                                                                                                                                                  |
+| `spec`       | `string`           | The stored spec, for example `cron 0 3 * * * Europe/Berlin` or `every 900000`.                                                                                                                                                             |
+| `nextAt`     | `Date` or `null`   | The next slot, by the stored spec and the database clock. `null` for a spec that this version cannot read.                                                                                                                                 |
+| `nextRunAt`  | `Date` or `null`   | The time the job of the next slot will be due: `nextAt` plus its jitter. The jitter is not stored: it is known for a schedule mounted in this process, with the stored spec, only; for another, `nextRunAt` has no jitter: it is `nextAt`. |
+| `lastSlotAt` | `Date`             | The last decided slot; at the registration, the time of the registration.                                                                                                                                                                  |
+| `lastJobId`  | `string` or `null` | The job that the last enqueued slot added.                                                                                                                                                                                                 |
 
-It reads the whole table, sorted by id, and adds the mounted schedules that have no row yet. After a deploy that
-changes a spec, `spec` shows the old one until the first slot of the new spec. Without schedules and without the table,
+It reads the whole table, sorted by id. After a deploy that changes a spec, `spec` shows the old one until the first slot of the new spec. Without schedules and without the table,
 it resolves to `[]`.
 
 ## `schedules.runSlot`
@@ -949,7 +946,8 @@ schedules when the database is back. A rejected `start` can be called again.
 The first `start()` or `schema.migrate()` of a sqlane checks the server: it rejects with a `ConfigError` if the
 server is not the database of the adapter's `dialect`, is below the supported version, or has a `sql_mode` that sqlane
 does not support ([server check](adapters.md#the-dialect-and-the-server-check)). If the database is down, `start`
-resolves anyway and emits an `error` event. `start` rejects with a `ClosedError` after `close()`.
+resolves anyway and emits an `error` event. `start` rejects with a `ConfigError` during `drain()`, and with a
+`ClosedError` after `close()`.
 
 ## `runner.drain`
 

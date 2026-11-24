@@ -5,7 +5,6 @@ import { ClosedError, ConfigError, InvalidOptionsError } from './errors.js';
 import { createMounts } from './mounts.js';
 import { createRegistry } from './registry.js';
 import { createRunner as createWorker } from './runner.js';
-import { checkSchedule } from './schedule.js';
 import { createScheduler } from './scheduler.js';
 import { internalsOf } from './sqlane_internals.js';
 import { isMissingTableError } from './transient_error.js';
@@ -20,40 +19,17 @@ import { checkInteger, checkObject, isPlainObject, NAME_REGEXP } from './validat
 const RUNNER_OPTION_NAMES = ['localMaxConcurrency', 'logger'];
 
 /**
- * The worker methods of the 9.x API, over the runner of a sqlane. Until 10.0.
- * @typedef {object} LegacyRunner
- * @property {(lane: import('./types.js').LaneDefinition | string, handler: import('./types.js').Handler,
- *     options?: unknown) => void} add `lanes.add()`.
- * @property {(lane: import('./types.js').LaneDefinition | string, options: unknown) => void} schedule
- * @property {() => Promise<void>} start
- * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
- * @property {() => void} wake
- */
-
-/**
- * @typedef {object} BuiltRunner
- * @property {import('./sqlane_internals.js').AttachedRunner} attached
- * @property {import('./mounts.js').Mounts} mounts
- * @property {ReturnType<typeof createWorker>} worker
- * @property {import('./registry.js').Registry} registry
- * @property {import('./scheduler.js').Scheduler} scheduler
- * @property {() => Promise<void>} start
- * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
- * @property {() => boolean} isStarting A start() runs: its check of the server, its registration.
- */
-
-/**
  * Builds the runner of a sqlane, and attaches it.
  * @param {import('./sqlane_internals.js').SqlaneInternals} core
- * @param {{ localMaxConcurrency: number, logger?: import('./types.js').Logger }} options
- * @returns {BuiltRunner}
+ * @param {{ localMaxConcurrency: number, logger: import('./types.js').Logger | undefined }} options
+ * @returns {{ mounts: import('./mounts.js').Mounts, worker: ReturnType<typeof createWorker>,
+ *     registry: import('./registry.js').Registry, scheduler: import('./scheduler.js').Scheduler,
+ *     start: () => Promise<void>, close: (options?: import('./types.js').CloseOptions) => Promise<void>,
+ *     isStarting: () => boolean }} `isStarting`: a start() runs, its check of the server or its registration.
  */
-export function buildRunner(core, { localMaxConcurrency, logger = core.logger }) {
+function buildRunner(core, { localMaxConcurrency, logger }) {
     const { store, defaults, hintChannel, tablePrefix, testTimings } = core;
-    const registry = createRegistry({
-        lanesByName: core.lanesByName,
-        defaultTimeoutMs: defaults.timeoutMs,
-    });
+    const registry = createRegistry({ defaultTimeoutMs: defaults.timeoutMs });
     const worker = createWorker({
         store,
         registry,
@@ -72,15 +48,13 @@ export function buildRunner(core, { localMaxConcurrency, logger = core.logger })
         store,
         defaults,
         maxPayloadBytes: core.maxPayloadBytes,
-        findDefinition: registry.findDefinition,
-        unknownLanes: core.unknownLanes,
         notifyChannel: core.notifyChannel,
         onCreated: lane => core.wakeFor(lane, true),
         emit: worker.emit,
         logger,
         timings: testTimings.schedules,
     });
-    const mounts = createMounts({ registry, scheduler, runner: worker, known: core.lanesByName });
+    const mounts = createMounts({ registry, scheduler, runner: worker });
     /** @type {Promise<void> | null} */
     let startPromise = null;
     /** start() runs: its registration of the schedules writes */
@@ -94,8 +68,6 @@ export function buildRunner(core, { localMaxConcurrency, logger = core.logger })
      * @returns {Promise<void>}
      */
     async function startOnce() {
-        scheduler.prepare();
-
         /** @type {(() => Promise<void>) | null} */
         let serverCheck = null;
 
@@ -205,42 +177,6 @@ export function buildRunner(core, { localMaxConcurrency, logger = core.logger })
         return closePromise;
     }
 
-    /** @type {LegacyRunner} */
-    const legacy = {
-        add: (lane, handler, addOptions) => {
-            if (worker.isClosed()) {
-                throw new ClosedError('lanes.add() after close()');
-            }
-
-            if (worker.isStarted()) {
-                throw new ConfigError('lanes.add() after start(): add all the lanes before start()');
-            }
-
-            if (!worker.isIdle()) {
-                throw new ConfigError('lanes.add() during drain(): add all the lanes before drain()');
-            }
-
-            registry.add(lane, handler, addOptions);
-        },
-        schedule: (lane, scheduleOptions) => {
-            if (worker.isClosed()) {
-                throw new ClosedError('schedule() after close()');
-            }
-
-            if (!worker.isIdle() || startPromise) {
-                throw new ConfigError('schedule() after start(): add all the schedules before start()');
-            }
-
-            const entry = checkSchedule(lane, scheduleOptions);
-
-            entry.definition = isPlainObject(lane) ? /** @type {import('./types.js').LaneDefinition} */ (lane) : null;
-            scheduler.add(entry);
-        },
-        start,
-        drain: worker.drain,
-        wake: () => worker.wake(),
-    };
-
     /** @type {import('./sqlane_internals.js').AttachedRunner} */
     const attached = {
         onEnqueued: worker.onEnqueued,
@@ -249,14 +185,12 @@ export function buildRunner(core, { localMaxConcurrency, logger = core.logger })
         wake: worker.wakeLanes,
         isBusy: () => starting || worker.isBusy(),
         close,
-        findDefinition: registry.findDefinition,
         schedules: scheduler.entries,
-        legacy,
     };
 
     core.attach(attached);
 
-    return { attached, mounts, worker, registry, scheduler, start, close, isStarting: () => starting };
+    return { mounts, worker, registry, scheduler, start, close, isStarting: () => starting };
 }
 
 /**

@@ -1,11 +1,11 @@
 // How free slots are shared between lanes: the lowest running / fairShareWeight first, under the local
-// concurrency limits of the lane and the instance's cap; ties round-robin. See docs/api.md › How free slots are shared.
+// concurrency limits of the lane and the runner's cap; ties round-robin. See docs/api.md › How free slots are shared.
 
 /**
  * A lane in a choice.
  * @typedef {object} ShareLane
  * @property {string} name
- * @property {number} index Its position in the order of the lanes.add() calls: the order of the ties.
+ * @property {number} index Its position in the order of the mounts: the order of the ties.
  * @property {number} weight 1–1000.
  * @property {number} running Its jobs that run in this instance.
  * @property {{ room: number }[]} limits Its local limits, each shared by its lanes: its max minus its running.

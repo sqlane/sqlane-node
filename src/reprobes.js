@@ -1,4 +1,4 @@
-// The re-probes after an enqueue (or a hint) of a added lane: its commit is to come, so the dispatcher probes its
+// The re-probes after an enqueue (or a hint) of a handled lane: its commit is to come, so the dispatcher probes its
 // lanes again a few times, until the job is visible. See docs/design.md › Wake-up after the commit.
 
 /** The wakes after the last enqueue (or hint), until its commit makes the job visible */

@@ -11,7 +11,7 @@ import {
 } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
-import { handle, runnerOf } from '../support/runners.js';
+import { handle, runnerOf, testLane } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 
@@ -191,17 +191,19 @@ async function waitFor(condition, timeoutMs = 5000) {
 }
 
 /**
- * Jobs of a name with global concurrency limits from their enqueue options.
+ * Jobs of a lane, with global limits from their definition or from their enqueue options.
  * @param {Sqlane} sqlane
- * @param {string} name
+ * @param {import('../../src/types.js').LaneDefinition | string} lane A definition, or the name of a lane of the tests.
  * @param {number} count
  * @param {import('../../src/types.js').EnqueueOptions} options
  * @returns {Promise<string[]>}
  */
-async function enqueued(sqlane, name, count, options) {
+async function enqueued(sqlane, lane, count, options) {
     const items = Array.from({ length: count }, () => ({ payload: {}, options }));
+    const definition = typeof lane === 'string' ? testLane(lane) : lane;
+    const results = await sqlane.enqueueMany(testAdapter.pool, definition, /** @type {any[]} */ (items));
 
-    return (await sqlane.enqueueMany(testAdapter.pool, name, /** @type {any[]} */ (items))).map(({ id }) => id);
+    return results.map(({ id }) => id);
 }
 
 const ORDER = defineConcurrencyLimit({ name: 'order', max: 2 });
@@ -246,7 +248,7 @@ describe('keyStats', () => {
         await sqlane.enqueue(testAdapter.pool, sync, {});
         await waitFor(() => started.length === 1);
 
-        const blocked = await enqueued(sqlane, 'sync', 2, {});
+        const blocked = await enqueued(sqlane, sync, 2, {});
 
         await waitFor(async () => (await sqlane.jobs.list({ lane: 'sync', status: 'blocked' })).jobs.length === 2);
 

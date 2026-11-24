@@ -1,16 +1,16 @@
 import { ConfigError } from './errors.js';
-import { checkLocalSettings } from './local_settings.js';
-import { checkFailureLane, checkOptionFields, checkObject, NAME_REGEXP } from './validate.js';
+import { isLaneDefinition } from './local_settings.js';
+import { checkOptionFields, checkObject, NAME_REGEXP } from './validate.js';
 
 const LANE_OPTION_NAMES = [
-    'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'failureLane', 'fairShareWeight',
-    'localConcurrencyLimits', 'globalConcurrencyLimits', 'localRateLimits', 'globalRateLimits',
+    'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'failureLane', 'globalConcurrencyLimits',
+    'globalRateLimits',
 ];
-export { MAX_WEIGHT } from './local_settings.js';
 
 /**
- * Defines a lane and its options. Producers and workers import the definition. `defineLane<{ reportId: string }>(…)`
- * declares the payload: `enqueue`, `lanes.add`, `globalConcurrencyLimits` and `globalRateLimits` then check it.
+ * Defines a lane and its options: what a job is. Producers and workers import the definition.
+ * `defineLane<{ reportId: string }>(…)` declares the payload: `enqueue`, `defineHandler`, `defineSchedule`,
+ * `globalConcurrencyLimits` and `globalRateLimits` then check it.
  * @template [P=any]
  * @param {import('./types.js').LaneOptions<P>} options
  * @returns {import('./types.js').LaneDefinition<P>} Frozen.
@@ -37,15 +37,25 @@ export function defineLane(options) {
         throw new ConfigError(`${where}: "globalRateLimits" must be a function of the context, ({ payload })`);
     }
 
-    if (options.failureLane !== undefined) {
-        checkFailureLane(options.failureLane, name, scope);
-    }
+    const { failureLane } = options;
 
-    const settings = checkLocalSettings(options, where);
+    if (failureLane !== undefined) {
+        if (!isLaneDefinition(failureLane)) {
+            throw new ConfigError(`${where}: "failureLane" must be a lane definition, from defineLane()`);
+        }
+
+        if (failureLane.name === name) {
+            throw new ConfigError(`${where}: a lane cannot be its own failure lane`);
+        }
+
+        // No chains: a failure job never has a failure job of its own
+        if (failureLane.failureLane !== undefined) {
+            throw new ConfigError(`${where}: the failure lane "${failureLane.name}" has a failure lane of its own`);
+        }
+    }
 
     return Object.freeze({
         ...options,
-        ...settings,
         ...(options.backoff && { backoff: Object.freeze({ ...options.backoff }) }),
         ...(options.retention && { retention: Object.freeze({ ...options.retention }) }),
     });

@@ -34,7 +34,7 @@ test.each([
         runner.mount([defineHandler(b, noop, {
             localConcurrencyLimits: [defineConcurrencyLimit({ name: 'heavy', max: 3 })],
         })]);
-    }, 'the concurrency limit "heavy" has the max 3 here and 2 in another definition'],
+    }, 'the concurrency limit "heavy" has the max 3 here and 2 in another handler'],
     ['two rate limits with one name and different settings', () => {
         const runner = runnerWith();
 
@@ -43,7 +43,7 @@ test.each([
             localRateLimits: [defineRateLimit({ name: 'disk', max: 10, per: '1s', burst: 5 })],
         })]);
     }, 'the rate limit "disk" has max 10 per 1000 ms, burst 5 here and max 10 per 1000 ms, burst 1 in another '
-    + 'definition'],
+    + 'handler'],
     ['a definition with global limits without a timeout', () => runnerWith().mount([defineHandler(withKeys, noop)]),
         'needs a timeout'],
     ['a lane mounted twice', () => {
@@ -72,7 +72,7 @@ test('one limit shared by several handlers; limits with one name and one max are
 });
 
 test('a local rate limit: one state per name of limit in the runner, shared by its handlers', () => {
-    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ defaultTimeoutMs: null });
     const disk = defineRateLimit({ name: 'disk', max: 10, per: '1s' });
     const [first, second, third] = registry.addEntries([
         { name: 'a', definition: a, handler: noop, settings: { localRateLimits: [disk] }, where: 'test' },

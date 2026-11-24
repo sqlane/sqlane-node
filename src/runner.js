@@ -51,7 +51,7 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  * @typedef {object} RunnerParams
  * @property {import('./store/store.js').Store} store
  * @property {import('./registry.js').Registry} registry
- * @property {number} localMaxConcurrency The instance's cap.
+ * @property {number} localMaxConcurrency The runner's cap.
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {boolean} cleanup
  * @property {import('./types.js').Logger | undefined} logger
@@ -70,7 +70,6 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  *     and the recovery and the cleanup start once it passes.
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
- * @property {() => void} wake
  * @property {(lanes: string[]) => void} wakeLanes Jobs of the lanes are due: an unblock.
  * @property {(lanes: string[]) => void} onEnqueued An enqueue: its commit is to come.
  * @property {(lanes: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.
@@ -184,7 +183,6 @@ export function createRunner({
         wake: lanes => wakeUp(lanes, { speculative: true }),
     });
     const failureLanes = createFailureLanes({
-        registry,
         defaults,
         emit,
         reportError,
@@ -415,7 +413,6 @@ export function createRunner({
             return;
         }
 
-        registry.validate();
         dispatcher.prepare();
         state = 'started';
         unblocks.resume();
@@ -469,7 +466,6 @@ export function createRunner({
             throw new InvalidOptionsError('drain(): "timeout" must be a duration');
         }
 
-        registry.validate();
         dispatcher.prepare();
         state = 'draining';
         unblocks.resume();
@@ -668,7 +664,6 @@ export function createRunner({
         start,
         drain,
         close,
-        wake: () => wakeUp(),
         wakeLanes: lanes => wakeUp(lanes),
         onEnqueued,
         onCommitted,

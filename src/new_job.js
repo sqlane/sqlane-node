@@ -4,7 +4,7 @@ import { InvalidOptionsError } from './errors.js';
 import { normalizeGlobalLimits } from './concurrency_keys.js';
 import { normalizeGlobalRateLimits } from './rate_keys.js';
 import { serializePayload } from './payload.js';
-import { isSlotKey, isSlotTime, MAX_KEY_LENGTH, SLOT_PREFIX, slotDedupeKeyOf } from './schedule.js';
+import { SLOT_PREFIX, slotDedupeKeyOf } from './schedule.js';
 import {
     checkOptionFields,
     checkObject,
@@ -14,7 +14,6 @@ import {
 
 const ENQUEUE_OPTION_NAMES = [
     'dedupeKey', 'delay', 'runAt', 'maxAttempts', 'maxStalls', 'retention', 'globalConcurrencyLimits', 'globalRateLimits',
-    'slot',
 ];
 const MAX_DEDUPE_KEY_LENGTH = 120;
 /** Sorted by creation order in this process, also within one millisecond */
@@ -42,12 +41,12 @@ const ulid = createMonotonicUlid();
 /**
  * @typedef {object} NewJobParams
  * @property {string} lane
- * @property {import('./types.js').LaneDefinition | null} definition Null: an unknown name, the defaults only.
+ * @property {import('./types.js').LaneDefinition} definition Its options: over the defaults.
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {unknown} payload
  * @property {import('./types.js').EnqueueOptions | undefined} options
  * @property {number} maxPayloadBytes
- * @property {{ at: number, key: string | null }} [slot] The slot of a schedule: the job gets its dedupe key, which an
+ * @property {{ at: number, key: string }} [slot] The slot of a schedule: the job gets its dedupe key, which an
  *     enqueue cannot give (its prefix is reserved). For the scheduler and `schedules.runSlot()`.
  */
 
@@ -66,29 +65,8 @@ function checkDedupeKey(dedupeKey, where) {
 
     if (dedupeKey.startsWith(SLOT_PREFIX)) {
         throw new InvalidOptionsError(`${where}: the "dedupeKey" prefix "${SLOT_PREFIX}" is reserved for the slots `
-            + 'of schedules: use the option "slot"');
+            + 'of schedules: run a slot by hand with schedules.runSlot()');
     }
-}
-
-/**
- * @param {unknown} slot
- * @param {string} where
- * @returns {string} The dedupe key of the slot.
- */
-function slotDedupeKeyFrom(slot, where) {
-    const { at, key } = checkObject(slot, ['at', 'key'], '"slot"', { where, ErrorClass: InvalidOptionsError });
-
-    if (!(at instanceof Date) || !isSlotTime(at.getTime())) {
-        throw new InvalidOptionsError(`${where}: "slot.at" must be a valid Date in the years 1970 to 9999`);
-    }
-
-    if (key !== undefined && !isSlotKey(key)) {
-        throw new InvalidOptionsError(
-            `${where}: "slot.key" must have 1 to ${MAX_KEY_LENGTH} printable ASCII characters, without spaces at the ends`,
-        );
-    }
-
-    return slotDedupeKeyOf(/** @type {string | undefined} */ (key), at.getTime());
 }
 
 /**
@@ -141,14 +119,6 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
         checkDedupeKey(dedupeKey, where);
     }
 
-    if (options.slot !== undefined) {
-        if (dedupeKey !== undefined) {
-            throw new InvalidOptionsError(`${where}: "slot" or "dedupeKey", not both`);
-        }
-
-        dedupeKey = slotDedupeKeyFrom(options.slot, where);
-    }
-
     if (slot) {
         dedupeKey = slotDedupeKeyOf(slot.key, slot.at);
     }
@@ -156,11 +126,11 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
     const payloadJson = serializePayload(payload, maxPayloadBytes, where);
     // The limits come from the payload as the handler gets it: as JSON gives it back.
     const rawLimits = options.globalConcurrencyLimits
-        ?? definition?.globalConcurrencyLimits?.({ payload: JSON.parse(payloadJson) }) ?? [];
+        ?? definition.globalConcurrencyLimits?.({ payload: JSON.parse(payloadJson) }) ?? [];
     const rawRateLimits = options.globalRateLimits
-        ?? definition?.globalRateLimits?.({ payload: JSON.parse(payloadJson) }) ?? [];
+        ?? definition.globalRateLimits?.({ payload: JSON.parse(payloadJson) }) ?? [];
     const limits = normalizeGlobalLimits(rawLimits, where);
-    const retention = { ...definition?.retention, ...options.retention };
+    const retention = { ...definition.retention, ...options.retention };
 
     return {
         id: dedupeKey === undefined ? ulid() : `${lane}:${dedupeKey}`,
@@ -169,8 +139,8 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
         payloadJson,
         limits,
         rateLimits: normalizeGlobalRateLimits(rawRateLimits, where, limits.length),
-        maxAttempts: options.maxAttempts ?? definition?.maxAttempts ?? defaults.maxAttempts,
-        maxStalls: options.maxStalls ?? definition?.maxStalls ?? defaults.maxStalls,
+        maxAttempts: options.maxAttempts ?? definition.maxAttempts ?? defaults.maxAttempts,
+        maxStalls: options.maxStalls ?? definition.maxStalls ?? defaults.maxStalls,
         completedRetentionMs: parseDuration(retention.completed) ?? defaults.retention.completedMs,
         failedRetentionMs: parseDuration(retention.failed) ?? defaults.retention.failedMs,
         ...getSchedule(options, where),

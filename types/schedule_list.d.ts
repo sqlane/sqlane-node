@@ -9,8 +9,8 @@ export declare function timingOfSpec(spec: string): import('./schedule.js').Timi
 /**
  * @param {object} params
  * @param {import('./store/store.js').Store} params.store
- * @param {ReadonlyMap<string, ScheduleEntry>} params.local The schedules of the runner of this process: those
- *     without a row yet are listed too, and their jitter gives `nextRunAt`.
+ * @param {ReadonlyMap<string, ScheduleEntry>} params.local The schedules of the runner of this process: their jitter
+ *     gives `nextRunAt`, for a row of their spec. The jitter is not stored: without it, `nextRunAt` is `nextAt`.
  * @returns {Promise<import('./types.js').ScheduleInfo[]>}
  */
 export declare function listSchedules({ store, local }: {

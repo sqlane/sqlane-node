@@ -1,5 +1,5 @@
 import { createMonotonicUlid } from './ulid.js';
-import { InvalidOptionsError, UnknownLaneError } from './errors.js';
+import { InvalidOptionsError } from './errors.js';
 import { buildNewJob } from './new_job.js';
 import { insertJobsMariadb } from './store/mariadb_enqueue.js';
 import { insertJobsMysql } from './store/mysql_enqueue.js';
@@ -13,9 +13,6 @@ const enqueueToken = createMonotonicUlid();
  * @typedef {object} EnqueuerOptions
  * @property {import('./types.js').Adapter<C>} adapter
  * @property {string} tablePrefix Checked.
- * @property {(lane: string) => import('./types.js').LaneDefinition | null} findDefinition The known definition of
- *     a lane.
- * @property {'allow' | 'reject'} unknownLanes
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {number} maxPayloadBytes
  * @property {string | null} notifyChannel PostgreSQL NOTIFY: `pg_notify` in the enqueue transaction, delivered on
@@ -33,6 +30,20 @@ const enqueueToken = createMonotonicUlid();
  */
 
 /**
+ * @param {unknown} given
+ * @returns {{ lane: string, definition: import('./types.js').LaneDefinition }}
+ */
+function resolveLane(given) {
+    if (!isPlainObject(given) || typeof given.name !== 'string') {
+        throw new InvalidOptionsError(
+            `enqueue(${JSON.stringify(given)}): the lane must be a lane definition, from defineLane()`,
+        );
+    }
+
+    return { lane: given.name, definition: /** @type {import('./types.js').LaneDefinition} */ (given) };
+}
+
+/**
  * The enqueue side of an instance.
  * @template C
  * @param {EnqueuerOptions<C>} options
@@ -41,8 +52,6 @@ const enqueueToken = createMonotonicUlid();
 export function createEnqueuer({
     adapter,
     tablePrefix,
-    findDefinition,
-    unknownLanes,
     defaults,
     maxPayloadBytes,
     notifyChannel,
@@ -51,28 +60,6 @@ export function createEnqueuer({
     /** @type {Record<string, typeof insertJobsMysql | undefined>} */
     const insertJobsByDialect = { mysql: insertJobsMysql, mariadb: insertJobsMariadb };
     const insertJobs = insertJobsByDialect[adapter.dialect];
-
-    /**
-     * @param {import('./types.js').LaneDefinition | string} given
-     * @returns {{ lane: string, definition: import('./types.js').LaneDefinition | null }}
-     */
-    function resolveLane(given) {
-        if (isPlainObject(given) && typeof given.name === 'string') {
-            return { lane: given.name, definition: given };
-        }
-
-        if (typeof given !== 'string') {
-            throw new InvalidOptionsError('enqueue: the lane must be a lane definition or a lane name');
-        }
-
-        const definition = findDefinition(given);
-
-        if (!definition && unknownLanes === 'reject') {
-            throw new UnknownLaneError(`enqueue("${given}"): the lane is not in "lanes" and not added`);
-        }
-
-        return { lane: given, definition };
-    }
 
     /**
      * @param {C | undefined} connection Undefined: the queue's pool.
@@ -110,7 +97,7 @@ export function createEnqueuer({
 
     /**
      * @param {C} connection
-     * @param {import('./types.js').LaneDefinition | string} given
+     * @param {import('./types.js').LaneDefinition} given
      * @param {readonly { payload: unknown, options?: import('./types.js').EnqueueOptions }[]} items
      * @returns {Promise<import('./types.js').EnqueueResult[]>}
      */

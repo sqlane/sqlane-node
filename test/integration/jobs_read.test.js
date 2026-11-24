@@ -13,7 +13,7 @@ import {
 import { MAX_STACK_LENGTH } from '../../src/error_json.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
-import { handle, testLane, runnerOf } from '../support/runners.js';
+import { handle, runnerOf, schedule, testLane } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 
@@ -309,7 +309,7 @@ describe('jobs.get()', () => {
             globalRateLimits: [sms.cost(2), github.key('t1')],
         });
         const at = new Date('2026-11-11T02:00:00.000Z');
-        const slot = await sqlane.enqueue(testAdapter.pool, testLane('nightly_report'), {}, { slot: { at } });
+        const slot = await sqlane.schedules.runSlot(schedule('nightly_report', { cron: '0 2 * * *' }), { at });
 
         await expect(sqlane.jobs.get(id)).resolves.toMatchObject({
             globalConcurrencyLimits: [{ key: 'all', max: 100 }, { key: 'client:42', max: 2 }],
@@ -320,7 +320,7 @@ describe('jobs.get()', () => {
             scheduledAt: null,
         });
         await expect(sqlane.jobs.get(slot.id)).resolves.toMatchObject({
-            id: 'nightly_report:schedule:2026-11-11T02:00:00.000Z',
+            id: 'nightly_report:schedule:k:2026-11-11T02:00:00.000Z',
             scheduledAt: at,
         });
     });
@@ -664,9 +664,9 @@ describe('jobs.list()', () => {
 });
 
 describe('sqlane.jobs', () => {
-    test('reads before start() and after the close() of a started instance, with unknownLanes: reject; a frozen object',
+    test('reads before start() and after the close() of a started instance, of any lane; a frozen object',
         async () => {
-            const sqlane = await freshSqlane({ unknownLanes: 'reject', lanes: [defineLane({ name: 'known' })] });
+            const sqlane = await freshSqlane();
 
             const { id } = await sqlane.enqueue(testAdapter.pool, testLane('known'), {}, { dedupeKey: 'k1' });
 

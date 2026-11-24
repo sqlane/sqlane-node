@@ -134,7 +134,7 @@ describe('schedules and start()', () => {
     });
 
     test('start() on a closed instance throws a ClosedError first', async () => {
-        const sqlane = createSqlane({ adapter: fakeAdapter().adapter, unknownLanes: 'reject' });
+        const sqlane = createSqlane({ adapter: fakeAdapter().adapter });
 
         runnerOf(sqlane).mount([schedule('tick', { every: '1m' })]);
         await sqlane.close({ deadline: 0 });
@@ -182,15 +182,14 @@ describe('schedules and start()', () => {
         expect(statements.filter(sql => sql.includes('FOR UPDATE'))).toStrictEqual([]);
     });
 
-    test('schedules.list() before start(): the registered schedules, a missing table is an empty one', async () => {
+    test('schedules.list(): the rows only; a missing table is an empty one', async () => {
         const sqlane = createSqlane({ adapter: fakeAdapter({ missingTable: true }).adapter });
 
         expect(Object.isFrozen(sqlane.schedules)).toBe(true);
         await expect(sqlane.schedules.list()).resolves.toStrictEqual([]);
+        // Mounted, not registered yet: no row
         runnerOf(sqlane).mount([schedule('tick', { every: '1m', key: 'a' })]);
-        await expect(sqlane.schedules.list()).resolves.toMatchObject([
-            { id: 'tick:a', lane: 'tick', spec: 'every 60000', registered: true, lastSlotAt: null, lastJobId: null },
-        ]);
+        await expect(sqlane.schedules.list()).resolves.toStrictEqual([]);
     });
 });
 

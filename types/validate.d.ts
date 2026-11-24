@@ -63,13 +63,6 @@ export declare function checkRetention(value: unknown, scope: Scope): void;
  */
 export declare function checkOptionFields(options: Record<string, unknown>, scope: Scope): void;
 /**
- * @param {unknown} value A name, or a definition.
- * @param {string} lane The lane that names it.
- * @param {Scope} scope
- * @returns {string} The failure lane.
- */
-export declare function checkFailureLane(value: unknown, lane: string, { where, ErrorClass }: Scope): string;
-/**
  * @param {unknown} tablePrefix
  * @param {Scope} scope
  */

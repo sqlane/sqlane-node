@@ -50,7 +50,7 @@ export type Dispatcher = {
     }>;
     /**
      * The jobs of the lane that can start now: under its local
-     * limits and the instance's cap.
+     * limits and the runner's cap.
      */
     freeSlots: (entry: HandlerEntry) => number;
     /**
@@ -77,14 +77,14 @@ export type Dispatcher = {
  *     jobs of the lanes, by share within the free slots, and starts them. For drain(). The lanes not handled here, or
  *     paused, are left out.
  * @property {(entry: HandlerEntry) => number} freeSlots The jobs of the lane that can start now: under its local
- *     limits and the instance's cap.
+ *     limits and the runner's cap.
  * @property {() => boolean} claiming A claim runs: it may have counted the free slots before a job ended.
  */
 /**
  * @param {object} params
  * @param {import('./store/store.js').Store} params.store
  * @param {import('./registry.js').Registry} params.registry
- * @param {number} params.localMaxConcurrency The instance's cap.
+ * @param {number} params.localMaxConcurrency The runner's cap.
  * @param {ReadonlyMap<string, unknown>} params.running The jobs that run in this process: each takes a slot.
  * @param {{ leaseMs: number, pollIntervalMs: number }} params.timings
  * @param {() => number} params.random The random start of the tie pointer.
