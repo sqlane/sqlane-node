@@ -73,6 +73,12 @@ async function waitFor(condition, timeoutMs = 5000) {
     }
 }
 
+/** Moves the cursors of the schedules 2 hours back */
+const BACK_2_HOURS = {
+    postgres: (/** @type {string} */ p) => `UPDATE ${p}schedules SET last_slot_at = last_slot_at - interval '2 hours'`,
+    mysql: (/** @type {string} */ p) => `UPDATE ${p}schedules SET last_slot_at = last_slot_at - INTERVAL 2 HOUR`,
+};
+
 /**
  * @param {string} p
  * @returns {Promise<{ id: string, lane: string, status: string }[]>}
@@ -166,4 +172,52 @@ test('drain(): runs the jobs of the mounted lanes that no pause holds', async ()
     await expect(runner.drain()).resolves.toStrictEqual({ completed: 1, retried: 0, failed: 0 });
     runner.resumeLocally(other);
     await expect(runner.drain()).resolves.toStrictEqual({ completed: 1, retried: 0, failed: 0 });
+});
+
+test('schedules.runSlot() without a runner, then the fire of the same slot: one job, which the cursor records',
+    async () => {
+        const { sqlane, runner, p, events } = await freshRunner();
+        const hourly = defineSchedule(defineLane({ name: 'tick' }), { key: 'a', every: '1h', overlap: 'skip' });
+        // A process that registered the schedule before: its cursor goes 2 hours back, the latest slot is due, late
+        const before = createSqlane({ adapter: testAdapter.adapter, tablePrefix: p });
+        const beforeRunner = createRunner(before);
+
+        instances.push(before);
+        beforeRunner.mount([hourly]);
+        await beforeRunner.start();
+        await before.close({ deadline: 0 });
+        await database.query(BACK_2_HOURS[database.family](p));
+
+        const slot = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+        const jobId = `tick:schedule:a:${new Date(slot).toISOString()}`;
+
+        await expect(sqlane.schedules.runSlot(hourly)).resolves.toStrictEqual({ id: jobId, created: true });
+        runner.mount([hourly]);
+        await runner.start();
+        await waitFor(() => events.some(event => event.type === 'schedule_fired'));
+        expect(events.filter(event => event.type === 'schedule_fired')).toMatchObject([{ jobId, late: true }]);
+        // overlap: 'skip' checks the job of the cursor: the job of runSlot()
+        await expect(database.query(`SELECT last_job_id FROM ${p}schedules`)).resolves.toStrictEqual([
+            { last_job_id: jobId },
+        ]);
+        await expect(sqlane.schedules.runSlot(hourly, { at: new Date(slot) })).resolves.toStrictEqual({
+            id: jobId,
+            created: false,
+        });
+        await expect(readJobs(p)).resolves.toStrictEqual([{ id: jobId, lane: 'tick', status: 'pending' }]);
+    });
+
+test('schedules.runSlot(), then drain(): the job of the slot runs, with the payload of the schedule', async () => {
+    const { sqlane, runner } = await freshRunner();
+    const report = defineLane({ name: 'report' });
+    const daily = defineSchedule(report, { key: 'daily', cron: '0 6 * * *', payload: { kind: 'full' } });
+    /** @type {unknown[]} */
+    const payloads = [];
+
+    runner.mount([defineHandler(report, ({ payload }) => {
+        payloads.push(payload);
+    })]);
+    await sqlane.schedules.runSlot(daily, { connection: testAdapter.pool });
+    await expect(runner.drain()).resolves.toStrictEqual({ completed: 1, retried: 0, failed: 0 });
+    expect(payloads).toStrictEqual([{ kind: 'full' }]);
 });

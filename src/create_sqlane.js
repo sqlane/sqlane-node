@@ -6,6 +6,7 @@ import { dropTables, rollbackMigrations, runMigrations } from './migrations.js';
 import { findSchemaProblems, getMigrationStatus } from './schema_status.js';
 import { DEFAULT_MAX_PAYLOAD_BYTES } from './payload.js';
 import { buildRunner } from './create_runner.js';
+import { createRunSlot } from './run_slot.js';
 import { listSchedules } from './schedule_list.js';
 import { checkServer } from './server_check.js';
 import { createJobsApi } from './jobs_api.js';
@@ -231,6 +232,14 @@ export function createSqlane(options) {
         }
     }
 
+    const runSlot = createRunSlot({
+        enqueuer,
+        defaults,
+        maxPayloadBytes,
+        // No connection: committed on the queue's pool
+        onCreated: (connection, lane) => (connection === undefined ? wakeFor(lane, true) : onCreated(connection, lane)),
+    });
+
     /** @type {Promise<void> | null} The check of the server: once per instance, again after a failure */
     let serverChecked = null;
 
@@ -407,6 +416,7 @@ export function createSqlane(options) {
         })),
         schedules: Object.freeze({
             list: () => listSchedules({ store, local: attached?.schedules() ?? new Map() }),
+            runSlot,
         }),
         wake: () => {
             attached?.legacy.wake();

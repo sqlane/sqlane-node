@@ -21,6 +21,11 @@ export type EnqueuerOptions<C> = {
 export type Enqueuer<C> = {
     enqueue: import('./types.js').Sqlane<C>['enqueue'];
     enqueueMany: import('./types.js').Sqlane<C>['enqueueMany'];
+    /**
+     * A built job. No connection: on the queue's pool, in
+     * a transaction of its own.
+     */
+    insertOne: (connection: C | undefined, newJob: import('./new_job.js').NewJob) => Promise<import('./types.js').EnqueueResult>;
 };
 /**
  * @template C
@@ -40,6 +45,9 @@ export type Enqueuer<C> = {
  * @typedef {object} Enqueuer
  * @property {import('./types.js').Sqlane<C>['enqueue']} enqueue
  * @property {import('./types.js').Sqlane<C>['enqueueMany']} enqueueMany
+ * @property {(connection: C | undefined, newJob: import('./new_job.js').NewJob)
+ *     => Promise<import('./types.js').EnqueueResult>} insertOne A built job. No connection: on the queue's pool, in
+ *     a transaction of its own.
  */
 /**
  * The enqueue side of an instance.

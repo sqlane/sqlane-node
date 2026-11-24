@@ -47,6 +47,8 @@ const ulid = createMonotonicUlid();
  * @property {unknown} payload
  * @property {import('./types.js').EnqueueOptions | undefined} options
  * @property {number} maxPayloadBytes
+ * @property {{ at: number, key: string | null }} [slot] The slot of a schedule: the job gets its dedupe key, which an
+ *     enqueue cannot give (its prefix is reserved). For the scheduler and `schedules.runSlot()`.
  */
 
 /**
@@ -121,7 +123,7 @@ function getSchedule(options, where) {
  * @param {NewJobParams} params
  * @returns {NewJob}
  */
-export function buildNewJob({ lane, definition, defaults, payload, options = {}, maxPayloadBytes }) {
+export function buildNewJob({ lane, definition, defaults, payload, options = {}, maxPayloadBytes, slot }) {
     const where = `enqueue(${JSON.stringify(lane)})`;
 
     if (typeof lane !== 'string' || !NAME_REGEXP.test(lane)) {
@@ -145,6 +147,10 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
         }
 
         dedupeKey = slotDedupeKeyFrom(options.slot, where);
+    }
+
+    if (slot) {
+        dedupeKey = slotDedupeKeyOf(slot.key, slot.at);
     }
 
     const payloadJson = serializePayload(payload, maxPayloadBytes, where);

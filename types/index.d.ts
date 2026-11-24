@@ -9,7 +9,7 @@ export type Adapter<C> = import('./types.js').Adapter<C>;
 export type Sqlane<C> = import('./types.js').Sqlane<C>;
 export type SqlaneJobs<C = any> = import('./sqlane.js').SqlaneJobs<C>;
 export type SqlaneLanes = import('./sqlane.js').SqlaneLanes;
-export type SqlaneSchedules = import('./sqlane.js').SqlaneSchedules;
+export type SqlaneSchedules<C = any> = import('./sqlane.js').SqlaneSchedules<C>;
 export type SqlaneSchema = import('./sqlane.js').SqlaneSchema;
 export type SqlaneOptions<C> = import('./types.js').SqlaneOptions<C>;
 export type Jsonable<T> = import('./types.js').Jsonable<T>;
@@ -57,6 +57,7 @@ export type KeyStatsPage = import('./types.js').KeyStatsPage;
 export type Logger = import('./types.js').Logger;
 export type MigrateOptions = import('./types.js').MigrateOptions;
 export type RollbackOptions = import('./types.js').RollbackOptions;
+export type RunSlotOptions<C = any> = import('./types.js').RunSlotOptions<C>;
 export type DropOptions = import('./types.js').DropOptions;
 export type MigrationStatus = import('./types.js').MigrationStatus;
 export type SchemaProblem = import('./types.js').SchemaProblem;
@@ -86,7 +87,10 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  * @template [C=any]
  */
 /** @typedef {import('./sqlane.js').SqlaneLanes} SqlaneLanes */
-/** @typedef {import('./sqlane.js').SqlaneSchedules} SqlaneSchedules */
+/**
+ * @typedef {import('./sqlane.js').SqlaneSchedules<C>} SqlaneSchedules
+ * @template [C=any]
+ */
 /** @typedef {import('./sqlane.js').SqlaneSchema} SqlaneSchema */
 /**
  * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions
@@ -170,6 +174,10 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').RollbackOptions} RollbackOptions */
+/**
+ * @typedef {import('./types.js').RunSlotOptions<C>} RunSlotOptions
+ * @template [C=any]
+ */
 /** @typedef {import('./types.js').DropOptions} DropOptions */
 /** @typedef {import('./types.js').MigrationStatus} MigrationStatus */
 /** @typedef {import('./types.js').SchemaProblem} SchemaProblem */

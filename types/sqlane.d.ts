@@ -1,4 +1,4 @@
-import type { BulkOptions, BulkResult, CloseOptions, DrainOptions, DrainResult, DropOptions, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, Handler, HandlerPayload, JobFilter, JobPage, JobRecord, JobSelector, KeyStatsOptions, KeyStatsPage, LaneDefinition, LaneHandler, LaneRunStatus, LaneStats, ListJobsOptions, MigrateOptions, MigrationStatus, RetryOptions, RollbackOptions, ScheduleBaseOptions, ScheduleDefinition, ScheduleInfo, SchedulePayload, ScheduleRunStatus, ScheduleTiming, SchemaProblems } from './types.js';
+import type { BulkOptions, BulkResult, CloseOptions, DrainOptions, DrainResult, DropOptions, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, Handler, HandlerPayload, JobFilter, JobPage, JobRecord, JobSelector, KeyStatsOptions, KeyStatsPage, LaneDefinition, LaneHandler, LaneRunStatus, LaneStats, ListJobsOptions, MigrateOptions, MigrationStatus, RetryOptions, RollbackOptions, RunSlotOptions, ScheduleBaseOptions, ScheduleDefinition, ScheduleInfo, SchedulePayload, ScheduleRunStatus, ScheduleTiming, SchemaProblems } from './types.js';
 /**
  * The tables of sqlane: `sqlane.schema`. Each migration is tagged with the lowest version of sqlane that ships it.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate | schema}
@@ -158,16 +158,30 @@ export interface SqlaneJobs<C = any> {
     keyStats(options?: KeyStatsOptions): Promise<KeyStatsPage>;
 }
 /**
- * The schedules: `sqlane.schedules`. Before `start()` and after `close()` too.
+ * The schedules in the database: `sqlane.schedules`. No runner needed, before `start()` and after `close()` too.
+ * @template C The connections that `runSlot` accepts as `connection`: those of the adapter.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#scheduleslist | schedules}
  */
-export interface SqlaneSchedules {
+export interface SqlaneSchedules<C = any> {
     /**
      * Lists the schedules of the table and those registered in this process, sorted by id. It works before `start()`.
      * @returns The schedules. `registered: false`: a schedule of another service, or one removed from the code.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#scheduleslist | schedules.list}
      */
     list(): Promise<ScheduleInfo[]>;
+    /**
+     * Enqueues a slot of a schedule by hand, as the scheduler would: the payload of the schedule, the dedupe key of the
+     * slot, the options of its lane. A second run of the slot, or its fire, gives `created: false`. Due now: it ignores
+     * the jitter and `overlap`, and moves no cursor. For tests (then `runner.drain()`) and for admin tasks; no runner
+     * needed. The default slot comes from the clock of this process; the scheduler uses the clock of the database.
+     * @param schedule A schedule definition, from `defineSchedule()`: it holds the payload.
+     * @param options `at`: a slot of the schedule, not in the future (default: the latest slot at or before now);
+     *     `connection`: your transaction, or a pool (default: the queue's pool). An `at` off the spec or in the
+     *     future: an `InvalidOptionsError`.
+     * @returns The id of the job of the slot, and `created: false` when it exists already.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulesrunslot | schedules.runSlot}
+     */
+    runSlot(schedule: ScheduleDefinition<any>, options?: RunSlotOptions<C>): Promise<EnqueueResult>;
 }
 /**
  * A sqlane instance, made by `createSqlane()`: one per process. It enqueues jobs, runs the handlers of this process,
@@ -243,8 +257,8 @@ export interface Sqlane<C> {
     readonly lanes: SqlaneLanes;
     /** The jobs in the database: read them; retry, cancel or remove them in bulk. */
     readonly jobs: SqlaneJobs<C>;
-    /** The schedules: list them. */
-    readonly schedules: SqlaneSchedules;
+    /** The schedules: list them; run a slot by hand. */
+    readonly schedules: SqlaneSchedules<C>;
     /** The `sqlane_*` tables: create, update, roll back or drop them; check them. */
     readonly schema: SqlaneSchema;
     /**

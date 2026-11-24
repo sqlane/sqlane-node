@@ -378,6 +378,16 @@
  */
 
 /**
+ * The options of `sqlane.schedules.runSlot()`.
+ * @template [C=any]
+ * @typedef {object} RunSlotOptions
+ * @property {Date | undefined} [at] The slot: a slot of the schedule, not in the future. Default: the latest slot at
+ *     or before now, by the clock of this process.
+ * @property {C | undefined} [connection] Your transaction, or a connection in one, of the adapter's library; or a
+ *     pool. Default: the queue's pool.
+ */
+
+/**
  * @typedef {object} ScheduleInfo
  * @property {string} id `<lane>` or `<lane>:<key>`.
  * @property {string} lane The lane.

@@ -310,14 +310,12 @@ export function createScheduler({
      * @returns {import('./new_job.js').NewJob}
      */
     function buildJob(entry, candidate, late) {
-        const at = new Date(candidate.slot);
-        const slot = entry.key === null ? { at } : { at, key: entry.key };
         /** @type {import('./types.js').EnqueueOptions} */
-        let options = late ? { slot } : { slot, runAt: new Date(candidate.due) };
+        let options = late ? {} : { runAt: new Date(candidate.due) };
 
         // A late catch-up keeps its jitter: the schedules do not all run in the same second after an outage
         if (late && entry.jitterMs) {
-            options = { slot, delay: candidate.due - candidate.slot };
+            options = { delay: candidate.due - candidate.slot };
         }
 
         return buildNewJob({
@@ -327,6 +325,7 @@ export function createScheduler({
             payload: entry.payload,
             options,
             maxPayloadBytes,
+            slot: { at: candidate.slot, key: entry.key },
         });
     }
 

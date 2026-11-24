@@ -27,6 +27,9 @@ const enqueueToken = createMonotonicUlid();
  * @typedef {object} Enqueuer
  * @property {import('./types.js').Sqlane<C>['enqueue']} enqueue
  * @property {import('./types.js').Sqlane<C>['enqueueMany']} enqueueMany
+ * @property {(connection: C | undefined, newJob: import('./new_job.js').NewJob)
+ *     => Promise<import('./types.js').EnqueueResult>} insertOne A built job. No connection: on the queue's pool, in
+ *     a transaction of its own.
  */
 
 /**
@@ -72,6 +75,40 @@ export function createEnqueuer({
     }
 
     /**
+     * @param {C | undefined} connection Undefined: the queue's pool.
+     * @param {import('./new_job.js').NewJob[]} jobs Distinct ids.
+     * @returns {Promise<Set<string>>} The ids that it created.
+     */
+    function insertJobsOf(connection, jobs) {
+        const token = enqueueToken();
+
+        if (insertJobs) {
+            const mysqlInsert = insertJobs;
+            /**
+             * @param {import('./types.js').Executor} executor
+             * @returns {Promise<Set<string>>}
+             */
+            const write = executor => mysqlInsert(executor, tablePrefix, jobs, token);
+
+            return connection === undefined
+                ? adapter.queueTransaction(write)
+                : adapter.inTransaction(connection, write);
+        }
+
+        // PostgreSQL: one statement, with its NOTIFY; atomic outside a transaction
+        const options = { enqueueToken: token, notifyChannel };
+
+        if (connection === undefined) {
+            return insertJobsPostgres(adapter.queue, tablePrefix, jobs, options);
+        }
+
+        return (adapter.inStatement ?? adapter.inTransaction)(
+            connection,
+            executor => insertJobsPostgres(executor, tablePrefix, jobs, options),
+        );
+    }
+
+    /**
      * @param {C} connection
      * @param {import('./types.js').LaneDefinition | string} given
      * @param {readonly { payload: unknown, options?: import('./types.js').EnqueueOptions }[]} items
@@ -101,25 +138,7 @@ export function createEnqueuer({
             return [];
         }
 
-        const token = enqueueToken();
-        const jobs = [...firstById.values()];
-        /** @type {Set<string>} */
-        let created;
-
-        if (insertJobs) {
-            created = await adapter.inTransaction(
-                connection,
-                executor => insertJobs(executor, tablePrefix, jobs, token),
-            );
-        } else {
-            // PostgreSQL: one statement, with its NOTIFY; atomic outside a transaction
-            const options = { enqueueToken: token, notifyChannel };
-
-            created = await (adapter.inStatement ?? adapter.inTransaction)(
-                connection,
-                executor => insertJobsPostgres(executor, tablePrefix, jobs, options),
-            );
-        }
+        const created = await insertJobsOf(connection, [...firstById.values()]);
 
         return newJobs.map(newJob => ({
             id: newJob.id,
@@ -140,5 +159,9 @@ export function createEnqueuer({
 
             return insert(connection, lane, items);
         },
+        insertOne: async (connection, newJob) => ({
+            id: newJob.id,
+            created: (await insertJobsOf(connection, [newJob])).has(newJob.id),
+        }),
     };
 }

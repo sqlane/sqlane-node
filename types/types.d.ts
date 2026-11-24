@@ -533,6 +533,18 @@ export type SchedulePayload<J, P> = [DeclaredPayload<J>] extends [never] ? {
 } : {
     payload: NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>>;
 };
+export type RunSlotOptions<C = any> = {
+    /**
+     * The slot: a slot of the schedule, not in the future. Default: the latest slot at
+     * or before now, by the clock of this process.
+     */
+    at?: Date | undefined;
+    /**
+     * Your transaction, or a connection in one, of the adapter's library; or a
+     * pool. Default: the queue's pool.
+     */
+    connection?: C | undefined;
+};
 export type ScheduleInfo = {
     /**
      * `<lane>` or `<lane>:<key>`.
@@ -1522,6 +1534,15 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * @template P
  * @typedef {[DeclaredPayload<J>] extends [never] ? { payload?: P & NoInfer<Jsonable<P>> }
  *     : { payload: NoInfer<DeclaredPayload<J> & Jsonable<DeclaredPayload<J>>> }} SchedulePayload
+ */
+/**
+ * The options of `sqlane.schedules.runSlot()`.
+ * @template [C=any]
+ * @typedef {object} RunSlotOptions
+ * @property {Date | undefined} [at] The slot: a slot of the schedule, not in the future. Default: the latest slot at
+ *     or before now, by the clock of this process.
+ * @property {C | undefined} [connection] Your transaction, or a connection in one, of the adapter's library; or a
+ *     pool. Default: the queue's pool.
  */
 /**
  * @typedef {object} ScheduleInfo

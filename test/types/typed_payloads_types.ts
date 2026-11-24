@@ -152,5 +152,14 @@ export async function typedPayloadsTypes() {
     // @ts-expect-error pollInterval is an option of the sqlane
     createRunner(sqlane, { pollInterval: '1s' });
 
+    // A slot by hand: a schedule definition (it holds the payload), the connections of the adapter
+    expectTypeOf(await sqlane.schedules.runSlot(daily, { at: new Date(), connection: pool }))
+        .toEqualTypeOf<{ id: string; created: boolean }>();
+    await sqlane.schedules.runSlot(daily);
+    // @ts-expect-error an id is not a definition: runSlot needs the payload
+    await sqlane.schedules.runSlot('build_report:daily');
+    // @ts-expect-error a slot is a Date
+    await sqlane.schedules.runSlot(daily, { at: '2026-01-01T00:00:00Z' });
+
     expectTypeOf<Page>().toEqualTypeOf<Report>();
 }

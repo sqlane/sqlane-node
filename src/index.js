@@ -41,7 +41,10 @@ export {
  * @template [C=any]
  */
 /** @typedef {import('./sqlane.js').SqlaneLanes} SqlaneLanes */
-/** @typedef {import('./sqlane.js').SqlaneSchedules} SqlaneSchedules */
+/**
+ * @typedef {import('./sqlane.js').SqlaneSchedules<C>} SqlaneSchedules
+ * @template [C=any]
+ */
 /** @typedef {import('./sqlane.js').SqlaneSchema} SqlaneSchema */
 /**
  * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions
@@ -125,6 +128,10 @@ export {
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').RollbackOptions} RollbackOptions */
+/**
+ * @typedef {import('./types.js').RunSlotOptions<C>} RunSlotOptions
+ * @template [C=any]
+ */
 /** @typedef {import('./types.js').DropOptions} DropOptions */
 /** @typedef {import('./types.js').MigrationStatus} MigrationStatus */
 /** @typedef {import('./types.js').SchemaProblem} SchemaProblem */
