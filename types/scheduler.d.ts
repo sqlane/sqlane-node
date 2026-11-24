@@ -115,6 +115,10 @@ export type Scheduler = {
     remove: (entry: ScheduleEntry) => void;
     has: (id: string) => boolean;
     /**
+     * By id.
+     */
+    entries: () => ReadonlyMap<string, ScheduleEntry>;
+    /**
      * Builds a test job of the entry: a ConfigError for a
      * payload or limits that its fires would refuse.
      */
@@ -142,7 +146,6 @@ export type Scheduler = {
      * Clears the timer, waits for the steps in flight.
      */
     stop: () => Promise<void>;
-    list: () => Promise<import('./types.js').ScheduleInfo[]>;
     /**
      * The registration of start() failed: logged as the fires are.
      */
@@ -196,6 +199,7 @@ export type FireOutcome = {
  * @property {(entry: ScheduleEntry) => void} remove Fires the entry no more, if it is still the one of its id. A fire
  *     in flight completes with it.
  * @property {(id: string) => boolean} has
+ * @property {() => ReadonlyMap<string, ScheduleEntry>} entries By id.
  * @property {(entry: ScheduleEntry, where: string) => void} check Builds a test job of the entry: a ConfigError for a
  *     payload or limits that its fires would refuse.
  * @property {() => void} prepare At start(): resolves the definitions, and builds a test job of each schedule.
@@ -206,7 +210,6 @@ export type FireOutcome = {
  * @property {() => void} startRegistering Registers now, then arms the timer: start() did not register (the check of
  *     the server did not run).
  * @property {() => Promise<void>} stop Clears the timer, waits for the steps in flight.
- * @property {() => Promise<import('./types.js').ScheduleInfo[]>} list
  * @property {(error: unknown) => void} reportFailure The registration of start() failed: logged as the fires are.
  * @property {() => number} size
  */

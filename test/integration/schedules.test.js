@@ -958,7 +958,8 @@ describe('schedules end to end', () => {
         sqlane.schedule('tick', { every: '1s', key: 'k' });
 
         await expect(sqlane.schedules.list()).resolves.toMatchObject([
-            { id: 'other', lane: 'other', spec: 'every 3600000', registered: false, nextAt: null, lastJobId: null },
+            // Its next slot by its stored spec
+            { id: 'other', lane: 'other', spec: 'every 3600000', registered: false, nextAt: expect.any(Date), lastJobId: null },
             { id: 'tick:k', lane: 'tick', registered: true, lastSlotAt: null, lastJobId: null },
         ]);
         await sqlane.start();

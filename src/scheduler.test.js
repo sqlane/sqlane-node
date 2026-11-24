@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { resolveDefaults } from './defaults.js';
 import { parseCron } from './cron.js';
 import { checkSchedule, dueOf } from './schedule.js';
+import { listSchedules } from './schedule_list.js';
 import { createScheduler } from './scheduler.js';
 import { decideSlot } from './store/fire_slots.js';
 
@@ -252,6 +253,8 @@ function failWith(database, id) {
  *     error: import('vitest').Mock }} logger
  * @property {() => Promise<void>} start Registers and starts, as createSqlane.start() does.
  * @property {import('./schedule.js').ScheduleEntry[]} entries
+ * @property {() => Promise<import('./types.js').ScheduleInfo[]>} list As `sqlane.schedules.list()` lists them, with the
+ *     schedules of this scheduler.
  */
 
 /**
@@ -295,7 +298,9 @@ function setup({ schedules, localOffsetMs = 0, offset = { ms: localOffsetMs }, t
         await vi.advanceTimersByTimeAsync(0);
     };
 
-    return { scheduler, database, events, created, logger, start, entries };
+    const list = () => listSchedules({ store, local: scheduler.entries() });
+
+    return { scheduler, database, events, created, logger, start, entries, list };
 }
 
 /**
@@ -390,7 +395,7 @@ describe('start', () => {
 
 describe('tick', () => {
     test('the schedules due at the same instant go in one fire; nextAt advances', async () => {
-        const { database, scheduler, start, events, created } = started({
+        const { database, start, events, created, list } = started({
             schedules: [['a', { every: '1m' }], ['b', { cron: '* * * * *' }], ['c', { every: '1h' }]],
         });
 
@@ -411,7 +416,7 @@ describe('tick', () => {
             jobId: 'a:schedule:2026-06-01T12:01:00.000Z',
         });
         expect(created).toStrictEqual(['a', 'b', 'a', 'b']);
-        await expect(scheduler.list()).resolves.toMatchObject([
+        await expect(list()).resolves.toMatchObject([
             { id: 'a', nextAt: new Date('2026-06-01T12:03:00.000Z'), lastSlotAt: new Date('2026-06-01T12:02:00.000Z') },
             { id: 'b', nextAt: new Date('2026-06-01T12:03:00.000Z') },
             { id: 'c', nextAt: new Date('2026-06-01T13:00:00.000Z'), lastJobId: null },
@@ -511,7 +516,7 @@ describe('tick', () => {
     });
 
     test('a schedule with no slot within the horizon is left out of the timer', async () => {
-        const { database, scheduler, start, entries } = started({ schedules: [['never', { cron: '0 0 1 1 *' }]] });
+        const { database, start, entries, list } = started({ schedules: [['never', { cron: '0 0 1 1 *' }]] });
 
         // As if the cron had no slot within the horizon
         Object.assign(entries[0].timing, { cron: parseCron('0 0 30 2 *') });
@@ -519,7 +524,7 @@ describe('tick', () => {
         await vi.advanceTimersByTimeAsync(10 * MINUTE_MS);
 
         expect(database.fires).toStrictEqual([]);
-        await expect(scheduler.list()).resolves.toMatchObject([{ id: 'never', nextAt: null }]);
+        await expect(list()).resolves.toMatchObject([{ id: 'never', nextAt: null }]);
     });
 });
 
@@ -795,6 +800,20 @@ describe('stop', () => {
 });
 
 describe('add and list', () => {
+    test('a row whose spec is not the one of the schedule here: its next slot by its spec, without the jitter of here',
+        async () => {
+            const { list, database } = setup({ schedules: [['tick', { every: '1h', jitter: '30m' }]] });
+
+            database.rows.set('tick', { id: 'tick', lane: 'tick', spec: 'every 60000', lastSlotMs: 5, lastJobId: null });
+
+            await expect(list()).resolves.toMatchObject([{
+                id: 'tick',
+                spec: 'every 60000',
+                nextAt: new Date('2026-06-01T12:01:00.000Z'),
+                nextRunAt: new Date('2026-06-01T12:01:00.000Z'),
+            }]);
+        });
+
     test('a second schedule with the same id throws', () => {
         const { scheduler } = setup({ schedules: [['tick', { every: '1m' }]] });
 
@@ -802,19 +821,20 @@ describe('add and list', () => {
         expect(() => scheduler.add(checkSchedule('tick', { every: '1h', key: 'k' }))).not.toThrow();
     });
 
-    test('lists the rows of other services, and the registered schedules without a row', async () => {
-        const { scheduler, database } = setup({ schedules: [['tick', { every: '1m' }]] });
+    test('lists the rows of other services, their next slot by their spec, and the schedules without a row', async () => {
+        const { list, database } = setup({ schedules: [['tick', { every: '1m' }]] });
 
         database.rows.set('gone', { id: 'gone', lane: 'gone', spec: 'every 1000', lastSlotMs: 5, lastJobId: 'gone:x' });
 
-        await expect(scheduler.list()).resolves.toStrictEqual([
+        await expect(list()).resolves.toStrictEqual([
             {
                 id: 'gone',
                 lane: 'gone',
                 spec: 'every 1000',
                 registered: false,
-                nextAt: null,
-                nextRunAt: null,
+                // By its stored spec: the jitter of a schedule of another process is not known
+                nextAt: new Date('2026-06-01T12:00:01.000Z'),
+                nextRunAt: new Date('2026-06-01T12:00:01.000Z'),
                 lastSlotAt: new Date(5),
                 lastJobId: 'gone:x',
             },
@@ -832,11 +852,11 @@ describe('add and list', () => {
     });
 
     test('a missing table is an empty one', async () => {
-        const { scheduler, database } = setup({ schedules: [] });
+        const { list, database } = setup({ schedules: [] });
 
         database.failRead = Object.assign(new Error('no table'), { code: '42P01' });
 
-        await expect(scheduler.list()).resolves.toStrictEqual([]);
+        await expect(list()).resolves.toStrictEqual([]);
     });
 });
 
@@ -856,7 +876,7 @@ describe('jitter', () => {
 
     test.each(['once', 'skip'])('a restart inside the window, missed %s: the slot fires at its due time, on time', async (missed) => {
         const options = { ...hourly, missed };
-        const { database, start, scheduler } = started({ schedules: [['job_0', options]] });
+        const { database, start, list } = started({ schedules: [['job_0', options]] });
         const due = dueTime('job_0', options, '2026-06-01T10:00:00Z');
 
         database.rows.set('job_0', {
@@ -866,7 +886,7 @@ describe('jitter', () => {
         await start();
 
         expect(database.fires).toStrictEqual([]);
-        await expect(scheduler.list()).resolves.toMatchObject([{
+        await expect(list()).resolves.toMatchObject([{
             nextAt: new Date('2026-06-01T10:00:00Z'),
             nextRunAt: new Date(due),
         }]);
@@ -1010,12 +1030,12 @@ describe('review fixes', () => {
     });
 
     test('schedules.list() before start(), with jitter: a slot that has come and is not due yet', async () => {
-        const { scheduler } = setup({ schedules: [['job_0', { every: '1h', jitter: '59m' }]] });
+        const { list } = setup({ schedules: [['job_0', { every: '1h', jitter: '59m' }]] });
         const due = dueTime('job_0', { every: '1h', jitter: '59m' }, '2026-06-01T10:00:00Z');
 
         vi.setSystemTime(Date.parse('2026-06-01T10:20:00Z'));
 
-        await expect(scheduler.list()).resolves.toMatchObject([{
+        await expect(list()).resolves.toMatchObject([{
             nextAt: new Date('2026-06-01T10:00:00Z'),
             nextRunAt: new Date(due),
         }]);

@@ -5,15 +5,13 @@ import { ClosedError, ConfigError } from './errors.js';
 import { dropTables, rollbackMigrations, runMigrations } from './migrations.js';
 import { findSchemaProblems, getMigrationStatus } from './schema_status.js';
 import { DEFAULT_MAX_PAYLOAD_BYTES } from './payload.js';
-import { createRegistry } from './registry.js';
-import { createRunner } from './runner.js';
-import { checkSchedule } from './schedule.js';
-import { createScheduler } from './scheduler.js';
+import { buildRunner } from './create_runner.js';
+import { listSchedules } from './schedule_list.js';
 import { checkServer } from './server_check.js';
 import { createJobsApi } from './jobs_api.js';
 import { createBulk } from './jobs_bulk.js';
+import { setInternals } from './sqlane_internals.js';
 import { createStore } from './store/store.js';
-import { isMissingTableError } from './transient_error.js';
 import { checkDuration, checkInteger, checkObject, checkTablePrefix, isPlainObject } from './validate.js';
 
 const OPTION_NAMES = [
@@ -124,46 +122,45 @@ export function createSqlane(options) {
     const pollIntervalMs = checkDuration(options.pollInterval ?? '5s', '"pollInterval"', scope, true);
     const lanesByName = indexLanes(options.lanes ?? [], scope);
     const defaults = resolveDefaults(options.defaults);
-    const registry = createRegistry({
-        lanesByName,
-        defaultTimeoutMs: defaults.timeoutMs,
-    });
     const hint = resolveHint(adapter, options.hint);
+    const { logger, onEvent } = options;
     /**
      * An error of an optimization (hints, wakes): logged as a warning, never thrown.
      * @param {string} operation
      * @param {unknown} error
      */
     const reportError = (operation, error) => {
-        options.logger?.warn({ error, operation }, `sqlane: ${operation} failed`);
-        options.onEvent?.({ type: 'error', operation, error });
+        logger?.warn({ error, operation }, `sqlane: ${operation} failed`);
+        onEvent?.({ type: 'error', operation, error });
+    };
+    /**
+     * Calls `onEvent`; logs what it throws.
+     * @param {import('./types.js').SqlaneEvent} event
+     */
+    const emit = (event) => {
+        try {
+            onEvent?.(event);
+        } catch (error) {
+            logger?.error({ error }, 'sqlane: onEvent threw');
+        }
     };
     const hintChannel = createHintChannel({ hint, channel: `${tablePrefix}ready`, reportError });
     // NOTIFY in the enqueue transaction: no publish after the enqueue
     const notifyChannel = adapter.notify ? `${tablePrefix}ready` : null;
     // Undocumented, for the tests of sqlane
-    const testTimings = /** @type {{ timings?: object }} */ (options).timings;
+    const testTimings = /** @type {{ timings?: Record<string, any> }} */ (options).timings ?? {};
     // Undocumented, for the tests of sqlane: in place of the version of package.json
     const { installedVersion } = /** @type {{ installedVersion?: string }} */ (options);
-    const store = createStore(adapter, tablePrefix, options.logger);
-    const runner = createRunner({
-        store,
-        registry,
-        localMaxConcurrency,
-        defaults,
-        cleanup,
-        logger: options.logger,
-        onEvent: options.onEvent,
-        hintChannel,
-        hintsAfterCommit: Boolean(adapter.notify),
-        timings: { pollIntervalMs, ...testTimings },
-        // Undocumented, for the tests of sqlane: the random start of the tie pointer
-        random: /** @type {{ random?: () => number }} */ (testTimings ?? {}).random ?? Math.random,
-    });
+    const store = createStore(adapter, tablePrefix, logger);
+    /** @type {import('./sqlane_internals.js').AttachedRunner | null} The runner of this process, if any */
+    let attached = null;
+    let closed = false;
+    /** @type {Promise<void> | null} */
+    let closePromise = null;
     const enqueuer = createEnqueuer({
         adapter,
         tablePrefix,
-        findDefinition: registry.findDefinition,
+        findDefinition: name => lanesByName.get(name) ?? attached?.findDefinition(name) ?? null,
         unknownLanes,
         defaults,
         maxPayloadBytes,
@@ -176,13 +173,13 @@ export function createSqlane(options) {
      */
     const wakeFor = (lane, committed) => {
         if (committed) {
-            runner.onCommitted([lane]);
+            attached?.onCommitted([lane]);
         } else {
-            runner.onEnqueued([lane]);
+            attached?.onEnqueued([lane]);
         }
 
         // A process sends a hint only for the jobs that it cannot start itself
-        if (!notifyChannel && !runner.canStartNow(lane)) {
+        if (!notifyChannel && !attached?.canStartNow(lane)) {
             hintChannel.publish(lane);
         }
     };
@@ -211,22 +208,29 @@ export function createSqlane(options) {
         }
     };
 
-    const scheduler = createScheduler({
-        store,
-        defaults,
-        maxPayloadBytes,
-        findDefinition: registry.findDefinition,
-        unknownLanes,
-        notifyChannel,
-        onCreated: lane => wakeFor(lane, true),
-        emit: runner.emit,
-        logger: options.logger,
-        timings: /** @type {{ schedules?: object }} */ (testTimings ?? {}).schedules,
-    });
-    /** @type {Promise<void> | null} */
-    let startPromise = null;
-    /** @type {Promise<void> | null} */
-    let closePromise = null;
+    /**
+     * Makes pending the jobs blocked on the concurrency keys, as far as the keys have room, and wakes their lanes here
+     * and in the other processes. Never rejects: an error is reported.
+     * @param {string[]} keys
+     * @returns {Promise<void>}
+     */
+    async function unblockKeys(keys) {
+        try {
+            const lanes = await store.unblock([...new Set(keys)]);
+
+            if (lanes.length) {
+                attached?.wake(lanes);
+
+                for (const lane of lanes) {
+                    hintChannel.publish(lane);
+                }
+            }
+        } catch (error) {
+            logger?.error({ error, operation: 'unblock' }, 'sqlane: unblock failed');
+            emit({ type: 'error', operation: 'unblock', error });
+        }
+    }
+
     /** @type {Promise<void> | null} The check of the server: once per instance, again after a failure */
     let serverChecked = null;
 
@@ -238,7 +242,7 @@ export function createSqlane(options) {
     function checkServerOnce(where) {
         serverChecked ??= (async () => {
             try {
-                await checkServer(adapter, where, options.logger);
+                await checkServer(adapter, where, logger);
             } catch (error) {
                 serverChecked = null;
                 throw error;
@@ -254,91 +258,63 @@ export function createSqlane(options) {
      * @param {string} where The caller, for the errors.
      */
     function checkSchemaChange(where) {
-        if (runner.isClosed()) {
+        if (closed) {
             throw new ClosedError(`${where} after close()`);
         }
 
-        if (!runner.isIdle() || startPromise) {
+        if (attached?.isBusy()) {
             throw new ConfigError(`${where} while started or draining: run it on an instance that is not started`);
         }
     }
 
+    /** @type {import('./sqlane_internals.js').SqlaneInternals} */
+    const internals = {
+        adapter,
+        tablePrefix,
+        store,
+        defaults,
+        maxPayloadBytes,
+        pollIntervalMs,
+        cleanup,
+        testTimings,
+        logger,
+        onEvent,
+        hintChannel,
+        notifyChannel,
+        lanesByName,
+        unknownLanes,
+        wakeFor,
+        reportError,
+        checkServerOnce,
+        isClosed: () => closed,
+        attach: (runner) => {
+            if (attached) {
+                throw new ConfigError('createRunner(): this sqlane has a runner already: one runner per sqlane');
+            }
+
+            attached = runner;
+        },
+    };
+
     /**
-     * Registers the schedules, then starts the runner and the scheduler. Nothing runs before the runner starts: a
-     * rejected start leaves no half-started instance.
-     * @returns {Promise<void>}
+     * The runner of the 9.x worker methods: built at the first call of one of them. Until 10.0.
+     * @param {string} where The caller, for the error after close().
+     * @returns {import('./create_runner.js').LegacyRunner}
      */
-    async function startOnce() {
-        scheduler.prepare();
-
-        /** @type {(() => Promise<void>) | null} */
-        let serverCheck = null;
-
-        try {
-            await checkServerOnce('start()');
-        } catch (error) {
-            if (error instanceof ConfigError) {
-                throw error;
+    function legacyRunner(where) {
+        if (!attached) {
+            if (closed) {
+                throw new ClosedError(`${where} after close()`);
             }
 
-            // The database is down: start anyway. The dispatcher checks again before its first turn, and claims
-            // nothing before the check passes; the schedules register once it passes
-            reportError('server_check', error);
-            serverCheck = () => checkServerOnce('start()');
+            buildRunner(internals, { localMaxConcurrency });
         }
 
-        /** @type {import('./store/store.js').ScheduleRead | null} */
-        let read = null;
-
-        // After a failed check, the schedules wait for it: their registration and their fires write too, and a wrong
-        // server gets none of them
-        if (scheduler.size() > 0 && !serverCheck) {
-            try {
-                read = await scheduler.register();
-            } catch (error) {
-                if (isMissingTableError(error)) {
-                    throw new ConfigError(
-                        `start(): the table ${tablePrefix}schedules is missing: run schema.migrate()`,
-                        { cause: error },
-                    );
-                }
-
-                // The database is down: start anyway, the registration retries
-                scheduler.reportFailure(error);
-            }
-        }
-
-        // close() ran during the registration
-        if (runner.isClosed()) {
-            return;
-        }
-
-        if (serverCheck) {
-            const check = serverCheck;
-
-            // The dispatcher runs it before its first turn, again until it passes; never after a ConfigError
-            await runner.start({
-                serverCheck: async () => {
-                    await check();
-
-                    if (!runner.isClosed()) {
-                        scheduler.startRegistering();
-                    }
-                },
-            });
-
-            return;
-        }
-
-        await runner.start();
-
-        // close() ran during runner.start()
-        if (!runner.isClosed()) {
-            scheduler.start(read);
-        }
+        return /** @type {import('./sqlane_internals.js').AttachedRunner} */ (attached).legacy;
     }
 
-    return {
+    /** @type {import('./types.js').Sqlane<C>} */
+    const sqlane = {
         enqueue: async (connection, lane, payload, enqueueOptions) => {
             const result = await enqueuer.enqueue(connection, lane, payload, enqueueOptions);
 
@@ -364,71 +340,29 @@ export function createSqlane(options) {
              * @param {unknown} [addOptions] None: the registry rejects any.
              */
             add(lane, handler, addOptions) {
-                if (runner.isClosed()) {
-                    throw new ClosedError('lanes.add() after close()');
-                }
-
-                if (runner.isStarted()) {
-                    throw new ConfigError('lanes.add() after start(): add all the lanes before start()');
-                }
-
-                if (!runner.isIdle()) {
-                    throw new ConfigError('lanes.add() during drain(): add all the lanes before drain()');
-                }
-
-                registry.add(lane, handler, addOptions);
+                legacyRunner('lanes.add()').add(lane, handler, addOptions);
             },
             stats: () => store.getStats(),
         }),
         schedule: (lane, scheduleOptions) => {
-            if (runner.isClosed()) {
-                throw new ClosedError('schedule() after close()');
-            }
-
-            if (!runner.isIdle() || startPromise) {
-                throw new ConfigError('schedule() after start(): add all the schedules before start()');
-            }
-
-            const entry = checkSchedule(lane, scheduleOptions);
-
-            entry.definition = isPlainObject(lane) ? /** @type {import('./types.js').LaneDefinition} */ (lane) : null;
-            scheduler.add(entry);
+            legacyRunner('schedule()').schedule(lane, scheduleOptions);
         },
-        start: async () => {
-            if (runner.isClosed()) {
-                throw new ClosedError('start() after close()');
-            }
-
-            if (!startPromise && !runner.isIdle()) {
-                return runner.start();
-            }
-
-            startPromise ??= (async () => {
-                try {
-                    await startOnce();
-                } catch (error) {
-                    startPromise = null;
-                    throw error;
-                }
-            })();
-
-            return startPromise;
-        },
-        drain: runner.drain,
-        // The runner closes at once: lanes.add() and start() then throw, and the deadline counts from the call. The
-        // scheduler stops in parallel, and a pending registration of start() ends first.
+        start: async () => legacyRunner('start()').start(),
+        drain: async drainOptions => legacyRunner('drain()').drain(drainOptions),
+        // The runner closes at once: lanes.add() and start() then throw, and the deadline counts from the call. Then
+        // the hint stops.
         close: (closeOptions) => {
+            closed = true;
             closePromise ??= (async () => {
-                const runnerClosed = runner.close(closeOptions);
-
-                await Promise.all([scheduler.stop(), startPromise?.catch(() => {}), runnerClosed]);
+                await attached?.close(closeOptions);
+                await hintChannel.stop();
             })();
 
             return closePromise;
         },
         schema: {
             migrate: async (migrateOptions) => {
-                if (runner.isClosed()) {
+                if (closed) {
                     throw new ClosedError('schema.migrate() after close()');
                 }
 
@@ -466,12 +400,20 @@ export function createSqlane(options) {
             adapter,
             tablePrefix,
             wakeFor,
-            unblockKeys: runner.unblockKeys,
-            emit: runner.emit,
+            unblockKeys,
+            emit,
             reportError,
             notifyChannel,
         })),
-        schedules: Object.freeze({ list: () => scheduler.list() }),
-        wake: () => runner.wake(),
+        schedules: Object.freeze({
+            list: () => listSchedules({ store, local: attached?.schedules() ?? new Map() }),
+        }),
+        wake: () => {
+            attached?.legacy.wake();
+        },
     };
+
+    setInternals(sqlane, internals);
+
+    return sqlane;
 }

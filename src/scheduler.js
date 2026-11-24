@@ -4,7 +4,7 @@
 import { ConfigError, InvalidConcurrencyLimitError, InvalidOptionsError, PayloadTooLargeError } from './errors.js';
 import { buildNewJob } from './new_job.js';
 import { dueOf, latestSlot, nextSlot, pendingSlots, previousSlot } from './schedule.js';
-import { isConnectionError, isMissingTableError, isTransientDbError } from './transient_error.js';
+import { isConnectionError, isTransientDbError } from './transient_error.js';
 
 /** @typedef {import('./schedule.js').ScheduleEntry} ScheduleEntry */
 /** @typedef {import('./store/fire_slots.js').SlotCandidate} SlotCandidate */
@@ -123,6 +123,7 @@ function advance(entry, slot, dbNow) {
  * @property {(entry: ScheduleEntry) => void} remove Fires the entry no more, if it is still the one of its id. A fire
  *     in flight completes with it.
  * @property {(id: string) => boolean} has
+ * @property {() => ReadonlyMap<string, ScheduleEntry>} entries By id.
  * @property {(entry: ScheduleEntry, where: string) => void} check Builds a test job of the entry: a ConfigError for a
  *     payload or limits that its fires would refuse.
  * @property {() => void} prepare At start(): resolves the definitions, and builds a test job of each schedule.
@@ -133,7 +134,6 @@ function advance(entry, slot, dbNow) {
  * @property {() => void} startRegistering Registers now, then arms the timer: start() did not register (the check of
  *     the server did not run).
  * @property {() => Promise<void>} stop Clears the timer, waits for the steps in flight.
- * @property {() => Promise<import('./types.js').ScheduleInfo[]>} list
  * @property {(error: unknown) => void} reportFailure The registration of start() failed: logged as the fires are.
  * @property {() => number} size
  */
@@ -901,15 +901,6 @@ export function createScheduler({
     }
 
     /**
-     * Before start(): the next slot to track, as start() will find it.
-     * @param {ScheduleEntry} entry
-     * @returns {number | null}
-     */
-    function nextBeforeStart(entry) {
-        return entry.jitterMs ? pendingSlots(entry, dbTime()).nextAt : nextSlot(entry, dbTime());
-    }
-
-    /**
      * @param {ScheduleEntry} entry
      * @param {string} where
      */
@@ -957,6 +948,7 @@ export function createScheduler({
             failingIds.delete(id);
         },
         has: id => entries.has(id),
+        entries: () => entries,
         check,
         prepare: () => {
             for (const entry of entries.values()) {
@@ -1040,43 +1032,6 @@ export function createScheduler({
             stopped = true;
             clearTimer();
             await current;
-        },
-        list: async () => {
-            /** @type {import('./store/fire_slots.js').ScheduleRow[]} */
-            let rows = [];
-
-            try {
-                const read = await store.readSchedules(null, now);
-
-                sample(read.clock);
-                ({ rows } = read);
-            } catch (error) {
-                // No table yet: no rows
-                if (!isMissingTableError(error)) {
-                    throw error;
-                }
-            }
-
-            const rowsById = new Map(rows.map(row => [row.id, row]));
-            const ids = [...new Set([...rowsById.keys(), ...entries.keys()])].toSorted();
-
-            return ids.map((id) => {
-                const row = rowsById.get(id);
-                const entry = entries.get(id);
-                const nextAt = entry && (started && !pending.has(id) ? entry.nextAt : nextBeforeStart(entry));
-                const known = entry !== undefined && nextAt !== null && nextAt !== undefined;
-
-                return {
-                    id,
-                    lane: row?.lane ?? /** @type {ScheduleEntry} */ (entry).lane,
-                    spec: row?.spec ?? /** @type {ScheduleEntry} */ (entry).spec,
-                    registered: Boolean(entry),
-                    nextAt: known ? new Date(nextAt) : null,
-                    nextRunAt: known ? new Date(dueAt(entry, nextAt)) : null,
-                    lastSlotAt: row ? new Date(row.lastSlotMs) : null,
-                    lastJobId: row?.lastJobId ?? null,
-                };
-            });
         },
         size: () => entries.size,
     };

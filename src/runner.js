@@ -71,11 +71,13 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
  * @property {() => void} wake
+ * @property {(lanes: string[]) => void} wakeLanes Jobs of the lanes are due: an unblock.
  * @property {(lanes: string[]) => void} onEnqueued An enqueue: its commit is to come.
  * @property {(lanes: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.
  * @property {() => boolean} isClosed
  * @property {() => boolean} isStarted
  * @property {() => boolean} isIdle Neither started, draining nor closed.
+ * @property {() => boolean} isBusy Started, draining or closing: its queries run.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
  * @property {(keys: string[]) => Promise<void>} unblockKeys Makes due the jobs blocked on keys with room, wakes and
  *     hints them. Never rejects: a failure is an `error` event (operation `unblock`).
@@ -608,7 +610,8 @@ export function createRunner({
     async function closeOnce({ startedAt, deadlineMs, exitsByMs, mode }) {
         state = 'closing';
         wakeUp();
-        await hintChannel.stop();
+        // The hint of the sqlane goes on: its enqueues still send it
+        await hintChannel.unlisten();
         await loopDone;
 
         const deadline = startedAt + deadlineMs;
@@ -665,11 +668,13 @@ export function createRunner({
         drain,
         close,
         wake: () => wakeUp(),
+        wakeLanes: lanes => wakeUp(lanes),
         onEnqueued,
         onCommitted,
         isClosed: () => state === 'closing' || state === 'closed',
         isStarted: () => state === 'started',
         isIdle: () => state === 'idle',
+        isBusy: () => state === 'started' || state === 'draining' || state === 'closing',
         emit,
         unblockKeys,
         canStartNow: (lane) => {

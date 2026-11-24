@@ -10,7 +10,8 @@ export const ANY_LANE = '*';
  * @typedef {object} HintChannel
  * @property {(lane: string) => void} publish Fire-and-forget: never throws, never waits.
  * @property {(onMessage: (lane: string) => void) => Promise<void>} listen
- * @property {() => Promise<void>} stop Stops listening; drops the pending messages.
+ * @property {() => Promise<void>} unlisten Stops listening; the publishes go on.
+ * @property {() => Promise<void>} stop Stops listening and publishing; drops the pending messages.
  */
 
 /**
@@ -26,6 +27,27 @@ export function createHintChannel({ hint, channel, reportError }) {
     /** @type {(() => Promise<void>) | null} */
     let unsubscribe = null;
     let stopped = false;
+    /** Each unlisten() ends the subscriptions before it: also one whose subscribe() is pending */
+    let unlistens = 0;
+
+    /**
+     * @param {(() => Promise<void>) | null} end
+     */
+    async function endSubscription(end) {
+        try {
+            await end?.();
+        } catch (error) {
+            reportError('hint_unsubscribe', error);
+        }
+    }
+
+    async function unlisten() {
+        const current = unsubscribe;
+
+        unsubscribe = null;
+        unlistens++;
+        await endSubscription(current);
+    }
 
     /** @param {string} lane */
     function send(lane) {
@@ -80,14 +102,25 @@ export function createHintChannel({ hint, channel, reportError }) {
                 return;
             }
 
-            unsubscribe = await hint.subscribe(channel, (message) => {
+            const seen = unlistens;
+            const end = await hint.subscribe(channel, (message) => {
                 try {
                     onMessage(message);
                 } catch (error) {
                     reportError('hint_message', error);
                 }
             });
+
+            // unlisten() or stop() ran during the subscribe: it ends now
+            if (unlistens !== seen) {
+                await endSubscription(end);
+
+                return;
+            }
+
+            unsubscribe = end;
         },
+        unlisten,
         stop: async () => {
             stopped = true;
 
@@ -96,12 +129,7 @@ export function createHintChannel({ hint, channel, reportError }) {
             }
 
             windows.clear();
-
-            try {
-                await unsubscribe?.();
-            } catch (error) {
-                reportError('hint_unsubscribe', error);
-            }
+            await unlisten();
         },
     };
 }

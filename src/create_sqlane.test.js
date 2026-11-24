@@ -666,6 +666,51 @@ describe.each([
     });
 });
 
+describe('onEvent', () => {
+    test('the events of the sqlane reach it without a runner: an error of an after-commit hook', async () => {
+        /** @type {import('./types.js').SqlaneEvent[]} */
+        const events = [];
+        const failure = new Error('hook');
+        /** @type {import('./types.js').Executor} */
+        const executor = {
+            query: async () => [{ id: 'a:k' }],
+            run: async () => 0,
+        };
+        const adapter = /** @type {import('./types.js').Adapter<any>} */ (/** @type {unknown} */ ({
+            dialect: 'postgres',
+            queue: executor,
+            inTransaction: (/** @type {unknown} */ _connection, /** @type {(executor: unknown) => unknown} */ func) => (
+                func(executor)
+            ),
+            afterCommit: () => {
+                throw failure;
+            },
+        }));
+        const sqlane = createSqlane({ adapter, onEvent: event => events.push(event) });
+
+        await expect(sqlane.enqueue({}, defineLane({ name: 'a' }), {}, { dedupeKey: 'k' }))
+            .resolves.toStrictEqual({ id: 'a:k', created: true });
+        expect(events).toStrictEqual([{ type: 'error', operation: 'after_commit', error: failure }]);
+    });
+
+    test('the events of the runner reach the onEvent of its sqlane: the checks of the server that its dispatcher retries',
+        async () => {
+        /** @type {import('./types.js').SqlaneEvent[]} */
+            const events = [];
+            // No database: each check of the server fails
+            const adapter = /** @type {import('./types.js').Adapter<any>} */ ({ dialect: 'mysql' });
+            const sqlane = createSqlane({ adapter, onEvent: event => events.push(event), pollInterval: '100ms' });
+
+            sqlane.lanes.add('a', () => {});
+            await sqlane.start();
+            await vi.waitFor(() => {
+                expect(events.filter(event => /** @type {{ operation?: string }} */ (event).operation === 'server_check'))
+                    .toHaveLength(3);
+            });
+            await sqlane.close({ deadline: 0 });
+        });
+});
+
 test('schema.drop(): a bad lockTimeout, an InvalidOptionsError before any statement', async () => {
     const { adapter, versionQueries } = fakeAdapter();
     const sqlane = createSqlane({ adapter });

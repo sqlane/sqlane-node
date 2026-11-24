@@ -71,6 +71,10 @@ export type Runner = {
     close: (options?: import('./types.js').CloseOptions) => Promise<void>;
     wake: () => void;
     /**
+     * Jobs of the lanes are due: an unblock.
+     */
+    wakeLanes: (lanes: string[]) => void;
+    /**
      * An enqueue: its commit is to come.
      */
     onEnqueued: (lanes: string[]) => void;
@@ -84,6 +88,10 @@ export type Runner = {
      * Neither started, draining nor closed.
      */
     isIdle: () => boolean;
+    /**
+     * Started, draining or closing: its queries run.
+     */
+    isBusy: () => boolean;
     /**
      * Calls `onEvent`; logs what it throws.
      */
@@ -142,11 +150,13 @@ export type Runner = {
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
  * @property {() => void} wake
+ * @property {(lanes: string[]) => void} wakeLanes Jobs of the lanes are due: an unblock.
  * @property {(lanes: string[]) => void} onEnqueued An enqueue: its commit is to come.
  * @property {(lanes: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.
  * @property {() => boolean} isClosed
  * @property {() => boolean} isStarted
  * @property {() => boolean} isIdle Neither started, draining nor closed.
+ * @property {() => boolean} isBusy Started, draining or closing: its queries run.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
  * @property {(keys: string[]) => Promise<void>} unblockKeys Makes due the jobs blocked on keys with room, wakes and
  *     hints them. Never rejects: a failure is an `error` event (operation `unblock`).
