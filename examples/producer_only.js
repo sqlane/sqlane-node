@@ -1,5 +1,5 @@
-// Scenarios: a producer-only process (a script, another service): no runner, so the dispatcher, the scheduler and the
-// leases are never loaded.
+// Scenarios: a producer-only process (a script, another service): no runner, so it runs no job and fires no
+// schedule.
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { createSqlane } from '@sqlane/core';

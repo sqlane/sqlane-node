@@ -27,7 +27,7 @@ export async function printSchedules() {
 }
 
 /**
- * Runs the report of a day by hand: the same job as the slot, so the scheduler adds no second one. No runner needed.
+ * Runs the report of a day by hand: the same job as the slot, so a runner adds no second one. No runner needed.
  * @param {Date} slot A slot of the schedule, not in the future.
  * @returns {Promise<void>}
  */

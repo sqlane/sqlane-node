@@ -363,8 +363,8 @@
  * @property {Date | null} nextAt The next slot, by the stored spec and the database clock. Null: no next slot, or a
  *     spec that this version cannot read.
  * @property {Date | null} nextRunAt When the job of the next slot will be due: `nextAt` plus its jitter, for a
- *     schedule mounted in this process (the jitter is not stored); else `nextAt`.
- * @property {Date} lastSlotAt The cursor: the last decided slot.
+ *     schedule mounted in this process with the stored spec; else `nextAt`, without jitter.
+ * @property {Date} lastSlotAt The last decided slot.
  * @property {string | null} lastJobId The job of the last enqueued slot.
  */
 

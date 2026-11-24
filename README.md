@@ -333,7 +333,7 @@ runner.mount([
     }),
 ]);
 await runner.start();
-process.once('SIGTERM', () => sqlane.close({ deadline: '30s' })); // closes the runner, then the hint
+process.once('SIGTERM', () => sqlane.close({ deadline: '30s' })); // stops the runner: running jobs get up to 30s
 ```
 
 ## Documentation

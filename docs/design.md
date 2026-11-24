@@ -67,10 +67,9 @@ reasons behind the shape of the API.
 - **Definition apart from the handler.** Producers import a small lane definition, not the handler and its
   dependencies. A lane says what a job is (`defineLane`); a handler says how a process runs it (`defineHandler`); a
   schedule says when one is added (`defineSchedule`), next to its lane. They are frozen values, with no instance.
-- **Two scopes.** `sqlane` (`createSqlane`) acts on the database, for every process; the runner (`createRunner`) acts
-  on this process: its mounts, its local pauses, `start`, `drain`, `close`. A producer creates no runner, so a web
-  process cannot start a worker by mistake. The runner reaches the internals of its sqlane through a map of the
-  package, so a sqlane of another copy of the package is refused at once.
+- **Two scopes.** `sqlane` (`createSqlane`) acts on the database, for every process; the runner (`createRunner`) acts on
+  this process: its mounts, its local pauses, `start`, `drain`, `close`. A producer creates no runner, so a web process
+  cannot start a worker by mistake. A runner takes only a sqlane of its own copy of the package.
 - **Mounts at runtime.** A runner mounts and unmounts handlers and schedules at any time, so a process can change
   what it runs (a feature flag, a tenant, a test) without a restart. A claim and a fire keep the parts they began with;
   a job that runs keeps its handler, and counts toward the lane, by name, after an unmount.
@@ -848,12 +847,12 @@ and the hint subscription. It never ends the app's pool.
 
 ### Schedules
 
-`defineSchedule(lane, options)` defines a schedule next to its lane, and a runner fires it while it mounts it, before
-or after `start()`. A schedule produces **slots**: the instants of a 5-field cron in an IANA time zone, or of a fixed
+`defineSchedule(lane, options)` defines a schedule next to its lane, and a runner fires it while it mounts it, before or
+after `start()`. A schedule produces **slots**: the instants of a 5-field cron in an IANA time zone, or of a fixed
 `every` interval counted from the Unix epoch. Its id is `<lane>:<key>`: the key is required, so the id of a schedule
-never changes when a second schedule of its lane comes. A mount after `start()` registers its schedules on the chain of
-the scheduler (one timer, one step at a time); an unmount drops them, and a fire in flight completes with its entries.
-`sqlane.schedules.runSlot()` enqueues a slot by hand, with the job id of the slot, without a runner.
+never changes when a second schedule of its lane comes. A mount after `start()` fires its schedules at once; an unmount
+stops them, and a fire in flight completes. `sqlane.schedules.runSlot()` enqueues a slot by hand, with the job id of the
+slot, without a runner.
 
 **The timer.** Each started process keeps one timer for the earliest slot of all its schedules. It sleeps at most 1
 minute, which covers wall-clock jumps and the `setTimeout` limit. While no slot is due, a schedule costs no query,
@@ -1067,7 +1066,7 @@ The source files in `src/` have snake_case names. These are the main ones:
 - `create_sqlane.js` is the facade of `@sqlane/core`: the database side (enqueue, jobs, schedules, schemas, the hint,
   the events) and a slot for the runner. `sqlane_internals.js` keeps its internals, for its runner only.
 - `create_runner.js` is the facade of the runner of a process, over a sqlane. `mounts.js` checks and adds the mounts.
-  `create_sqlane.js` imports none of the runner side: only `create_runner.js` does (`src/packaging.test.js`).
+  `create_sqlane.js` imports none of the runner side: only `create_runner.js` does.
 - `define_lane.js`, `define_handler.js` and `define_schedule.js` define the lanes, the handlers and the schedules.
 - `registry.js` keeps the handled lanes: their handlers, weights and local limits, and the running counts by lane.
 - `fair_share.js` shares the free slots between the lanes: `fill()`, `rankNames()`, `chooseRows()`, and `replayTie()` for the choices made in SQL.

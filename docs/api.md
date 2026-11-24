@@ -564,11 +564,10 @@ handlers. To give the handlers a context, such as a logger, call `start()` insid
 ### `Mount.unmount`
 
 `unmount` removes the parts of its mount from this process, at once: the runner stops claiming their lanes and firing
-their schedules. A claim or a fire in flight completes with the old parts; the jobs that run go on to their end, with
-their own timeout and lease renewal, and `close()` waits for them. A job that fails for good after the unmount gets the
-failure lane of the old definition. The lanes can be mounted again at once, with any handler: the jobs of the old one
-that still run count toward the running count of the lane (its share) and toward the local limits that both handlers
-list.
+their schedules. A claim or a fire in flight completes with the old parts; the jobs that run go on to their end, and
+`close()` waits for them. A job that fails for good after the unmount gets the failure lane of the old definition. The
+lanes can be mounted again at once, with any handler: the jobs of the old one that still run count toward the running
+count of the lane (its share) and toward the local limits that both handlers list.
 
 `unmount` is sync and idempotent. During `drain()`, it throws a `ConfigError`; after `close()`, it does nothing.
 
@@ -679,10 +678,6 @@ between a completion and the next claim, so its measured slot time is a little b
 `heavy` of 2, and E (weight 3), on 10 slots. T and R each run 1 job, and E runs 8. With `heavy` at 4, R and E share
 the 9 slots that T leaves by 1:3. A lane can have several local limits: it takes a slot while each of them has room.
 
-**The slots of lanes with global limits.** A claim first finds the jobs of lanes with global limits whose keys have
-room, and leaves them their share of the free slots, of the runner and of their local limits. If another process
-takes those jobs first, the slots stay free until the next turn, which comes at once.
-
 ## Schedules
 
 A schedule adds a job at each time of a cron in a time zone, or at a fixed interval. You define it with
@@ -692,10 +687,9 @@ A schedule adds a job at each time of a cron in a time zone, or at a fixed inter
 defineSchedule(lane: LaneDefinition, options: ScheduleOptions): ScheduleDefinition
 ```
 
-Each time of a schedule is a **slot**. At each slot, every started runner that mounts the schedule tries to add the
-job. A row per schedule in the table `sqlane_schedules` lets one of them add it. So each slot adds at most one job in
-the whole cluster, with no leader. A scheduled job is an ordinary job: its definition gives its retries, backoff,
-timeout, global limits, failure job and retention.
+Each time of a schedule is a **slot**. At each slot, every started runner that mounts the schedule tries to add the job,
+and one of them adds it: each slot adds at most one job in the whole cluster, with no leader. A scheduled job is an
+ordinary job: its definition gives its retries, backoff, timeout, global limits, failure job and retention.
 
 | Option     | Type                  | Default   | Description                                                                                                                                                                                      |
 | ---------- | --------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -852,45 +846,45 @@ scheduler, so the scheduler adds no second job for that slot.
 
 ## `schedules.list`
 
-`sqlane.schedules.list` lists the schedules of the table: the database, for every process. A schedule gets its row
-when a started runner registers it. `sqlane.schedules` is a frozen object of the sqlane. It needs no runner.
+`sqlane.schedules.list` lists the schedules of the table: the database, for every process. A schedule is listed once
+a started runner has mounted it. `sqlane.schedules` is a frozen object of the sqlane. It needs no runner.
 
 ```ts
 sqlane.schedules.list(): Promise<ScheduleInfo[]>
 ```
 
-| Field        | Type               | Description                                                                                                                                                                                                                                |
-| ------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`         | `string`           | `<lane>:<key>`.                                                                                                                                                                                                                            |
-| `lane`       | `string`           | The lane.                                                                                                                                                                                                                                  |
-| `spec`       | `string`           | The stored spec, for example `cron 0 3 * * * Europe/Berlin` or `every 900000`.                                                                                                                                                             |
-| `nextAt`     | `Date` or `null`   | The next slot, by the stored spec and the database clock. `null` for a spec that this version cannot read.                                                                                                                                 |
-| `nextRunAt`  | `Date` or `null`   | The time the job of the next slot will be due: `nextAt` plus its jitter. The jitter is not stored: it is known for a schedule mounted in this process, with the stored spec, only; for another, `nextRunAt` has no jitter: it is `nextAt`. |
-| `lastSlotAt` | `Date`             | The last decided slot; at the registration, the time of the registration.                                                                                                                                                                  |
-| `lastJobId`  | `string` or `null` | The job that the last enqueued slot added.                                                                                                                                                                                                 |
+| Field        | Type               | Description                                                                                                                                                                             |
+| ------------ | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`         | `string`           | `<lane>:<key>`.                                                                                                                                                                         |
+| `lane`       | `string`           | The lane.                                                                                                                                                                               |
+| `spec`       | `string`           | The stored spec, for example `cron 0 3 * * * Europe/Berlin` or `every 900000`.                                                                                                          |
+| `nextAt`     | `Date` or `null`   | The next slot, by the stored spec and the database clock. `null` for a spec that this version cannot read.                                                                              |
+| `nextRunAt`  | `Date` or `null`   | When the job of the next slot will be due: `nextAt` plus its jitter, for a schedule mounted in this process with the stored spec. For another schedule, it is `nextAt`, without jitter. |
+| `lastSlotAt` | `Date`             | The last decided slot; for a new schedule, the time a runner first started it.                                                                                                          |
+| `lastJobId`  | `string` or `null` | The job that the last enqueued slot added.                                                                                                                                              |
 
-It reads the whole table, sorted by id. After a deploy that changes a spec, `spec` shows the old one until the first slot of the new spec. Without schedules and without the table,
-it resolves to `[]`.
+Sorted by id. After a deploy that changes a spec, `spec` shows the old one until the first slot of the new spec. Without
+schedules and without the table, it resolves to `[]`.
 
 ## `schedules.runSlot`
 
-`sqlane.schedules.runSlot` enqueues a slot of a schedule by hand, as the scheduler would: the payload of the schedule,
+`sqlane.schedules.runSlot` enqueues a slot of a schedule by hand, as a runner would: the payload of the schedule,
 the dedupe key of the slot, the options of its lane.
 
 ```ts
 sqlane.schedules.runSlot(schedule: ScheduleDefinition, options?: { at?: Date, connection?: C }): Promise<EnqueueResult>
 ```
 
-| Option       | Type   | Default                                       | Description                                                                                                                                |
-| ------------ | ------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `at`         | `Date` | The latest slot at or before now              | The slot: a slot of the spec, not in the future. The default uses the clock of this process; the scheduler uses the clock of the database. |
-| `connection` | `C`    | The queue's pool, in a transaction of its own | Your transaction, or a connection in one, of the adapter's library; or a pool.                                                             |
+| Option       | Type   | Default                                       | Description                                                                                                                             |
+| ------------ | ------ | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `at`         | `Date` | The latest slot at or before now              | The slot: a slot of the spec, not in the future. The default uses the clock of this process; the runners use the clock of the database. |
+| `connection` | `C`    | The queue's pool, in a transaction of its own | Your transaction, or a connection in one, of the adapter's library; or a pool.                                                          |
 
-The job is due now: `runSlot` ignores `overlap` and the jitter, and does not move the cursor of the schedule nor set
-its last job. A second run of the slot, or its fire, gives `created: false`; the fire of a slot whose job `runSlot` added
-records that job as the last job of the schedule, so `overlap: 'skip'` tracks it. It works without a runner, so in
-tests and in admin tasks. It takes a schedule definition only, which holds the payload. An `at` off the spec or in the
-future rejects with an `InvalidOptionsError`.
+The job is due now: `runSlot` ignores `overlap` and the jitter, and leaves `lastSlotAt` and `lastJobId` of the schedule
+as they are. A second run of the slot gives `created: false`. When the slot comes, the runners add no second job, and
+record this one as `lastJobId`, so `overlap: 'skip'` tracks it. It works without a runner, so in tests and in admin
+tasks. It takes a schedule definition only, which holds the payload. An `at` off the spec or in the future rejects with
+an `InvalidOptionsError`.
 
 ```js
 // A test: the slot, then the runner runs its job
@@ -911,7 +905,7 @@ runner.resumeLocally(lane: LaneDefinition | string): void
 The pause is in memory, by lane name, for the life of the runner: it works before the lane is mounted, and it holds
 across an unmount and a mount. The running jobs finish; the schedules of the lane go on, and its jobs wait pending; the
 enqueues of the lane in this process send the hint to the others. Both are sync and idempotent. A pause during
-`drain()` holds from its next round.
+`drain()` applies to the jobs that it claims next.
 
 ## `runner.getStatus`
 
@@ -937,9 +931,9 @@ After `start()`, the runner claims and runs the due jobs of the mounted lanes th
 leases, recovers stalled jobs and, if `cleanup` is on, deletes expired jobs. It fires the mounted [schedules](#schedules).
 A second call does nothing, and concurrent calls share one start. The mounts after it claim and fire at once.
 
-With schedules, `start` registers them first. It rejects with a `ConfigError` if the table of the schedules is missing:
-run `schema.migrate()`. If the database is down, `start` resolves anyway, emits an `error` event, and registers the
-schedules when the database is back. A rejected `start` can be called again.
+With schedules, `start` adds their rows to the table first. It rejects with a `ConfigError` if the table of the
+schedules is missing: run `schema.migrate()`. If the database is down, `start` resolves anyway, emits an `error` event,
+and adds the rows when the database is back. A rejected `start` can be called again.
 
 The first `start()` or `schema.migrate()` of a sqlane checks the server: it rejects with a `ConfigError` if the
 server is not the database of the adapter's `dialect`, is below the supported version, or has a `sql_mode` that sqlane
@@ -986,9 +980,8 @@ const { completed, failed } = await runner.drain({ includeDelayed: true });
 ## `runner.close` and `sqlane.close`
 
 `runner.close` stops the runner of this process and waits for the running handlers. `sqlane.close` closes the runner
-of the sqlane, if any, with these options, then stops publishing hints and unsubscribes from the hint (the result of
-its `subscribe`): hints not yet published are dropped, and the jobs that they were for run at the next poll. It never
-ends your pools.
+of the sqlane, if any, with these options, then stops publishing hints and unsubscribes from the hint. It never ends
+your pools.
 
 ```ts
 runner.close(options?: CloseOptions): Promise<void>
@@ -1008,10 +1001,10 @@ Set `exitsBy` lower if your process exits sooner, so released jobs can run again
 because of its options, so a shutdown always releases its jobs. Instead, each invalid option logs a warning, and sqlane
 uses its default. This includes an unknown option, and an `exitsBy` that is earlier than the deadline.
 
-`close` resolves when the handlers have settled or the deadline has passed, and the releases are written. With
-schedules, it also waits for a fire or a registration in flight. A second call returns the same promise. `close` ends
-only what sqlane opened, such as the LISTEN connection and the hint subscription. It never ends your pools. After
-`runner.close()`, the sqlane still enqueues, and sends the hint; after `sqlane.close()`, it sends no hint.
+`close` resolves when the handlers have settled or the deadline has passed, and the releases are written. It also
+waits for a schedule fire in flight. A second call returns the same promise. `close` ends only what sqlane opened, such
+as the LISTEN connection. After `runner.close()`, the sqlane still enqueues, and sends the hint; after `sqlane.close()`,
+it sends no hint: a hint not sent yet is dropped, and its jobs run at the next poll.
 
 ```js
 process.once('SIGTERM', () => sqlane.close({ deadline: '30s', exitsBy: '35s' }));
@@ -1544,7 +1537,7 @@ handle unknown ones.
   unblock is an `error` event (operation `unblock`), never a rejection of the call. A rate key may start its next job a
   little later than it could, until its next start.
 - `overlap: 'skip'` skips while the last job of a schedule is pending or running. So removing or cancelling it lets the
-  next slot run, and retrying it makes the skip apply again. The scheduler never adds a slot again; after a remove,
+  next slot run, and retrying it makes the skip apply again. A slot never adds a job again; after a remove,
   `schedules.runSlot` adds a new job. Retrying an older job of a schedule may overlap a new slot. The skip ignores a
   blocked last job, so cancelling one changes nothing for the skip.
 

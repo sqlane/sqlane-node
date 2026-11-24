@@ -151,16 +151,16 @@ export interface SqlaneJobs<C = any> {
 export interface SqlaneSchedules<C = any> {
     /**
      * Lists the schedules of the table, sorted by id: their next slot by their stored spec. No runner needed. A
-     * schedule gets its row when a started runner registers it.
-     * @returns The schedules: their spec, their next slot, their cursor and their last job.
+     * schedule is listed once a started runner has mounted it.
+     * @returns The schedules: their spec, their next slot, their last slot and their last job.
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#scheduleslist | schedules.list}
      */
     list(): Promise<ScheduleInfo[]>;
     /**
-     * Enqueues a slot of a schedule by hand, as the scheduler would: the payload of the schedule, the dedupe key of the
+     * Enqueues a slot of a schedule by hand, as a runner would: the payload of the schedule, the dedupe key of the
      * slot, the options of its lane. A second run of the slot, or its fire, gives `created: false`. Due now: it ignores
-     * the jitter and `overlap`, and moves no cursor. For tests (then `runner.drain()`) and for admin tasks; no runner
-     * needed. The default slot comes from the clock of this process; the scheduler uses the clock of the database.
+     * the jitter and `overlap`. For tests (then `runner.drain()`) and for admin tasks; no runner needed. The default
+     * slot comes from the clock of this process; the runners use the clock of the database.
      * @param schedule A schedule definition, from `defineSchedule()`: it holds the payload.
      * @param options `at`: a slot of the schedule, not in the future (default: the latest slot at or before now);
      *     `connection`: your transaction, or a pool (default: the queue's pool). An `at` off the spec or in the
@@ -205,8 +205,7 @@ export interface Sqlane<C> {
     enqueueMany<J extends LaneDefinition, P>(connection: C, lane: J, items: readonly EnqueueManyItem<J, P>[]): Promise<EnqueueResult[]>;
     /**
      * Closes the runner of this sqlane, if any (see `runner.close()`), with these options, then stops publishing hints
-     * and unsubscribes from the hint (the result of its `subscribe`): hints not yet published are dropped, and their
-     * jobs run at the next poll. It never ends your pools: close them after it. The enqueues still work after it,
+     * and unsubscribes from the hint. It never ends your pools: close them after it. The enqueues still work after it,
      * without a hint.
      * @param options `deadline` (default `'30s'`); `mode`: `'release'` (default) puts unfinished jobs back in the
      *     queue without using an attempt; `exitsBy`: the latest time the process exits.
@@ -240,7 +239,7 @@ export interface Mount {
 }
 /**
  * The runner of this process, made by `createRunner()`: it runs the handlers and fires the
- * schedules that it mounts. Its methods act on this process: memory, sync, but `start`, `drain` and `close`. The
+ * schedules that it mounts. Its methods act on this process, sync, but `start`, `drain` and `close`. The
  * methods of the sqlane act on the database, for every process.
  * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runner | Runner}
  */

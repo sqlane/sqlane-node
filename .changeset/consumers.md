@@ -24,8 +24,8 @@ Breaking changes:
 - `sqlane.lanes.add(lane, handler)` is now `runner.mount([defineHandler(lane, handler)])`, and
   `sqlane.schedule(lane, options)` is `runner.mount([defineSchedule(lane, { key, ...options })])`. A mount works before
   `start()` and after it (it claims and fires at once); `mount.unmount()` removes it. `sqlane.start()`, `drain()` and
-  the worker part of `close()` are `runner.start()`, `drain()` and `close()`; `sqlane.close()` closes the runner, then the
-  hint. `sqlane.wake()` is gone: the enqueues and the hints wake the runner.
+  the worker part of `close()` are `runner.start()`, `drain()` and `close()`; `sqlane.close()` closes the runner, then
+  stops publishing hints. `sqlane.wake()` is gone: the enqueues and the hints wake the runner.
 - `createSqlane({ localMaxConcurrency })` is now `createRunner(sqlane, { localMaxConcurrency, logger })`. The options
   `lanes` and `unknownLanes`, and `UnknownLaneError` (code `UNKNOWN_LANE`), are gone: `enqueue` and `enqueueMany` take a
   lane definition only, and a `failureLane` is a definition only. The reads and the admin methods (`jobs.list`,
@@ -36,9 +36,9 @@ Breaking changes:
   the keyless schedules of 9.x stay in `<prefix>schedules`: delete them by hand. The enqueue option `slot` is now
   `sqlane.schedules.runSlot(schedule, { at, connection })`: the slot of the spec (by default the latest one up to now),
   with the payload of the schedule; no runner needed.
-- `schedules.list()` lists the rows of the table only (a schedule of this process is listed once a started runner has
-  registered it), and computes `nextAt` from their stored spec, for every schedule; `nextRunAt` adds the jitter of a
-  schedule mounted in this process (the jitter is not stored). `ScheduleInfo.registered` is gone:
+- `schedules.list()` lists the rows of the table only: a schedule is listed once a started runner has mounted it.
+  `nextAt` comes from the stored spec; `nextRunAt` has the jitter only for a schedule mounted in this process with the
+  stored spec. `ScheduleInfo.registered` is gone:
   `runner.getStatus(schedule)`; `lastSlotAt` is never null.
 - New: `runner.pauseLocally(lane)` / `resumeLocally(lane)` (this process claims none of its jobs, for the life of the
   runner), `runner.getStatus(lane | schedule)`. Types `LaneHandler`, `HandlerOptions`, `ScheduleDefinition`,
@@ -55,7 +55,6 @@ Breaking changes:
   one above `maxStalls`, and keeps its due time: it is due at once, in its place in line. Its next claim fails it at
   once, without running its handler and without an attempt used, with a `StalledError` and the failure job of the
   claiming runner's definition. That claim ignores the global limits and rate limits of the job: it is never blocked,
-  takes no global slot and no global quota, and no quota of the local rate limits. It still counts toward the local
-  concurrency of the runner while its fail is written. The events of the failure are `claimed`, then `failed`
-  (`durationMs` 0), from the claiming process; the stall recovery emits only `stalled`. `drain()` counts the failure. A
-  job of a lane that no process handles stays pending until a process handles the lane.
+  takes no global slot and no global quota, and no quota of the local rate limits. The events of the failure are
+  `claimed`, then `failed` (`durationMs` 0), from the claiming process; the stall recovery emits only `stalled`.
+  `drain()` counts the failure. A job of a lane that no process handles stays pending until a process handles the lane.
