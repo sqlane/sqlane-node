@@ -5,8 +5,8 @@ import { buildNewJob } from './new_job.js';
 /**
  * @typedef {object} FailureLanes
  * @property {(definition: import('./types.js').LaneDefinition | null) => import('./store/store.js').FailureJobBuilder}
- *     builderOf The failure job of a job of a lane with this definition in this process. Null: a lane added without a
- *     definition: the failure lane of the row, from its enqueue.
+ *     builderOf The failure job of a job of a lane with this definition in this process. None without a definition (a
+ *     lane added by name only) or without a `failureLane`.
  * @property {(job: { id: string, lane: string, attempt: number },
  *     result: import('./store/store.js').FailureJobResult | null) => void} report An added failure job wakes its lane
  *     here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
@@ -22,48 +22,31 @@ import { buildNewJob } from './new_job.js';
  * @returns {FailureLanes}
  */
 export function createFailureLanes({ registry, defaults, emit, reportError, onAdded }) {
-    /**
-     * @param {string | import('./types.js').LaneDefinition | undefined} failureLane Of a definition.
-     * @returns {import('./types.js').LaneDefinition | null} The definition of the failure lane: a definition object
-     *     itself, a name in `lanes` or added.
-     */
-    function definitionOf(failureLane) {
-        return typeof failureLane === 'object' ? failureLane : registry.findDefinition(String(failureLane));
-    }
-
     return {
         builderOf: (definition) => {
-            const ownLane = definition?.failureLane;
+            const failureLane = definition?.failureLane;
+            const lane = typeof failureLane === 'object' ? failureLane.name : failureLane ?? null;
 
             return {
-                laneOf: (stored) => {
-                    if (!definition) {
-                        return stored;
-                    }
-
-                    return typeof ownLane === 'object' ? ownLane.name : ownLane ?? null;
-                },
-                build: (failed) => {
-                    const newJob = buildNewJob({
-                        lane: failed.failureLane,
-                        definition: definition ? definitionOf(ownLane) : registry.findDefinition(failed.failureLane),
-                        defaults,
-                        payload: {
-                            job: {
-                                id: failed.id,
-                                lane: failed.lane,
-                                payload: failed.payload,
-                                attempt: failed.attempt,
-                                maxAttempts: failed.maxAttempts,
-                            },
-                            error: failed.error,
+                lane,
+                build: failed => buildNewJob({
+                    lane: String(lane),
+                    // A definition object is its own definition; a name, the one in "lanes" or added
+                    definition: typeof failureLane === 'object' ? failureLane : registry.findDefinition(String(lane)),
+                    defaults,
+                    payload: {
+                        job: {
+                            id: failed.id,
+                            lane: failed.lane,
+                            payload: failed.payload,
+                            attempt: failed.attempt,
+                            maxAttempts: failed.maxAttempts,
                         },
-                        options: undefined,
-                        maxPayloadBytes: Infinity,
-                    });
-
-                    return { ...newJob, failureLane: null };
-                },
+                        error: failed.error,
+                    },
+                    options: undefined,
+                    maxPayloadBytes: Infinity,
+                }),
             };
         },
         report: (job, result) => {

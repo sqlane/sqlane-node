@@ -52,7 +52,6 @@ describe('with a definition', () => {
             maxStalls: 2,
             completedRetentionMs: 600_000,
             failedRetentionMs: 2_592_000_000,
-            failureLane: 'report_failed',
             delayMs: 0,
             runAt: null,
         });
@@ -80,8 +79,6 @@ describe('with a definition', () => {
             maxStalls: 0,
             completedRetentionMs: 600_000,
             failedRetentionMs: 86_400_000,
-            // The definition's, for display: the process that fails the job decides
-            failureLane: 'report_failed',
             delayMs: 0,
             runAt,
         });
@@ -140,7 +137,6 @@ test('an unknown name takes the defaults', () => {
         maxStalls: 2,
         completedRetentionMs: 3_600_000,
         failedRetentionMs: 2_592_000_000,
-        failureLane: null,
     });
 });
 

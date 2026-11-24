@@ -141,7 +141,7 @@ test('lanes.stats: the counts of each name', async () => {
     await store.markTimedOut(/** @type {any} */ (claimed.find(job => job.id === runningId)));
     await store.failJob(/** @type {any} */ (claimed.find(job => job.id === failedId)), {
         error: { name: 'Error', message: 'x' },
-        failureJob: { laneOf: () => null, build: () => { throw new Error('none'); } },
+        failureJob: { lane: null, build: () => { throw new Error('none'); } },
         attemptUsed: true,
     });
     await store.completeJobs(claimed.filter(job => completedIds.includes(job.id)));

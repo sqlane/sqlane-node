@@ -213,13 +213,13 @@ function recordPostgresQueries(pool) {
 }
 
 /**
- * The failure job of the row's failure lane, as for a lane added without a definition.
+ * The failure job of `sync_failed`, with the defaults.
  * @type {import('../../src/store/store.js').FailureJobBuilder}
  */
 const failureJob = {
-    laneOf: stored => stored,
+    lane: 'sync_failed',
     build: failed => buildNewJob({
-        lane: failed.failureLane,
+        lane: 'sync_failed',
         definition: null,
         defaults,
         payload: { job: failed, error: failed.error },
@@ -549,7 +549,7 @@ describe('failJob', () => {
         const result = await tables.store.failJob(job, {
             error: toErrorJson('gone'),
             failureJob: {
-                laneOf: stored => stored,
+                lane: 'sync_failed',
                 build: () => {
                     throw new Error('bad options');
                 },
@@ -563,29 +563,20 @@ describe('failJob', () => {
         });
     });
 
-    test('the failure lane of the builder (the definition of the process), not the one of the row', async () => {
+    test('a builder without a failure lane (a definition without one): no failure job', async () => {
         const tables = await freshTables();
-        const job = await claimedJob(tables);
-        const result = await tables.store.failJob(job, {
-            error: toErrorJson('gone'),
-            failureJob: { ...failureJob, laneOf: () => 'other_failed' },
-            attemptUsed: true,
-        });
-
-        expect(result).toMatchObject({ changed: true, failureResult: { added: { lane: 'other_failed' } } });
-
         const none = await claimedJob(tables);
 
         await expect(tables.store.failJob(none, {
             error: toErrorJson('gone'),
-            failureJob: { ...failureJob, laneOf: () => null },
+            failureJob: { ...failureJob, lane: null },
             attemptUsed: true,
         })).resolves.toStrictEqual({ changed: true, failureResult: null });
-        await expect(readJob(tables.p, none.id)).resolves.toMatchObject({ status: 'failed', failure_lane: 'sync_failed' });
+        await expect(readJob(tables.p, none.id)).resolves.toMatchObject({ status: 'failed', failure_lane: null });
 
         const [{ count }] = await database.query(`SELECT COUNT(*) AS count FROM ${tables.p}jobs`);
 
-        expect(Number(count)).toBe(3);
+        expect(Number(count)).toBe(1);
     });
 
     test('without an attempt used (a job past its maxStalls, failed at its claim): its attempts stay', async () => {

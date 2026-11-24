@@ -200,18 +200,13 @@ export type FailedJob = {
     payload: unknown;
     attempt: number;
     maxAttempts: number;
-    /**
-     * Its failure lane, from `laneOf`.
-     */
-    failureLane: string;
     error: import('../error_json.js').ErrorJson;
 };
 export type FailureJobBuilder = {
     /**
-     * Its failure lane; null: none. `stored`: the failure lane
-     * of the row, from its enqueue.
+     * Its failure lane; null: none.
      */
-    laneOf: (stored: string | null) => string | null;
+    lane: string | null;
     /**
      * Its options from the definition of the
      * failure lane, else the defaults; no failure lane of its own.
@@ -545,14 +540,12 @@ export type SweepResult = {
  * @property {unknown} payload Null: its payload is missing.
  * @property {number} attempt
  * @property {number} maxAttempts
- * @property {string} failureLane Its failure lane, from `laneOf`.
  * @property {import('../error_json.js').ErrorJson} error
  */
 /**
  * The failure job of a job that fails for good, by the definition of its lane in the process that fails it.
  * @typedef {object} FailureJobBuilder
- * @property {(stored: string | null) => string | null} laneOf Its failure lane; null: none. `stored`: the failure lane
- *     of the row, from its enqueue.
+ * @property {string | null} lane Its failure lane; null: none.
  * @property {(failed: FailedJob) => import('../new_job.js').NewJob} build Its options from the definition of the
  *     failure lane, else the defaults; no failure lane of its own.
  */

@@ -1939,7 +1939,7 @@ test('a job past its maxStalls fails at its claim, as fatal: no handler, no atte
             params: { error: { name: 'StalledError' }, attemptUsed: false },
         }]);
         // The failure lane of the definition of this process
-        expect(/** @type {any} */ (fails[0].params.failureJob).laneOf(null)).toBe('ping_failed');
+        expect(/** @type {any} */ (fails[0].params.failureJob).lane).toBe('ping_failed');
         expect(/** @type {any[]} */ (events).filter(event => event.jobId === 'job-1')).toMatchObject([
             { type: 'claimed', attempt: 2 },
             { type: 'failed', attempt: 2, error: { name: 'StalledError' } },
@@ -1971,7 +1971,7 @@ test('a job that fails: its failure job by the definition of this process, and t
     try {
         await expect(runner.drain()).resolves.toMatchObject({ failed: 1 });
         expect(fails).toMatchObject([{ error: { name: 'Error', message: 'broken' }, attemptUsed: true }]);
-        expect(/** @type {any} */ (fails[0].failureJob).laneOf('other_failed')).toBe('ping_failed');
+        expect(/** @type {any} */ (fails[0].failureJob).lane).toBe('ping_failed');
     } finally {
         await runner.close({ deadline: 0 });
     }

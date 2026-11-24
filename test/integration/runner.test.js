@@ -1105,9 +1105,9 @@ describe('the failure lane: the definition of the process that fails the job dec
             expected: [],
         },
         {
-            title: 'a lane added by name, without a definition: the failure lane of the enqueue',
+            title: 'a lane added by name, without a definition: no failure job',
             definition: 'build',
-            expected: ['a_failed'],
+            expected: [],
         },
     ])('$title', async ({ definition, expected }) => {
         const { p } = await freshSqlane();
@@ -1123,8 +1123,8 @@ describe('the failure lane: the definition of the process that fails the job dec
 
         const jobs = await readStalls(p);
 
-        // The column, written at enqueue: for display
-        expect(jobs[0]).toMatchObject({ id, status: 'failed', failureLane: 'a_failed' });
+        // The column is no longer written
+        expect(jobs[0]).toMatchObject({ id, status: 'failed', failureLane: null });
         expect(jobs.slice(1).map(job => job.lane)).toStrictEqual(expected);
     });
 });

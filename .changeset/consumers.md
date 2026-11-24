@@ -9,8 +9,10 @@ Breaking changes:
 
 - The failure lane is read from the definition of the worker when the job fails for good, no longer from the job row.
   A job enqueued under a definition with another `failureLane`, or with none, gets the failure job of the worker's
-  definition, or none. A lane added by name, without a definition, still takes the failure lane stored at enqueue.
-  `JobRecord.failureLane` shows the failure lane of the definition at enqueue, for display.
+  definition, or none. A lane added by name, without a definition in `lanes`, has no failure lane: its jobs get no
+  failure job.
+- `JobRecord.failureLane` is removed, and the enqueue no longer writes the column `failure_lane` (it stays in the
+  schema; the rows of 9.x keep their value, which nothing reads).
 - The enqueue option `failureLane` is removed (`EnqueueOptions.failureLane`): it rejects as an unknown option. Set the
   failure lane in the definition of the lane.
 - After `maxStalls` stalls, the next stall releases the job as any stall (its slots linger for one lease), with

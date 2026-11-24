@@ -131,7 +131,7 @@ not depend on the `timezone` or `dateStrings` settings of the pool.
 | `timed_out_at`                                                        | ts(3) null        | Set on a timeout, cleared by the claim and by every transition out of `running`. For `stuck`.                      |
 | `last_error`                                                          | json null         |                                                                                                                    |
 | `completed_retention_ms`, `failed_retention_ms`                       | bigint            | Frozen at enqueue.                                                                                                 |
-| `failure_lane`                                                        | varchar(128) null | The failure lane of the definition at enqueue, for display.                                                        |
+| `failure_lane`                                                        | varchar(128) null | Not written since 10.0: the definition of the process that fails the job decides its failure lane.                 |
 | `created_at`, `started_at`, `finished_at`, `expires_at`, `updated_at` | ts(3)             |                                                                                                                    |
 
 `attempts` counts the finished attempts: a completion, a retry and a failure each add one. A stall, a release, a
@@ -374,8 +374,8 @@ In the caller's transaction, with its connection (with a pool: in a transaction 
 Frozen in the row at enqueue: `maxAttempts`, `maxStalls`, both retentions, the keys and their maxes, the rate keys and
 their settings. Any process can then retry or stall the job without its definition. Read from the worker's definition
 at run time: `backoff`, `timeout`, `fairShareWeight`, the local limits, of concurrency and of rate, and `failureLane`
-(at the fail, [Failure jobs](#failure-jobs)). The `failure_lane` of the row is the one of the definition of the enqueue,
-for display (`JobRecord.failureLane`).
+(at the fail, [Failure jobs](#failure-jobs)). The column `failure_lane` stays, but sqlane no longer writes it: the
+rows of 9.x keep their value, which nothing reads.
 
 `enqueueMany` inserts many jobs in one statement per table and returns `{ id, created }[]` in input order. `created`
 comes from the call's `enqueue_token` (MySQL has no `RETURNING`): the payloads are inserted only for the rows with
@@ -780,7 +780,7 @@ the cluster, in `sqlane_rate_limits`; a local limit counts in the memory of each
 When a job fails for good (no attempts left, a claim past `maxStalls`, or a `FatalJobError`), it gets a failure job if
 the definition of its lane in the process that fails it has a `failureLane`. That definition decides, not the row: a job
 enqueued under another definition gets the failure job of this one, or none. A lane added by name, without a
-definition, takes the `failure_lane` of the row, from its enqueue.
+definition in `lanes`, has no failure lane, so its jobs get none.
 
 - The fail and the insert of the failure job commit together. If the database refuses the insert, the job still fails,
   but without its failure job. sqlane then logs an error and emits a `failure_job_not_added` event.
@@ -794,8 +794,8 @@ definition, takes the `failure_lane` of the row, from its enqueue.
 - A `FatalJobError` fails the job at once, with the same failure job.
 - The failure job is an ordinary job. Its options come from the definition of its lane: `start()` and `drain()` check
   that the failure lane resolves (a definition object, or a name in `lanes` or added) and has no `failureLane` of its
-  own (`ConfigError`). A failure lane added by name, without a definition, uses the defaults. Its row always gets
-  `failure_lane = null` (no chains), and it is exempt from `unknownLanes: 'reject'`.
+  own (`ConfigError`). A failure lane added by name, without a definition, uses the defaults. It has no failure job of
+  its own (no chains), and it is exempt from `unknownLanes: 'reject'`.
 - A replayed fail (lost acknowledgment) or a lost lease adds no second failure job.
 
 ### Close

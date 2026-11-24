@@ -174,7 +174,7 @@ export async function retryJob(executor, p, job, { delayMs, error }) {
  * @returns {Promise<FailureJobResult | null>} Null: no failure lane.
  */
 async function addFailureJob(executor, p, row, { error, failureJob }) {
-    const failureLane = failureJob.laneOf(row.failure_lane === null ? null : String(row.failure_lane));
+    const failureLane = failureJob.lane;
 
     if (failureLane === null) {
         return null;
@@ -189,7 +189,6 @@ async function addFailureJob(executor, p, row, { error, failureJob }) {
             payload: row.payload === null ? null : JSON.parse(String(row.payload)),
             attempt: Number(row.attempts) + 1,
             maxAttempts: Number(row.max_attempts),
-            failureLane,
             error,
         });
     } catch (buildError) {
@@ -225,7 +224,7 @@ async function addFailureJob(executor, p, row, { error, failureJob }) {
  */
 async function lockJob(executor, p, where, params) {
     const [row] = await executor.query(`
-        SELECT j.id, j.lane, j.attempts, j.max_attempts, j.failure_lane,
+        SELECT j.id, j.lane, j.attempts, j.max_attempts,
                CAST(pl.payload AS CHAR) AS payload
           FROM ${p}jobs j LEFT JOIN ${p}payloads pl ON pl.id = j.id
          WHERE ${where}

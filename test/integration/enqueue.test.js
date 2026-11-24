@@ -122,7 +122,8 @@ test('adds the job in the caller\'s transaction, with the values frozen at enque
         limit_keys: ['report:r1', 'reports'],
         limit_maxes: [1, 3],
         rate_limits: null,
-        failure_lane: 'report_failed',
+        // Not stored: the definition of the process that fails the job decides its failure lane
+        failure_lane: null,
         completed_retention_ms: 600_000,
         failed_retention_ms: 2_592_000_000,
         payload: { reportId: 'r1' },

@@ -30,7 +30,7 @@ function runAtSql(job) {
  * @returns {Promise<Set<string>>} The ids that this call created.
  */
 async function insertChunk(executor, p, jobs, enqueueToken) {
-    const values = jobs.map(job => `(?, ?, 'pending', ${runAtSql(job).sql}, ?, ?, ?, ?, ?, ?, ?, ?, ?, `
+    const values = jobs.map(job => `(?, ?, 'pending', ${runAtSql(job).sql}, ?, ?, ?, ?, ?, ?, ?, ?, `
         + 'UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))');
     const params = jobs.flatMap(job => [
         job.id,
@@ -44,13 +44,12 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
         enqueueToken,
         job.completedRetentionMs,
         job.failedRetentionMs,
-        job.failureLane,
     ]);
 
     // A duplicate id keeps its row: its token is not this one.
     await executor.query(`
         INSERT INTO ${p}jobs (id, lane, status, run_at, max_attempts, max_stalls, limit_keys, limit_maxes,
-            rate_limits, enqueue_token, completed_retention_ms, failed_retention_ms, failure_lane, created_at, updated_at)
+            rate_limits, enqueue_token, completed_retention_ms, failed_retention_ms, created_at, updated_at)
         VALUES ${values.join(', ')}
         ON DUPLICATE KEY UPDATE id = id
     `, params);

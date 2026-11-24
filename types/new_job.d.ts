@@ -20,7 +20,6 @@ export type NewJob = {
     maxStalls: number;
     completedRetentionMs: number;
     failedRetentionMs: number;
-    failureLane: string | null;
     /**
      * From the DB clock at insert. 0 with `runAt`.
      */

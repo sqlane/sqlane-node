@@ -468,7 +468,8 @@ export async function publicApiTypes() {
     expectTypeOf(read?.blockedOn).toEqualTypeOf(/** @type {BlockedOn | undefined} */ (undefined));
     // A record refers to its lane: `lane`, not `name`
     expectTypeOf(read?.lane).toEqualTypeOf(/** @type {string | undefined} */ (undefined));
-    expectTypeOf(read?.failureLane).toEqualTypeOf(/** @type {string | null | undefined} */ (undefined));
+    // @ts-expect-error JobRecord has no failureLane: the definition of the process that fails the job decides
+    void read?.failureLane;
     // @ts-expect-error JobRecord has no name: its lane is `lane`
     void read?.name;
 

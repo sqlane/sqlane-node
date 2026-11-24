@@ -944,11 +944,6 @@ export type JobRecord<P = any> = {
      */
     blockedOn: BlockedOn | null;
     /**
-     * The failure lane of its definition at enqueue, for display: the process that
-     * fails the job decides, by its definition.
-     */
-    failureLane: string | null;
-    /**
      * Absent when not asked for, or when the database holds no payload for the job.
      */
     payload?: P;
@@ -1613,8 +1608,6 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  *     by the full rate key.
  * @property {BlockedOn | null} blockedOn What a blocked job waits for. Null when it is not blocked. Its `type` may
  *     gain members in a minor.
- * @property {string | null} failureLane The failure lane of its definition at enqueue, for display: the process that
- *     fails the job decides, by its definition.
  * @property {P} [payload] Absent when not asked for, or when the database holds no payload for the job.
  */
 /**

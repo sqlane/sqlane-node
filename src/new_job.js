@@ -6,7 +6,6 @@ import { normalizeGlobalRateLimits } from './rate_keys.js';
 import { serializePayload } from './payload.js';
 import { isSlotKey, isSlotTime, MAX_KEY_LENGTH, SLOT_PREFIX, slotDedupeKeyOf } from './schedule.js';
 import {
-    checkFailureLane,
     checkOptionFields,
     checkObject,
     NAME_REGEXP,
@@ -36,7 +35,6 @@ const ulid = createMonotonicUlid();
  * @property {number} maxStalls
  * @property {number} completedRetentionMs
  * @property {number} failedRetentionMs
- * @property {string | null} failureLane
  * @property {number} delayMs From the DB clock at insert. 0 with `runAt`.
  * @property {Date | null} runAt
  */
@@ -149,8 +147,6 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
         dedupeKey = slotDedupeKeyFrom(options.slot, where);
     }
 
-    // For display (JobRecord.failureLane): the process that fails the job decides, by its definition
-    const failureLane = definition?.failureLane;
     const payloadJson = serializePayload(payload, maxPayloadBytes, where);
     // The limits come from the payload as the handler gets it: as JSON gives it back.
     const rawLimits = options.globalConcurrencyLimits
@@ -171,7 +167,6 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
         maxStalls: options.maxStalls ?? definition?.maxStalls ?? defaults.maxStalls,
         completedRetentionMs: parseDuration(retention.completed) ?? defaults.retention.completedMs,
         failedRetentionMs: parseDuration(retention.failed) ?? defaults.retention.failedMs,
-        failureLane: failureLane === undefined ? null : checkFailureLane(failureLane, lane, scope),
         ...getSchedule(options, where),
     };
 }

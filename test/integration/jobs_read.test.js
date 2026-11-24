@@ -206,7 +206,6 @@ describe('jobs.get()', () => {
             globalConcurrencyLimits: [],
             globalRateLimits: [],
             blockedOn: null,
-            failureLane: 'report_failed',
             payload: { reportId: 'r1' },
         });
     });

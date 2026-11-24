@@ -28,7 +28,7 @@ test('the enqueue statement is pinned: its prepared statement does not change by
 
     // Changed on purpose? Measure with `pnpm bench:regression`, then pin the new hash.
     expect(createHash('sha256').update(sql).digest('hex'))
-        .toBe('8c85c3161bd98b9fca2d3302bf268348c7cfdb8d6f4709111454e36e57aa9e5d');
+        .toBe('9ad4758613310944475a2dd6ec4edddf545e52c81264d1c55d4593efa50626a1');
 });
 
 test('the jobs of slots: one NOTIFY per name, run by a reference', async () => {
@@ -55,11 +55,12 @@ test('the input of a job: its rate limits as a JSON array, null without', () => 
         maxStalls: 0,
         completedRetentionMs: 0,
         failedRetentionMs: 0,
-        failureLane: null,
         delayMs: 0,
         runAt: null,
     };
 
     expect(toJobInput(job)).toMatchObject({ limit_keys: null, limit_maxes: null, rate_limits: job.rateLimits });
     expect(toJobInput({ ...job, rateLimits: [] })).toMatchObject({ rate_limits: null });
+    // The failure lane is not stored: the definition of the process that fails the job decides
+    expect(toJobInput(job)).not.toHaveProperty('failure_lane');
 });
