@@ -29,17 +29,25 @@ export type NewJob = {
 export type NewJobParams = {
     lane: string;
     /**
-     * Null: an unknown name, the defaults only.
+     * Its options: over the defaults.
      */
-    definition: import('./types.js').LaneDefinition | null;
+    definition: import('./types.js').LaneDefinition;
     defaults: import('./defaults.js').ResolvedDefaults;
     payload: unknown;
     options: import('./types.js').EnqueueOptions | undefined;
     maxPayloadBytes: number;
+    /**
+     * The slot of a schedule: the job gets its dedupe key, which an
+     * enqueue cannot give (its prefix is reserved). For the scheduler and `schedules.runSlot()`.
+     */
+    slot?: {
+        at: number;
+        key: string;
+    };
 };
 /**
  * Checks an enqueue and computes the job to insert: options, then the definition, then the defaults.
  * @param {NewJobParams} params
  * @returns {NewJob}
  */
-export declare function buildNewJob({ lane, definition, defaults, payload, options, maxPayloadBytes }: NewJobParams): NewJob;
+export declare function buildNewJob({ lane, definition, defaults, payload, options, maxPayloadBytes, slot }: NewJobParams): NewJob;

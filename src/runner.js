@@ -51,7 +51,7 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  * @typedef {object} RunnerParams
  * @property {import('./store/store.js').Store} store
  * @property {import('./registry.js').Registry} registry
- * @property {number} localMaxConcurrency The instance's cap.
+ * @property {number} localMaxConcurrency The runner's cap.
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {boolean} cleanup
  * @property {import('./types.js').Logger | undefined} logger
@@ -70,16 +70,26 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  *     and the recovery and the cleanup start once it passes.
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
- * @property {() => void} wake
+ * @property {(lanes: string[]) => void} wakeLanes Jobs of the lanes are due: an unblock.
  * @property {(lanes: string[]) => void} onEnqueued An enqueue: its commit is to come.
  * @property {(lanes: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.
  * @property {() => boolean} isClosed
  * @property {() => boolean} isStarted
  * @property {() => boolean} isIdle Neither started, draining nor closed.
+ * @property {() => boolean} isDraining
+ * @property {() => boolean} isBusy Started, draining or closing: its queries run.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
  * @property {(keys: string[]) => Promise<void>} unblockKeys Makes due the jobs blocked on keys with room, wakes and
  *     hints them. Never rejects: a failure is an `error` event (operation `unblock`).
- * @property {(lane: string) => boolean} canStartNow The lane is added in this process and has a free slot.
+ * @property {(lane: string) => boolean} canStartNow The lane is handled in this process, not paused, and has a free
+ *     slot.
+ * @property {(entries: readonly HandlerEntry[]) => void} added Lanes handled from now on (a mount): claimed at once
+ *     when started.
+ * @property {(entries: readonly HandlerEntry[]) => void} removed Lanes no longer handled (an unmount). A claim in
+ *     flight and the jobs that run keep their handler.
+ * @property {(lane: string) => void} pauseLocally This process claims no job of the lane, until resumeLocally().
+ * @property {(lane: string) => void} resumeLocally Claims the lane again, at once.
+ * @property {(lane: string) => boolean} isPausedLocally
  */
 
 /**
@@ -173,7 +183,6 @@ export function createRunner({
         wake: lanes => wakeUp(lanes, { speculative: true }),
     });
     const failureLanes = createFailureLanes({
-        registry,
         defaults,
         emit,
         reportError,
@@ -254,8 +263,9 @@ export function createRunner({
     /**
      * @param {ClaimedJob} claimed
      * @param {{ found: boolean, payload: unknown }} payload
+     * @param {HandlerEntry} entry The handler of the claim.
      */
-    function startJob(claimed, payload) {
+    function startJob(claimed, payload, entry) {
         const key = `${claimed.id}\n${claimed.lockToken}`;
 
         if (running.has(key)) {
@@ -266,7 +276,6 @@ export function createRunner({
             return;
         }
 
-        const entry = /** @type {HandlerEntry} */ (registry.getEntry(claimed.lane));
         /** @type {RunningJob} */
         const job = {
             key,
@@ -379,10 +388,17 @@ export function createRunner({
 
     /**
      * @param {string[]} lanes
-     * @returns {boolean} One of the lanes is added in this process, or one is `*`.
+     * @returns {boolean} One of the lanes is handled in this process and not paused, or one is `*`.
      */
     function anyAdded(lanes) {
-        return lanes.some(lane => lane === ANY_LANE || registry.getEntry(lane));
+        return lanes.some(lane => lane === ANY_LANE || (registry.getEntry(lane) && !dispatcher.isPaused(lane)));
+    }
+
+    /**
+     * @returns {string[]} The lanes that drain() runs: handled, not paused.
+     */
+    function drainLanes() {
+        return registry.entries().map(entry => entry.name).filter(lane => !dispatcher.isPaused(lane));
     }
 
     /**
@@ -397,7 +413,6 @@ export function createRunner({
             return;
         }
 
-        registry.validate();
         dispatcher.prepare();
         state = 'started';
         unblocks.resume();
@@ -451,14 +466,12 @@ export function createRunner({
             throw new InvalidOptionsError('drain(): "timeout" must be a duration');
         }
 
-        registry.validate();
         dispatcher.prepare();
         state = 'draining';
         unblocks.resume();
 
         const before = { ...counts };
         const deadline = Date.now() + timeoutMs;
-        const lanes = registry.entries().map(entry => entry.name);
 
         let quietRounds = 0;
 
@@ -471,16 +484,20 @@ export function createRunner({
                 let lostRace = false;
                 /** @type {string[]} */
                 let due = [];
+                // Each round: a pause during drain() holds from the next round
+                const lanes = drainLanes();
 
                 try {
-                    if (options.includeDelayed) {
+                    if (options.includeDelayed && lanes.length) {
                         // oxlint-disable-next-line no-await-in-loop -- one round after the other
                         await store.makeDue(lanes);
                     }
 
                     // One probe per round: only the due lanes compete for the free slots
-                    // oxlint-disable-next-line no-await-in-loop -- one round after the other
-                    due = (await store.probe(lanes)).filter(row => row.delayMs <= 0).map(row => row.name);
+                    due = lanes.length
+                        // oxlint-disable-next-line no-await-in-loop -- one round after the other
+                        ? (await store.probe(lanes)).filter(row => row.delayMs <= 0).map(row => row.name)
+                        : [];
 
                     // oxlint-disable-next-line no-await-in-loop -- one round after the other
                     ({ claimed } = due.length ? await dispatcher.claimAndStart(due) : { claimed: 0 });
@@ -590,7 +607,8 @@ export function createRunner({
     async function closeOnce({ startedAt, deadlineMs, exitsByMs, mode }) {
         state = 'closing';
         wakeUp();
-        await hintChannel.stop();
+        // The hint of the sqlane goes on: its enqueues still send it
+        await hintChannel.unlisten();
         await loopDone;
 
         const deadline = startedAt + deadlineMs;
@@ -646,18 +664,45 @@ export function createRunner({
         start,
         drain,
         close,
-        wake: () => wakeUp(),
+        wakeLanes: lanes => wakeUp(lanes),
         onEnqueued,
         onCommitted,
         isClosed: () => state === 'closing' || state === 'closed',
         isStarted: () => state === 'started',
         isIdle: () => state === 'idle',
+        isDraining: () => state === 'draining',
+        isBusy: () => state === 'started' || state === 'draining' || state === 'closing',
         emit,
         unblockKeys,
         canStartNow: (lane) => {
             const entry = registry.getEntry(lane);
 
-            return state === 'started' && Boolean(entry) && dispatcher.freeSlots(/** @type {HandlerEntry} */ (entry)) > 0;
+            return state === 'started' && Boolean(entry) && !dispatcher.isPaused(lane)
+                && dispatcher.freeSlots(/** @type {HandlerEntry} */ (entry)) > 0;
         },
+        added: (entries) => {
+            dispatcher.added(entries);
+
+            if (state === 'started' && entries.length) {
+                // Its due jobs: claimed at once
+                wakeUp(entries.map(entry => entry.name));
+            }
+        },
+        removed: entries => dispatcher.removed(entries),
+        pauseLocally: (lane) => {
+            dispatcher.setPaused(lane, true);
+        },
+        resumeLocally: (lane) => {
+            if (!dispatcher.isPaused(lane)) {
+                return;
+            }
+
+            dispatcher.setPaused(lane, false);
+
+            if (state === 'started' && registry.getEntry(lane)) {
+                wakeUp([lane]);
+            }
+        },
+        isPausedLocally: lane => dispatcher.isPaused(lane),
     };
 }

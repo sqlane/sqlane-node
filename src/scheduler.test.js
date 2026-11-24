@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { resolveDefaults } from './defaults.js';
 import { parseCron } from './cron.js';
+import { defineLane } from './define_lane.js';
 import { checkSchedule, dueOf } from './schedule.js';
+import { listSchedules } from './schedule_list.js';
 import { createScheduler } from './scheduler.js';
 import { decideSlot } from './store/fire_slots.js';
 
@@ -25,6 +27,7 @@ const MINUTE_MS = 60_000;
  * @property {number} rttMs The round trip of each statement, on the process clock.
  * @property {((params: FireParams) => Promise<FireResult> | FireResult) | null} failFire Replaces a fire.
  * @property {unknown} failRead Thrown by the reads.
+ * @property {Promise<void> | null} holdRead Awaited by the reads of the rows.
  * @property {(params: FireParams) => FireResult} fire The fire of the fake store.
  * @property {{ job: import('./new_job.js').NewJob, firedAt: number }[]} built The jobs of the slots, when they were
  *     inserted.
@@ -48,6 +51,7 @@ function fakeStore(now) {
         rttMs: 0,
         failFire: null,
         failRead: null,
+        holdRead: null,
         fire: params => fire(params),
         built: [],
     };
@@ -140,6 +144,7 @@ function fakeStore(now) {
         },
         readSchedules: async (/** @type {string[] | null} */ ids) => {
             database.reads.push(ids);
+            await database.holdRead;
 
             if (database.failRead) {
                 throw database.failRead;
@@ -249,6 +254,8 @@ function failWith(database, id) {
  *     error: import('vitest').Mock }} logger
  * @property {() => Promise<void>} start Registers and starts, as createSqlane.start() does.
  * @property {import('./schedule.js').ScheduleEntry[]} entries
+ * @property {() => Promise<import('./types.js').ScheduleInfo[]>} list As `sqlane.schedules.list()` lists them, with the
+ *     schedules of this scheduler.
  */
 
 /**
@@ -268,8 +275,6 @@ function setup({ schedules, localOffsetMs = 0, offset = { ms: localOffsetMs }, t
         store,
         defaults: resolveDefaults(),
         maxPayloadBytes: 1024,
-        findDefinition: () => null,
-        unknownLanes: 'allow',
         notifyChannel: null,
         onCreated: name => created.push(name),
         emit: event => events.push(event),
@@ -278,13 +283,12 @@ function setup({ schedules, localOffsetMs = 0, offset = { ms: localOffsetMs }, t
         timings: { now, monotonic: () => Date.now(), ...timings },
     });
 
-    const entries = schedules.map(([name, options]) => checkSchedule(name, options));
+    // The key `k` of each schedule, unless its options give one: its id is `<lane>:k`
+    const entries = schedules.map(([name, options]) => checkSchedule(defineLane({ name }), { key: 'k', ...options }));
 
     for (const entry of entries) {
         scheduler.add(entry);
     }
-
-    scheduler.prepare();
 
     /** Registers and starts, as createSqlane.start() does */
     const start = async () => {
@@ -292,7 +296,9 @@ function setup({ schedules, localOffsetMs = 0, offset = { ms: localOffsetMs }, t
         await vi.advanceTimersByTimeAsync(0);
     };
 
-    return { scheduler, database, events, created, logger, start, entries };
+    const list = () => listSchedules({ store, local: scheduler.entries() });
+
+    return { scheduler, database, events, created, logger, start, entries, list };
 }
 
 /**
@@ -344,10 +350,10 @@ describe('start', () => {
 
         await start();
 
-        expect(database.registers).toStrictEqual([['tick']]);
+        expect(database.registers).toStrictEqual([['tick:k']]);
         expect(database.fires).toStrictEqual([]);
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
-        expect(firedSlots(database)).toStrictEqual([['tick@2026-06-01T12:01:00.000Z']]);
+        expect(firedSlots(database)).toStrictEqual([['tick:k@2026-06-01T12:01:00.000Z']]);
     });
 
     test('a slot missed during a restart: on time, late with once and the same spec, none otherwise', async () => {
@@ -366,28 +372,28 @@ describe('start', () => {
 
         // 12:00:30: the slot 12:00 of `on_time` is 30 s old, the slot 12:00 of the others too
         vi.setSystemTime(START + (30 * SECOND_MS));
-        row('on_time', START - MINUTE_MS, 'every 60000');
-        row('done', START + (2 * MINUTE_MS), 'every 60000');
+        row('on_time:k', START - MINUTE_MS, 'every 60000');
+        row('done:k', START + (2 * MINUTE_MS), 'every 60000');
         vi.setSystemTime(START + (2 * MINUTE_MS));
-        row('late_once', START - 3_600_000);
-        row('late_skip', START - 3_600_000);
-        row('late_other_spec', START - 3_600_000, 'every 60');
+        row('late_once:k', START - 3_600_000);
+        row('late_skip:k', START - 3_600_000);
+        row('late_other_spec:k', START - 3_600_000, 'every 60');
         await start();
 
         expect(firedSlots(database)).toStrictEqual([[
-            'late_once@2026-06-01T12:00:00.000Z',
-            'on_time@2026-06-01T12:02:00.000Z',
+            'late_once:k@2026-06-01T12:00:00.000Z',
+            'on_time:k@2026-06-01T12:02:00.000Z',
         ]]);
         expect(database.jobs).toStrictEqual([
-            'late_once:schedule:2026-06-01T12:00:00.000Z',
-            'on_time:schedule:2026-06-01T12:02:00.000Z',
+            'late_once:schedule:k:2026-06-01T12:00:00.000Z',
+            'on_time:schedule:k:2026-06-01T12:02:00.000Z',
         ]);
     });
 });
 
 describe('tick', () => {
     test('the schedules due at the same instant go in one fire; nextAt advances', async () => {
-        const { database, scheduler, start, events, created } = started({
+        const { database, start, events, created, list } = started({
             schedules: [['a', { every: '1m' }], ['b', { cron: '* * * * *' }], ['c', { every: '1h' }]],
         });
 
@@ -395,23 +401,23 @@ describe('tick', () => {
         await vi.advanceTimersByTimeAsync(2 * MINUTE_MS);
 
         expect(firedSlots(database)).toStrictEqual([
-            ['a@2026-06-01T12:01:00.000Z', 'b@2026-06-01T12:01:00.000Z'],
-            ['a@2026-06-01T12:02:00.000Z', 'b@2026-06-01T12:02:00.000Z'],
+            ['a:k@2026-06-01T12:01:00.000Z', 'b:k@2026-06-01T12:01:00.000Z'],
+            ['a:k@2026-06-01T12:02:00.000Z', 'b:k@2026-06-01T12:02:00.000Z'],
         ]);
         expect(events.filter(({ type }) => type === 'schedule_fired')).toHaveLength(4);
         expect(events[0]).toStrictEqual({
             type: 'schedule_fired',
-            scheduleId: 'a',
+            scheduleId: 'a:k',
             lane: 'a',
             scheduledAt: new Date('2026-06-01T12:01:00.000Z'),
             late: false,
-            jobId: 'a:schedule:2026-06-01T12:01:00.000Z',
+            jobId: 'a:schedule:k:2026-06-01T12:01:00.000Z',
         });
         expect(created).toStrictEqual(['a', 'b', 'a', 'b']);
-        await expect(scheduler.list()).resolves.toMatchObject([
-            { id: 'a', nextAt: new Date('2026-06-01T12:03:00.000Z'), lastSlotAt: new Date('2026-06-01T12:02:00.000Z') },
-            { id: 'b', nextAt: new Date('2026-06-01T12:03:00.000Z') },
-            { id: 'c', nextAt: new Date('2026-06-01T13:00:00.000Z'), lastJobId: null },
+        await expect(list()).resolves.toMatchObject([
+            { id: 'a:k', nextAt: new Date('2026-06-01T12:03:00.000Z'), lastSlotAt: new Date('2026-06-01T12:02:00.000Z') },
+            { id: 'b:k', nextAt: new Date('2026-06-01T12:03:00.000Z') },
+            { id: 'c:k', nextAt: new Date('2026-06-01T13:00:00.000Z'), lastJobId: null },
         ]);
     });
 
@@ -432,7 +438,7 @@ describe('tick', () => {
         const [candidate] = fireParams[0].candidates;
 
         expect(fireParams[0].buildJob(candidate, false)).toMatchObject({
-            id: 'tick:schedule:2026-06-01T12:01:00.000Z',
+            id: 'tick:schedule:k:2026-06-01T12:01:00.000Z',
             runAt: new Date('2026-06-01T12:01:00.000Z'),
             payloadJson: '{}',
         });
@@ -447,11 +453,11 @@ describe('tick', () => {
         vi.setSystemTime(Date.now() + (29 * SECOND_MS));
         await vi.advanceTimersByTimeAsync(SECOND_MS);
 
-        expect(firedSlots(database)).toStrictEqual([['tick@2026-06-01T12:00:30.000Z']]);
+        expect(firedSlots(database)).toStrictEqual([['tick:k@2026-06-01T12:00:30.000Z']]);
     });
 
     test.each([
-        ['once', ['tick@2026-06-01T15:00:00.000Z']],
+        ['once', ['tick:k@2026-06-01T15:00:00.000Z']],
         ['skip', []],
     ])('a stall past the grace, missed %s', async (missed, expected) => {
         const { database, start } = started({ schedules: [['tick', { every: '1h', missed }]] });
@@ -473,11 +479,11 @@ describe('tick', () => {
         }));
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
 
-        expect(firedSlots(database)).toStrictEqual([['tick@2026-06-01T12:01:00.000Z']]);
+        expect(firedSlots(database)).toStrictEqual([['tick:k@2026-06-01T12:01:00.000Z']]);
         expect(database.jobs).toStrictEqual([]);
         await vi.advanceTimersByTimeAsync(100);
-        expect(firedSlots(database).flat()).toStrictEqual(['tick@2026-06-01T12:01:00.000Z', 'tick@2026-06-01T12:01:00.000Z']);
-        expect(database.jobs).toStrictEqual(['tick:schedule:2026-06-01T12:01:00.000Z']);
+        expect(firedSlots(database).flat()).toStrictEqual(['tick:k@2026-06-01T12:01:00.000Z', 'tick:k@2026-06-01T12:01:00.000Z']);
+        expect(database.jobs).toStrictEqual(['tick:schedule:k:2026-06-01T12:01:00.000Z']);
     });
 
     test('overlap skip: the event has no job', async () => {
@@ -485,14 +491,14 @@ describe('tick', () => {
 
         await start();
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
-        database.unfinished.add('tick:schedule:2026-06-01T12:01:00.000Z');
+        database.unfinished.add('tick:schedule:k:2026-06-01T12:01:00.000Z');
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
 
         /** @type {import('./types.js').ScheduleFiredEvent[]} */
         const fired = /** @type {any[]} */ (events);
 
         expect(fired.map(event => event.jobId)).toStrictEqual([
-            'tick:schedule:2026-06-01T12:01:00.000Z',
+            'tick:schedule:k:2026-06-01T12:01:00.000Z',
             null,
         ]);
         expect(created).toStrictEqual(['tick']);
@@ -504,11 +510,11 @@ describe('tick', () => {
         await start();
         await vi.advanceTimersByTimeAsync(30 * 24 * 60 * MINUTE_MS);
 
-        expect(firedSlots(database)).toStrictEqual([['monthly@2026-07-01T00:00:00.000Z']]);
+        expect(firedSlots(database)).toStrictEqual([['monthly:k@2026-07-01T00:00:00.000Z']]);
     });
 
     test('a schedule with no slot within the horizon is left out of the timer', async () => {
-        const { database, scheduler, start, entries } = started({ schedules: [['never', { cron: '0 0 1 1 *' }]] });
+        const { database, start, entries, list } = started({ schedules: [['never', { cron: '0 0 1 1 *' }]] });
 
         // As if the cron had no slot within the horizon
         Object.assign(entries[0].timing, { cron: parseCron('0 0 30 2 *') });
@@ -516,7 +522,7 @@ describe('tick', () => {
         await vi.advanceTimersByTimeAsync(10 * MINUTE_MS);
 
         expect(database.fires).toStrictEqual([]);
-        await expect(scheduler.list()).resolves.toMatchObject([{ id: 'never', nextAt: null }]);
+        await expect(list()).resolves.toMatchObject([{ id: 'never:k', nextAt: null }]);
     });
 });
 
@@ -532,8 +538,8 @@ describe('the clock of the database', () => {
         await vi.advanceTimersByTimeAsync(MINUTE_MS - 1);
         expect(database.fires).toStrictEqual([]);
         await vi.advanceTimersByTimeAsync(1);
-        expect(firedSlots(database)).toStrictEqual([['tick@2026-06-01T12:01:00.000Z']]);
-        expect(database.jobs).toStrictEqual(['tick:schedule:2026-06-01T12:01:00.000Z']);
+        expect(firedSlots(database)).toStrictEqual([['tick:k@2026-06-01T12:01:00.000Z']]);
+        expect(database.jobs).toStrictEqual(['tick:schedule:k:2026-06-01T12:01:00.000Z']);
         await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
         expect(logger.warn).toHaveBeenCalledTimes(1);
         expect(logger.warn).toHaveBeenCalledWith(
@@ -560,15 +566,15 @@ describe('the clock of the database', () => {
     test('the registration seeds the skew, even with a slow round trip: a deferred slot at start still fires', async () => {
         const { database, start, logger } = started({ schedules: [['tick', { every: '1m' }]], localOffsetMs: 5000 });
 
-        database.rows.set('tick', { id: 'tick', lane: 'tick', spec: 'every 60000', lastSlotMs: START - MINUTE_MS, lastJobId: null });
+        database.rows.set('tick:k', { id: 'tick:k', lane: 'tick', spec: 'every 60000', lastSlotMs: START - MINUTE_MS, lastJobId: null });
         database.rttMs = 60;
         vi.setSystemTime(START + (59.5 * SECOND_MS));
         await start();
         await vi.advanceTimersByTimeAsync(2 * MINUTE_MS);
 
         expect(database.jobs.slice(0, 2)).toStrictEqual([
-            'tick:schedule:2026-06-01T12:00:00.000Z',
-            'tick:schedule:2026-06-01T12:01:00.000Z',
+            'tick:schedule:k:2026-06-01T12:00:00.000Z',
+            'tick:schedule:k:2026-06-01T12:01:00.000Z',
         ]);
         expect(logger.warn).not.toHaveBeenCalled();
     });
@@ -579,16 +585,16 @@ describe('busy rows', () => {
         const { database, start, events } = started({ schedules: [['tick', { every: '1m' }]] });
 
         await start();
-        database.locked.add('tick');
+        database.locked.add('tick:k');
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
         // The holder moves the cursor, and commits
-        const row = /** @type {ScheduleRow} */ (database.rows.get('tick'));
+        const row = /** @type {ScheduleRow} */ (database.rows.get('tick:k'));
 
         database.rows.set('tick', { ...row, lastSlotMs: START + MINUTE_MS });
-        database.locked.delete('tick');
+        database.locked.delete('tick:k');
         await vi.advanceTimersByTimeAsync(SECOND_MS);
 
-        expect(database.reads).toStrictEqual([['tick']]);
+        expect(database.reads).toStrictEqual([['tick:k']]);
         expect(database.fires).toHaveLength(1);
         expect(events).toStrictEqual([]);
     });
@@ -597,27 +603,27 @@ describe('busy rows', () => {
         const { database, start } = started({ schedules: [['tick', { every: '1m' }]] });
 
         await start();
-        database.locked.add('tick');
+        database.locked.add('tick:k');
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
-        database.locked.delete('tick');
+        database.locked.delete('tick:k');
         await vi.advanceTimersByTimeAsync(SECOND_MS);
 
         expect(firedSlots(database)).toStrictEqual([
-            ['tick@2026-06-01T12:01:00.000Z'],
-            ['tick@2026-06-01T12:01:00.000Z'],
+            ['tick:k@2026-06-01T12:01:00.000Z'],
+            ['tick:k@2026-06-01T12:01:00.000Z'],
         ]);
-        expect(database.jobs).toStrictEqual(['tick:schedule:2026-06-01T12:01:00.000Z']);
+        expect(database.jobs).toStrictEqual(['tick:schedule:k:2026-06-01T12:01:00.000Z']);
     });
 
     test('a missing row: on time, fired with insertMissing', async () => {
         const { database, start } = started({ schedules: [['tick', { every: '1m' }]] });
 
         await start();
-        database.rows.delete('tick');
+        database.rows.delete('tick:k');
         await vi.advanceTimersByTimeAsync(MINUTE_MS + SECOND_MS);
 
         expect(database.fires.map(({ candidates }) => candidates[0].insertMissing)).toStrictEqual([undefined, true]);
-        expect(database.jobs).toStrictEqual(['tick:schedule:2026-06-01T12:01:00.000Z']);
+        expect(database.jobs).toStrictEqual(['tick:schedule:k:2026-06-01T12:01:00.000Z']);
     });
 
     test('a row that stays busy: the rechecks back off, up to 60 s, and warn once past the grace', async () => {
@@ -639,7 +645,7 @@ describe('busy rows', () => {
         expect(gaps.slice(0, 8)).toStrictEqual([1, 2, 4, 8, 16, 32, 60, 60]);
         expect(logger.warn).toHaveBeenCalledTimes(1);
         expect(logger.warn).toHaveBeenCalledWith(
-            expect.objectContaining({ scheduleId: 'daily' }),
+            expect.objectContaining({ scheduleId: 'daily:k' }),
             'sqlane: the row of a schedule stays locked by another transaction',
         );
     });
@@ -660,7 +666,7 @@ describe('errors', () => {
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
 
         expect(database.fires).toHaveLength(2);
-        expect(database.jobs).toStrictEqual(['tick:schedule:2026-06-01T12:01:00.000Z']);
+        expect(database.jobs).toStrictEqual(['tick:schedule:k:2026-06-01T12:01:00.000Z']);
     });
 
     test('a connection error with 500 due slots: one fire per backoff step, one error, then recovery', async () => {
@@ -720,7 +726,7 @@ describe('errors', () => {
 
         await start();
 
-        const counter = failWith(database, 'job_042');
+        const counter = failWith(database, 'job_042:k');
 
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
 
@@ -729,7 +735,7 @@ describe('errors', () => {
         expect(logger.error).toHaveBeenCalledTimes(1);
         expect(database.jobs).toHaveLength(99);
         expect(logger.error).toHaveBeenCalledWith(
-            expect.objectContaining({ scheduleId: 'job_042' }),
+            expect.objectContaining({ scheduleId: 'job_042:k' }),
             'sqlane: a schedule could not enqueue its slot',
         );
     });
@@ -778,6 +784,8 @@ describe('stop', () => {
         const { database, scheduler } = started({ schedules: [['tick', { every: '1m' }]] });
 
         database.failRead = Object.assign(new Error('down'), { code: 'ECONNREFUSED' });
+        // As runner.start() does when its registration fails
+        scheduler.reportFailure(database.failRead);
         scheduler.start(null);
         await vi.advanceTimersByTimeAsync(15 * SECOND_MS);
         expect(database.registers).toHaveLength(2);
@@ -790,48 +798,53 @@ describe('stop', () => {
 });
 
 describe('add and list', () => {
+    test('a row whose spec is not the one of the schedule here: its next slot by its spec, without the jitter of here',
+        async () => {
+            const { list, database } = setup({ schedules: [['tick', { every: '1h', jitter: '30m' }]] });
+
+            database.rows.set('tick:k', { id: 'tick:k', lane: 'tick', spec: 'every 60000', lastSlotMs: 5, lastJobId: null });
+
+            await expect(list()).resolves.toMatchObject([{
+                id: 'tick:k',
+                spec: 'every 60000',
+                nextAt: new Date('2026-06-01T12:01:00.000Z'),
+                nextRunAt: new Date('2026-06-01T12:01:00.000Z'),
+            }]);
+        });
+
     test('a second schedule with the same id throws', () => {
         const { scheduler } = setup({ schedules: [['tick', { every: '1m' }]] });
 
-        expect(() => scheduler.add(checkSchedule('tick', { every: '1h' }))).toThrow(/exists already/);
-        expect(() => scheduler.add(checkSchedule('tick', { every: '1h', key: 'k' }))).not.toThrow();
+        expect(() => scheduler.add(checkSchedule(defineLane({ name: 'tick' }), { every: '1h', key: 'k' }))).toThrow(/is mounted here already/);
+        expect(() => scheduler.add(checkSchedule(defineLane({ name: 'tick' }), { every: '1h', key: 'other' }))).not.toThrow();
     });
 
-    test('lists the rows of other services, and the registered schedules without a row', async () => {
-        const { scheduler, database } = setup({ schedules: [['tick', { every: '1m' }]] });
+    test('lists the rows only, of other services too, with their next slot by their spec', async () => {
+        const { list, database } = setup({ schedules: [['tick', { every: '1m' }]] });
 
-        database.rows.set('gone', { id: 'gone', lane: 'gone', spec: 'every 1000', lastSlotMs: 5, lastJobId: 'gone:x' });
+        database.rows.set('gone:k', { id: 'gone:k', lane: 'gone', spec: 'every 1000', lastSlotMs: 5, lastJobId: 'gone:x' });
 
-        await expect(scheduler.list()).resolves.toStrictEqual([
+        // The schedule of here has no row before its registration: not listed
+        await expect(list()).resolves.toStrictEqual([
             {
-                id: 'gone',
+                id: 'gone:k',
                 lane: 'gone',
                 spec: 'every 1000',
-                registered: false,
-                nextAt: null,
-                nextRunAt: null,
+                // By its stored spec: the jitter of a schedule of another process is not known
+                nextAt: new Date('2026-06-01T12:00:01.000Z'),
+                nextRunAt: new Date('2026-06-01T12:00:01.000Z'),
                 lastSlotAt: new Date(5),
                 lastJobId: 'gone:x',
-            },
-            {
-                id: 'tick',
-                lane: 'tick',
-                spec: 'every 60000',
-                registered: true,
-                nextAt: new Date('2026-06-01T12:01:00.000Z'),
-                nextRunAt: new Date('2026-06-01T12:01:00.000Z'),
-                lastSlotAt: null,
-                lastJobId: null,
             },
         ]);
     });
 
     test('a missing table is an empty one', async () => {
-        const { scheduler, database } = setup({ schedules: [] });
+        const { list, database } = setup({ schedules: [] });
 
         database.failRead = Object.assign(new Error('no table'), { code: '42P01' });
 
-        await expect(scheduler.list()).resolves.toStrictEqual([]);
+        await expect(list()).resolves.toStrictEqual([]);
     });
 });
 
@@ -842,33 +855,33 @@ describe('add and list', () => {
  * @returns {number} The due time of the slot.
  */
 function dueTime(id, options, slot) {
-    return dueOf(checkSchedule(id, options), Date.parse(slot));
+    return dueOf(checkSchedule(defineLane({ name: id }), { key: 'k', ...options }), Date.parse(slot));
 }
 
 describe('jitter', () => {
-    // job_0, every 1h, jitter 59m: the slot 10:00 is due at 10:46:03
+    // job_0:k, every 1h, jitter 59m: the slot 10:00 is due at 10:55:48
     const hourly = { every: '1h', jitter: '59m' };
 
     test.each(['once', 'skip'])('a restart inside the window, missed %s: the slot fires at its due time, on time', async (missed) => {
         const options = { ...hourly, missed };
-        const { database, start, scheduler } = started({ schedules: [['job_0', options]] });
+        const { database, start, list } = started({ schedules: [['job_0', options]] });
         const due = dueTime('job_0', options, '2026-06-01T10:00:00Z');
 
-        database.rows.set('job_0', {
-            id: 'job_0', lane: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T09:00:00Z'), lastJobId: null,
+        database.rows.set('job_0:k', {
+            id: 'job_0:k', lane: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T09:00:00Z'), lastJobId: null,
         });
         vi.setSystemTime(Date.parse('2026-06-01T10:20:00Z'));
         await start();
 
         expect(database.fires).toStrictEqual([]);
-        await expect(scheduler.list()).resolves.toMatchObject([{
+        await expect(list()).resolves.toMatchObject([{
             nextAt: new Date('2026-06-01T10:00:00Z'),
             nextRunAt: new Date(due),
         }]);
         await vi.advanceTimersByTimeAsync(due - Date.now());
 
         expect(database.built).toStrictEqual([{
-            job: expect.objectContaining({ id: 'job_0:schedule:2026-06-01T10:00:00.000Z', runAt: new Date(due) }),
+            job: expect.objectContaining({ id: 'job_0:schedule:k:2026-06-01T10:00:00.000Z', runAt: new Date(due) }),
             firedAt: due,
         }]);
     });
@@ -883,8 +896,8 @@ describe('jitter', () => {
         await vi.advanceTimersByTimeAsync(2 * 3_600_000);
 
         expect(database.built.map(({ job, firedAt }) => [job.id, job.delayMs, firedAt === due11])).toStrictEqual([
-            ['job_0:schedule:2026-06-01T10:00:00.000Z', dueTime('job_0', hourly, '2026-06-01T10:00:00Z') - Date.parse('2026-06-01T10:00:00Z'), false],
-            ['job_0:schedule:2026-06-01T11:00:00.000Z', 0, true],
+            ['job_0:schedule:k:2026-06-01T10:00:00.000Z', dueTime('job_0', hourly, '2026-06-01T10:00:00Z') - Date.parse('2026-06-01T10:00:00Z'), false],
+            ['job_0:schedule:k:2026-06-01T11:00:00.000Z', 0, true],
         ]);
     });
 
@@ -901,21 +914,22 @@ describe('jitter', () => {
         ).toISOString())];
 
         expect(database.built.map(({ job, firedAt }) => [job.id, firedAt])).toStrictEqual(
-            slots.map(slot => [`report:schedule:${slot}`, dueTime('report', options, slot)]),
+            slots.map(slot => [`report:schedule:k:${slot}`, dueTime('report', options, slot)]),
         );
     });
 
     test('a late catch-up keeps its offset as a delay', async () => {
         const { database, start } = started({ schedules: [['job_0', hourly]] });
 
-        database.rows.set('job_0', {
-            id: 'job_0', lane: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T08:00:00Z'), lastJobId: null,
+        database.rows.set('job_0:k', {
+            id: 'job_0:k', lane: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T08:00:00Z'), lastJobId: null,
         });
-        vi.setSystemTime(Date.parse('2026-06-01T10:50:00Z'));
+        // After the due time of the slot 10:00 (10:55:48), more than 1 minute: late
+        vi.setSystemTime(Date.parse('2026-06-01T10:59:30Z'));
         await start();
 
         expect(database.built.map(({ job }) => [job.id, job.delayMs, job.runAt])).toStrictEqual([[
-            'job_0:schedule:2026-06-01T10:00:00.000Z',
+            'job_0:schedule:k:2026-06-01T10:00:00.000Z',
             dueTime('job_0', hourly, '2026-06-01T10:00:00Z') - Date.parse('2026-06-01T10:00:00Z'),
             null,
         ]]);
@@ -925,8 +939,8 @@ describe('jitter', () => {
         const { database, start } = started({ schedules: [['job_0', hourly]] });
         const due = dueTime('job_0', hourly, '2026-06-01T10:00:00Z');
 
-        database.rows.set('job_0', {
-            id: 'job_0', lane: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T09:00:00Z'), lastJobId: null,
+        database.rows.set('job_0:k', {
+            id: 'job_0:k', lane: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T09:00:00Z'), lastJobId: null,
         });
         vi.setSystemTime(due + 500);
         failNext(database, 1, params => ({
@@ -935,7 +949,7 @@ describe('jitter', () => {
         await start();
         await vi.advanceTimersByTimeAsync(SECOND_MS);
 
-        expect(database.jobs).toStrictEqual(['job_0:schedule:2026-06-01T10:00:00.000Z']);
+        expect(database.jobs).toStrictEqual(['job_0:schedule:k:2026-06-01T10:00:00.000Z']);
     });
 
     test('without jitter: no due time is computed', async () => {
@@ -959,7 +973,7 @@ describe('review fixes', () => {
         // The busy fire, the recheck read and its deferred fire, the fire at the slot of the database
         expect(database.fires.length).toBeLessThanOrEqual(4);
         expect(database.reads.length).toBeLessThanOrEqual(2);
-        expect(database.jobs).toStrictEqual(['tick:schedule:2026-06-01T12:01:00.000Z']);
+        expect(database.jobs).toStrictEqual(['tick:schedule:k:2026-06-01T12:01:00.000Z']);
     });
 
     test('a step of the process clock moves the skew: the next slot fires on time', async () => {
@@ -977,9 +991,9 @@ describe('review fixes', () => {
         const lateness = database.built.map(({ job, firedAt }) => firedAt - Date.parse(job.id.slice(-24)));
 
         expect(database.built.map(({ job }) => job.id)).toStrictEqual([
-            'tick:schedule:2026-06-01T12:01:00.000Z',
-            'tick:schedule:2026-06-01T12:02:00.000Z',
-            'tick:schedule:2026-06-01T12:03:00.000Z',
+            'tick:schedule:k:2026-06-01T12:01:00.000Z',
+            'tick:schedule:k:2026-06-01T12:02:00.000Z',
+            'tick:schedule:k:2026-06-01T12:03:00.000Z',
         ]);
         expect(Math.max(...lateness)).toBeLessThan(100);
     });
@@ -993,9 +1007,9 @@ describe('review fixes', () => {
         });
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
         // The next fires succeed, but another process takes the slots
-        database.locked.add('tick');
+        database.locked.add('tick:k');
         await vi.advanceTimersByTimeAsync(2 * MINUTE_MS);
-        database.locked.delete('tick');
+        database.locked.delete('tick:k');
         failNext(database, 1, () => {
             throw Object.assign(new Error('down'), { code: 'ECONNREFUSED' });
         });
@@ -1004,13 +1018,16 @@ describe('review fixes', () => {
         expect(logger.error).toHaveBeenCalledTimes(2);
     });
 
-    test('schedules.list() before start(), with jitter: a slot that has come and is not due yet', async () => {
-        const { scheduler } = setup({ schedules: [['job_0', { every: '1h', jitter: '59m' }]] });
+    test('schedules.list() of a schedule mounted here, with jitter: a slot that has come and is not due yet', async () => {
+        const { list, database } = setup({ schedules: [['job_0', { every: '1h', jitter: '59m' }]] });
         const due = dueTime('job_0', { every: '1h', jitter: '59m' }, '2026-06-01T10:00:00Z');
 
+        database.rows.set('job_0:k', {
+            id: 'job_0:k', lane: 'job_0', spec: 'every 3600000', lastSlotMs: Date.parse('2026-06-01T09:00:00Z'), lastJobId: null,
+        });
         vi.setSystemTime(Date.parse('2026-06-01T10:20:00Z'));
 
-        await expect(scheduler.list()).resolves.toMatchObject([{
+        await expect(list()).resolves.toMatchObject([{
             nextAt: new Date('2026-06-01T10:00:00Z'),
             nextRunAt: new Date(due),
         }]);
@@ -1033,8 +1050,8 @@ describe('review 2 fixes', () => {
         await vi.advanceTimersByTimeAsync(2 * MINUTE_MS);
 
         expect(database.built.map(({ job }) => job.id).slice(0, 2)).toStrictEqual([
-            'tick:schedule:2026-06-01T12:11:00.000Z',
-            'tick:schedule:2026-06-01T12:12:00.000Z',
+            'tick:schedule:k:2026-06-01T12:11:00.000Z',
+            'tick:schedule:k:2026-06-01T12:12:00.000Z',
         ]);
     });
 
@@ -1043,7 +1060,7 @@ describe('review 2 fixes', () => {
         const { database, start, logger, events } = started({ schedules });
 
         await start();
-        failWith(database, 'bad');
+        failWith(database, 'bad:k');
         await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
 
         expect(logger.error).toHaveBeenCalledTimes(1);
@@ -1054,7 +1071,7 @@ describe('review 2 fixes', () => {
         // It succeeds, then fails again: a new error
         database.failFire = null;
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
-        failWith(database, 'bad');
+        failWith(database, 'bad:k');
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
 
         expect(logger.error).toHaveBeenCalledTimes(2);
@@ -1076,4 +1093,137 @@ test('a forward step of the process clock keeps every slot of a short period', a
 
     expect(slots.length).toBeGreaterThanOrEqual(11);
     expect(gaps.filter(gap => gap !== 2 * SECOND_MS)).toStrictEqual([]);
+});
+
+describe('runtime add and remove', () => {
+    test('an add while start() has no schedule to register: registered at once, not after a backoff', async () => {
+        const { database, scheduler } = started({ schedules: [] });
+
+        // As runner.start() does: it found no schedule to register, then a mount came during its start
+        scheduler.add(checkSchedule(defineLane({ name: 'tick' }), { every: '1m', key: 'a' }));
+        scheduler.start(null);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(database.registers).toStrictEqual([['tick:a']]);
+    });
+
+    test('an add during the registration of start(): registered after it, its rows read, not fired as busy',
+        async () => {
+            const { database, scheduler } = started({ schedules: [['old', { every: '1m' }]] });
+            const read = await scheduler.register();
+
+            scheduler.add(checkSchedule(defineLane({ name: 'tick' }), { every: '1m', key: 'a' }));
+            scheduler.start(read);
+            await vi.advanceTimersByTimeAsync(MINUTE_MS);
+            expect(database.registers).toStrictEqual([['old:k'], ['tick:a']]);
+            expect(firedSlots(database)).toStrictEqual([['old:k@2026-06-01T12:01:00.000Z', 'tick:a@2026-06-01T12:01:00.000Z']]);
+            expect(database.reads).toStrictEqual([]);
+        });
+
+    test('a remove and an add of the same id during the read of a recheck: the old candidate is not fired', async () => {
+        const { database, scheduler, start, entries } = started({ schedules: [['tick', { every: '1m' }]] });
+        const held = Promise.withResolvers();
+
+        await start();
+        database.locked.add('tick:k');
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        database.locked.delete('tick:k');
+        database.holdRead = held.promise;
+        await vi.advanceTimersByTimeAsync(SECOND_MS);
+        expect(database.reads).toStrictEqual([['tick:k']]);
+        scheduler.remove(entries[0]);
+        scheduler.add(checkSchedule(defineLane({ name: 'tick' }), { key: 'k', every: '2m' }));
+        held.resolve(undefined);
+        await vi.advanceTimersByTimeAsync(0);
+        // The candidate of the old entry (every 1m, the slot 12:01) is gone with it
+        expect(database.fires.slice(1).flatMap(({ candidates }) => candidates.map(({ spec }) => spec)))
+            .not.toContain('every 60000');
+    });
+
+    test('the first schedule after a start with none: registered at once, then fired', async () => {
+        const { database, scheduler } = started({ schedules: [] });
+
+        // As createSqlane.start() does: no registration without a schedule
+        scheduler.start(null);
+        scheduler.add(checkSchedule(defineLane({ name: 'tick' }), { every: '1m', key: 'a' }));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(database.registers).toStrictEqual([['tick:a']]);
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        expect(firedSlots(database)).toStrictEqual([['tick:a@2026-06-01T12:01:00.000Z']]);
+    });
+
+    test('an add during a failed check of the server (not started yet) registers once the check passes', async () => {
+        const { database, scheduler } = started({ schedules: [['old', { every: '1m' }]] });
+
+        scheduler.add(checkSchedule(defineLane({ name: 'tick' }), { every: '1m', key: 'a' }));
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        expect(database.registers).toStrictEqual([]);
+        scheduler.startRegistering();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(database.registers).toStrictEqual([['old:k', 'tick:a']]);
+    });
+
+    test('an add during a failing registration waits for its next try, which registers both', async () => {
+        const { database, scheduler } = started({ schedules: [['old', { every: '1m' }]] });
+
+        database.failRead = Object.assign(new Error('down'), { code: 'ECONNREFUSED' });
+        // As runner.start() does when its registration fails
+        scheduler.reportFailure(database.failRead);
+        scheduler.start(null);
+        await vi.advanceTimersByTimeAsync(SECOND_MS);
+        scheduler.add(checkSchedule(defineLane({ name: 'tick' }), { every: '1m', key: 'a' }));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(database.registers).toStrictEqual([]);
+        database.failRead = null;
+        await vi.advanceTimersByTimeAsync(4 * SECOND_MS);
+        expect(database.registers).toStrictEqual([['old:k', 'tick:a']]);
+    });
+
+    test('a remove during a fire: the fire completes with its entry; no fire after it', async () => {
+        const { database, scheduler, start, entries, events } = started({ schedules: [['tick', { every: '1m' }]] });
+
+        await start();
+
+        const { promise, resolve: release } = /** @type {PromiseWithResolvers<void>} */ (Promise.withResolvers());
+
+        database.failFire = async (params) => {
+            await promise;
+
+            return database.fire(params);
+        };
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        scheduler.remove(entries[0]);
+        release();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(database.jobs).toStrictEqual(['tick:schedule:k:2026-06-01T12:01:00.000Z']);
+        expect(events.map(({ type }) => type)).toStrictEqual(['schedule_fired']);
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+        expect(database.fires).toHaveLength(1);
+        expect(scheduler.has('tick')).toBe(false);
+    });
+
+    test('a remove during a recheck: no read and no fire after it', async () => {
+        const { database, scheduler, start, entries } = started({ schedules: [['tick', { every: '1m' }]] });
+
+        await start();
+        database.locked.add('tick:k');
+        await vi.advanceTimersByTimeAsync(MINUTE_MS);
+        expect(database.fires).toHaveLength(1);
+        scheduler.remove(entries[0]);
+        await vi.advanceTimersByTimeAsync(5 * MINUTE_MS);
+        expect(database.reads).toStrictEqual([]);
+        expect(database.fires).toHaveLength(1);
+    });
+
+    test('a remove, then an add of the same id: the new entry registers and fires; a remove of the old one does nothing',
+        async () => {
+            const { database, scheduler, start, entries } = started({ schedules: [['tick', { every: '1m' }]] });
+
+            await start();
+            scheduler.remove(entries[0]);
+            scheduler.add(checkSchedule(defineLane({ name: 'tick' }), { every: '1m', key: 'k' }));
+            scheduler.remove(entries[0]);
+            await vi.advanceTimersByTimeAsync(MINUTE_MS);
+            expect(database.registers).toStrictEqual([['tick:k'], ['tick:k']]);
+            expect(firedSlots(database)).toStrictEqual([['tick:k@2026-06-01T12:01:00.000Z']]);
+        });
 });

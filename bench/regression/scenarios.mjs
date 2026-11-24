@@ -9,9 +9,12 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 /**
  * @typedef {object} Context
- * @property {any} lib The module of sqlane: `createSqlane`, `defineLane`.
+ * @property {any} lib The module of sqlane: `createSqlane`, `createRunner`, `defineLane`, `defineHandler`,
+ *     `defineSchedule`.
  * @property {(options?: Record<string, unknown>) => any} create A sqlane instance on the scenario's database, with
  *     these options on top of its adapter.
+ * @property {(sqlane: any, options?: Record<string, unknown>) => any} createRunner The runner of an instance:
+ *     `createRunner` of the same source tree.
  * @property {any} pool The pool of the scenario's database, for `enqueue`.
  * @property {(func: () => Promise<void>) => Promise<StatementStats>} measure Clears the statistics, runs `func`, and
  *     reads them.
@@ -45,13 +48,12 @@ function definitions(lib, count, options = {}) {
 }
 
 /**
- * @param {any} sqlane
+ * @param {any} lib
+ * @param {any} runner
  * @param {any[]} jobs
  */
-function handleAll(sqlane, jobs) {
-    for (const job of jobs) {
-        sqlane.lanes.add(job, async () => {});
-    }
+function handleAll(lib, runner, jobs) {
+    runner.mount(jobs.map(job => lib.defineHandler(job, async () => {})));
 }
 
 /**
@@ -78,7 +80,7 @@ export const SCENARIOS = [
         unit: 'enqueue, in a transaction of its own',
         async run({ lib, create, pool, measure }) {
             const [job] = definitions(lib, 1);
-            const sqlane = create({ lanes: [job] });
+            const sqlane = create();
 
             await sqlane.schema.migrate();
 
@@ -98,7 +100,7 @@ export const SCENARIOS = [
         unit: '`enqueueMany` of 100 jobs',
         async run({ lib, create, pool, measure }) {
             const [job] = definitions(lib, 1);
-            const sqlane = create({ lanes: [job] });
+            const sqlane = create();
 
             await sqlane.schema.migrate();
 
@@ -119,11 +121,12 @@ export const SCENARIOS = [
         name: 'run',
         unit: 'job claimed, run and completed, over 1000 added lanes',
         timing: ROUNDS,
-        async run({ lib, create, pool, measure }) {
+        async run({ lib, create, createRunner, pool, measure }) {
             const jobs = definitions(lib, NAMES);
-            const sqlane = create({ lanes: jobs, localMaxConcurrency: 1 });
+            const sqlane = create();
+            const runner = createRunner(sqlane, { localMaxConcurrency: 1 });
 
-            handleAll(sqlane, jobs);
+            handleAll(lib, runner, jobs);
             await sqlane.schema.migrate();
 
             for (let index = 0; index < JOBS; index++) {
@@ -131,7 +134,7 @@ export const SCENARIOS = [
             }
 
             const stats = await measure(async () => {
-                const { completed } = await sqlane.drain({ timeout: '60s' });
+                const { completed } = await runner.drain({ timeout: '60s' });
 
                 if (completed !== JOBS) {
                     throw new Error(`run: ${completed} of ${JOBS} jobs completed`);
@@ -146,15 +149,16 @@ export const SCENARIOS = [
     {
         name: 'idle',
         unit: '`drain()` of 1000 added lanes with no job: its rounds until it finds none',
-        async run({ lib, create, measure }) {
+        async run({ lib, create, createRunner, measure }) {
             const jobs = definitions(lib, NAMES);
-            const sqlane = create({ lanes: jobs });
+            const sqlane = create();
+            const runner = createRunner(sqlane);
 
-            handleAll(sqlane, jobs);
+            handleAll(lib, runner, jobs);
             await sqlane.schema.migrate();
 
             const stats = await measure(async () => {
-                await sqlane.drain();
+                await runner.drain();
             });
 
             await sqlane.close();
@@ -166,7 +170,7 @@ export const SCENARIOS = [
         name: 'global_limits',
         unit: 'job with 2 global limits (a key of 1 of 10, and one shared of 5), 100 jobs of 2 lanes',
         timing: ROUNDS,
-        async run({ lib, create, pool, measure }) {
+        async run({ lib, create, createRunner, pool, measure }) {
             const account = lib.defineConcurrencyLimit({ name: 'account', max: 1 });
             const accounts = lib.defineConcurrencyLimit({ name: 'accounts', max: 5 });
             const jobs = definitions(lib, 2, {
@@ -176,9 +180,10 @@ export const SCENARIOS = [
                 ],
                 timeout: '1m',
             });
-            const sqlane = create({ lanes: jobs, localMaxConcurrency: 1 });
+            const sqlane = create();
+            const runner = createRunner(sqlane, { localMaxConcurrency: 1 });
 
-            handleAll(sqlane, jobs);
+            handleAll(lib, runner, jobs);
             await sqlane.schema.migrate();
 
             for (let index = 0; index < 100; index++) {
@@ -186,7 +191,7 @@ export const SCENARIOS = [
             }
 
             const stats = await measure(async () => {
-                const { completed } = await sqlane.drain({ timeout: '60s' });
+                const { completed } = await runner.drain({ timeout: '60s' });
 
                 if (completed !== 100) {
                     throw new Error(`global_limits: ${completed} of 100 jobs completed`);
@@ -202,7 +207,7 @@ export const SCENARIOS = [
         name: 'global_rate_limits',
         unit: 'job with a key of 1 of 10 of a global rate limit that none reaches, 100 jobs of 2 lanes',
         timing: ROUNDS,
-        async run({ lib, create, pool, measure }) {
+        async run({ lib, create, createRunner, pool, measure }) {
             // A burst of 1000 per key: the 10 starts of each key fit at once, so no job blocks and the counts are
             // the statements of the rate limit on each job, not of a timer
             const api = lib.defineRateLimit({ name: 'api', max: 1000, per: '1s', burst: 1000 });
@@ -210,9 +215,10 @@ export const SCENARIOS = [
                 globalRateLimits: (/** @type {{ payload: { key: number } }} */ { payload }) => [api.key(payload.key)],
                 timeout: '1m',
             });
-            const sqlane = create({ lanes: jobs, localMaxConcurrency: 1 });
+            const sqlane = create();
+            const runner = createRunner(sqlane, { localMaxConcurrency: 1 });
 
-            handleAll(sqlane, jobs);
+            handleAll(lib, runner, jobs);
             await sqlane.schema.migrate();
 
             for (let index = 0; index < 100; index++) {
@@ -220,7 +226,7 @@ export const SCENARIOS = [
             }
 
             const stats = await measure(async () => {
-                const { completed } = await sqlane.drain({ timeout: '60s' });
+                const { completed } = await runner.drain({ timeout: '60s' });
 
                 if (completed !== 100) {
                     throw new Error(`global_rate_limits: ${completed} of 100 jobs completed`);
@@ -235,11 +241,10 @@ export const SCENARIOS = [
     {
         name: 'schedule',
         unit: 'slot of 1000 `every: \'10s\'` schedules, in one process that adds none of their lanes',
-        async run({ lib, create, measure }) {
+        async run({ lib, create, createRunner, measure }) {
             const jobs = definitions(lib, NAMES);
             let fired = 0;
             const sqlane = create({
-                lanes: jobs,
                 // The stall recovery and the cleanup run every 30 s and 5 minutes: off, so the window holds the
                 // scheduler's work only (`timings` is undocumented, for the tests of sqlane). Their first run comes
                 // at a random time within the interval: 3 weeks, not 1 h, where it fell in the window of 20 s about
@@ -252,12 +257,11 @@ export const SCENARIOS = [
                 },
             });
 
-            for (const job of jobs) {
-                sqlane.schedule(job, { every: '10s' });
-            }
+            const runner = createRunner(sqlane);
 
+            runner.mount(jobs.map(job => lib.defineSchedule(job, { key: 's', every: '10s' })));
             await sqlane.schema.migrate();
-            await sqlane.start();
+            await runner.start();
 
             // The first slot may come during the registration: measure the next one, from 2 s before it
             const slot = (Math.floor(Date.now() / 10_000) + 2) * 10_000;

@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Pool } from 'pg';
-import { createSqlane, defineConcurrencyLimit, defineLane } from '@sqlane/core';
+import { createRunner, createSqlane, defineConcurrencyLimit, defineHandler, defineLane } from '@sqlane/core';
 import { pgAdapter } from '@sqlane/core/adapter-pg';
 
 const url = process.env.DATABASE_URL ?? 'postgres://postgres@127.0.0.1:15432/app';
@@ -27,7 +27,6 @@ const events = new EventEmitter();
 const sqlane = createSqlane({
     // NOTIFY wakes the workers of other processes at the commit
     adapter: pgAdapter(queuePool, { dialect: 'postgres', notify: true }),
-    lanes: [sendReceipt, syncOrder],
     onEvent: event => events.emit(event.type, event),
 });
 
@@ -41,15 +40,19 @@ let committedAt = 0;
 const timeline = [];
 const startedAt = performance.now();
 
-sqlane.lanes.add(sendReceipt, ({ payload }) => {
-    console.log(`   send_receipt of order ${payload.orderId} ran ${ms(performance.now() - committedAt)} after the commit`);
-});
-sqlane.lanes.add(syncOrder, async ({ payload, signal }) => {
-    timeline.push({ order: payload.orderId, event: 'start', at: performance.now() - startedAt });
-    await sleep(200, undefined, { signal }); // the work: stops when sqlane aborts the signal
-    timeline.push({ order: payload.orderId, event: 'end', at: performance.now() - startedAt });
-});
-await sqlane.start();
+const runner = createRunner(sqlane);
+
+runner.mount([
+    defineHandler(sendReceipt, ({ payload }) => {
+        console.log(`   send_receipt of order ${payload.orderId} ran ${ms(performance.now() - committedAt)} after the commit`);
+    }),
+    defineHandler(syncOrder, async ({ payload, signal }) => {
+        timeline.push({ order: payload.orderId, event: 'start', at: performance.now() - startedAt });
+        await sleep(200, undefined, { signal }); // the work: stops when sqlane aborts the signal
+        timeline.push({ order: payload.orderId, event: 'end', at: performance.now() - startedAt });
+    }),
+]);
+await runner.start();
 
 console.log('1. Commit: order 1 and its job');
 let done = completions(1);

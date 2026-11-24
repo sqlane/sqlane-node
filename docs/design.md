@@ -12,7 +12,7 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 1. **Transactional enqueue.** sqlane inserts a job with the connection of the caller's transaction. The job exists only
    if that transaction commits, and it never starts before its data is visible.
 2. **Cheap idle lanes.** 1000 lanes, most of them idle, cost about the same as 10. The database load of a
-   process does not grow with the number of registered lanes. It grows only with the lanes that have pending jobs.
+   process does not grow with the number of handled lanes. It grows only with the lanes that have pending jobs.
 3. **Low latency.** In the same process, a job starts right after the commit when the adapter sees the commit, and
    about 25 ms after it otherwise. In another process, a job starts within a few milliseconds with PostgreSQL NOTIFY,
    and about 25 ms after the commit with a hint. Without either, it starts within the poll interval, which is 5 s by
@@ -44,7 +44,8 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 | **Job**               | One row: a payload, a state, attempts, a lease.                                                                                                                                                                                                   |
 | **Lane**              | The jobs that share a name, e.g. `build_report`, with the default options of its definition. It is also the "queue": there is no separate queue. Lanes share the table and the workers, with fair sharing between them; a lane is not a priority. |
 | **Lane definition**   | The name and the options of a lane. Producers and workers import it.                                                                                                                                                                              |
-| **Handler**           | The function that runs the jobs of a lane. Only workers add lanes, with `lanes.add`.                                                                                                                                                              |
+| **Handler**           | How a process runs the jobs of a lane: its function and its local settings (`defineHandler`). Only runners mount handlers.                                                                                                                        |
+| **Runner**            | The part of a process that runs jobs and fires schedules (`createRunner`). Producers have none.                                                                                                                                                   |
 | **Concurrency limit** | The most jobs that run at once: local (per process, in memory) or global (per key, in the cluster).                                                                                                                                               |
 | **Rate limit**        | The most job starts per period: local (per process, in memory) or global (per key, in the cluster).                                                                                                                                               |
 | **Fair share weight** | A lane's share of the free slots against the other due lanes.                                                                                                                                                                                     |
@@ -55,7 +56,7 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 | **Failure job**       | A job that sqlane adds, to the failure lane, when another job fails for good.                                                                                                                                                                     |
 | **Adapter**           | Wraps a driver: the dialect, the queue's pool, and the raw connections given to `enqueue`.                                                                                                                                                        |
 | **Hint**              | A message "jobs of this lane are ready" between processes. Only an optimization.                                                                                                                                                                  |
-| **Schedule**          | A cron in a time zone, or a fixed interval, that adds a job at each of its times.                                                                                                                                                                 |
+| **Schedule**          | A cron in a time zone, or a fixed interval, that adds a job at each of its times (`defineSchedule`, id `<lane>:<key>`).                                                                                                                           |
 | **Slot**              | One time of a schedule. It adds at most one job.                                                                                                                                                                                                  |
 
 ## API
@@ -63,14 +64,24 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 The [API reference](api.md) describes every function, option, default, error and event. This section keeps only the
 reasons behind the shape of the API.
 
-- **Definition apart from the handler.** Producers import a small job definition, not the handler and its
-  dependencies. So `enqueue` and `lanes.add` take a definition or a name.
+- **Definition apart from the handler.** Producers import a small lane definition, not the handler and its
+  dependencies. A lane says what a job is (`defineLane`); a handler says how a process runs it (`defineHandler`); a
+  schedule says when one is added (`defineSchedule`), next to its lane. They are frozen values, with no instance.
+- **Two scopes.** `sqlane` (`createSqlane`) acts on the database, for every process; the runner (`createRunner`) acts on
+  this process: its mounts, its local pauses, `start`, `drain`, `close`. A producer creates no runner, so a web process
+  cannot start a worker by mistake. A runner takes only a sqlane of its own copy of the package.
+- **Mounts at runtime.** A runner mounts and unmounts handlers and schedules at any time, so a process can change
+  what it runs (a feature flag, a tenant, a test) without a restart. A claim and a fire keep the parts they began with;
+  a job that runs keeps its handler, and counts toward the lane, by name, after an unmount.
 - **Payload types, no validation.** A definition can declare its payload type, so the compiler checks `enqueue`, the
   handler, `globalConcurrencyLimits` and `globalRateLimits`. sqlane does not validate payloads at runtime, because the app knows its own rules. A
   payload is plain JSON without revivers. sqlane refuses a NUL character on both databases, because PostgreSQL `jsonb`
   refuses it.
-- **Enqueue by name.** A producer without the definition, such as another service or a script, can enqueue by name.
-  The job then gets the options of the known definition, or the defaults.
+- **No enqueue by name.** `enqueue` takes a definition only. An enqueue by name took the options of whatever
+  definition the process knew, else the defaults: a producer without the definition silently enqueued jobs with other
+  options (attempts, limits, retention) than the lane's. A producer imports the module of the lanes, which holds no
+  handler code, so the definition costs it nothing. The reads and the admin methods (`jobs.list`, `retry`, `cancel`,
+  `remove`, `runner.pauseLocally`, `getStatus`) keep a name: they change no option of a job.
 - **One adapter, raw connections.** The adapter gives the dialect and the queue's pool. `enqueue` takes the driver's
   own connection, so the job joins the app's transaction. A connection must be in a transaction, because MySQL cannot
   detect one safely.
@@ -80,15 +91,17 @@ reasons behind the shape of the API.
   Instead, an adapter checks the ORM it gets and throws a `ConfigError` with the supported versions. CI tests each
   supported major version. An ORM adapter runs sqlane's SQL on the driver connection under the ORM, or through its
   raw-SQL API, so there is one SQL per dialect. [Adapters](adapters.md) describes each one.
-- **All the options of a lane in its definition.** `lanes.add()` takes none: the local limits, the weight and the timeout
-  are definition fields too, read by the worker, so one module describes a lane. A machine that needs other caps
-  computes them in that module, from its own environment.
+- **What a job is in its definition; how a process runs it in its handler.** The options stored on the row
+  (`maxAttempts`, `maxStalls`, `retention`, the global limits) are fixed at enqueue, from the producer's definition.
+  `timeout`, `backoff` and `failureLane` take effect in the process that runs or fails the job, from the definition
+  mounted there. The local limits and the weight are per process: they are options of the handler, so each worker
+  sets its own caps, and the producers never see them.
 - **Limits are objects.** `defineConcurrencyLimit()` and `defineRateLimit()` return a frozen object, which a
   definition lists or keys. A typo in a string cannot create a new limit, and the max is declared once, so two lanes
   cannot disagree on it.
 - **Maxes frozen with the keys.** A worker cannot see the limit behind the key of a row: the definition's function
   runs at enqueue. So the row stores each key with its max, and each rate key with its settings, as it stores
-  `maxAttempts`. Jobs enqueued by name work, and a deploy that changes a max applies to the new jobs.
+  `maxAttempts`. A deploy that changes a max applies to the new jobs.
 - **A 429 is not a failure.** A handler that the other side refuses throws a `RateLimitedError`: the key pauses for
   every job, and the job waits without using an attempt. A retry would use attempts for an error that is not the
   job's, and the other jobs of the key would each get their own 429.
@@ -389,9 +402,9 @@ many as the free slots allow, and starts their handlers. The pseudo-code below s
 
 ```text
 loop while started
-  lanes = registered lanes with a free slot (under each of its local limits and the instance's cap), and quota
-    in each of their local rate limits
-  if no lanes: wait for a wake
+  lanes = handled lanes, not paused here, with a free slot (under each of its local limits and the runner's cap),
+    and quota in each of their local rate limits
+  if no lanes: wait for a wake, or the poll
   probe: the next run_at of each lane that has pending jobs (one statement)
   if nothing due: wait until the next run_at (at most the poll interval) or a wake
   turn = the due lanes, the lowest running / weight first, at most 4 per free slot and 4 per free slot of each of
@@ -459,8 +472,8 @@ those slots free: in the instance, and in their local limits (the plain claim ge
 reserved slots, and a `maxJobs` within them). If other processes take the candidates first, the reserved slots stay
 free for one turn, which comes at once.
 
-The process ignores the lanes that it did not add. An idle lane has no pending row, so it costs nothing. With 1000
-lanes and pending jobs in 10 of them, the probe reads 10 index entries. A probe with one query per registered lane (a
+The process ignores the lanes that it does not handle. An idle lane has no pending row, so it costs nothing. With 1000
+lanes and pending jobs in 10 of them, the probe reads 10 index entries. A probe with one query per handled lane (a
 `UNION`) would grow with the number of all lanes.
 
 These events wake the dispatcher:
@@ -479,7 +492,7 @@ These events wake the dispatcher:
 A raw driver has no after-commit event, so `enqueue` does not know when the job becomes visible. The business logic
 does not need to call anything, because sqlane uses the following signals.
 
-- **Re-probes, the default for any driver.** After an enqueue of an added lane, the dispatcher of this process probes
+- **Re-probes, the default for any driver.** After an enqueue of a handled lane, the dispatcher of this process probes
   again a few times. The steps are 20, 50, 100, 200 and 500 ms, 1 s and 2 s after the enqueue, and only the steps that
   are shorter than the poll interval count. A probe reads all the lanes, so a process has one series of re-probes. Each
   enqueue restarts the series from its own time, but a re-probe that is already due within the next 20 ms is kept. The
@@ -493,7 +506,8 @@ does not need to call anything, because sqlane uses the following signals.
   the after-commit hook or promise of the ORM. An `enqueue` on a pool runs in a transaction of its own, which has
   committed when `enqueue` returns, so it works the same way. After the commit, the process wakes at once and sends the
   hint. Then it re-probes as above, counted from the commit.
-- **`sqlane.wake()`.** This method stays public as a low-level escape hatch. The docs never require it.
+- **No `wake()`.** An enqueue in the process and the hints wake the runner; the poll is the fallback. A runner mounted
+  after `start()` claims at once.
 
 The commit event of an ORM is a signal, not a proof, so a probe of the table decides. The cases below were checked with
 knex 3.3 and Sequelize 6.37, against MySQL 8.4 and PostgreSQL 18.
@@ -705,7 +719,7 @@ limit without keys. A key of a limit of 1 is a mutex.
   that is left runs the sweep again at once, after 5–30 ms, up to 3 times, as a turn of the dispatcher; then it is an
   `error` event.
 - **A job with global limits needs a timeout.** The lease is renewed while a handler runs. Without a timeout, a hung
-  handler would hold its slots in the whole cluster forever. So `lanes.add()` throws a `ConfigError` if the definition has
+  handler would hold its slots in the whole cluster forever. So `runner.mount()` throws a `ConfigError` if the definition has
   `globalConcurrencyLimits` and no timeout, from the definition or from `defaults`. A job can also get limits only from its enqueue options. If its handler has
   no timeout, the job fails for good at the claim with a `FatalJobError` ("a job with global concurrency limits needs a
   timeout"), and its failure job runs.
@@ -779,8 +793,8 @@ the cluster, in `sqlane_rate_limits`; a local limit counts in the memory of each
 
 When a job fails for good (no attempts left, a claim past `maxStalls`, or a `FatalJobError`), it gets a failure job if
 the definition of its lane in the process that fails it has a `failureLane`. That definition decides, not the row: a job
-enqueued under another definition gets the failure job of this one, or none. A lane added by name, without a
-definition in `lanes`, has no failure lane, so its jobs get none.
+enqueued under another definition gets the failure job of this one, or none. A job that fails after the unmount of its
+handler uses the definition of that handler.
 
 - The fail and the insert of the failure job commit together. If the database refuses the insert, the job still fails,
   but without its failure job. sqlane then logs an error and emits a `failure_job_not_added` event.
@@ -792,10 +806,9 @@ definition in `lanes`, has no failure lane, so its jobs get none.
 - Payload (`FailedJobPayload`): `{ job: { id, lane, payload, attempt, maxAttempts }, error: { name, message, stack } }`.
   Exempt from `maxPayloadBytes`; `error.stack` is cut to 8 KiB.
 - A `FatalJobError` fails the job at once, with the same failure job.
-- The failure job is an ordinary job. Its options come from the definition of its lane: `start()` and `drain()` check
-  that the failure lane resolves (a definition object, or a name in `lanes` or added) and has no `failureLane` of its
-  own (`ConfigError`). A failure lane added by name, without a definition, uses the defaults. It has no failure job of
-  its own (no chains), and it is exempt from `unknownLanes: 'reject'`.
+- The failure job is an ordinary job. Its options come from the definition of its lane, a definition object:
+  `defineLane` and `runner.mount()` refuse a failure lane that has a `failureLane` of its own (`ConfigError`). It has
+  no failure job of its own (no chains).
 - A replayed fail (lost acknowledgment) or a lost lease adds no second failure job.
 
 ### Close
@@ -826,7 +839,7 @@ and the hint subscription. It never ends the app's pool.
 
 - Only the lanes this instance added, and only the due jobs. Pending jobs of other lanes are not waited for.
 - `includeDelayed: true` also runs the delayed jobs and the retries in backoff at once (each round makes the pending
-  jobs of the added lanes due now): for tests like "fails 3 times, then the failure job runs".
+  jobs of the mounted lanes due now): for tests like "fails 3 times, then the failure job runs".
 - Returns counts: `completed`, `retried` (failed attempts that were retried), `failed` (jobs that failed for good).
   On timeout it rejects with `DrainTimeoutError`.
 - It waits for the timers of the rate keys on which it blocked jobs, when they are due before the timeout, but not for
@@ -834,8 +847,12 @@ and the hint subscription. It never ends the app's pool.
 
 ### Schedules
 
-`schedule(job, options)` adds a schedule in code, before `start()`, like `lanes.add()`. A schedule produces **slots**:
-the instants of a 5-field cron in an IANA time zone, or of a fixed `every` interval counted from the Unix epoch.
+`defineSchedule(lane, options)` defines a schedule next to its lane, and a runner fires it while it mounts it, before or
+after `start()`. A schedule produces **slots**: the instants of a 5-field cron in an IANA time zone, or of a fixed
+`every` interval counted from the Unix epoch. Its id is `<lane>:<key>`: the key is required, so the id of a schedule
+never changes when a second schedule of its lane comes. A mount after `start()` fires its schedules at once; an unmount
+stops them, and a fire in flight completes. `sqlane.schedules.runSlot()` enqueues a slot by hand, with the job id of the
+slot, without a runner.
 
 **The timer.** Each started process keeps one timer for the earliest slot of all its schedules. It sleeps at most 1
 minute, which covers wall-clock jumps and the `setTimeout` limit. While no slot is due, a schedule costs no query,
@@ -931,7 +948,7 @@ jobs whose retention has ended. It deletes them in batches of 1000 with SKIP LOC
 - `enqueue` uses the caller's connection or transaction.
 - All other queue work uses the adapter's pool, which should be small. The queue's transactions on this pool use
   `READ COMMITTED`. `schema.migrate()` also runs on a connection of this pool.
-- Handlers use whatever connections they open. `localMaxConcurrency` limits the running handlers of a process, so they
+- Handlers use whatever connections they open. The `localMaxConcurrency` of the runner limits the running handlers of a process, so they
   cannot exhaust the app's pool.
 
 ### MariaDB
@@ -1046,16 +1063,19 @@ repository of their own. `test/` holds the integration tests and the test databa
 
 The source files in `src/` have snake_case names. These are the main ones:
 
-- `create_sqlane.js` is the facade. It creates the instance and connects the parts below.
-- `define_lane.js` defines the lanes.
-- `registry.js` keeps the added lanes: their handlers, weights and local limits.
+- `create_sqlane.js` is the facade of `@sqlane/core`: the database side (enqueue, jobs, schedules, schemas, the hint,
+  the events) and a slot for the runner. `sqlane_internals.js` keeps its internals, for its runner only.
+- `create_runner.js` is the facade of the runner of a process, over a sqlane. `mounts.js` checks and adds the mounts.
+  `create_sqlane.js` imports none of the runner side: only `create_runner.js` does.
+- `define_lane.js`, `define_handler.js` and `define_schedule.js` define the lanes, the handlers and the schedules.
+- `registry.js` keeps the handled lanes: their handlers, weights and local limits, and the running counts by lane.
 - `fair_share.js` shares the free slots between the lanes: `fill()`, `rankNames()`, `chooseRows()`, and `replayTie()` for the choices made in SQL.
 - `define_concurrency_limit.js` defines the concurrency limits; `concurrency_keys.js` checks the global limits of a
   job at enqueue.
 - `define_rate_limit.js` defines the rate limits; `rate_keys.js` checks the global rate limits of a job at enqueue;
   `gcra.js` holds the arithmetic of GCRA, `local_rates.js` the local rate limits, and `rate_wakes.js` the timer of the
   rate keys.
-- `runner.js` implements `start()`, `close()` and `drain()`, and connects these parts. `dispatcher.js` runs the
+- `runner.js` implements the `start()`, `close()` and `drain()` of a runner, and connects these parts. `dispatcher.js` runs the
   dispatcher loop: the wakes, the probes and the claims. `job_runs.js` runs a claimed job and writes its result, and
   `failure_lanes.js` adds its failure job. `leases.js` renews the leases. `key_unblocks.js` unblocks the jobs blocked on
   keys, with the timer of the rate keys. `local_limits.js` holds the rooms of the local limits, and the wake timer of
@@ -1070,7 +1090,7 @@ The source files in `src/` have snake_case names. These are the main ones:
   version, and the `sql_mode` of MySQL and MariaDB.
 - `cron.js` parses cron expressions and finds their slots, `time_zone.js` reads wall-clock times from `Intl`,
   `schedule.js` checks the options of a schedule and computes its slots, and `scheduler.js` runs the timer and the
-  fires of the schedules.
+  fires of the schedules. `schedule_list.js` implements `schedules.list()`, `run_slot.js` `schedules.runSlot()`.
 - `errors.js` defines the error classes.
 - `store/` holds the SQL of each dialect behind one store interface.
 - `schema/` holds the schema of each dialect, as tagged migrations, and `expected.js`, what they create.

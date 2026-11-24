@@ -4,6 +4,7 @@ import { createSqlane, defineConcurrencyLimit, defineLane } from '../../src/inde
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { handle, runnerOf, testLane } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 
@@ -46,7 +47,8 @@ function nextPrefix() {
  * @returns {Sqlane}
  */
 function instanceOn(p, options = {}) {
-    const { timings, ...rest } = /** @type {{ timings?: object }} */ (options);
+    /** @type {{ timings?: object, localMaxConcurrency?: number }} */
+    const { timings, localMaxConcurrency, ...rest } = options;
     const sqlane = createSqlane(/** @type {any} */ ({
         adapter: testAdapter.adapter,
         tablePrefix: p,
@@ -56,6 +58,7 @@ function instanceOn(p, options = {}) {
     }));
 
     instances.push(sqlane);
+    runnerOf(sqlane, { localMaxConcurrency });
 
     return sqlane;
 }
@@ -149,7 +152,7 @@ function holdingHandlers() {
  * @returns {Promise<void>}
  */
 async function enqueue(sqlane, name, count) {
-    await sqlane.enqueueMany(testAdapter.pool, name, Array.from({ length: count }, () => ({ payload: {} })));
+    await sqlane.enqueueMany(testAdapter.pool, testLane(name), Array.from({ length: count }, () => ({ payload: {} })));
 }
 
 /**
@@ -193,11 +196,11 @@ describe('the worked examples', () => {
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 8 });
         const jobs = holdingHandlers();
 
-        sqlane.lanes.add(defineLane({ name: 'a', fairShareWeight: 3 }), jobs.handler('a'));
-        sqlane.lanes.add('b', jobs.handler('b'));
+        runnerOf(sqlane).mount([handle('a', jobs.handler('a'), { fairShareWeight: 3 })]);
+        runnerOf(sqlane).mount([handle('b', jobs.handler('b'))]);
         await enqueue(sqlane, 'a', 20);
         await enqueue(sqlane, 'b', 20);
-        await sqlane.start();
+        await runnerOf(sqlane).start();
         await waitFor(() => jobs.started.length === 8);
         expect(jobs.running).toStrictEqual({ a: 6, b: 2 });
 
@@ -214,10 +217,10 @@ describe('the worked examples', () => {
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 4 });
         const jobs = holdingHandlers();
 
-        sqlane.lanes.add('a', jobs.handler('a'));
-        sqlane.lanes.add('b', jobs.handler('b'));
+        runnerOf(sqlane).mount([handle('a', jobs.handler('a'))]);
+        runnerOf(sqlane).mount([handle('b', jobs.handler('b'))]);
         await enqueue(sqlane, 'a', 10);
-        await sqlane.start();
+        await runnerOf(sqlane).start();
         await waitFor(() => jobs.started.length === 4);
         await enqueue(sqlane, 'b', 3);
 
@@ -262,11 +265,11 @@ describe('the worked examples', () => {
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 4 });
         const jobs = holdingHandlers();
 
-        sqlane.lanes.add('long', jobs.handler('long'));
-        sqlane.lanes.add('short', jobs.handler('short'));
+        runnerOf(sqlane).mount([handle('long', jobs.handler('long'))]);
+        runnerOf(sqlane).mount([handle('short', jobs.handler('short'))]);
         await enqueue(sqlane, 'long', 10);
         await enqueue(sqlane, 'short', 20);
-        await sqlane.start();
+        await runnerOf(sqlane).start();
         await waitFor(() => jobs.started.length === 4);
         expect(jobs.running).toStrictEqual({ long: 2, short: 2 });
 
@@ -288,16 +291,16 @@ describe('the worked examples', () => {
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 10 });
         const jobs = holdingHandlers();
 
-        sqlane.lanes.add(defineLane({ name: 't', fairShareWeight: 2, localConcurrencyLimits: [tOnly, heavy] }), jobs.handler('t'));
-        sqlane.lanes.add(defineLane({ name: 'r', localConcurrencyLimits: [heavy] }), jobs.handler('r'));
-        sqlane.lanes.add(defineLane({ name: 'e', fairShareWeight: 3 }), jobs.handler('e'));
+        runnerOf(sqlane).mount([handle('t', jobs.handler('t'), { fairShareWeight: 2, localConcurrencyLimits: [tOnly, heavy] })]);
+        runnerOf(sqlane).mount([handle('r', jobs.handler('r'), { localConcurrencyLimits: [heavy] })]);
+        runnerOf(sqlane).mount([handle('e', jobs.handler('e'), { fairShareWeight: 3 })]);
 
         for (const name of ['t', 'r', 'e']) {
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues
             await enqueue(sqlane, name, 20);
         }
 
-        await sqlane.start();
+        await runnerOf(sqlane).start();
         await waitFor(() => jobs.started.length === 10);
         expect(jobs.running).toStrictEqual({ t: 1, r: 1, e: 8 });
 
@@ -320,12 +323,12 @@ describe('the worked examples', () => {
         const jobs = holdingHandlers();
 
         for (const name of ['a', 'b']) {
-            sqlane.lanes.add(defineLane({ name, localConcurrencyLimits: [one] }), jobs.handler(name));
+            runnerOf(sqlane).mount([handle(name, jobs.handler(name), { localConcurrencyLimits: [one] })]);
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues
             await enqueue(sqlane, name, 5);
         }
 
-        await sqlane.start();
+        await runnerOf(sqlane).start();
 
         for (let count = 1; count <= 6; count++) {
             // oxlint-disable-next-line no-await-in-loop -- one start at a time
@@ -342,16 +345,15 @@ describe('the worked examples', () => {
             name: 'k',
             timeout: '10s',
             globalConcurrencyLimits: ({ payload }) => [defineConcurrencyLimit({ name: 'n', max: 1 }).key(payload.n)],
-            localConcurrencyLimits: [pair],
         });
         const { sqlane } = await freshSqlane({ localMaxConcurrency: 10 });
         const jobs = holdingHandlers();
 
-        sqlane.lanes.add(defineLane({ name: 'p', localConcurrencyLimits: [pair] }), jobs.handler('p'));
-        sqlane.lanes.add(keyed, jobs.handler('k'));
+        runnerOf(sqlane).mount([handle('p', jobs.handler('p'), { localConcurrencyLimits: [pair] })]);
+        runnerOf(sqlane).mount([handle(keyed, jobs.handler('k'), { localConcurrencyLimits: [pair] })]);
         await enqueue(sqlane, 'p', 20);
         await sqlane.enqueueMany(testAdapter.pool, keyed, Array.from({ length: 10 }, (_, n) => ({ payload: { n } })));
-        await sqlane.start();
+        await runnerOf(sqlane).start();
         await waitFor(() => jobs.started.length === 2);
         expect(jobs.running).toStrictEqual({ p: 1, k: 1 });
 
@@ -442,14 +444,14 @@ describe('ties and processes', () => {
         const started = [];
 
         for (const name of ['a', 'b', 'c']) {
-            sqlane.lanes.add(name, () => {
+            runnerOf(sqlane).mount([handle(name, () => {
                 started.push(name);
-            });
+            })]);
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues
             await enqueue(sqlane, name, 12);
         }
 
-        await sqlane.start();
+        await runnerOf(sqlane).start();
         await waitFor(() => started.length >= 30);
 
         const firstThirty = started.slice(0, 30);
@@ -474,9 +476,9 @@ describe('ties and processes', () => {
 
         for (const sqlane of all) {
             for (const name of names) {
-                sqlane.lanes.add(name, () => {
+                runnerOf(sqlane).mount([handle(name, () => {
                     started.push(name);
-                });
+                })]);
             }
         }
 
@@ -485,7 +487,7 @@ describe('ties and processes', () => {
             await enqueue(all[0], name, 1);
         }
 
-        await Promise.all(all.map(sqlane => sqlane.start()));
+        await Promise.all(all.map(sqlane => runnerOf(sqlane).start()));
         await waitFor(() => started.length === 20);
 
         expect(started.toSorted()).toStrictEqual(names);
@@ -501,14 +503,14 @@ describe('ties and processes', () => {
         /** @type {unknown[]} */
         const keyedOrder = [];
 
-        sqlane.lanes.add(keyed, async (context) => {
+        runnerOf(sqlane).mount([handle(keyed, async (context) => {
             keyedOrder.push(context.payload.n);
             await jobs.handler('keyed')(context);
-        });
-        sqlane.lanes.add('plain', jobs.handler('plain'));
+        })]);
+        runnerOf(sqlane).mount([handle('plain', jobs.handler('plain'))]);
         await sqlane.enqueueMany(testAdapter.pool, keyed, [1, 2, 3].map(n => ({ payload: { n } })));
         await enqueue(sqlane, 'plain', 10);
-        await sqlane.start();
+        await runnerOf(sqlane).start();
         // keyed 1 holds the key: the 2 other slots go to plain
         await waitFor(() => jobs.started.length === 3);
         expect(jobs.running).toStrictEqual({ keyed: 1, plain: 2 });
@@ -529,18 +531,18 @@ describe('drain(), start()', () => {
         /** @type {string[]} */
         const started = [];
 
-        sqlane.lanes.add(defineLane({ name: 'a', fairShareWeight: 3 }), async () => {
+        runnerOf(sqlane).mount([handle('a', async () => {
             started.push('a');
             await sleep(50);
-        });
-        sqlane.lanes.add('b', async () => {
+        }, { fairShareWeight: 3 })]);
+        runnerOf(sqlane).mount([handle('b', async () => {
             started.push('b');
             await sleep(50);
-        });
+        })]);
         await enqueue(sqlane, 'a', 8);
         await enqueue(sqlane, 'b', 8);
 
-        await expect(sqlane.drain()).resolves.toMatchObject({ completed: 16 });
+        await expect(runnerOf(sqlane).drain()).resolves.toMatchObject({ completed: 16 });
         expect(started.slice(0, 4).toSorted()).toStrictEqual(['a', 'a', 'a', 'b']);
     });
 
@@ -551,17 +553,17 @@ describe('drain(), start()', () => {
         const jobs = holdingHandlers();
 
         // l and r hold one limit each, b holds both: at most 3 of l + b and 3 of r + b
-        sqlane.lanes.add(defineLane({ name: 'l', localConcurrencyLimits: [left] }), jobs.handler('l'));
-        sqlane.lanes.add(defineLane({ name: 'b', localConcurrencyLimits: [left, right] }), jobs.handler('b'));
-        sqlane.lanes.add(defineLane({ name: 'r', localConcurrencyLimits: [right] }), jobs.handler('r'));
-        sqlane.lanes.add(defineLane({ name: 'x' }), jobs.handler('x'));
+        runnerOf(sqlane).mount([handle('l', jobs.handler('l'), { localConcurrencyLimits: [left] })]);
+        runnerOf(sqlane).mount([handle('b', jobs.handler('b'), { localConcurrencyLimits: [left, right] })]);
+        runnerOf(sqlane).mount([handle('r', jobs.handler('r'), { localConcurrencyLimits: [right] })]);
+        runnerOf(sqlane).mount([handle(defineLane({ name: 'x' }), jobs.handler('x'))]);
 
         for (const [name, count] of [['l', 10], ['b', 10], ['r', 10], ['x', 20]]) {
             // oxlint-disable-next-line no-await-in-loop -- a few enqueues
             await enqueue(sqlane, /** @type {string} */ (name), /** @type {number} */ (count));
         }
 
-        await sqlane.start();
+        await runnerOf(sqlane).start();
         await waitFor(() => jobs.started.length === 6);
 
         for (let round = 0; round < 12; round++) {

@@ -12,6 +12,7 @@ import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 import { checkSchemaChanges, SCHEMA_CHANGES } from './helpers/schema_checks.js';
 import { checkStartTimes } from './helpers/start_time_checks.js';
+import { handle, testLane, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -128,7 +129,7 @@ describe.each([
     test('schedules: start() without the table asks for schema.migrate(); a slot adds its job', async () => {
         const { sqlane, p } = await freshSqlane();
 
-        await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+        await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:k:\d{4}-/);
     });
 
     test('sqlane.jobs: get and list through the adapter', async () => {
@@ -182,36 +183,36 @@ describe.each([
         const { sqlane, p } = await freshSqlane();
 
         await dataSource.transaction(async (/** @type {any} */ manager) => {
-            await expect(sqlane.enqueue(manager, 'ping', { n: 1 }, { dedupeKey: 'a' }))
+            await expect(sqlane.enqueue(manager, testLane('ping'), { n: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(dataSource.transaction(async (/** @type {any} */ manager) => {
-            await sqlane.enqueue(manager, 'ping', { n: 2 }, { dedupeKey: 'b' });
+            await sqlane.enqueue(manager, testLane('ping'), { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-        await expect(sqlane.enqueue(dataSource, 'ping', { n: 3 }, { dedupeKey: 'a' }))
+        await expect(sqlane.enqueue(dataSource, testLane('ping'), { n: 3 }, { dedupeKey: 'a' }))
             .resolves.toMatchObject({ created: false });
     });
 
     test('a DataSource and its manager: a transaction of their own', async () => {
         const { sqlane, p } = await freshSqlane();
 
-        await sqlane.enqueue(dataSource, 'ping', {});
-        await sqlane.enqueueMany(dataSource.manager, 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
+        await sqlane.enqueue(dataSource, testLane('ping'), {});
+        await sqlane.enqueueMany(dataSource.manager, testLane('ping'), [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
         await expect(statuses(p)).resolves.toStrictEqual(['pending', 'pending', 'pending']);
     });
 
     test('the commit wakes the worker at once: the job does not wait for a re-probe', async () => {
         const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
 
-        sqlane.lanes.add('ping', () => {});
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle('ping', () => {})]);
+        await runnerOf(sqlane).start();
         await sleep(100);
         await dataSource.transaction(async (/** @type {any} */ manager) => {
-            await sqlane.enqueue(manager, 'ping', {});
+            await sqlane.enqueue(manager, testLane('ping'), {});
             // The re-probes after the enqueue: 20, 50, 100, 200, then 500 ms
             await sleep(300);
         });
@@ -227,20 +228,20 @@ describe.each([
         const rolledBack = dataSource.createQueryRunner();
         const committed = dataSource.createQueryRunner();
 
-        sqlane.lanes.add('ping', () => {});
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle('ping', () => {})]);
+        await runnerOf(sqlane).start();
 
         try {
             await rolledBack.startTransaction();
             await rolledBack.startTransaction();
-            await sqlane.enqueue(rolledBack, 'ping', {}, { dedupeKey: 'rolled_back' });
+            await sqlane.enqueue(rolledBack, testLane('ping'), {}, { dedupeKey: 'rolled_back' });
             // The release of the savepoint: not the commit
             await rolledBack.commitTransaction();
             await rolledBack.rollbackTransaction();
 
             await committed.startTransaction();
             await committed.startTransaction();
-            await sqlane.enqueue(committed, 'ping', {}, { dedupeKey: 'committed' });
+            await sqlane.enqueue(committed, testLane('ping'), {}, { dedupeKey: 'committed' });
             await committed.commitTransaction();
             await committed.commitTransaction();
         } finally {
@@ -266,21 +267,21 @@ describe.each([
             backoff: { type: 'fixed', delay: 10, jitter: 0 },
             failureLane: reportFailed,
         });
-        const { sqlane, p } = await freshSqlane({ lanes: [report, reportFailed, failing] });
+        const { sqlane, p } = await freshSqlane();
         /** @type {unknown[]} */
         const failures = [];
 
-        sqlane.lanes.add(report, () => {});
-        sqlane.lanes.add(failing, () => {
+        runnerOf(sqlane).mount([handle(report, () => {})]);
+        runnerOf(sqlane).mount([handle(failing, () => {
             throw new Error('always');
-        });
-        sqlane.lanes.add(reportFailed, ({ payload }) => {
+        })]);
+        runnerOf(sqlane).mount([handle(reportFailed, ({ payload }) => {
             failures.push(payload.job.lane);
-        });
+        })]);
         await sqlane.enqueueMany(dataSource, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
         await sqlane.enqueue(dataSource, failing, {});
 
-        await expect(sqlane.drain({ includeDelayed: true }))
+        await expect(runnerOf(sqlane).drain({ includeDelayed: true }))
             .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
         expect(failures).toStrictEqual(['failing']);
         await expect(sqlane.lanes.stats()).resolves.toMatchObject([

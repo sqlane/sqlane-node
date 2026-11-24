@@ -14,11 +14,8 @@ test('gives a frozen copy of the options', () => {
         retention: { completed: 0, failed: '30d' },
         timeout: '5m',
         globalConcurrencyLimits: () => [],
-        failureLane: 'report_failed',
-        fairShareWeight: 3,
-        localConcurrencyLimits: [defineConcurrencyLimit({ name: 'heavy', max: 2 })],
+        failureLane: defineLane({ name: 'report_failed' }),
         globalRateLimits: () => [],
-        localRateLimits: [defineRateLimit({ name: 'disk_io', max: 50, per: '1s' })],
     };
     const definition = defineLane(options);
 
@@ -27,10 +24,6 @@ test('gives a frozen copy of the options', () => {
     expect(Object.isFrozen(definition)).toBe(true);
     expect(Object.isFrozen(definition.backoff)).toBe(true);
     expect(Object.isFrozen(definition.retention)).toBe(true);
-    expect(Object.isFrozen(definition.localConcurrencyLimits)).toBe(true);
-    expect(definition.localConcurrencyLimits).not.toBe(options.localConcurrencyLimits);
-    expect(Object.isFrozen(definition.localRateLimits)).toBe(true);
-    expect(definition.localRateLimits).not.toBe(options.localRateLimits);
 });
 
 test('accepts a definition as the failure job', () => {
@@ -62,30 +55,30 @@ test.each([
     ['a bad timeout', { name: 'a', timeout: 'later' }],
     ['a timeout with trailing text', { name: 'a', timeout: '1s typo' }],
     ['globalConcurrencyLimits as an array', { name: 'a', globalConcurrencyLimits: [] }],
-    ['a bad failure lane name', { name: 'a', failureLane: 'Fail' }],
-    ['the job as its own failure job', { name: 'a', failureLane: 'a' }],
-    ['fairShareWeight 0', { name: 'a', fairShareWeight: 0 }],
-    ['fairShareWeight 1001', { name: 'a', fairShareWeight: 1001 }],
-    ['fairShareWeight 1.5', { name: 'a', fairShareWeight: 1.5 }],
-    ['a local limit that is not from defineConcurrencyLimit()', { name: 'a', localConcurrencyLimits: [{ name: 'b', max: 1 }] }],
-    ['local limits as one limit', { name: 'a', localConcurrencyLimits: defineConcurrencyLimit({ name: 'b', max: 1 }) }],
-    ['a local limit twice', {
+    ['a failure lane by name', { name: 'a', failureLane: 'a_failed' }],
+    ['a failure lane that is not frozen', { name: 'a', failureLane: { name: 'a_failed' } }],
+    ['the job as its own failure job', { name: 'a', failureLane: defineLane({ name: 'a' }) }],
+    ['a failure lane with a failure lane of its own', {
         name: 'a',
-        localConcurrencyLimits: [defineConcurrencyLimit({ name: 'b', max: 1 }), defineConcurrencyLimit({ name: 'b', max: 2 })],
+        failureLane: defineLane({ name: 'a_failed', failureLane: defineLane({ name: 'other' }) }),
+    }],
+    ['a local setting: fairShareWeight (of a handler)', { name: 'a', fairShareWeight: 2 }],
+    ['a local setting: localConcurrencyLimits (of a handler)', {
+        name: 'a',
+        localConcurrencyLimits: [defineConcurrencyLimit({ name: 'b', max: 1 })],
+    }],
+    ['a local setting: localRateLimits (of a handler)', {
+        name: 'a',
+        localRateLimits: [defineRateLimit({ name: 'b', max: 1, per: '1s' })],
     }],
     ['globalRateLimits as an array', { name: 'a', globalRateLimits: [] }],
-    ['a local rate limit that is not from defineRateLimit()', {
-        name: 'a',
-        localRateLimits: [{ name: 'b', max: 1, per: 1000, burst: 1 }],
-    }],
-    ['a concurrency limit as a local rate limit', { name: 'a', localRateLimits: [defineConcurrencyLimit({ name: 'b', max: 1 })] }],
-    ['a key of a local rate limit', { name: 'a', localRateLimits: [defineRateLimit({ name: 'b', max: 1, per: '1s' }).key('k')] }],
-    ['a cost of a local rate limit', { name: 'a', localRateLimits: [defineRateLimit({ name: 'b', max: 2, per: '1s', burst: 2 }).cost(2)] }],
-    ['local rate limits as one limit', { name: 'a', localRateLimits: defineRateLimit({ name: 'b', max: 1, per: '1s' }) }],
-    ['a local rate limit twice', {
-        name: 'a',
-        localRateLimits: [defineRateLimit({ name: 'b', max: 1, per: '1s' }), defineRateLimit({ name: 'b', max: 2, per: '1s' })],
-    }],
 ])('rejects %s', (_, options) => {
     expect(() => defineLane(/** @type {any} */ (options))).toThrow(ConfigError);
+});
+
+test('a failure lane with a failure lane of its own: the message names it', () => {
+    expect(() => defineLane({
+        name: 'a',
+        failureLane: defineLane({ name: 'a_failed', failureLane: defineLane({ name: 'other' }) }),
+    })).toThrow('defineLane("a"): the failure lane "a_failed" has a failure lane of its own');
 });

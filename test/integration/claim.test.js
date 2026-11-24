@@ -13,6 +13,7 @@ import { createStore } from '../../src/store/store.js';
 import { poolTransactionIsolation, readCommitted, readsAcrossCommit } from './helpers/isolation.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { handle, testLane, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/store/store.js').ClaimedJob} ClaimedJob */
 
@@ -222,9 +223,9 @@ describe('probe', () => {
     test('gives the pending names and the delay of their oldest job', async () => {
         const { sqlane, store } = await freshTables();
 
-        await sqlane.enqueue(testAdapter.pool, 'due_now', {}, { runAt: ago(10) });
-        await sqlane.enqueue(testAdapter.pool, 'due_now', {}, { delay: '1h' });
-        await sqlane.enqueue(testAdapter.pool, 'later', {}, { delay: '1h' });
+        await sqlane.enqueue(testAdapter.pool, testLane('due_now'), {}, { runAt: ago(10) });
+        await sqlane.enqueue(testAdapter.pool, testLane('due_now'), {}, { delay: '1h' });
+        await sqlane.enqueue(testAdapter.pool, testLane('later'), {}, { delay: '1h' });
 
         const rows = (await store.probe(null)).toSorted(byName);
 
@@ -236,9 +237,9 @@ describe('probe', () => {
     test('of given names: only those with pending jobs', async () => {
         const { sqlane, store } = await freshTables();
 
-        await sqlane.enqueue(testAdapter.pool, 'due_now', {}, { runAt: ago(10) });
-        await sqlane.enqueue(testAdapter.pool, 'later', {}, { delay: '1h' });
-        await sqlane.enqueue(testAdapter.pool, 'other', {});
+        await sqlane.enqueue(testAdapter.pool, testLane('due_now'), {}, { runAt: ago(10) });
+        await sqlane.enqueue(testAdapter.pool, testLane('later'), {}, { delay: '1h' });
+        await sqlane.enqueue(testAdapter.pool, testLane('other'), {});
 
         const rows = (await store.probe(['due_now', 'later', 'none'])).toSorted(byName);
 
@@ -252,9 +253,9 @@ describe('probe', () => {
         const { p, sqlane, store } = await freshTables();
         const idle = Array.from({ length: 1000 }, (_, index) => `idle_${index}`);
 
-        await Promise.all(idle.map(name => sqlane.enqueue(testAdapter.pool, name, {})));
+        await Promise.all(idle.map(name => sqlane.enqueue(testAdapter.pool, testLane(name), {})));
         await setAllStatus(p, 'completed');
-        await sqlane.enqueueMany(testAdapter.pool, 'busy', [{ payload: {} }, { payload: {} }]);
+        await sqlane.enqueueMany(testAdapter.pool, testLane('busy'), [{ payload: {} }, { payload: {} }]);
 
         await expect(store.probe(null)).resolves.toMatchObject([{ name: 'busy' }]);
     });
@@ -263,7 +264,7 @@ describe('probe', () => {
         const { p, sqlane } = await freshTables();
         const items = Array.from({ length: 2000 }, (_, index) => ({ payload: {}, options: { dedupeKey: `j${index}` } }));
 
-        await Promise.all(Array.from({ length: 20 }, (_, index) => sqlane.enqueueMany(testAdapter.pool, `n${index}`, items)));
+        await Promise.all(Array.from({ length: 20 }, (_, index) => sqlane.enqueueMany(testAdapter.pool, testLane(`n${index}`), items)));
         await database.query(`ANALYZE TABLE ${p}jobs`);
 
         const [plan] = await database.query(`EXPLAIN ${probeSql(p)}`);
@@ -275,13 +276,13 @@ describe('probe', () => {
 describe('findCandidates', () => {
     test('the oldest due jobs of each name, at most its limit', async () => {
         const { sqlane, store } = await freshTables();
-        const a1 = await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(30) });
-        const b1 = await sqlane.enqueue(testAdapter.pool, 'b', {}, { runAt: ago(20) });
-        const a2 = await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(10) });
+        const a1 = await sqlane.enqueue(testAdapter.pool, testLane('a'), {}, { runAt: ago(30) });
+        const b1 = await sqlane.enqueue(testAdapter.pool, testLane('b'), {}, { runAt: ago(20) });
+        const a2 = await sqlane.enqueue(testAdapter.pool, testLane('a'), {}, { runAt: ago(10) });
 
-        await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(5) });
-        await sqlane.enqueue(testAdapter.pool, 'a', {}, { delay: '1h' });
-        await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(40) });
+        await sqlane.enqueue(testAdapter.pool, testLane('a'), {}, { runAt: ago(5) });
+        await sqlane.enqueue(testAdapter.pool, testLane('a'), {}, { delay: '1h' });
+        await sqlane.enqueue(testAdapter.pool, testLane('c'), {}, { runAt: ago(40) });
 
         const { startable, full } = await store.findCandidates(new Map([['a', 2], ['b', 5]]));
 
@@ -293,7 +294,7 @@ describe('findCandidates', () => {
 describe('claim', () => {
     test('locks the jobs, sets them running with a lease, reads their payloads', async () => {
         const { p, sqlane, store } = await freshTables();
-        const job = defineLane({ name: 'build', maxAttempts: 4, failureLane: 'build_failed' });
+        const job = defineLane({ name: 'build', maxAttempts: 4, failureLane: defineLane({ name: 'build_failed' }) });
         const { id } = await sqlane.enqueue(testAdapter.pool, job, { reportId: 'r1' }, { runAt: ago(5) });
         const [claimed] = await claimAll(store, [id], 'TOKEN1');
 
@@ -321,7 +322,7 @@ describe('claim', () => {
         const { sqlane, store } = await freshTables();
         const results = await sqlane.enqueueMany(
             testAdapter.pool,
-            'busy',
+            testLane('busy'),
             Array.from({ length: 40 }, () => ({ payload: {}, options: { runAt: ago(5) } })),
         );
         const ids = results.map(result => result.id);
@@ -465,11 +466,9 @@ async function compareChoice(sqlane, store, random, round) {
     for (let index = 0; index < count; index++) {
         const name = `r${round}_${index}`;
         const due = int(5);
+        const items = Array.from({ length: due }, (_, k) => ({ payload: {}, options: { runAt: ago(100 - k) } }));
         // oxlint-disable-next-line no-await-in-loop -- the jobs of each name in order
-        const results = await sqlane.enqueueMany(testAdapter.pool, name, Array.from({ length: due }, (_, k) => ({
-            payload: {},
-            options: { runAt: ago(100 - k) },
-        })));
+        const results = await sqlane.enqueueMany(testAdapter.pool, testLane(name), items);
         const maxJobs = 1 + int(4);
 
         rows.push(...results.slice(0, maxJobs).map(result => ({ id: result.id, lane: name })));
@@ -501,14 +500,14 @@ async function compareChoice(sqlane, store, random, round) {
 describe('claimDue', () => {
     test('claims the oldest due jobs of each name, with their payloads, in one go', async () => {
         const { p, sqlane, store } = await freshTables();
-        const job = defineLane({ name: 'a', maxAttempts: 4, failureLane: 'a_failed' });
+        const job = defineLane({ name: 'a', maxAttempts: 4, failureLane: defineLane({ name: 'a_failed' }) });
         const a1 = await sqlane.enqueue(testAdapter.pool, job, { n: 1 }, { runAt: ago(30) });
-        const b1 = await sqlane.enqueue(testAdapter.pool, 'b', { n: 2 }, { runAt: ago(20) });
+        const b1 = await sqlane.enqueue(testAdapter.pool, testLane('b'), { n: 2 }, { runAt: ago(20) });
         const a2 = await sqlane.enqueue(testAdapter.pool, job, { n: 3 }, { runAt: ago(10) });
 
         await sqlane.enqueue(testAdapter.pool, job, {}, { runAt: ago(5) });
         await sqlane.enqueue(testAdapter.pool, job, {}, { delay: '1h' });
-        await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(40) });
+        await sqlane.enqueue(testAdapter.pool, testLane('c'), {}, { runAt: ago(40) });
 
         const claimed = await claimDue(store, {
             requests: [request('a', 2, 0), request('b', 5, 1)],
@@ -537,11 +536,11 @@ describe('claimDue', () => {
     test('gives the next due time of the requested names, among the jobs that it did not take', async () => {
         const { sqlane, store } = await freshTables();
 
-        await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(30) });
-        await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(20) });
-        await sqlane.enqueue(testAdapter.pool, 'a', {}, { delay: '1h' });
-        await sqlane.enqueue(testAdapter.pool, 'b', {}, { runAt: ago(10) });
-        await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(10) });
+        await sqlane.enqueue(testAdapter.pool, testLane('a'), {}, { runAt: ago(30) });
+        await sqlane.enqueue(testAdapter.pool, testLane('a'), {}, { runAt: ago(20) });
+        await sqlane.enqueue(testAdapter.pool, testLane('a'), {}, { delay: '1h' });
+        await sqlane.enqueue(testAdapter.pool, testLane('b'), {}, { runAt: ago(10) });
+        await sqlane.enqueue(testAdapter.pool, testLane('c'), {}, { runAt: ago(10) });
 
         const first = await claimDueWithNext(store, {
             requests: [request('a', 1, 0), request('b', 1, 1)],
@@ -561,7 +560,7 @@ describe('claimDue', () => {
     test('a claim that fills the free process slots does not read the next due times', async () => {
         const { sqlane, store } = await freshTables();
 
-        await Promise.all(['a', 'b', 'c'].map(name => sqlane.enqueue(testAdapter.pool, name, {}, { runAt: ago(10) })));
+        await Promise.all(['a', 'b', 'c'].map(name => sqlane.enqueue(testAdapter.pool, testLane(name), {}, { runAt: ago(10) })));
 
         const requests = ['a', 'b', 'c'].map((name, index) => request(name, 2, index));
         const full = await claimDueWithNext(store, { requests, free: 2 });
@@ -577,12 +576,12 @@ describe('claimDue', () => {
 
     test('the free slots of each local limit and of the instance, by share', async () => {
         const { sqlane, store } = await freshTables();
-        const a1 = await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(50) });
-        const b1 = await sqlane.enqueue(testAdapter.pool, 'b', {}, { runAt: ago(40) });
-        const c1 = await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(35) });
+        const a1 = await sqlane.enqueue(testAdapter.pool, testLane('a'), {}, { runAt: ago(50) });
+        const b1 = await sqlane.enqueue(testAdapter.pool, testLane('b'), {}, { runAt: ago(40) });
+        const c1 = await sqlane.enqueue(testAdapter.pool, testLane('c'), {}, { runAt: ago(35) });
 
-        await sqlane.enqueue(testAdapter.pool, 'a', {}, { runAt: ago(30) });
-        await sqlane.enqueue(testAdapter.pool, 'c', {}, { runAt: ago(20) });
+        await sqlane.enqueue(testAdapter.pool, testLane('a'), {}, { runAt: ago(30) });
+        await sqlane.enqueue(testAdapter.pool, testLane('c'), {}, { runAt: ago(20) });
 
         // a and b share limit 0 (1 free slot); c has no limit; the instance has 2 free slots
         const claimed = await claimDue(store, {
@@ -616,7 +615,7 @@ describe('claimDue', () => {
         const { sqlane, store } = await freshTables();
         const results = await sqlane.enqueueMany(
             testAdapter.pool,
-            'busy',
+            testLane('busy'),
             Array.from({ length: 40 }, () => ({ payload: {}, options: { runAt: ago(5) } })),
         );
         const claims = await Promise.all(['T1', 'T2', 'T3', 'T4'].map(token => claimDue(store, {
@@ -634,10 +633,10 @@ describe('claimDue', () => {
         const { p, sqlane, store } = await freshTables();
         const results = await sqlane.enqueueMany(
             testAdapter.pool,
-            'a',
+            testLane('a'),
             Array.from({ length: 3 }, () => ({ payload: {}, options: { runAt: ago(5) } })),
         );
-        const b = await sqlane.enqueue(testAdapter.pool, 'b', {}, { runAt: ago(5) });
+        const b = await sqlane.enqueue(testAdapter.pool, testLane('b'), {}, { runAt: ago(5) });
         const claimed = await claimDue(store, {
             requests: [request('a', 5, 0), request('b', 5, 1), request('a', 5, 2)],
             // MySQL and MariaDB: every locked row
@@ -654,7 +653,7 @@ describe('claimDue', () => {
 
     test('a job without its payload row: claimed, the payload not found', async () => {
         const { p, sqlane, store } = await freshTables();
-        const { id } = await sqlane.enqueue(testAdapter.pool, 'a', { n: 1 }, { runAt: ago(5) });
+        const { id } = await sqlane.enqueue(testAdapter.pool, testLane('a'), { n: 1 }, { runAt: ago(5) });
 
         await database.query(`DELETE FROM ${p}payloads`);
 
@@ -688,7 +687,7 @@ describe('claimDue', () => {
     // commits right after.
     test.runIf(inject('databaseDialect') !== 'postgres')('mysql, mariadb: a payload that the claim statement did not see: read again', async () => {
         const { p, sqlane } = await freshTables();
-        const { id } = await sqlane.enqueue(testAdapter.pool, 'a', { n: 1 }, { runAt: ago(5) });
+        const { id } = await sqlane.enqueue(testAdapter.pool, testLane('a'), { n: 1 }, { runAt: ago(5) });
         const { adapter } = testAdapter;
 
         await database.query(`DELETE FROM ${p}payloads`);
@@ -730,7 +729,7 @@ describe('claimDue', () => {
         const enqueuer = async () => {
             for (let n = 0; Date.now() < until; n++) {
                 // oxlint-disable-next-line no-await-in-loop -- one enqueue after the other
-                await sqlane.enqueue(testAdapter.pool, names[n % names.length], { n });
+                await sqlane.enqueue(testAdapter.pool, testLane(names[n % names.length]), { n });
             }
         };
         const claimer = async (/** @type {number} */ index) => {
@@ -890,11 +889,11 @@ describe('global concurrency limits', () => {
     test('concurrent claims of jobs that share one of their keys: one gets the key, no partial slots', async () => {
         const { p, sqlane, store } = await freshTables();
         const both = defineConcurrencyLimit({ name: 'both', max: 1 });
-        const a = await sqlane.enqueue(testAdapter.pool, 'two', {}, {
+        const a = await sqlane.enqueue(testAdapter.pool, testLane('two'), {}, {
             globalConcurrencyLimits: [both.key('a'), both.key('b')],
             runAt: ago(20),
         });
-        const b = await sqlane.enqueue(testAdapter.pool, 'two', {}, {
+        const b = await sqlane.enqueue(testAdapter.pool, testLane('two'), {}, {
             globalConcurrencyLimits: [both.key('b'), both.key('c')],
             runAt: ago(10),
         });
@@ -1043,7 +1042,7 @@ describe('global concurrency limits', () => {
                 const one = defineConcurrencyLimit({ name: 'one', max: 1 });
                 const keyed = defineLane({ name: 'keyed', timeout: '1m', globalConcurrencyLimits: () => [one] });
                 const withKey = await sqlane.enqueue(testAdapter.pool, keyed, {}, { runAt: ago(2) });
-                const plain = await sqlane.enqueue(testAdapter.pool, 'plain', {}, { runAt: ago(1) });
+                const plain = await sqlane.enqueue(testAdapter.pool, testLane('plain'), {}, { runAt: ago(1) });
                 const pool = /** @type {import('mysql2/promise').Pool} */ (testAdapter.pool);
                 const foreign = await pool.getConnection();
                 const claimer = await pool.getConnection();
@@ -1148,7 +1147,7 @@ describe('global concurrency limits', () => {
             let released = false;
             let releaseMs = 0;
 
-            sqlane.lanes.add(onA, async ({ job }) => {
+            runnerOf(sqlane).mount([handle(onA, async ({ job }) => {
                 const record = await sqlane.jobs.get(job.id);
                 const [slot] = await database.query(
                     `SELECT (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS ms FROM ${p}concurrency_slots
@@ -1157,8 +1156,8 @@ describe('global concurrency limits', () => {
                 );
 
                 runs.push({ info: job, record, slotMs: Number(slot.ms), released });
-            });
-            sqlane.lanes.add(onB, async () => {});
+            })]);
+            runnerOf(sqlane).mount([handle(onB, async () => {})]);
 
             const x = await sqlane.enqueue(pool, onA, {}, { runAt: ago(2) });
 
@@ -1173,7 +1172,7 @@ describe('global concurrency limits', () => {
                 await foreign.query(`INSERT INTO ${p}concurrency_slots
                     (limit_key, slot, job_id, lock_token, held_until, created_at)
                     VALUES ('b', 0, 'other', 'other', NULL, clock_timestamp())`);
-                await sqlane.start();
+                await runnerOf(sqlane).start();
                 await sleep(300);
 
                 const [{ ms }] = await database.query('SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint AS ms');
@@ -1289,15 +1288,15 @@ describe('global concurrency limits', () => {
     test('the claim of names without limits leaves the jobs with limits from their enqueue options', async () => {
         const { sqlane, store } = await freshTables();
 
-        await sqlane.enqueue(testAdapter.pool, 'plain', {}, { globalConcurrencyLimits: [order.key(1)], runAt: ago(20) });
+        await sqlane.enqueue(testAdapter.pool, testLane('plain'), {}, { globalConcurrencyLimits: [order.key(1)], runAt: ago(20) });
 
-        const plain = await sqlane.enqueue(testAdapter.pool, 'plain', {}, { runAt: ago(10) });
+        const plain = await sqlane.enqueue(testAdapter.pool, testLane('plain'), {}, { runAt: ago(10) });
 
         await expect(claimDueWithNext(store, { requests: [request('plain', 5, 0)] })).resolves.toMatchObject({
             jobs: [{ id: plain.id }],
             limited: ['plain'],
         });
-        await sqlane.enqueue(testAdapter.pool, 'other', {}, { globalConcurrencyLimits: [order], runAt: ago(5) });
+        await sqlane.enqueue(testAdapter.pool, testLane('other'), {}, { globalConcurrencyLimits: [order], runAt: ago(5) });
         const both = await claimDueWithNext(store, { requests: [request('other', 5, 0), request('plain', 5, 1)] });
 
         expect(both.jobs).toStrictEqual([]);
@@ -1434,7 +1433,7 @@ describe('global rate limits', () => {
 
         for (const secondsAgo of [30, 20, 10]) {
             // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
-            ids.push((await sqlane.enqueue(testAdapter.pool, 'tick', {}, {
+            ids.push((await sqlane.enqueue(testAdapter.pool, testLane('tick'), {}, {
                 globalRateLimits: [smooth],
                 runAt: ago(secondsAgo),
             })).id);
@@ -1461,7 +1460,7 @@ describe('global rate limits', () => {
 
         for (const secondsAgo of [20, 10]) {
             // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
-            ids.push((await sqlane.enqueue(testAdapter.pool, 'tick', {}, {
+            ids.push((await sqlane.enqueue(testAdapter.pool, testLane('tick'), {}, {
                 globalRateLimits: [seventh],
                 runAt: ago(secondsAgo),
             })).id);
@@ -1498,8 +1497,8 @@ describe('global rate limits', () => {
         const { p, sqlane, store } = await freshTables();
         const a = defineRateLimit({ name: 'a', max: 1, per: '1h' });
         const b = defineRateLimit({ name: 'b', max: 1, per: '1h' });
-        const onB = await sqlane.enqueue(testAdapter.pool, 'two', {}, { globalRateLimits: [b], runAt: ago(30) });
-        const both = await sqlane.enqueue(testAdapter.pool, 'two', {}, { globalRateLimits: [a, b], runAt: ago(20) });
+        const onB = await sqlane.enqueue(testAdapter.pool, testLane('two'), {}, { globalRateLimits: [b], runAt: ago(30) });
+        const both = await sqlane.enqueue(testAdapter.pool, testLane('two'), {}, { globalRateLimits: [a, b], runAt: ago(20) });
 
         await expect(claimWithBlocks(store, [onB.id, both.id], 'T1')).resolves.toMatchObject({
             jobs: [{ id: onB.id }],
@@ -1507,7 +1506,7 @@ describe('global rate limits', () => {
         });
 
         // @a kept its quota: a job of @a alone starts
-        const onA = await sqlane.enqueue(testAdapter.pool, 'two', {}, { globalRateLimits: [a], runAt: ago(10) });
+        const onA = await sqlane.enqueue(testAdapter.pool, testLane('two'), {}, { globalRateLimits: [a], runAt: ago(10) });
 
         await expect(claimAll(store, [onA.id], 'T2')).resolves.toMatchObject([{ id: onA.id }]);
         await expect(statuses(p)).resolves.toStrictEqual([
@@ -1560,10 +1559,10 @@ describe('global rate limits', () => {
         const lane = defineConcurrencyLimit({ name: 'lane', max: 1 });
         const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
         const options = { globalConcurrencyLimits: [lane], globalRateLimits: [once] };
-        const first = await sqlane.enqueue(testAdapter.pool, 'both', {}, { ...options, runAt: ago(30) });
+        const first = await sqlane.enqueue(testAdapter.pool, testLane('both'), {}, { ...options, runAt: ago(30) });
         const [running] = await claimAll(store, [first.id], 'T1');
 
-        const second = await sqlane.enqueue(testAdapter.pool, 'both', {}, { ...options, runAt: ago(20) });
+        const second = await sqlane.enqueue(testAdapter.pool, testLane('both'), {}, { ...options, runAt: ago(20) });
 
         await expect(claimWithBlocks(store, [], 'T2', [second.id]))
             .resolves.toMatchObject({ blockedKeys: ['lane'], rateWaits: [] });
@@ -1582,19 +1581,19 @@ describe('global rate limits', () => {
         const { p, sqlane, store } = await freshTables();
         const lane = defineConcurrencyLimit({ name: 'lane', max: 1 });
         const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
-        const holder = await sqlane.enqueue(testAdapter.pool, 'both', {}, {
+        const holder = await sqlane.enqueue(testAdapter.pool, testLane('both'), {}, {
             globalConcurrencyLimits: [lane],
             runAt: ago(30),
         });
 
         await claimAll(store, [holder.id], 'T1');
 
-        const waiting = await sqlane.enqueue(testAdapter.pool, 'both', {}, {
+        const waiting = await sqlane.enqueue(testAdapter.pool, testLane('both'), {}, {
             globalConcurrencyLimits: [lane],
             globalRateLimits: [once],
             runAt: ago(20),
         });
-        const rateOnly = await sqlane.enqueue(testAdapter.pool, 'both', {}, { globalRateLimits: [once], runAt: ago(10) });
+        const rateOnly = await sqlane.enqueue(testAdapter.pool, testLane('both'), {}, { globalRateLimits: [once], runAt: ago(10) });
 
         await expect(claimWithBlocks(store, [waiting.id, rateOnly.id], 'T2')).resolves.toMatchObject({
             jobs: [{ id: rateOnly.id }],
@@ -1644,7 +1643,7 @@ describe('global rate limits', () => {
 
         for (const secondsAgo of [20, 10]) {
             // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
-            ids.push((await sqlane.enqueue(testAdapter.pool, 'tick', {}, {
+            ids.push((await sqlane.enqueue(testAdapter.pool, testLane('tick'), {}, {
                 globalRateLimits: [smooth],
                 runAt: ago(secondsAgo),
             })).id);
@@ -1670,7 +1669,7 @@ describe('global rate limits', () => {
 
         for (let at = 0; at < 7; at++) {
             // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
-            ids.push((await sqlane.enqueue(testAdapter.pool, 'call', {}, {
+            ids.push((await sqlane.enqueue(testAdapter.pool, testLane('call'), {}, {
                 globalRateLimits: [quota],
                 runAt: ago(70 - at),
             })).id);
@@ -1711,7 +1710,7 @@ describe('global rate limits', () => {
 
         for (const [at, cost] of [3, 2, 1, 1].entries()) {
             // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
-            ids.push((await sqlane.enqueue(testAdapter.pool, 'call', {}, {
+            ids.push((await sqlane.enqueue(testAdapter.pool, testLane('call'), {}, {
                 globalRateLimits: [quota.cost(cost)],
                 runAt: ago(70 - at),
             })).id);
@@ -1746,7 +1745,7 @@ describe('global rate limits', () => {
 
         for (const secondsAgo of [30, 20, 10]) {
             // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
-            ids.push((await sqlane.enqueue(testAdapter.pool, 'tick', {}, {
+            ids.push((await sqlane.enqueue(testAdapter.pool, testLane('tick'), {}, {
                 globalRateLimits: [once],
                 runAt: ago(secondsAgo),
             })).id);
@@ -1780,7 +1779,7 @@ describe('global rate limits', () => {
 
         for (const [at, cost] of [3, 2, 1].entries()) {
             // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
-            ids.push((await sqlane.enqueue(testAdapter.pool, 'call', {}, {
+            ids.push((await sqlane.enqueue(testAdapter.pool, testLane('call'), {}, {
                 globalRateLimits: [quota.cost(cost)],
                 runAt: ago(70 - at),
             })).id);
@@ -1815,8 +1814,8 @@ describe('global rate limits', () => {
         + 'meanwhile holds the newer ones (withRates: %s)', async (withRates) => {
         const { p, sqlane, store } = await freshTables();
         const once = defineRateLimit({ name: 'once', max: 1, per: '1h' });
-        const older = await sqlane.enqueue(testAdapter.pool, 'tick', {}, { globalRateLimits: [once], runAt: ago(20) });
-        const newer = await sqlane.enqueue(testAdapter.pool, 'tick', {}, { globalRateLimits: [once], runAt: ago(10) });
+        const older = await sqlane.enqueue(testAdapter.pool, testLane('tick'), {}, { globalRateLimits: [once], runAt: ago(20) });
+        const newer = await sqlane.enqueue(testAdapter.pool, testLane('tick'), {}, { globalRateLimits: [once], runAt: ago(10) });
 
         await database.query(SET_TAT_SQL[database.family](p), ['@once', 0]);
 
@@ -1860,7 +1859,7 @@ describe('global rate limits', () => {
 
         for (const limit of [once, brief]) {
             // oxlint-disable-next-line no-await-in-loop -- one after the other
-            ids.push((await sqlane.enqueue(testAdapter.pool, 'x', {}, { globalRateLimits: [limit], runAt: ago(5) })).id);
+            ids.push((await sqlane.enqueue(testAdapter.pool, testLane('x'), {}, { globalRateLimits: [limit], runAt: ago(5) })).id);
         }
 
         await claimAll(store, ids, 'T1');
@@ -1872,9 +1871,9 @@ describe('global rate limits', () => {
     test('the claim of names without limits leaves the jobs with rate limits', async () => {
         const { sqlane, store } = await freshTables();
 
-        await sqlane.enqueue(testAdapter.pool, 'plain', {}, { globalRateLimits: [api.key('a1')], runAt: ago(20) });
+        await sqlane.enqueue(testAdapter.pool, testLane('plain'), {}, { globalRateLimits: [api.key('a1')], runAt: ago(20) });
 
-        const plain = await sqlane.enqueue(testAdapter.pool, 'plain', {}, { runAt: ago(10) });
+        const plain = await sqlane.enqueue(testAdapter.pool, testLane('plain'), {}, { runAt: ago(10) });
 
         await expect(claimDueWithNext(store, { requests: [request('plain', 5, 0)] })).resolves.toMatchObject({
             jobs: [{ id: plain.id }],
@@ -1891,7 +1890,7 @@ describe('global rate limits', () => {
         for (const [at, options] of [{}, {}, ...Array.from({ length: 3 }, () => ({ globalRateLimits: [once] }))]
             .entries()) {
             // oxlint-disable-next-line no-await-in-loop -- in the order of run_at
-            ids.push((await sqlane.enqueue(testAdapter.pool, 'mixed', {}, { ...options, runAt: ago(50 - at) })).id);
+            ids.push((await sqlane.enqueue(testAdapter.pool, testLane('mixed'), {}, { ...options, runAt: ago(50 - at) })).id);
         }
 
         const limits = new Map([['mixed', 2]]);
@@ -2025,7 +2024,7 @@ describe('a job past its maxStalls: claimed without its limits, as its claim fai
         await expect(slotsOf(p)).resolves.toMatchObject([{ limit_key: 'order', job_id: first.id }]);
         expect((await aheadMs(p))['@once']).toBeGreaterThan(3_000_000);
 
-        const plain = await sqlane.enqueue(testAdapter.pool, 'plain', {}, { ...options, globalRateLimits: [once] });
+        const plain = await sqlane.enqueue(testAdapter.pool, testLane('plain'), {}, { ...options, globalRateLimits: [once] });
 
         await database.query(`UPDATE ${p}jobs SET stalls = ${stalls} WHERE id = '${plain.id}'`);
         await expect(claimDueWithNext(store, { requests: [request('plain', 5, 0)] })).resolves.toMatchObject({
@@ -2038,8 +2037,8 @@ describe('a job past its maxStalls: claimed without its limits, as its claim fai
         + 'several', async () => {
         const { p, sqlane, store } = await freshTables();
         const options = { globalConcurrencyLimits: [order], globalRateLimits: [once], runAt: ago(20) };
-        const one = await sqlane.enqueue(testAdapter.pool, 'plain', {}, options);
-        const other = await sqlane.enqueue(testAdapter.pool, 'other', {}, options);
+        const one = await sqlane.enqueue(testAdapter.pool, testLane('plain'), {}, options);
+        const other = await sqlane.enqueue(testAdapter.pool, testLane('other'), {}, options);
 
         await stallOut(p, one.id);
         await stallOut(p, other.id);
@@ -2048,7 +2047,7 @@ describe('a job past its maxStalls: claimed without its limits, as its claim fai
             limited: [],
         });
 
-        const third = await sqlane.enqueue(testAdapter.pool, 'plain', {}, options);
+        const third = await sqlane.enqueue(testAdapter.pool, testLane('plain'), {}, options);
 
         await stallOut(p, third.id);
 

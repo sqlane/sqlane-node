@@ -151,26 +151,6 @@ export function checkOptionFields(options, scope) {
 }
 
 /**
- * @param {unknown} value A name, or a definition.
- * @param {string} lane The lane that names it.
- * @param {Scope} scope
- * @returns {string} The failure lane.
- */
-export function checkFailureLane(value, lane, { where, ErrorClass }) {
-    const name = isPlainObject(value) ? value.name : value;
-
-    if (typeof name !== 'string' || !NAME_REGEXP.test(name)) {
-        throw new ErrorClass(`${where}: "failureLane" must be a lane name or a lane definition`);
-    }
-
-    if (name === lane) {
-        throw new ErrorClass(`${where}: a lane cannot be its own failure lane`);
-    }
-
-    return name;
-}
-
-/**
  * @param {unknown} tablePrefix
  * @param {Scope} scope
  */

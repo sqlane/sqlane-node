@@ -271,7 +271,7 @@ export function createJobRuns({
      *     the job; else the backoff.
      */
     function retryDelayMs(job, error) {
-        const backoffMs = getBackoffMs(job.entry.definition?.backoff ?? defaults.backoff, job.claimed.attempts + 1);
+        const backoffMs = getBackoffMs(job.entry.definition.backoff ?? defaults.backoff, job.claimed.attempts + 1);
 
         if (error instanceof RetryJobError) {
             return parseDuration(error.delay) ?? backoffMs;

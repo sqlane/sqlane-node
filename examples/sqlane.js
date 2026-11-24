@@ -1,9 +1,9 @@
-// One sqlane instance per process, over Drizzle on PostgreSQL.
+// One sqlane per process, over Drizzle on PostgreSQL: it enqueues, and reads and changes the jobs. A worker process
+// adds a runner over it (worker.js).
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { createSqlane } from '@sqlane/core';
 import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
-import { allLanes } from './jobs.js';
 
 /** The app's database: business transactions, handlers. */
 export const db = drizzle({ client: new Pool({ connectionString: 'postgres://app@localhost/app', max: 20 }) });
@@ -14,10 +14,7 @@ const queueDb = drizzle({ client: new Pool({ connectionString: 'postgres://app@l
 export const sqlane = createSqlane({
     // NOTIFY wakes the workers of every process at the commit
     adapter: drizzleAdapter(queueDb, { dialect: 'postgres', notify: true }),
-    lanes: allLanes,
-    localMaxConcurrency: 10,
     defaults: { timeout: '10m' },
-    unknownLanes: 'reject',
     onEvent: (event) => {
         if (event.type === 'failed') {
             reportError(event.lane, event.error);

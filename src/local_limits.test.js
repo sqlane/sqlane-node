@@ -13,17 +13,32 @@ import {
 import { nowUs, takeRate } from './local_rates.js';
 import { createRegistry } from './registry.js';
 
+/**
+ * Adds a handler of a lane to the registry, as a mount does.
+ * @param {import('./registry.js').Registry} registry
+ * @param {import('./types.js').LaneDefinition | string} lane A definition, or a name: a definition without options.
+ * @param {import('./types.js').Handler} handler
+ * @param {import('./types.js').HandlerOptions} [settings] Its local settings.
+ * @returns {import('./registry.js').HandlerEntry}
+ */
+function addLane(registry, lane, handler, settings = {}) {
+    const definition = typeof lane === 'string' ? defineLane({ name: lane }) : lane;
+    const [entry] = registry.addEntries([{ name: definition.name, definition, handler, settings, where: 'test' }]);
+
+    return entry;
+}
+
 const lane = defineConcurrencyLimit({ name: 'lane', max: 3 });
 const disk = defineRateLimit({ name: 'disk', max: 2, per: '1s', burst: 2 });
 
 /** @returns {import('./registry.js').Registry} plain, two names in `lane`, and one with `disk` */
 function registryOf() {
-    const registry = createRegistry({ lanesByName: new Map(), defaultTimeoutMs: null });
+    const registry = createRegistry({ defaultTimeoutMs: null });
 
-    registry.add('plain', async () => {});
-    registry.add(defineLane({ name: 'a', localConcurrencyLimits: [lane] }), async () => {});
-    registry.add(defineLane({ name: 'b', localConcurrencyLimits: [lane], fairShareWeight: 2 }), async () => {});
-    registry.add(defineLane({ name: 'rated', localRateLimits: [disk] }), async () => {});
+    addLane(registry, 'plain', async () => {});
+    addLane(registry, 'a', async () => {}, { localConcurrencyLimits: [lane] });
+    addLane(registry, 'b', async () => {}, { localConcurrencyLimits: [lane], fairShareWeight: 2 });
+    addLane(registry, 'rated', async () => {}, { localRateLimits: [disk] });
 
     return registry;
 }

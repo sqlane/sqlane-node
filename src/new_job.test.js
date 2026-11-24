@@ -129,7 +129,7 @@ describe('with a definition', () => {
 });
 
 test('an unknown name takes the defaults', () => {
-    expect(build({ lane: 'send_email', definition: null, options: { dedupeKey: 'e1' } })).toMatchObject({
+    expect(build({ lane: 'send_email', definition: defineLane({ name: 'send_email' }), options: { dedupeKey: 'e1' } })).toMatchObject({
         id: 'send_email:e1',
         limits: [],
         rateLimits: [],
@@ -157,12 +157,7 @@ test.each([
     ['a bad key of a rate limit', { options: { globalRateLimits: [reportApi.key('a ')] } }, InvalidRateLimitError],
     ['a concurrency limit as a rate limit', { options: { globalRateLimits: [report] } }, InvalidRateLimitError],
     ['a rate limit as a concurrency limit', { options: { globalConcurrencyLimits: [reportApi] } }, InvalidConcurrencyLimitError],
-    ['a slot without at', { options: { slot: {} } }, InvalidOptionsError],
-    ['a slot at an invalid Date', { options: { slot: { at: new Date('nope') } } }, InvalidOptionsError],
-    ['a slot before 1970', { options: { slot: { at: new Date('1969-12-31T23:59:59Z') } } }, InvalidOptionsError],
-    ['a slot after 9999', { options: { slot: { at: new Date('+010000-01-01T00:00:00Z') } } }, InvalidOptionsError],
-    ['a slot with a bad key', { options: { slot: { at: new Date(), key: 'a ' } } }, InvalidOptionsError],
-    ['a slot with an unknown option', { options: { slot: { at: new Date(), id: 'x' } } }, InvalidOptionsError],
+    ['the slot option of 9.x', { options: { slot: { at: new Date() } } }, InvalidOptionsError],
 ])('rejects %s', (_, params, ErrorClass) => {
     expect(() => build(/** @type {any} */ (params))).toThrow(ErrorClass);
 });
@@ -175,7 +170,7 @@ test.each([
     ['a dedupeKey with a space at the end', { dedupeKey: 'r1 ' }, BAD_DEDUPE_KEY],
     ['a dedupeKey of 121 characters', { dedupeKey: 'x'.repeat(121) }, BAD_DEDUPE_KEY],
     ['a dedupeKey with the reserved prefix', { dedupeKey: 'schedule:2026' }, 'the "dedupeKey" prefix "schedule:" is reserved'],
-    ['slot with dedupeKey', { slot: { at: new Date() }, dedupeKey: 'r1' }, '"slot" or "dedupeKey", not both'],
+    ['slot of 9.x', { slot: { at: new Date() } }, 'unknown options: slot'],
 ])('rejects %s', (_, options, message) => {
     const bad = () => build({ options: /** @type {any} */ (options) });
 
@@ -191,31 +186,26 @@ test('accepts a dedupeKey with schedule: after its start', () => {
     expect(build({ options: { dedupeKey: 'x:schedule:1' } }).id).toBe('build_report:x:schedule:1');
 });
 
-describe('a slot run by hand', () => {
-    const at = new Date('2026-11-11T02:00:00.000Z');
+describe('the job of a slot (the scheduler, schedules.runSlot)', () => {
+    const at = Date.parse('2026-11-11T02:00:00.000Z');
 
-    test('gets the dedupe key of the slot, due now', () => {
-        expect(build({ options: { slot: { at } } })).toMatchObject({
-            id: 'build_report:schedule:2026-11-11T02:00:00.000Z',
+    test('gets the dedupe key of the slot, with the key of its schedule, due now', () => {
+        expect(build({ slot: { at, key: 'tenant:42' } })).toMatchObject({
+            id: 'build_report:schedule:tenant:42:2026-11-11T02:00:00.000Z',
             hasJobId: true,
             delayMs: 0,
             runAt: null,
         });
     });
 
-    test('with a key', () => {
-        expect(build({ options: { slot: { at, key: 'tenant:42' } } }).id)
-            .toBe('build_report:schedule:tenant:42:2026-11-11T02:00:00.000Z');
-    });
-
     test('with a delay or a runAt', () => {
-        expect(build({ options: { slot: { at }, delay: '1m' } })).toMatchObject({ delayMs: 60_000 });
-        expect(build({ options: { slot: { at }, runAt: at } })).toMatchObject({ runAt: at });
+        expect(build({ slot: { at, key: 'k' }, options: { delay: '1m' } })).toMatchObject({ delayMs: 60_000 });
+        expect(build({ slot: { at, key: 'k' }, options: { runAt: new Date(at) } })).toMatchObject({ runAt: new Date(at) });
     });
 
     test('the years 1970 and 9999', () => {
-        expect(build({ options: { slot: { at: new Date(0) } } }).id).toBe('build_report:schedule:1970-01-01T00:00:00.000Z');
-        expect(build({ options: { slot: { at: new Date('9999-12-31T23:59:59.999Z') } } }).id)
-            .toBe('build_report:schedule:9999-12-31T23:59:59.999Z');
+        expect(build({ slot: { at: 0, key: 'k' } }).id).toBe('build_report:schedule:k:1970-01-01T00:00:00.000Z');
+        expect(build({ slot: { at: Date.parse('9999-12-31T23:59:59.999Z'), key: 'k' } }).id)
+            .toBe('build_report:schedule:k:9999-12-31T23:59:59.999Z');
     });
 });

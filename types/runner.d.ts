@@ -36,7 +36,7 @@ export type RunnerParams = {
     store: import('./store/store.js').Store;
     registry: import('./registry.js').Registry;
     /**
-     * The instance's cap.
+     * The runner's cap.
      */
     localMaxConcurrency: number;
     defaults: import('./defaults.js').ResolvedDefaults;
@@ -69,7 +69,10 @@ export type Runner = {
     }) => Promise<void>;
     drain: (options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>;
     close: (options?: import('./types.js').CloseOptions) => Promise<void>;
-    wake: () => void;
+    /**
+     * Jobs of the lanes are due: an unblock.
+     */
+    wakeLanes: (lanes: string[]) => void;
     /**
      * An enqueue: its commit is to come.
      */
@@ -84,6 +87,11 @@ export type Runner = {
      * Neither started, draining nor closed.
      */
     isIdle: () => boolean;
+    isDraining: () => boolean;
+    /**
+     * Started, draining or closing: its queries run.
+     */
+    isBusy: () => boolean;
     /**
      * Calls `onEvent`; logs what it throws.
      */
@@ -94,16 +102,36 @@ export type Runner = {
      */
     unblockKeys: (keys: string[]) => Promise<void>;
     /**
-     * The lane is added in this process and has a free slot.
+     * The lane is handled in this process, not paused, and has a free
+     * slot.
      */
     canStartNow: (lane: string) => boolean;
+    /**
+     * Lanes handled from now on (a mount): claimed at once
+     * when started.
+     */
+    added: (entries: readonly HandlerEntry[]) => void;
+    /**
+     * Lanes no longer handled (an unmount). A claim in
+     * flight and the jobs that run keep their handler.
+     */
+    removed: (entries: readonly HandlerEntry[]) => void;
+    /**
+     * This process claims no job of the lane, until resumeLocally().
+     */
+    pauseLocally: (lane: string) => void;
+    /**
+     * Claims the lane again, at once.
+     */
+    resumeLocally: (lane: string) => void;
+    isPausedLocally: (lane: string) => boolean;
 };
 /** @typedef {'idle' | 'started' | 'draining' | 'closing' | 'closed'} RunnerState */
 /**
  * @typedef {object} RunnerParams
  * @property {import('./store/store.js').Store} store
  * @property {import('./registry.js').Registry} registry
- * @property {number} localMaxConcurrency The instance's cap.
+ * @property {number} localMaxConcurrency The runner's cap.
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {boolean} cleanup
  * @property {import('./types.js').Logger | undefined} logger
@@ -121,16 +149,26 @@ export type Runner = {
  *     and the recovery and the cleanup start once it passes.
  * @property {(options?: import('./types.js').DrainOptions) => Promise<import('./types.js').DrainResult>} drain
  * @property {(options?: import('./types.js').CloseOptions) => Promise<void>} close
- * @property {() => void} wake
+ * @property {(lanes: string[]) => void} wakeLanes Jobs of the lanes are due: an unblock.
  * @property {(lanes: string[]) => void} onEnqueued An enqueue: its commit is to come.
  * @property {(lanes: string[]) => void} onCommitted An enqueue committed: wakes at once, then re-probes.
  * @property {() => boolean} isClosed
  * @property {() => boolean} isStarted
  * @property {() => boolean} isIdle Neither started, draining nor closed.
+ * @property {() => boolean} isDraining
+ * @property {() => boolean} isBusy Started, draining or closing: its queries run.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
  * @property {(keys: string[]) => Promise<void>} unblockKeys Makes due the jobs blocked on keys with room, wakes and
  *     hints them. Never rejects: a failure is an `error` event (operation `unblock`).
- * @property {(lane: string) => boolean} canStartNow The lane is added in this process and has a free slot.
+ * @property {(lane: string) => boolean} canStartNow The lane is handled in this process, not paused, and has a free
+ *     slot.
+ * @property {(entries: readonly HandlerEntry[]) => void} added Lanes handled from now on (a mount): claimed at once
+ *     when started.
+ * @property {(entries: readonly HandlerEntry[]) => void} removed Lanes no longer handled (an unmount). A claim in
+ *     flight and the jobs that run keep their handler.
+ * @property {(lane: string) => void} pauseLocally This process claims no job of the lane, until resumeLocally().
+ * @property {(lane: string) => void} resumeLocally Claims the lane again, at once.
+ * @property {(lane: string) => boolean} isPausedLocally
  */
 /**
  * @param {RunnerParams} params

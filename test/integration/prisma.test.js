@@ -12,6 +12,7 @@ import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 import { checkSchemaChanges, SCHEMA_CHANGES } from './helpers/schema_checks.js';
 import { checkStartTimes } from './helpers/start_time_checks.js';
+import { handle, testLane, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/adapters/prisma.js').PrismaClientLike} PrismaClientLike */
 /** @typedef {import('../../src/types.js').Sqlane<PrismaClientLike>} Sqlane */
@@ -131,7 +132,7 @@ async function waitFor(condition) {
 test('schedules: start() without the table asks for schema.migrate(); a slot adds its job', async () => {
     const { sqlane, p } = await freshSqlane();
 
-    await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+    await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:k:\d{4}-/);
 });
 
 test('schema.migrate() through Prisma: the tables, once', async () => {
@@ -214,33 +215,33 @@ test('enqueue in an interactive transaction: the job commits with it, and rolls 
     const { sqlane, p } = await freshSqlane();
 
     await prisma.$transaction(async (/** @type {any} */ tx) => {
-        await expect(sqlane.enqueue(tx, 'ping', { n: 1 }, { dedupeKey: 'a' }))
+        await expect(sqlane.enqueue(tx, testLane('ping'), { n: 1 }, { dedupeKey: 'a' }))
             .resolves.toStrictEqual({ id: 'ping:a', created: true });
         await expect(statuses(p)).resolves.toStrictEqual([]);
     });
     await expect(prisma.$transaction(async (/** @type {any} */ tx) => {
-        await sqlane.enqueue(tx, 'ping', { n: 2 }, { dedupeKey: 'b' });
+        await sqlane.enqueue(tx, testLane('ping'), { n: 2 }, { dedupeKey: 'b' });
         throw new Error('rollback');
     })).rejects.toThrow('rollback');
 
     await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-    await expect(sqlane.enqueue(prisma, 'ping', { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
+    await expect(sqlane.enqueue(prisma, testLane('ping'), { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
 });
 
 test('a client: a transaction of its own', async () => {
     const { sqlane, p } = await freshSqlane();
 
-    await sqlane.enqueueMany(prisma, 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
+    await sqlane.enqueueMany(prisma, testLane('ping'), [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
     await expect(statuses(p)).resolves.toStrictEqual(['pending', 'pending']);
 });
 
 test('a worker runs a job enqueued in a transaction', async () => {
     const { sqlane, p, events } = await freshSqlane({ pollInterval: '10s' });
 
-    sqlane.lanes.add('ping', () => {});
-    await sqlane.start();
+    runnerOf(sqlane).mount([handle('ping', () => {})]);
+    await runnerOf(sqlane).start();
     await prisma.$transaction(async (/** @type {any} */ tx) => {
-        await sqlane.enqueue(tx, 'ping', {});
+        await sqlane.enqueue(tx, testLane('ping'), {});
     });
 
     await waitFor(() => events.some(event => event.type === 'completed'));
@@ -261,21 +262,21 @@ test('drain: retries, global limits and a failure job', async () => {
         backoff: { type: 'fixed', delay: 10, jitter: 0 },
         failureLane: reportFailed,
     });
-    const { sqlane, p } = await freshSqlane({ lanes: [report, reportFailed, failing] });
+    const { sqlane, p } = await freshSqlane();
     /** @type {unknown[]} */
     const failures = [];
 
-    sqlane.lanes.add(report, () => {});
-    sqlane.lanes.add(failing, () => {
+    runnerOf(sqlane).mount([handle(report, () => {})]);
+    runnerOf(sqlane).mount([handle(failing, () => {
         throw new Error('always');
-    });
-    sqlane.lanes.add(reportFailed, ({ payload }) => {
+    })]);
+    runnerOf(sqlane).mount([handle(reportFailed, ({ payload }) => {
         failures.push(payload.job.lane);
-    });
+    })]);
     await sqlane.enqueueMany(prisma, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
     await sqlane.enqueue(prisma, failing, {});
 
-    await expect(sqlane.drain({ includeDelayed: true }))
+    await expect(runnerOf(sqlane).drain({ includeDelayed: true }))
         .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
     expect(failures).toStrictEqual(['failing']);
     await expect(sqlane.lanes.stats()).resolves.toMatchObject([

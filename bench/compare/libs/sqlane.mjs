@@ -5,7 +5,10 @@ import { createPool } from 'mysql2/promise';
 import { Pool } from 'pg';
 import { mysql2Adapter } from '../../../src/adapters/mysql2.js';
 import { pgAdapter } from '../../../src/adapters/pg.js';
-import { createSqlane, defineConcurrencyLimit, defineLane } from '../../../src/index.js';
+import {
+    createRunner,
+    createSqlane,
+    defineConcurrencyLimit, defineHandler, defineLane, defineSchedule } from '../../../src/index.js';
 import { queryRows, scheduleKeys, UnsupportedError } from './common.mjs';
 
 /**
@@ -76,7 +79,6 @@ export const adapter = {
                 ? mysql2Adapter(/** @type {import('mysql2/promise').Pool} */ (pool), { dialect })
                 : pgAdapter(/** @type {Pool} */ (pool), { dialect: 'postgres', notify: true })),
             ...mysql && { hint: udpHint(Number(new URL(url).port) - 10_000) },
-            localMaxConcurrency: concurrency,
             pollInterval: pollIntervalMs,
             // A lease of 4 minutes: no public option shortens it
             ...stall && { timings: { leaseMs: 3000, renewIntervalMs: 1000, recoveryIntervalMs: 1000 } },
@@ -85,6 +87,8 @@ export const adapter = {
         if (stall) {
             notes.push('test-only option: lease 3 s (default and minimum public: 4 min)');
         }
+
+        const runner = createRunner(sqlane, { localMaxConcurrency: concurrency });
 
         await sqlane.schema.migrate();
 
@@ -109,18 +113,20 @@ export const adapter = {
             });
 
             definitions.set(name, definition);
-            sqlane.lanes.add(definition, ({ job, payload, signal }) => (
+            runner.mount([defineHandler(definition, ({ job, payload, signal }) => (
                 handler(job.lane, payload, signal, job.scheduledAt?.getTime())
-            ));
+            ))]);
         }
 
         // Schedules in code, in each worker: no jitter, `missed: 'once'` (the defaults), UTC
         if (schedules && role !== 'setup') {
             const [definition] = definitions.values();
 
-            for (const key of scheduleKeys(schedules.count)) {
-                sqlane.schedule(definition, { cron: schedules.cron, key, payload: { s: key } });
-            }
+            runner.mount(scheduleKeys(schedules.count).map(key => defineSchedule(definition, {
+                cron: schedules.cron,
+                key,
+                payload: { s: key },
+            })));
         }
 
         return {
@@ -144,7 +150,7 @@ export const adapter = {
                     definitions.get(name)
                 ), payloads.map(payload => ({ payload })));
             },
-            start: () => sqlane.start(),
+            start: () => runner.start(),
             stop: async () => {
                 await sqlane.close({ deadline: 0 });
                 await pool.end();

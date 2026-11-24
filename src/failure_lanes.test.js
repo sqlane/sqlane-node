@@ -2,7 +2,6 @@ import { expect, test } from 'vitest';
 import { resolveDefaults } from './defaults.js';
 import { defineLane } from './define_lane.js';
 import { createFailureLanes } from './failure_lanes.js';
-import { createRegistry } from './registry.js';
 
 const reportFailed = defineLane({ name: 'report_failed', maxAttempts: 7 });
 const alert = defineLane({ name: 'alert', maxAttempts: 5 });
@@ -12,7 +11,6 @@ const alert = defineLane({ name: 'alert', maxAttempts: 5 });
  *     added: string[] }}
  */
 function failureLanesOf() {
-    const registry = createRegistry({ lanesByName: new Map([['report_failed', reportFailed]]), defaultTimeoutMs: null });
     /** @type {import('./types.js').SqlaneEvent[]} */
     const events = [];
     /** @type {string[]} */
@@ -20,7 +18,6 @@ function failureLanesOf() {
 
     return {
         failureLanes: createFailureLanes({
-            registry,
             defaults: resolveDefaults(),
             emit: event => events.push(event),
             reportError: () => {},
@@ -43,13 +40,13 @@ const failedJob = {
 
 test.each([
     {
-        title: 'a failure lane by name: its definition in "lanes"',
-        definition: defineLane({ name: 'report', failureLane: 'report_failed' }),
+        title: 'its options',
+        definition: defineLane({ name: 'report', failureLane: reportFailed }),
         lane: 'report_failed',
         maxAttempts: 7,
     },
     {
-        title: 'a failure lane as a definition: its own options',
+        title: 'another definition: its own options',
         definition: defineLane({ name: 'report', failureLane: alert }),
         lane: 'alert',
         maxAttempts: 5,
@@ -67,18 +64,17 @@ test.each([
     });
 });
 
-test('no failure lane: a definition without one; a lane added by name, without a definition', () => {
+test('no failure lane: a definition without one', () => {
     const { failureLanes } = failureLanesOf();
 
     expect(failureLanes.builderOf(defineLane({ name: 'report' })).lane).toBeNull();
-    expect(failureLanes.builderOf(null).lane).toBeNull();
 });
 
 test('report: an added failure job wakes its lane; a refused one is a failure_job_not_added event with its lane', () => {
     const { failureLanes, events, added } = failureLanesOf();
     const error = new Error('refused');
     const job = { id: 'job-1', lane: 'report', attempt: 2 };
-    const builder = failureLanes.builderOf(defineLane({ name: 'report', failureLane: 'report_failed' }));
+    const builder = failureLanes.builderOf(defineLane({ name: 'report', failureLane: reportFailed }));
 
     failureLanes.report(job, null);
     failureLanes.report(job, { added: builder.build(failedJob) });

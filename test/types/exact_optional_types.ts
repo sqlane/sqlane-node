@@ -2,7 +2,7 @@
 // (test/types/tsconfig.exact_optional.json, in `pnpm typecheck` and the hooks), never run. Without the option, an
 // optional field accepts `undefined` whatever its type says, so only this config can catch a missing `| undefined`.
 import mysql from 'mysql2/promise';
-import { createSqlane } from '@sqlane/core';
+import { createSqlane, defineLane, defineSchedule } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
 /** The type tests: never called. */
@@ -35,4 +35,9 @@ export async function exactOptionalTypes() {
 
     // keyStats: an option set to undefined counts as absent
     await sqlane.jobs.keyStats({ limit: undefined, type: undefined, orderBy: undefined });
+
+    // runSlot: an option set to undefined counts as absent
+    const tick = defineSchedule(defineLane({ name: 'tick' }), { key: 'a', every: '1m' });
+
+    await sqlane.schedules.runSlot(tick, { at: undefined, connection: undefined });
 }

@@ -12,6 +12,7 @@ import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 import { checkSchemaChanges, SCHEMA_CHANGES } from './helpers/schema_checks.js';
 import { checkStartTimes } from './helpers/start_time_checks.js';
+import { handle, testLane, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/adapters/sequelize.js').SequelizeConnection} SequelizeConnection */
 /** @typedef {import('../../src/types.js').Sqlane<SequelizeConnection>} Sqlane */
@@ -128,7 +129,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
     test('schedules: start() without the table asks for schema.migrate(); a slot adds its job', async () => {
         const { sqlane, p } = await freshSqlane();
 
-        await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+        await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:k:\d{4}-/);
     });
 
     test('sqlane.jobs: get and list through the adapter', async () => {
@@ -184,26 +185,26 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         const app = sequelize;
 
         await sequelize.transaction(async (t) => {
-            await expect(sqlane.enqueue(/** @type {any} */ (t), 'ping', { n: 1 }, { dedupeKey: 'a' }))
+            await expect(sqlane.enqueue(/** @type {any} */ (t), testLane('ping'), { n: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(sequelize.transaction(async (t) => {
-            await sqlane.enqueue(/** @type {any} */ (t), 'ping', { n: 2 }, { dedupeKey: 'b' });
+            await sqlane.enqueue(/** @type {any} */ (t), testLane('ping'), { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-        await expect(sqlane.enqueue(app, 'ping', { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
+        await expect(sqlane.enqueue(app, testLane('ping'), { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
     });
 
     test('an unmanaged transaction, and an instance (a transaction of its own)', async () => {
         const { sqlane, p } = await freshSqlane();
         const t = await sequelize.transaction();
 
-        await sqlane.enqueue(/** @type {any} */ (t), 'ping', {}, { dedupeKey: 'unmanaged' });
+        await sqlane.enqueue(/** @type {any} */ (t), testLane('ping'), {}, { dedupeKey: 'unmanaged' });
         await t.commit();
-        await sqlane.enqueueMany(/** @type {any} */ (sequelize), 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
+        await sqlane.enqueueMany(/** @type {any} */ (sequelize), testLane('ping'), [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
 
         await expect(statuses(p)).resolves.toHaveLength(3);
     });
@@ -211,11 +212,11 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
     test('the commit wakes the worker at once: the job does not wait for a re-probe', async () => {
         const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
 
-        sqlane.lanes.add('ping', () => {});
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle('ping', () => {})]);
+        await runnerOf(sqlane).start();
         await sleep(100);
         await sequelize.transaction(async (t) => {
-            await sqlane.enqueue(/** @type {any} */ (t), 'ping', {});
+            await sqlane.enqueue(/** @type {any} */ (t), testLane('ping'), {});
             // The re-probes after the enqueue: 20, 50, 100, 200, then 500 ms
             await sleep(300);
         });
@@ -229,17 +230,17 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
     test('a nested transaction: the job runs after the outer commit, and never after an outer rollback', async () => {
         const { sqlane, p, events } = await freshSqlane({ pollInterval: '10s' });
 
-        sqlane.lanes.add('ping', () => {});
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle('ping', () => {})]);
+        await runnerOf(sqlane).start();
         await expect(sequelize.transaction(async (outer) => {
             await sequelize.transaction({ transaction: outer }, async (inner) => {
-                await sqlane.enqueue(/** @type {any} */ (inner), 'ping', {}, { dedupeKey: 'rolled_back' });
+                await sqlane.enqueue(/** @type {any} */ (inner), testLane('ping'), {}, { dedupeKey: 'rolled_back' });
             });
             throw new Error('outer rollback');
         })).rejects.toThrow('outer rollback');
         await sequelize.transaction(async (outer) => {
             await sequelize.transaction({ transaction: outer }, async (inner) => {
-                await sqlane.enqueue(/** @type {any} */ (inner), 'ping', {}, { dedupeKey: 'committed' });
+                await sqlane.enqueue(/** @type {any} */ (inner), testLane('ping'), {}, { dedupeKey: 'committed' });
             });
         });
 
@@ -261,23 +262,23 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
             backoff: { type: 'fixed', delay: 10, jitter: 0 },
             failureLane: reportFailed,
         });
-        const { sqlane, p } = await freshSqlane({ lanes: [report, reportFailed, failing] });
+        const { sqlane, p } = await freshSqlane();
         /** @type {any} */
         const app = sequelize;
         /** @type {unknown[]} */
         const failures = [];
 
-        sqlane.lanes.add(report, () => {});
-        sqlane.lanes.add(failing, () => {
+        runnerOf(sqlane).mount([handle(report, () => {})]);
+        runnerOf(sqlane).mount([handle(failing, () => {
             throw new Error('always');
-        });
-        sqlane.lanes.add(reportFailed, ({ payload }) => {
+        })]);
+        runnerOf(sqlane).mount([handle(reportFailed, ({ payload }) => {
             failures.push(payload.job.lane);
-        });
+        })]);
         await sqlane.enqueueMany(app, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
         await sqlane.enqueue(app, failing, {});
 
-        await expect(sqlane.drain({ includeDelayed: true }))
+        await expect(runnerOf(sqlane).drain({ includeDelayed: true }))
             .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
         expect(failures).toStrictEqual(['failing']);
         await expect(sqlane.lanes.stats()).resolves.toMatchObject([
@@ -315,7 +316,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
             const queueStatements = await preparedAfterAJob(sqlane, /** @type {any} */ (queueOne), query);
             // The caller's transaction: on the app's connection
             const appStatements = await appOne.transaction(async (t) => {
-                await sqlane.enqueue(/** @type {any} */ (t), 'ping', {});
+                await sqlane.enqueue(/** @type {any} */ (t), testLane('ping'), {});
 
                 const [row] = await appOne.query(SQLANE_STATEMENTS_SQL, { type: QueryTypes.SELECT, transaction: t });
 

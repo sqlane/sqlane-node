@@ -1,3 +1,5 @@
+import { handle, testLane, runnerOf } from '../../support/runners.js';
+
 /** PostgreSQL: the named prepared statements of sqlane (`sqlane_<hash>`) on the connection that runs it */
 export const SQLANE_STATEMENTS_SQL = 'SELECT count(*)::int AS statements FROM pg_prepared_statements '
     + 'WHERE name LIKE \'sqlane\\_%\'';
@@ -13,10 +15,10 @@ export const SQLANE_STATEMENTS_SQL = 'SELECT count(*)::int AS statements FROM pg
  */
 export async function preparedAfterAJob(sqlane, connection, query) {
     await sqlane.schema.migrate();
-    sqlane.lanes.add('ping', () => {});
-    await sqlane.enqueue(connection, 'ping', {});
+    runnerOf(sqlane).mount([handle('ping', () => {})]);
+    await sqlane.enqueue(connection, testLane('ping'), {});
 
-    const { completed } = await sqlane.drain();
+    const { completed } = await runnerOf(sqlane).drain();
 
     if (completed !== 1) {
         throw new Error(`preparedAfterAJob: ${completed} jobs completed, not 1`);

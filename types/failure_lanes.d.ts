@@ -1,9 +1,9 @@
 export type FailureLanes = {
     /**
-     * The failure job of a job of a lane with this definition in this process. None without a definition (a
-     * lane added by name only) or without a `failureLane`.
+     * The failure job of a job of a lane with this definition in this process. None without a
+     * `failureLane`.
      */
-    builderOf: (definition: import('./types.js').LaneDefinition | null) => import('./store/store.js').FailureJobBuilder;
+    builderOf: (definition: import('./types.js').LaneDefinition) => import('./store/store.js').FailureJobBuilder;
     /**
      * An added failure job wakes its lane
      * here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
@@ -16,24 +16,22 @@ export type FailureLanes = {
 };
 /**
  * @typedef {object} FailureLanes
- * @property {(definition: import('./types.js').LaneDefinition | null) => import('./store/store.js').FailureJobBuilder}
- *     builderOf The failure job of a job of a lane with this definition in this process. None without a definition (a
- *     lane added by name only) or without a `failureLane`.
+ * @property {(definition: import('./types.js').LaneDefinition) => import('./store/store.js').FailureJobBuilder}
+ *     builderOf The failure job of a job of a lane with this definition in this process. None without a
+ *     `failureLane`.
  * @property {(job: { id: string, lane: string, attempt: number },
  *     result: import('./store/store.js').FailureJobResult | null) => void} report An added failure job wakes its lane
  *     here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
  */
 /**
  * @param {object} params
- * @param {import('./registry.js').Registry} params.registry
  * @param {import('./defaults.js').ResolvedDefaults} params.defaults
  * @param {(event: import('./types.js').SqlaneEvent) => void} params.emit
  * @param {(operation: string, error: unknown) => void} params.reportError
  * @param {(lane: string) => void} params.onAdded A failure job of the lane was added: its commit is to come.
  * @returns {FailureLanes}
  */
-export declare function createFailureLanes({ registry, defaults, emit, reportError, onAdded }: {
-    registry: import('./registry.js').Registry;
+export declare function createFailureLanes({ defaults, emit, reportError, onAdded }: {
     defaults: import('./defaults.js').ResolvedDefaults;
     emit: (event: import('./types.js').SqlaneEvent) => void;
     reportError: (operation: string, error: unknown) => void;

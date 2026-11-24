@@ -43,9 +43,10 @@
  */
 
 /**
- * The options of a lane, shared by its producers and workers. A definition overrides the instance `defaults`.
- * @template [P=any] The payload: `defineLane<{ reportId: string }>(…)` types `enqueue`, `lanes.add`,
- *     `globalConcurrencyLimits` and `globalRateLimits`.
+ * The options of a lane, shared by its producers and workers: what a job is. A definition overrides the `defaults` of
+ * the sqlane.
+ * @template [P=any] The payload: `defineLane<{ reportId: string }>(…)` types `enqueue`, `defineHandler`,
+ *     `defineSchedule`, `globalConcurrencyLimits` and `globalRateLimits`.
  * @typedef {object} LaneOptions
  * @property {string} name Matches `^[a-z][a-z0-9_.-]{0,127}$`.
  * @property {number} [maxAttempts] The runs of a job before it fails for good. Default: 3. Set at enqueue; a
@@ -59,15 +60,11 @@
  *     limits needs one.
  * @property {(context: { payload: P }) => readonly (ConcurrencyLimit | ConcurrencyLimitKey)[]}
  *     [globalConcurrencyLimits] Limits that the whole cluster counts, per key. Sync, from the context only; at enqueue.
- * @property {number} [fairShareWeight] 1–1000. The lane's share of the free slots of an instance. Default: 1.
- * @property {readonly ConcurrencyLimit[]} [localConcurrencyLimits] Limits that each instance counts for its own jobs.
- *     A job starts only while every one of them has room.
  * @property {(context: { payload: P }) => readonly (RateLimit | RateLimitKey)[]} [globalRateLimits] Rate limits that
  *     the whole cluster counts, per key: the starts of jobs. Sync, from the context only; at enqueue. At most 10 keys
  *     with the global concurrency limits.
- * @property {readonly RateLimit[]} [localRateLimits] Rate limits that each instance counts for its own starts: keyless.
- * @property {string | LaneDefinition} [failureLane] Gets a job, the failure job, when a job fails for good: by the
- *     definition in the process that fails the job.
+ * @property {LaneDefinition} [failureLane] Gets a job, the failure job, when a job fails for good: by the definition in
+ *     the process that fails the job. It has no failure lane of its own.
  */
 
 /**
@@ -110,13 +107,6 @@
  */
 
 /**
- * A slot of a schedule, run by hand: the job gets the dedupe key that the scheduler gives the slot.
- * @typedef {object} SlotOptions
- * @property {Date} at The slot, in the years 1970 to 9999.
- * @property {string} [key] The `key` of the schedule.
- */
-
-/**
  * @typedef {object} EnqueueBaseOptions
  * @property {number} [maxAttempts] Overrides the definition's `maxAttempts` for this job. A `one_more` retry changes
  *     it.
@@ -129,23 +119,12 @@
  */
 
 /**
- * @typedef {object} EnqueueDedupeKeyOption
- * @property {string} [dedupeKey] 1–120 printable ASCII characters, not starting with `schedule:`. The job id is
- *     `<lane>:<dedupeKey>`: a job with this id is added once while its row exists.
- * @property {never} [slot] Not with `dedupeKey`.
- */
-
-/**
- * @typedef {object} EnqueueSlotOption
- * @property {SlotOptions} slot Runs a slot of a schedule by hand: the job gets the dedupe key of the slot.
- * @property {never} [dedupeKey] Not with `slot`.
- */
-
-/**
- * The options of an enqueue: `delay` or `runAt`, not both; `dedupeKey` or `slot`, not both.
+ * The options of an enqueue: `delay` or `runAt`, not both.
  * @typedef {EnqueueBaseOptions
- *     & ({ delay?: Duration, runAt?: never } | { runAt: Date, delay?: never })
- *     & (EnqueueDedupeKeyOption | EnqueueSlotOption)} EnqueueOptions
+ *     & { dedupeKey?: string }
+ *     & ({ delay?: Duration, runAt?: never } | { runAt: Date, delay?: never })} EnqueueOptions `dedupeKey`: 1–120
+ *     printable ASCII characters, not starting with `schedule:`. The job id is `<lane>:<dedupeKey>`: a job with this id
+ *     is added once while its row exists.
  */
 
 /**
@@ -189,6 +168,21 @@
  * Runs a job. Its return value is ignored.
  * @template [P=any]
  * @typedef {(context: HandlerContext<P>) => unknown} Handler
+ */
+
+/**
+ * The settings of a lane in the process that runs it: the options of `defineHandler()`.
+ * @typedef {object} HandlerOptions
+ * @property {number} [fairShareWeight] 1–1000. The lane's share of the free slots of the runner. Default: 1.
+ * @property {readonly ConcurrencyLimit[]} [localConcurrencyLimits] Limits that each runner counts for its own jobs. A
+ *     job starts only while every one of them has room.
+ * @property {readonly RateLimit[]} [localRateLimits] Rate limits that each runner counts for its own starts: keyless.
+ */
+
+/**
+ * The result of `defineHandler()`: how a process runs the jobs of a lane. Frozen.
+ * @template [P=any] The payload of the lane.
+ * @typedef {Readonly<{ lane: LaneDefinition<P>, handler: Handler<P> } & HandlerOptions>} LaneHandler
  */
 
 /**
@@ -293,7 +287,7 @@
  * A slot of a schedule was decided: once in the cluster, by the process that moved the cursor.
  * @typedef {object} ScheduleFiredEvent
  * @property {'schedule_fired'} type The event type.
- * @property {string} scheduleId `<lane>` or `<lane>:<key>`.
+ * @property {string} scheduleId `<lane>:<key>`.
  * @property {string} lane The lane.
  * @property {Date} scheduledAt The slot.
  * @property {boolean} late A catch-up of a missed slot.
@@ -307,8 +301,10 @@
  */
 
 /**
- * @typedef {object} ScheduleBaseOptions
- * @property {string} [key] Tells several schedules of one lane apart: 1–64 printable ASCII characters.
+ * The settings of `defineSchedule()`, with its timing and payload.
+ * @typedef {object} ScheduleSettings
+ * @property {string} key Tells the schedules of a lane apart, in their id `<lane>:<key>`: 1–64 printable ASCII
+ *     characters.
  * @property {'once' | 'skip'} [missed] A slot that no process enqueued within 1 minute. Default: `'once'`: the
  *     latest missed slot runs once, within the catch-up reach.
  * @property {'allow' | 'skip'} [overlap] Default: `'allow'`. `'skip'`: a slot adds no job while the previous job of
@@ -318,11 +314,26 @@
  */
 
 /**
- * The options of `schedule()`. With a payload type, `payload` is required: a variable of this type passes to
- * `schedule()` with a definition of that payload type.
+ * The options of `defineSchedule()`. With a payload type, `payload` is required: a variable of this type passes to
+ * `defineSchedule()` with a definition of that payload type.
  * @template [P=any] The payload of each job. Default: `{}`.
- * @typedef {ScheduleBaseOptions & ScheduleTiming & (IsAny<P> extends true ? { payload?: P } : { payload: P })}
+ * @typedef {ScheduleSettings & ScheduleTiming & (IsAny<P> extends true ? { payload?: P } : { payload: P })}
  *     ScheduleOptions
+ */
+
+/**
+ * The result of `defineSchedule()`: a cron or an interval that adds a job of its lane at each slot. Frozen, its
+ * payload too.
+ * @template [P=any] The payload of each job.
+ * @typedef {Readonly<{
+ *     id: string,
+ *     lane: LaneDefinition<P>,
+ *     key: string,
+ *     payload: P,
+ *     missed: 'once' | 'skip',
+ *     overlap: 'allow' | 'skip',
+ *     jitter?: Duration,
+ * } & ScheduleTiming>} ScheduleDefinition `id`: `<lane>:<key>`.
  */
 
 /**
@@ -335,15 +346,25 @@
  */
 
 /**
+ * The options of `sqlane.schedules.runSlot()`.
+ * @template [C=any]
+ * @typedef {object} RunSlotOptions
+ * @property {Date | undefined} [at] The slot: a slot of the schedule, not in the future. Default: the latest slot at
+ *     or before now, by the clock of this process.
+ * @property {C | undefined} [connection] Your transaction, or a connection in one, of the adapter's library; or a
+ *     pool. Default: the queue's pool.
+ */
+
+/**
  * @typedef {object} ScheduleInfo
- * @property {string} id `<lane>` or `<lane>:<key>`.
+ * @property {string} id `<lane>:<key>`.
  * @property {string} lane The lane.
  * @property {string} spec The stored spec, e.g. `cron 0 3 * * * Europe/Berlin` or `every 900000`.
- * @property {boolean} registered `schedule()` was called in this process.
- * @property {Date | null} nextAt Registered: the next slot. Null: not registered, or no next slot.
- * @property {Date | null} nextRunAt When the job of the next slot will be due: `nextAt` plus its jitter. Null when
- *     `nextAt` is.
- * @property {Date | null} lastSlotAt The cursor: the last decided slot.
+ * @property {Date | null} nextAt The next slot, by the stored spec and the database clock. Null: no next slot, or a
+ *     spec that this version cannot read.
+ * @property {Date | null} nextRunAt When the job of the next slot will be due: `nextAt` plus its jitter, for a
+ *     schedule mounted in this process with the stored spec; else `nextAt`, without jitter.
+ * @property {Date} lastSlotAt The last decided slot.
  * @property {string | null} lastJobId The job of the last enqueued slot.
  */
 
@@ -403,20 +424,38 @@
  * @typedef {object} SqlaneOptions
  * @property {Adapter<C>} adapter The adapter of your driver or ORM, over the queue's own small pool, e.g.
  *     `pgAdapter(queuePool, { dialect: 'postgres' })`.
- * @property {readonly LaneDefinition[]} [lanes] The definitions known by name, without a handler: `lanes.add()`
- *     runs a lane.
- * @property {number} [localMaxConcurrency] The handlers that run at the same time in this instance. Default: 10.
  * @property {JobDefaults} [defaults] Defaults of `maxAttempts`, `maxStalls`, `backoff`, `retention` and `timeout`. A
  *     definition overrides them.
- * @property {'allow' | 'reject'} [unknownLanes] Default: `'allow'`. `'reject'`: `enqueue` of a lane that is not in
- *     `lanes` and not added throws an `UnknownLaneError`.
  * @property {Hint | null} [hint] Default: null: polling only.
- * @property {Logger} [logger] Default: no logs.
- * @property {(event: SqlaneEvent) => void} [onEvent] Gets the events of the job lifecycle. A throw is logged.
+ * @property {Logger} [logger] Default: no logs. The default logger of the runner too.
+ * @property {(event: SqlaneEvent) => void} [onEvent] Gets every event: the job lifecycle of the runner of this
+ *     sqlane, and the sqlane's own (`cancelled`, `error`). A throw is logged.
  * @property {string} [tablePrefix] Default: `'sqlane_'`.
- * @property {Duration} [pollInterval] Default: `'5s'`.
+ * @property {Duration} [pollInterval] How often a started runner looks for due jobs when nothing wakes it. Default:
+ *     `'5s'`.
  * @property {number} [maxPayloadBytes] Default: 256 KiB.
- * @property {boolean} [cleanup] Built-in deletion of the expired jobs. Default: true.
+ * @property {boolean} [cleanup] Built-in deletion of the expired jobs, by the started runners. Default: true.
+ */
+
+/**
+ * The options of `createRunner()`.
+ * @typedef {object} RunnerOptions
+ * @property {number} [localMaxConcurrency] The handlers that run at the same time in this runner. Default: 10.
+ * @property {Logger} [logger] Default: the logger of the sqlane. The queries of the sqlane log to the sqlane's.
+ */
+
+/**
+ * A lane in this process: `runner.getStatus(lane)`.
+ * @typedef {object} LaneRunStatus
+ * @property {boolean} mounted A handler of the lane is mounted in this runner.
+ * @property {boolean} pausedLocally `runner.pauseLocally()` holds the lane in this runner.
+ * @property {number} running Its jobs that run in this runner, by any of its handlers.
+ */
+
+/**
+ * A schedule in this process: `runner.getStatus(schedule)`.
+ * @typedef {object} ScheduleRunStatus
+ * @property {boolean} mounted The schedule is mounted in this runner: it fires here.
  */
 
 /**
@@ -686,7 +725,7 @@
  */
 
 /**
- * A sqlane instance, made by `createSqlane()`. Its methods and their docs are in sqlane.ts.
+ * A sqlane, made by `createSqlane()`: the database side. Its methods and their docs are in sqlane.ts.
  * @template C The connections that `enqueue` accepts.
  * @typedef {import('./sqlane.js').Sqlane<C>} Sqlane
  */

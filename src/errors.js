@@ -19,7 +19,7 @@ export class SqlaneError extends Error {
     }
 }
 
-/** Bad `createSqlane`, `defineLane` or `lanes.add()` options. */
+/** Bad options of `createSqlane`, `createRunner`, a definition or a mount. */
 export class ConfigError extends SqlaneError {
     /**
      * @param {string} message
@@ -82,19 +82,7 @@ export class InvalidRateLimitError extends SqlaneError {
     }
 }
 
-/** Enqueue of an unknown lane with `unknownLanes: 'reject'`. */
-export class UnknownLaneError extends SqlaneError {
-    /**
-     * @param {string} message
-     * @param {ErrorOptions} [options]
-     */
-    constructor(message, options) {
-        super('UNKNOWN_LANE', message, options);
-        this.name = 'UnknownLaneError';
-    }
-}
-
-/** `start`, `lanes.add` or `drain` after `close()`. */
+/** A method of a runner after its `close()`, or `createRunner` or a schema change after `sqlane.close()`. */
 export class ClosedError extends SqlaneError {
     /**
      * @param {string} message

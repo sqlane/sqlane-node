@@ -88,8 +88,6 @@ export type SchedulerParams = {
     store: import('./store/store.js').Store;
     defaults: import('./defaults.js').ResolvedDefaults;
     maxPayloadBytes: number;
-    findDefinition: (lane: string) => import('./types.js').LaneDefinition | null;
-    unknownLanes: 'allow' | 'reject';
     notifyChannel: string | null;
     /**
      * After the commit of a fire: once per lane that got a job.
@@ -104,19 +102,33 @@ export type SchedulerParams = {
 };
 export type Scheduler = {
     /**
-     * Throws a ConfigError for a second schedule with the same id.
+     * Throws a ConfigError for a second schedule with the same id. Once
+     * started, the entry registers at once (or with the registration that retries), then fires.
      */
     add: (entry: ScheduleEntry) => void;
     /**
-     * At start(): resolves the definitions, and builds a test job of each schedule.
+     * Fires the entry no more, if it is still the one of its id. A fire
+     * in flight completes with it.
      */
-    prepare: () => void;
+    remove: (entry: ScheduleEntry) => void;
+    has: (id: string) => boolean;
+    /**
+     * By id.
+     */
+    entries: () => ReadonlyMap<string, ScheduleEntry>;
+    /**
+     * Builds a test job of the entry: a ConfigError for a
+     * payload or limits that its fires would refuse.
+     */
+    check: (entry: ScheduleEntry, where: string) => void;
     /**
      * Inserts the missing rows, reads them all.
      */
     register: () => Promise<ScheduleRead>;
     /**
-     * Arms the timer. Null: the registration failed; it retries.
+     * Arms the timer. Null: no registration, as no schedule was
+     * there, or a failed one (`reportFailure()`), which retries with a backoff. The entries that the registration did
+     * not include register at once.
      */
     start: (read: ScheduleRead | null) => void;
     /**
@@ -125,10 +137,9 @@ export type Scheduler = {
      */
     startRegistering: () => void;
     /**
-     * Clears the timer, waits for the fire in flight.
+     * Clears the timer, waits for the steps in flight.
      */
     stop: () => Promise<void>;
-    list: () => Promise<import('./types.js').ScheduleInfo[]>;
     /**
      * The registration of start() failed: logged as the fires are.
      */
@@ -137,6 +148,10 @@ export type Scheduler = {
 };
 export type Recheck = {
     candidate: SlotCandidate;
+    /**
+     * The entry of the busy fire: its recheck is for it only.
+     */
+    entry: ScheduleEntry;
     /**
      * Local time.
      */
@@ -163,8 +178,6 @@ export type FireOutcome = {
  * @property {import('./store/store.js').Store} store
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {number} maxPayloadBytes
- * @property {(lane: string) => import('./types.js').LaneDefinition | null} findDefinition
- * @property {'allow' | 'reject'} unknownLanes
  * @property {string | null} notifyChannel
  * @property {(lane: string) => void} onCreated After the commit of a fire: once per lane that got a job.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit
@@ -173,14 +186,21 @@ export type FireOutcome = {
  */
 /**
  * @typedef {object} Scheduler
- * @property {(entry: ScheduleEntry) => void} add Throws a ConfigError for a second schedule with the same id.
- * @property {() => void} prepare At start(): resolves the definitions, and builds a test job of each schedule.
+ * @property {(entry: ScheduleEntry) => void} add Throws a ConfigError for a second schedule with the same id. Once
+ *     started, the entry registers at once (or with the registration that retries), then fires.
+ * @property {(entry: ScheduleEntry) => void} remove Fires the entry no more, if it is still the one of its id. A fire
+ *     in flight completes with it.
+ * @property {(id: string) => boolean} has
+ * @property {() => ReadonlyMap<string, ScheduleEntry>} entries By id.
+ * @property {(entry: ScheduleEntry, where: string) => void} check Builds a test job of the entry: a ConfigError for a
+ *     payload or limits that its fires would refuse.
  * @property {() => Promise<ScheduleRead>} register Inserts the missing rows, reads them all.
- * @property {(read: ScheduleRead | null) => void} start Arms the timer. Null: the registration failed; it retries.
+ * @property {(read: ScheduleRead | null) => void} start Arms the timer. Null: no registration, as no schedule was
+ *     there, or a failed one (`reportFailure()`), which retries with a backoff. The entries that the registration did
+ *     not include register at once.
  * @property {() => void} startRegistering Registers now, then arms the timer: start() did not register (the check of
  *     the server did not run).
- * @property {() => Promise<void>} stop Clears the timer, waits for the fire in flight.
- * @property {() => Promise<import('./types.js').ScheduleInfo[]>} list
+ * @property {() => Promise<void>} stop Clears the timer, waits for the steps in flight.
  * @property {(error: unknown) => void} reportFailure The registration of start() failed: logged as the fires are.
  * @property {() => number} size
  */
@@ -188,6 +208,7 @@ export type FireOutcome = {
  * A slot that another transaction held: read again later.
  * @typedef {object} Recheck
  * @property {SlotCandidate} candidate
+ * @property {ScheduleEntry} entry The entry of the busy fire: its recheck is for it only.
  * @property {number} at Local time.
  * @property {number} delayMs
  * @property {number} since Local time of the first busy result.
@@ -205,4 +226,4 @@ export type FireOutcome = {
  * @param {SchedulerParams} params
  * @returns {Scheduler}
  */
-export declare function createScheduler({ store, defaults, maxPayloadBytes, findDefinition, unknownLanes, notifyChannel, onCreated, emit, logger, timings, }: SchedulerParams): Scheduler;
+export declare function createScheduler({ store, defaults, maxPayloadBytes, notifyChannel, onCreated, emit, logger, timings, }: SchedulerParams): Scheduler;

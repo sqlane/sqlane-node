@@ -104,6 +104,7 @@ async function runScenario(database, stats, adminUrl, scenario) {
             lib,
             pool,
             create: options => lib.createSqlane({ adapter, ...options }),
+            createRunner: lib.createRunner,
             measure: async (func) => {
                 await stats.reset(name);
                 await func();

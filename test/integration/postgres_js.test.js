@@ -10,6 +10,7 @@ import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 import { checkSchemaChanges, SCHEMA_CHANGES } from './helpers/schema_checks.js';
 import { checkStartTimes } from './helpers/start_time_checks.js';
+import { handle, testLane, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/adapters/postgres_js.js').PostgresJsConnection} PostgresJsConnection */
 /** @typedef {import('../../src/types.js').Sqlane<PostgresJsConnection>} Sqlane */
@@ -161,17 +162,17 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
         const { sqlane, p } = await freshSqlane();
 
         await sql.begin(async (/** @type {any} */ tx) => {
-            await expect(sqlane.enqueue(tx, 'ping', { n: 1 }, { dedupeKey: 'a' }))
+            await expect(sqlane.enqueue(tx, testLane('ping'), { n: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(sql.begin(async (/** @type {any} */ tx) => {
-            await sqlane.enqueue(tx, 'ping', { n: 2 }, { dedupeKey: 'b' });
+            await sqlane.enqueue(tx, testLane('ping'), { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-        await expect(sqlane.enqueue(sql, 'ping', { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
+        await expect(sqlane.enqueue(sql, testLane('ping'), { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
     });
 
     test('a savepoint rolls back with the outer transaction; the pool: a transaction of its own', async () => {
@@ -179,11 +180,11 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
 
         await expect(sql.begin(async (/** @type {any} */ tx) => {
             await tx.savepoint(async (/** @type {any} */ inner) => {
-                await sqlane.enqueue(inner, 'ping', {}, { dedupeKey: 'rolled_back' });
+                await sqlane.enqueue(inner, testLane('ping'), {}, { dedupeKey: 'rolled_back' });
             });
             throw new Error('outer rollback');
         })).rejects.toThrow('outer rollback');
-        await sqlane.enqueueMany(sql, 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
+        await sqlane.enqueueMany(sql, testLane('ping'), [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending', 'pending']);
     });
@@ -202,23 +203,23 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
             backoff: { type: 'fixed', delay: 10, jitter: 0 },
             failureLane: reportFailed,
         });
-        const { sqlane, p } = await freshSqlane({ lanes: [report, reportFailed, failing] });
+        const { sqlane, p } = await freshSqlane();
         /** @type {unknown[]} */
         const payloads = [];
 
-        sqlane.lanes.add(report, ({ payload }) => {
+        runnerOf(sqlane).mount([handle(report, ({ payload }) => {
             payloads.push(payload);
-        });
-        sqlane.lanes.add(failing, () => {
+        })]);
+        runnerOf(sqlane).mount([handle(failing, () => {
             throw new Error('always');
-        });
-        sqlane.lanes.add(reportFailed, ({ payload }) => {
+        })]);
+        runnerOf(sqlane).mount([handle(reportFailed, ({ payload }) => {
             payloads.push(payload.job.lane);
-        });
+        })]);
         await sqlane.enqueueMany(sql, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
         await sqlane.enqueue(sql, failing, {});
 
-        await expect(sqlane.drain({ includeDelayed: true }))
+        await expect(runnerOf(sqlane).drain({ includeDelayed: true }))
             .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
         expect(payloads).toStrictEqual([{ id: 1 }, { id: 1 }, 'failing']);
         await expect(sqlane.lanes.stats()).resolves.toMatchObject([
@@ -236,11 +237,11 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
             pollInterval: '10s',
         }, p);
 
-        worker.lanes.add('ping', () => {});
-        await worker.start();
+        runnerOf(worker).mount([handle('ping', () => {})]);
+        await runnerOf(worker).start();
         await sleep(200);
         await sql.begin(async (/** @type {any} */ tx) => {
-            await producer.enqueue(tx, 'ping', {});
+            await producer.enqueue(tx, testLane('ping'), {});
             // The re-probes of the producer are for its own process: they cannot wake the worker
             await sleep(300);
         });
@@ -259,7 +260,7 @@ describe.runIf(inject('databaseDialect') === 'postgres').each([
         const { sqlane, p } = await freshSqlane();
 
         await camel.begin(async (/** @type {any} */ tx) => {
-            await expect(sqlane.enqueue(tx, 'ping', { someKey: 1 }, { dedupeKey: 'a' }))
+            await expect(sqlane.enqueue(tx, testLane('ping'), { someKey: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
         });
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);

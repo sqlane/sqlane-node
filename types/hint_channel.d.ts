@@ -7,7 +7,11 @@ export type HintChannel = {
     publish: (lane: string) => void;
     listen: (onMessage: (lane: string) => void) => Promise<void>;
     /**
-     * Stops listening; drops the pending messages.
+     * Stops listening; the publishes go on.
+     */
+    unlisten: () => Promise<void>;
+    /**
+     * Stops listening and publishing; drops the pending messages.
      */
     stop: () => Promise<void>;
 };
@@ -15,7 +19,8 @@ export type HintChannel = {
  * @typedef {object} HintChannel
  * @property {(lane: string) => void} publish Fire-and-forget: never throws, never waits.
  * @property {(onMessage: (lane: string) => void) => Promise<void>} listen
- * @property {() => Promise<void>} stop Stops listening; drops the pending messages.
+ * @property {() => Promise<void>} unlisten Stops listening; the publishes go on.
+ * @property {() => Promise<void>} stop Stops listening and publishing; drops the pending messages.
  */
 /**
  * @param {object} params

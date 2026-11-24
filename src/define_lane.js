@@ -1,17 +1,16 @@
-import { isConcurrencyLimit } from './define_concurrency_limit.js';
-import { isRateLimit } from './define_rate_limit.js';
 import { ConfigError } from './errors.js';
-import { checkFailureLane, checkOptionFields, checkObject, NAME_REGEXP } from './validate.js';
+import { isLaneDefinition } from './local_settings.js';
+import { checkOptionFields, checkObject, NAME_REGEXP } from './validate.js';
 
 const LANE_OPTION_NAMES = [
-    'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'failureLane', 'fairShareWeight',
-    'localConcurrencyLimits', 'globalConcurrencyLimits', 'localRateLimits', 'globalRateLimits',
+    'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'failureLane', 'globalConcurrencyLimits',
+    'globalRateLimits',
 ];
-export const MAX_WEIGHT = 1000;
 
 /**
- * Defines a lane and its options. Producers and workers import the definition. `defineLane<{ reportId: string }>(…)`
- * declares the payload: `enqueue`, `lanes.add`, `globalConcurrencyLimits` and `globalRateLimits` then check it.
+ * Defines a lane and its options: what a job is. Producers and workers import the definition.
+ * `defineLane<{ reportId: string }>(…)` declares the payload: `enqueue`, `defineHandler`, `defineSchedule`,
+ * `globalConcurrencyLimits` and `globalRateLimits` then check it.
  * @template [P=any]
  * @param {import('./types.js').LaneOptions<P>} options
  * @returns {import('./types.js').LaneDefinition<P>} Frozen.
@@ -38,43 +37,25 @@ export function defineLane(options) {
         throw new ConfigError(`${where}: "globalRateLimits" must be a function of the context, ({ payload })`);
     }
 
-    if (options.failureLane !== undefined) {
-        checkFailureLane(options.failureLane, name, scope);
-    }
+    const { failureLane } = options;
 
-    const weight = options.fairShareWeight;
+    if (failureLane !== undefined) {
+        if (!isLaneDefinition(failureLane)) {
+            throw new ConfigError(`${where}: "failureLane" must be a lane definition, from defineLane()`);
+        }
 
-    if (weight !== undefined && (!Number.isSafeInteger(weight) || weight < 1 || weight > MAX_WEIGHT)) {
-        throw new ConfigError(`${where}: "fairShareWeight" must be an integer from 1 to ${MAX_WEIGHT}`);
-    }
+        if (failureLane.name === name) {
+            throw new ConfigError(`${where}: a lane cannot be its own failure lane`);
+        }
 
-    const local = options.localConcurrencyLimits;
-
-    if (local !== undefined && (!Array.isArray(local) || !local.every(isConcurrencyLimit))) {
-        throw new ConfigError(`${where}: "localConcurrencyLimits" must be an array of limits from defineConcurrencyLimit()`);
-    }
-
-    if (local && new Set(local.map(limit => limit.name)).size !== local.length) {
-        throw new ConfigError(`${where}: "localConcurrencyLimits" names a limit twice`);
-    }
-
-    const localRate = options.localRateLimits;
-
-    // Keyless: each instance counts its starts in memory, with no key to tell apart
-    if (localRate !== undefined && (!Array.isArray(localRate) || !localRate.every(isRateLimit))) {
-        throw new ConfigError(
-            `${where}: "localRateLimits" must be an array of limits from defineRateLimit(), without key() or cost()`,
-        );
-    }
-
-    if (localRate && new Set(localRate.map(limit => limit.name)).size !== localRate.length) {
-        throw new ConfigError(`${where}: "localRateLimits" names a limit twice`);
+        // No chains: a failure job never has a failure job of its own
+        if (failureLane.failureLane !== undefined) {
+            throw new ConfigError(`${where}: the failure lane "${failureLane.name}" has a failure lane of its own`);
+        }
     }
 
     return Object.freeze({
         ...options,
-        ...(local && { localConcurrencyLimits: Object.freeze([...local]) }),
-        ...(localRate && { localRateLimits: Object.freeze([...localRate]) }),
         ...(options.backoff && { backoff: Object.freeze({ ...options.backoff }) }),
         ...(options.retention && { retention: Object.freeze({ ...options.retention }) }),
     });

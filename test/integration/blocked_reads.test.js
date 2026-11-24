@@ -38,7 +38,7 @@ beforeAll(async () => {
     testAdapter = createTestAdapter();
     p = `${database.tablePrefix}br_`;
 
-    const sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: p, lanes: [rated, limited] });
+    const sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: p });
     const items = Array.from({ length: BLOCKED }, () => ({ payload: {} }));
 
     await sqlane.schema.migrate();

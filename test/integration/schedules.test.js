@@ -10,6 +10,7 @@ import { insertScheduledJobsPostgres } from '../../src/store/postgres_schedules.
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { handle, testLane, runnerOf, schedule } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -213,15 +214,14 @@ async function dbNow() {
  * @returns {import('../../src/new_job.js').NewJob}
  */
 function slotJob(candidate, late = false) {
-    const slot = { at: new Date(candidate.slot) };
-
     return buildNewJob({
         lane: candidate.lane,
-        definition: null,
+        definition: defineLane({ name: candidate.lane }),
         defaults,
         payload: {},
-        options: late ? { slot } : { slot, runAt: new Date(candidate.slot) },
+        options: late ? {} : { runAt: new Date(candidate.slot) },
         maxPayloadBytes: 1024,
+        slot: { at: candidate.slot, key: 'k' },
     });
 }
 
@@ -351,7 +351,7 @@ function slotWithOffset(now) {
     for (let index = 0; ; index++) {
         const options = { every: '10s', jitter: '9s', key: `k${index}` };
 
-        if (dueOf(checkSchedule('tick', options), slot) - slot >= 3000) {
+        if (dueOf(checkSchedule(defineLane({ name: 'tick' }), options), slot) - slot >= 3000) {
             return { slot, options };
         }
     }
@@ -455,10 +455,10 @@ describe('start()', () => {
         const p = nextPrefix();
         const { sqlane } = instanceOn(p);
 
-        sqlane.schedule('tick', { every: '1s' });
+        runnerOf(sqlane).mount([schedule('tick', { every: '1s' })]);
 
-        await expect(sqlane.start()).rejects.toThrow(ConfigError);
-        await expect(sqlane.start())
+        await expect(runnerOf(sqlane).start()).rejects.toThrow(ConfigError);
+        await expect(runnerOf(sqlane).start())
             .rejects.toThrow(`start(): the table ${p}schedules is missing: run schema.migrate()`);
     });
 
@@ -467,8 +467,8 @@ describe('start()', () => {
         const { adapter, state } = flakyAdapter();
         const { sqlane, events } = instanceOn(p, { adapter, timings: { schedules: { retryMs: 200 } } });
 
-        sqlane.schedule('tick', { every: '1s' });
-        await sqlane.start();
+        runnerOf(sqlane).mount([schedule('tick', { every: '1s' })]);
+        await runnerOf(sqlane).start();
         expect(events).toMatchObject([{ type: 'error', operation: 'schedule' }]);
         state.down = false;
         await waitFor(async () => (await readJobs(p)).length > 0);
@@ -490,7 +490,7 @@ describe('the fire of the store', () => {
 
         expect(outcomes(results).filter(outcome => outcome === 'enqueued')).toHaveLength(1);
         expect(outcomes(results).filter(outcome => !['busy', 'lost'].includes(outcome))).toStrictEqual(['enqueued']);
-        await expect(readJobs(p)).resolves.toMatchObject([{ id: `tick:schedule:${new Date(slot).toISOString()}` }]);
+        await expect(readJobs(p)).resolves.toMatchObject([{ id: `tick:schedule:k:${new Date(slot).toISOString()}` }]);
     });
 
     test('the job of a slot keeps its global limits and rate limits', async () => {
@@ -503,15 +503,15 @@ describe('the fire of the store', () => {
         await fire(p, [{ id: 'tick', slot }], {
             buildJob: (/** @type {SlotCandidate} */ candidate) => buildNewJob({
                 lane: candidate.lane,
-                definition: null,
+                definition: defineLane({ name: candidate.lane }),
                 defaults,
                 payload: {},
                 options: {
-                    slot: { at: new Date(candidate.slot) },
                     globalConcurrencyLimits: [tenant.key('eu')],
                     globalRateLimits: [api.key('eu', { cost: 2 })],
                 },
                 maxPayloadBytes: 1024,
+                slot: { at: candidate.slot, key: 'k' },
             }),
         });
 
@@ -529,11 +529,12 @@ describe('the fire of the store', () => {
         await fire(p, [{ id: 'tick', slot }], {
             buildJob: (/** @type {SlotCandidate} */ candidate) => buildNewJob({
                 lane: candidate.lane,
-                definition: null,
+                definition: defineLane({ name: candidate.lane }),
                 defaults,
                 payload: null,
-                options: { slot: { at: new Date(candidate.slot) } },
+                options: undefined,
                 maxPayloadBytes: 1024,
+                slot: { at: candidate.slot, key: 'k' },
             }),
         });
 
@@ -627,7 +628,7 @@ describe('the fire of the store', () => {
             ['e', 'enqueued', true],
         ]);
         expect(result.deferred).toStrictEqual(['d']);
-        await expect(readJobs(p)).resolves.toMatchObject([{ id: `e:schedule:${new Date(slot - HOUR_MS).toISOString()}` }]);
+        await expect(readJobs(p)).resolves.toMatchObject([{ id: `e:schedule:k:${new Date(slot - HOUR_MS).toISOString()}` }]);
     });
 
     test('after a manual DELETE of the row: an on-time slot creates it again and wins', async () => {
@@ -696,7 +697,7 @@ describe('the fire of the store', () => {
             await listener.query(`LISTEN ${p}ready`);
 
             const jobs = ['alpha', 'beta', 'gamma', 'alpha'].map((name, index) => buildNewJob({
-                lane: name, definition: null, defaults, payload: {}, options: { dedupeKey: `j${index}` }, maxPayloadBytes: 1024,
+                lane: name, definition: defineLane({ name }), defaults, payload: {}, options: { dedupeKey: `j${index}` }, maxPayloadBytes: 1024,
             }));
 
             await testAdapter.adapter.queueTransaction(executor => insertScheduledJobsPostgres(executor, p, jobs, {
@@ -719,10 +720,10 @@ describe('schedules end to end', () => {
         const all = Array.from({ length: 4 }, () => instanceOn(p));
 
         for (const { sqlane } of all) {
-            sqlane.schedule('tick', { every: '1s' });
+            runnerOf(sqlane).mount([schedule('tick', { every: '1s' })]);
         }
 
-        await Promise.all(all.map(({ sqlane }) => sqlane.start()));
+        await Promise.all(all.map(({ sqlane }) => runnerOf(sqlane).start()));
         await sleep(5000);
         await Promise.all(all.map(({ sqlane }) => sqlane.close({ deadline: 0 })));
 
@@ -742,10 +743,10 @@ describe('schedules end to end', () => {
         }));
 
         for (const { sqlane } of all) {
-            sqlane.schedule('tick', { every: '1s' });
+            runnerOf(sqlane).mount([schedule('tick', { every: '1s' })]);
         }
 
-        await Promise.all(all.map(({ sqlane }) => sqlane.start()));
+        await Promise.all(all.map(({ sqlane }) => runnerOf(sqlane).start()));
         await sleep(4000);
         await Promise.all(all.map(({ sqlane }) => sqlane.close({ deadline: 0 })));
 
@@ -757,7 +758,7 @@ describe('schedules end to end', () => {
 
         // Each job is added within 2 s after its slot, by the database clock
         for (const row of created) {
-            const slot = Date.parse(String(row.id).slice('tick:schedule:'.length));
+            const slot = Date.parse(String(row.id).slice('tick:schedule:k:'.length));
 
             expect(Number(row.created_ms) - slot).toBeLessThan(2000);
             expect(Number(row.created_ms) - slot).toBeGreaterThanOrEqual(-1000);
@@ -770,33 +771,38 @@ describe('schedules end to end', () => {
         const latest = Math.floor(now / HOUR_MS) * HOUR_MS;
         const first = instanceOn(p);
 
-        first.sqlane.schedule('once', { every: '1h' });
-        first.sqlane.schedule('far', { every: '1h' });
-        first.sqlane.schedule('skip', { every: '1h', missed: 'skip' });
-        await first.sqlane.start();
+        runnerOf(first.sqlane).mount([schedule('once', { every: '1h' })]);
+        runnerOf(first.sqlane).mount([schedule('far', { every: '1h' })]);
+        runnerOf(first.sqlane).mount([schedule('skip', { every: '1h', missed: 'skip' })]);
+        await runnerOf(first.sqlane).start();
         await first.sqlane.close({ deadline: 0 });
-        await setCursor(p, 'once', latest - HOUR_MS);
-        await setCursor(p, 'far', latest - HOUR_MS - (2 * DAY_MS));
-        await setCursor(p, 'skip', latest - HOUR_MS);
+        await setCursor(p, 'once:k', latest - HOUR_MS);
+        await setCursor(p, 'far:k', latest - HOUR_MS - (2 * DAY_MS));
+        await setCursor(p, 'skip:k', latest - HOUR_MS);
 
         const { sqlane, events } = instanceOn(p);
         /** @type {Date[]} */
         const scheduledAt = [];
 
-        sqlane.lanes.add('once', ({ job }) => {
+        runnerOf(sqlane).mount([handle('once', ({ job }) => {
             scheduledAt.push(/** @type {Date} */ (job.scheduledAt));
-        });
-        sqlane.schedule('once', { every: '1h' });
-        sqlane.schedule('far', { every: '1h' });
-        sqlane.schedule('skip', { every: '1h', missed: 'skip' });
-        await sqlane.start();
+        })]);
+        runnerOf(sqlane).mount([schedule('once', { every: '1h' })]);
+        runnerOf(sqlane).mount([schedule('far', { every: '1h' })]);
+        runnerOf(sqlane).mount([schedule('skip', { every: '1h', missed: 'skip' })]);
+        await runnerOf(sqlane).start();
         await waitFor(() => scheduledAt.length === 1);
 
         expect(scheduledAt).toStrictEqual([new Date(latest)]);
         expect(events.filter(({ type }) => type === 'schedule_fired')).toMatchObject([
-            { scheduleId: 'once', scheduledAt: new Date(latest), late: true, jobId: `once:schedule:${new Date(latest).toISOString()}` },
+            {
+                scheduleId: 'once:k',
+                scheduledAt: new Date(latest),
+                late: true,
+                jobId: `once:schedule:k:${new Date(latest).toISOString()}`,
+            },
         ]);
-        await expect(readJobs(p)).resolves.toMatchObject([{ id: `once:schedule:${new Date(latest).toISOString()}` }]);
+        await expect(readJobs(p)).resolves.toMatchObject([{ id: `once:schedule:k:${new Date(latest).toISOString()}` }]);
     }, 120_000);
 
     test('a deploy that changes the spec: no late catch-up for it; an on-time slot runs and stores the new spec', async () => {
@@ -805,36 +811,36 @@ describe('schedules end to end', () => {
         const latest = Math.floor(now / HOUR_MS) * HOUR_MS;
         const first = instanceOn(p);
 
-        first.sqlane.schedule('report', { every: '1h' });
-        first.sqlane.schedule('tick', { every: '1h' });
-        await first.sqlane.start();
+        runnerOf(first.sqlane).mount([schedule('report', { every: '1h' })]);
+        runnerOf(first.sqlane).mount([schedule('tick', { every: '1h' })]);
+        await runnerOf(first.sqlane).start();
         await first.sqlane.close({ deadline: 0 });
-        await setCursor(p, 'report', latest - HOUR_MS, 'every 7200000');
-        await setCursor(p, 'tick', latest - HOUR_MS, 'every 5000');
+        await setCursor(p, 'report:k', latest - HOUR_MS, 'every 7200000');
+        await setCursor(p, 'tick:k', latest - HOUR_MS, 'every 5000');
 
         const { sqlane } = instanceOn(p);
 
-        sqlane.schedule('report', { every: '1h' });
-        sqlane.schedule('tick', { every: '1s' });
-        await sqlane.start();
+        runnerOf(sqlane).mount([schedule('report', { every: '1h' })]);
+        runnerOf(sqlane).mount([schedule('tick', { every: '1s' })]);
+        await runnerOf(sqlane).start();
         await waitFor(async () => (await readJobs(p, 'tick:%')).length > 0);
 
         await expect(readJobs(p, 'report:%')).resolves.toStrictEqual([]);
         await expect(readSchedules(p)).resolves.toMatchObject([
-            { id: 'report', spec: 'every 7200000' },
-            { id: 'tick', spec: 'every 1000' },
+            { id: 'report:k', spec: 'every 7200000' },
+            { id: 'tick:k', spec: 'every 1000' },
         ]);
         await expect(sqlane.schedules.list()).resolves.toMatchObject([
-            { id: 'report', spec: 'every 7200000', registered: true },
-            { id: 'tick', spec: 'every 1000', registered: true },
+            { id: 'report:k', spec: 'every 7200000' },
+            { id: 'tick:k', spec: 'every 1000' },
         ]);
     }, 120_000);
 
     test('overlap skip: a slot adds no job while the previous one is pending; the event has no job', async () => {
         const { sqlane, p, events } = await freshSqlane();
 
-        sqlane.schedule('slow', { every: '1s', overlap: 'skip' });
-        await sqlane.start();
+        runnerOf(sqlane).mount([schedule('slow', { every: '1s', overlap: 'skip' })]);
+        await runnerOf(sqlane).start();
         await waitFor(() => events.filter(({ type }) => type === 'schedule_fired').length >= 3);
 
         const fired = /** @type {import('../../src/types.js').ScheduleFiredEvent[]} */ (
@@ -847,6 +853,7 @@ describe('schedules end to end', () => {
     });
 
     test('a scheduled job is an ordinary job: the payload, scheduledAt, a retry, a global limit, a failure job', async () => {
+        const nightlyFailed = defineLane({ name: 'nightly_failed' });
         const job = defineLane({
             name: 'nightly',
             timeout: '10s',
@@ -854,34 +861,34 @@ describe('schedules end to end', () => {
             backoff: { type: 'fixed', delay: 10, jitter: 0 },
             // One run at a time: the next slot waits for the key
             globalConcurrencyLimits: () => [defineConcurrencyLimit({ name: 'nightly', max: 1 })],
-            failureLane: 'nightly_failed',
+            failureLane: nightlyFailed,
         });
         const { sqlane } = await freshSqlane();
         const runs = scheduledRuns();
         /** @type {unknown[]} */
         const failures = [];
 
-        sqlane.lanes.add(job, runs.handler);
-        sqlane.lanes.add('nightly_failed', ({ payload }) => {
+        runnerOf(sqlane).mount([handle(job, runs.handler)]);
+        runnerOf(sqlane).mount([handle(nightlyFailed, ({ payload }) => {
             failures.push(payload);
-        });
-        sqlane.schedule(job, { every: '1s', payload: { region: 'eu' } });
-        await sqlane.start();
+        })]);
+        runnerOf(sqlane).mount([schedule(job, { every: '1s', payload: { region: 'eu' } })]);
+        await runnerOf(sqlane).start();
         await waitFor(() => failures.length > 0, 15_000);
 
         const [first, second] = runs.slots;
 
         // Through the scheduler: the payload of the schedule, the slot in the job id and in scheduledAt
         expect(runs.calls.slice(0, 4)).toStrictEqual([
-            { id: `nightly:schedule:${first.toISOString()}`, payload: { region: 'eu' }, scheduledAt: first, attempt: 1 },
-            { id: `nightly:schedule:${first.toISOString()}`, payload: { region: 'eu' }, scheduledAt: first, attempt: 2 },
-            { id: `nightly:schedule:${second.toISOString()}`, payload: { region: 'eu' }, scheduledAt: second, attempt: 1 },
-            { id: `nightly:schedule:${second.toISOString()}`, payload: { region: 'eu' }, scheduledAt: second, attempt: 2 },
+            { id: `nightly:schedule:k:${first.toISOString()}`, payload: { region: 'eu' }, scheduledAt: first, attempt: 1 },
+            { id: `nightly:schedule:k:${first.toISOString()}`, payload: { region: 'eu' }, scheduledAt: first, attempt: 2 },
+            { id: `nightly:schedule:k:${second.toISOString()}`, payload: { region: 'eu' }, scheduledAt: second, attempt: 1 },
+            { id: `nightly:schedule:k:${second.toISOString()}`, payload: { region: 'eu' }, scheduledAt: second, attempt: 2 },
         ]);
         expect(runs.maxActive).toBe(1);
         // The second slot waited for the run of the first one: it started well after its slot
         expect(runs.startedAt[2] - second.getTime()).toBeGreaterThan(300);
-        expect(failures[0]).toMatchObject({ job: { id: `nightly:schedule:${second.toISOString()}`, attempt: 2 } });
+        expect(failures[0]).toMatchObject({ job: { id: `nightly:schedule:k:${second.toISOString()}`, attempt: 2 } });
     }, 20_000);
 
     test('the default payload is {}', async () => {
@@ -889,11 +896,11 @@ describe('schedules end to end', () => {
         /** @type {unknown[]} */
         const payloads = [];
 
-        sqlane.lanes.add('tick', ({ payload }) => {
+        runnerOf(sqlane).mount([handle('tick', ({ payload }) => {
             payloads.push(payload);
-        });
-        sqlane.schedule('tick', { every: '1s' });
-        await sqlane.start();
+        })]);
+        runnerOf(sqlane).mount([schedule('tick', { every: '1s' })]);
+        await runnerOf(sqlane).start();
         await waitFor(() => payloads.length > 0);
 
         expect(payloads[0]).toStrictEqual({});
@@ -910,14 +917,14 @@ describe('schedules end to end', () => {
         await scheduler.sqlane.schema.migrate();
 
         for (const name of ['alpha', 'beta']) {
-            scheduler.sqlane.schedule(name, { every: '2s' });
-            worker.sqlane.lanes.add(name, () => {
+            runnerOf(scheduler.sqlane).mount([schedule(name, { every: '2s' })]);
+            runnerOf(worker.sqlane).mount([handle(name, () => {
                 startedAt[name] = Date.now();
-            });
+            })]);
         }
 
-        await worker.sqlane.start();
-        await scheduler.sqlane.start();
+        await runnerOf(worker.sqlane).start();
+        await runnerOf(scheduler.sqlane).start();
         await waitFor(() => Object.keys(startedAt).length === 2, 5000);
 
         const fired = /** @type {import('../../src/types.js').ScheduleFiredEvent[]} */ (scheduler.events
@@ -928,48 +935,29 @@ describe('schedules end to end', () => {
         expect(startedAt.beta - slot).toBeLessThan(1000);
     });
 
-    test('a slot run by hand before its time: the scheduler finds its job, and moves the cursor', async () => {
-        const { sqlane, p, events } = await freshSqlane();
-        const slot = (Math.floor((await dbNow()) / 2000) + 2) * 2000;
+    test('schedules.list: the rows of other services; a schedule without a row is not listed; the cursor and the last job',
+        async () => {
+            const { sqlane, p } = await freshSqlane();
+            const other = instanceOn(p);
 
-        await expect(sqlane.enqueue(testAdapter.pool, 'tick', {}, { slot: { at: new Date(slot) } }))
-            .resolves.toStrictEqual({ id: `tick:schedule:${new Date(slot).toISOString()}`, created: true });
-        sqlane.schedule('tick', { every: '2s' });
-        await sqlane.start();
-        await waitFor(() => events.some(event => /** @type {any} */ (event).scheduledAt?.getTime() === slot));
+            runnerOf(other.sqlane).mount([schedule('other', { every: '1h' })]);
+            await runnerOf(other.sqlane).start();
+            await other.sqlane.close({ deadline: 0 });
+            runnerOf(sqlane).mount([schedule('tick', { every: '1s', key: 'k' })]);
 
-        expect(events.findLast(({ type }) => type === 'schedule_fired')).toMatchObject({
-            scheduledAt: new Date(slot),
-            jobId: `tick:schedule:${new Date(slot).toISOString()}`,
+            // Its next slot by its stored spec; tick:k has no row before the start of its runner
+            await expect(sqlane.schedules.list()).resolves.toMatchObject([
+                { id: 'other:k', lane: 'other', spec: 'every 3600000', nextAt: expect.any(Date), lastJobId: null },
+            ]);
+            await runnerOf(sqlane).start();
+            await waitFor(async () => (await readJobs(p)).length > 0);
+
+            const [, tick] = await sqlane.schedules.list();
+
+            expect(tick.lastJobId).toMatch(/^tick:schedule:k:/);
+            expect(tick.lastSlotAt?.getTime()).toBe(Date.parse(String(tick.lastJobId).slice('tick:schedule:k:'.length)));
+            expect(Number(tick.nextAt) - Number(tick.lastSlotAt)).toBeGreaterThanOrEqual(1000);
         });
-        await expect(readSchedules(p)).resolves.toMatchObject([{ lastSlotMs: slot }]);
-        await expect(sqlane.enqueue(testAdapter.pool, 'tick', {}, { slot: { at: new Date(slot) } }))
-            .resolves.toMatchObject({ created: false });
-        await expect(readJobs(p, `tick:schedule:${new Date(slot).toISOString()}`)).resolves.toHaveLength(1);
-    });
-
-    test('schedules.list: the rows of other services, a schedule without a row, the cursor and the last job', async () => {
-        const { sqlane, p } = await freshSqlane();
-        const other = instanceOn(p);
-
-        other.sqlane.schedule('other', { every: '1h' });
-        await other.sqlane.start();
-        await other.sqlane.close({ deadline: 0 });
-        sqlane.schedule('tick', { every: '1s', key: 'k' });
-
-        await expect(sqlane.schedules.list()).resolves.toMatchObject([
-            { id: 'other', lane: 'other', spec: 'every 3600000', registered: false, nextAt: null, lastJobId: null },
-            { id: 'tick:k', lane: 'tick', registered: true, lastSlotAt: null, lastJobId: null },
-        ]);
-        await sqlane.start();
-        await waitFor(async () => (await readJobs(p)).length > 0);
-
-        const [, tick] = await sqlane.schedules.list();
-
-        expect(tick.lastJobId).toMatch(/^tick:schedule:k:/);
-        expect(tick.lastSlotAt?.getTime()).toBe(Date.parse(String(tick.lastJobId).slice('tick:schedule:k:'.length)));
-        expect(Number(tick.nextAt) - Number(tick.lastSlotAt)).toBeGreaterThanOrEqual(1000);
-    });
 
     test('without schedules: no statement on the table of the schedules', async () => {
         const { p } = await freshSqlane();
@@ -989,9 +977,9 @@ describe('schedules end to end', () => {
         };
         const { sqlane } = instanceOn(p, { adapter });
 
-        sqlane.lanes.add('tick', () => {});
-        await sqlane.start();
-        await sqlane.enqueue(testAdapter.pool, 'tick', {});
+        runnerOf(sqlane).mount([handle('tick', () => {})]);
+        await runnerOf(sqlane).start();
+        await sqlane.enqueue(testAdapter.pool, testLane('tick'), {});
         await sleep(500);
         await sqlane.close({ deadline: 0 });
 
@@ -1005,14 +993,14 @@ describe('jitter', () => {
         const { p } = await freshSqlane();
         const all = Array.from({ length: 3 }, () => instanceOn(p));
         const options = { every: '2s', jitter: '1s' };
-        const entry = checkSchedule('tick', options);
+        const entry = checkSchedule(defineLane({ name: 'tick' }), { key: 'k', ...options });
         let maxAheadMs = -Infinity;
 
         for (const { sqlane } of all) {
-            sqlane.schedule('tick', options);
+            runnerOf(sqlane).mount([schedule('tick', options)]);
         }
 
-        await Promise.all(all.map(({ sqlane }) => sqlane.start()));
+        await Promise.all(all.map(({ sqlane }) => runnerOf(sqlane).start()));
 
         for (let sample = 0; sample < 30; sample++) {
             // oxlint-disable-next-line no-await-in-loop -- samples over time
@@ -1029,7 +1017,7 @@ describe('jitter', () => {
 
         expect(jobs.length).toBeGreaterThanOrEqual(2);
         expect(new Set(jobs.map(({ id }) => id)).size).toBe(jobs.length);
-        expect(jobs.map(({ id, runAtMs }) => runAtMs - dueOf(entry, Date.parse(id.slice('tick:schedule:'.length)))))
+        expect(jobs.map(({ id, runAtMs }) => runAtMs - dueOf(entry, Date.parse(id.slice('tick:schedule:k:'.length)))))
             .toStrictEqual(jobs.map(() => 0));
         expect(maxAheadMs).toBeLessThanOrEqual(1000);
     }, 20_000);
@@ -1038,20 +1026,20 @@ describe('jitter', () => {
         const { p } = await freshSqlane();
         // The next slot, 1.5 s away or more, and a key whose job of that slot is due 3 s or more after it
         const { slot, options } = slotWithOffset(await dbNow());
-        const due = dueOf(checkSchedule('tick', options), slot);
+        const due = dueOf(checkSchedule(defineLane({ name: 'tick' }), options), slot);
         const jobId = `tick:schedule:${options.key}:${new Date(slot).toISOString()}`;
         const first = instanceOn(p);
 
-        first.sqlane.schedule('tick', options);
-        await first.sqlane.start();
+        runnerOf(first.sqlane).mount([schedule('tick', options)]);
+        await runnerOf(first.sqlane).start();
         await sleep(slot + 200 - (await dbNow()));
         await first.sqlane.close({ deadline: 0 });
 
         const { sqlane, events } = instanceOn(p);
 
-        sqlane.schedule('tick', options);
+        runnerOf(sqlane).mount([schedule('tick', options)]);
         await sleep(300);
-        await sqlane.start();
+        await runnerOf(sqlane).start();
 
         await expect(sqlane.schedules.list())
             .resolves.toMatchObject([{ nextAt: new Date(slot), nextRunAt: new Date(due) }]);

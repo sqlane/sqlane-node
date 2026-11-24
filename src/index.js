@@ -1,9 +1,12 @@
 // The public API of sqlane. See docs/design.md.
 
+export { createRunner } from './create_runner.js';
 export { createSqlane } from './create_sqlane.js';
 export { defineConcurrencyLimit } from './define_concurrency_limit.js';
+export { defineHandler } from './define_handler.js';
 export { defineLane } from './define_lane.js';
 export { defineRateLimit } from './define_rate_limit.js';
+export { defineSchedule } from './define_schedule.js';
 export {
     ClosedError,
     ConfigError,
@@ -23,7 +26,6 @@ export {
     RetryJobError,
     ShutdownError,
     SqlaneError,
-    UnknownLaneError,
 } from './errors.js';
 
 /**
@@ -39,7 +41,10 @@ export {
  * @template [C=any]
  */
 /** @typedef {import('./sqlane.js').SqlaneLanes} SqlaneLanes */
-/** @typedef {import('./sqlane.js').SqlaneSchedules} SqlaneSchedules */
+/**
+ * @typedef {import('./sqlane.js').SqlaneSchedules<C>} SqlaneSchedules
+ * @template [C=any]
+ */
 /** @typedef {import('./sqlane.js').SqlaneSchema} SqlaneSchema */
 /**
  * @typedef {import('./types.js').SqlaneOptions<C>} SqlaneOptions
@@ -79,10 +84,15 @@ export {
  * @typedef {import('./types.js').HandlerPayload<J>} HandlerPayload
  * @template J
  */
+/** @typedef {import('./types.js').HandlerOptions} HandlerOptions */
 /** @typedef {import('./types.js').Hint} Hint */
 /** @typedef {import('./types.js').JobDefaults} JobDefaults */
 /**
  * @typedef {import('./types.js').LaneDefinition<P>} LaneDefinition
+ * @template [P=any]
+ */
+/**
+ * @typedef {import('./types.js').LaneHandler<P>} LaneHandler
  * @template [P=any]
  */
 /** @typedef {import('./types.js').JobError} JobError */
@@ -105,6 +115,11 @@ export {
  */
 /** @typedef {import('./types.js').JobSelector} JobSelector */
 /** @typedef {import('./types.js').LaneStats} LaneStats */
+/** @typedef {import('./types.js').LaneRunStatus} LaneRunStatus */
+/** @typedef {import('./sqlane.js').Mount} Mount */
+/** @typedef {import('./sqlane.js').Runner} Runner */
+/** @typedef {import('./types.js').RunnerOptions} RunnerOptions */
+/** @typedef {import('./types.js').ScheduleRunStatus} ScheduleRunStatus */
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 /** @typedef {import('./types.js').ListJobsOptions} ListJobsOptions */
 /** @typedef {import('./types.js').KeyStats} KeyStats */
@@ -113,6 +128,10 @@ export {
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').RollbackOptions} RollbackOptions */
+/**
+ * @typedef {import('./types.js').RunSlotOptions<C>} RunSlotOptions
+ * @template [C=any]
+ */
 /** @typedef {import('./types.js').DropOptions} DropOptions */
 /** @typedef {import('./types.js').MigrationStatus} MigrationStatus */
 /** @typedef {import('./types.js').SchemaProblem} SchemaProblem */
@@ -126,10 +145,14 @@ export {
  * @template [C=any]
  */
 /** @typedef {import('./types.js').ScheduleFiredEvent} ScheduleFiredEvent */
+/**
+ * @typedef {import('./types.js').ScheduleDefinition<P>} ScheduleDefinition
+ * @template [P=any]
+ */
 /** @typedef {import('./types.js').ScheduleInfo} ScheduleInfo */
 /**
  * @typedef {import('./types.js').ScheduleOptions<P>} ScheduleOptions
  * @template [P=any]
  */
-/** @typedef {import('./types.js').SlotOptions} SlotOptions */
+/** @typedef {import('./types.js').ScheduleSettings} ScheduleSettings */
 /** @typedef {import('./types.js').SqlaneEvent} SqlaneEvent */

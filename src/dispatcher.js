@@ -1,4 +1,4 @@
-// The dispatcher of a process: one loop that finds the due jobs of the added lanes, claims as many as the free slots
+// The dispatcher of a process: one loop that finds the due jobs of the handled lanes, claims as many as the free slots
 // allow, by the share of their lanes, and starts them. See docs/design.md › Dispatcher: one loop per process, Claim.
 import { hostname } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -14,6 +14,9 @@ import { createMonotonicUlid } from './ulid.js';
 /** @typedef {import('./store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('./registry.js').HandlerEntry} HandlerEntry */
 /** @typedef {import('./local_limits.js').LocalLimit} LocalLimit */
+/**
+ * @typedef {(claimed: ClaimedJob, payload: { found: boolean, payload: unknown }, entry: HandlerEntry) => void} StartJob
+ */
 
 /** A turn that fails with a deadlock-like error is retried at once this many times, then reported and backed off */
 const MAX_TRANSIENT_DISPATCH_RETRIES = 3;
@@ -31,16 +34,22 @@ const CLAIM_LANES_PER_SLOT = 4;
  * @typedef {object} Dispatcher
  * @property {(lanes?: readonly string[], options?: { speculative?: boolean }) => void} wake Ends the sleep of the
  *     loop. The next turn looks at the given lanes, or at all lanes.
- * @property {() => void} prepare For start() and drain(), after the check of the registry: reads the added lanes,
- *     and starts the tie pointer at a random lane.
+ * @property {() => void} prepare For start() and drain(), after the check of the registry: reads the handled
+ *     lanes, and starts the tie pointer at a random lane.
+ * @property {(entries: readonly HandlerEntry[]) => void} added Lanes handled from now on: mounted after prepare().
+ * @property {(entries: readonly HandlerEntry[]) => void} removed Lanes no longer handled: unmounted.
+ * @property {(lane: string, paused: boolean) => void} setPaused A lane paused or resumed in this process: no claim of
+ *     it while paused. For the life of the dispatcher, whether the lane is handled or not.
+ * @property {(lane: string) => boolean} isPaused
  * @property {(serverCheck?: (() => Promise<void>) | null) => Promise<void>} run The loop: one turn after the other,
  *     while the runner is started. An error of a turn is retried, or reported and backed off. `serverCheck`: the check
  *     of the server that start() could not run (the database was down): no turn before it passes; a `ConfigError` of
  *     it ends the loop.
  * @property {(dueLanes: string[]) => Promise<{ candidates: number, claimed: number }>} claimAndStart Claims the due
- *     jobs of the lanes, by share within the free slots, and starts them. For drain().
+ *     jobs of the lanes, by share within the free slots, and starts them. For drain(). The lanes not handled here, or
+ *     paused, are left out.
  * @property {(entry: HandlerEntry) => number} freeSlots The jobs of the lane that can start now: under its local
- *     limits and the instance's cap.
+ *     limits and the runner's cap.
  * @property {() => boolean} claiming A claim runs: it may have counted the free slots before a job ended.
  */
 
@@ -48,15 +57,15 @@ const CLAIM_LANES_PER_SLOT = 4;
  * @param {object} params
  * @param {import('./store/store.js').Store} params.store
  * @param {import('./registry.js').Registry} params.registry
- * @param {number} params.localMaxConcurrency The instance's cap.
+ * @param {number} params.localMaxConcurrency The runner's cap.
  * @param {ReadonlyMap<string, unknown>} params.running The jobs that run in this process: each takes a slot.
  * @param {{ leaseMs: number, pollIntervalMs: number }} params.timings
  * @param {() => number} params.random The random start of the tie pointer.
  * @param {() => import('./runner.js').RunnerState} params.state
  * @param {import('./types.js').Logger | undefined} params.logger
  * @param {(operation: string, error: unknown) => void} params.reportError
- * @param {(claimed: ClaimedJob, payload: { found: boolean, payload: unknown }) => void} params.startJob Takes a slot
- *     of the instance and of the local limits of its lane, and runs the job.
+ * @param {StartJob} params.startJob Takes a slot of the instance and of the local limits of its lane, and runs the job
+ *     with the handler of the claim: an unmount during the claim does not change it.
  * @param {(keys: readonly string[]) => Promise<void>} params.unblockKeys The unblock of the concurrency keys: never
  *     rejects.
  * @param {(key: string, delayMs: number) => void} params.armRateWake The timer of a rate key with blocked jobs.
@@ -94,14 +103,18 @@ export function createDispatcher({
     const scheduled = new Map();
     /** The earliest time of `scheduled`; null: to compute again */
     let earliestScheduled = /** @type {number | null} */ (Infinity);
-    /** @type {Set<string>} The added lanes with global limits: their definition's, set by start(); and the lanes
-     *     whose jobs got limits from their enqueue options, seen by the claims */
+    /** @type {Set<string>} The handled lanes with global limits: their definition's, set by start() and the mounts;
+     *     and the lanes whose jobs got limits from their enqueue options, seen by the claims */
     let lanesWithLimits = new Set();
-    /** @type {Set<string>} The added lanes with global rate limits: their definition's, set by start(); and the
+    /** @type {Set<string>} The lanes whose jobs got limits from their enqueue options: kept across an unmount */
+    const learnedLimits = new Set();
+    /** @type {Set<string>} The handled lanes with global rate limits: their definition's, set by start(); and the
      *     lanes whose jobs got rate limits from their enqueue options, seen by the search of candidates */
     let lanesWithRates = new Set();
-    /** @type {HandlerEntry[]} The added lanes with local rate limits, set by start() */
+    /** @type {HandlerEntry[]} The handled lanes with local rate limits, set by start() and the mounts */
     let entriesWithLocalRates = [];
+    /** @type {Set<string>} The lanes paused in this process */
+    const paused = new Set();
     /** The time of the next probe of all lanes: the poll */
     let fullProbeAt = 0;
     /** @type {(() => void) | null} */
@@ -109,8 +122,6 @@ export function createDispatcher({
     let contentionDelayMs = 0;
     /** The tie pointer: equal shares go round-robin from it. Random at the start: a fleet breaks ties differently */
     let tiePointer = 0;
-    /** The added lanes, counted at start() or drain(): the span of the tie order */
-    let addedCount = 1;
     /** The last claim left due lanes out: the next turn runs at once, for them */
     let lanesLeftOut = false;
     let claimsInFlight = 0;
@@ -246,19 +257,27 @@ export function createDispatcher({
 
     /**
      * @param {HandlerEntry} entry
-     * @returns {number} The jobs of the lane that can start now: under its local limits and the instance's cap.
+     * @returns {number} The jobs of the lane that can start now: under its local limits and the runner's cap.
      */
     function freeSlots(entry) {
-        // Each poll checks every added lane, and most have no limit: the check stays small enough for V8 to inline,
+        // Each poll checks every handled lane, and most have no limit: the check stays small enough for V8 to inline,
         // and the loops of limitsRoom() run only for the lanes with limits
         const room = entry.limits.length || entry.rates.length ? limitsRoom(entry) : Infinity;
 
         return Math.max(0, Math.min(room, freeProcessSlots()));
     }
 
-    /** @returns {number} The added lanes: the span of the tie order. Fixed from start() or drain(). */
+    /** @returns {number} The indexes of the handled lanes so far: the span of the tie order. Never shrinks. */
     function tieSpan() {
-        return addedCount;
+        return Math.max(registry.span(), 1);
+    }
+
+    /**
+     * @param {string} lane
+     * @returns {HandlerEntry | undefined} Its entry, if it is handled here and not paused.
+     */
+    function runnableEntry(lane) {
+        return paused.has(lane) ? undefined : registry.getEntry(lane);
     }
 
     /**
@@ -272,34 +291,16 @@ export function createDispatcher({
     }
 
     /**
-     * @param {string[]} lanes
-     * @returns {HandlerEntry[]} Their entries.
-     */
-    function entriesOf(lanes) {
-        /** @type {HandlerEntry[]} */
-        const entries = [];
-
-        for (const lane of lanes) {
-            const entry = registry.getEntry(lane);
-
-            if (entry) {
-                entries.push(entry);
-            }
-        }
-
-        return entries;
-    }
-
-    /**
      * Takes the locked jobs of lanes with global limits, by the share of their lanes, FIFO within a lane: a job whose
      * keys all have room, and whose rate keys all have quota (gcra.js), with the jobs that this choice took. A
      * passed-over job stays pending.
      * @param {ClaimedJob[]} locked In the order of run_at; none of their keys was full.
      * @param {Map<string, number>} held The held slots of their keys.
      * @param {Map<string, number>} debts The debts of their rate keys, in µs.
+     * @param {ReadonlyMap<string, HandlerEntry>} captured The entries of the claim, by lane.
      * @returns {ClaimedJob[]}
      */
-    function pick(locked, held, debts) {
+    function pick(locked, held, debts, captured) {
         const taken = new Map(held);
         const used = new Map(debts);
         const fits = (/** @type {ClaimedJob} */ job) => job.limits.every(({ key, max }) => (taken.get(key) ?? 0) < max)
@@ -308,12 +309,14 @@ export function createDispatcher({
         const rowsByLane = new Map();
 
         for (const job of locked) {
-            if (registry.getEntry(job.lane)) {
+            if (captured.has(job.lane)) {
                 rowsByLane.set(job.lane, [...rowsByLane.get(job.lane) ?? [], job]);
             }
         }
 
-        const lanes = shareLanesOf(entriesOf([...rowsByLane.keys()]));
+        const lanes = shareLanesOf([...rowsByLane.keys()].map(
+            lane => /** @type {HandlerEntry} */ (captured.get(lane)),
+        ));
 
         for (const lane of lanes) {
             lane.available = /** @type {ClaimedJob[]} */ (rowsByLane.get(lane.name)).length;
@@ -364,7 +367,7 @@ export function createDispatcher({
         const withRoom = [];
 
         for (const lane of dueLanes) {
-            const entry = registry.getEntry(lane);
+            const entry = runnableEntry(lane);
 
             if (entry && freeSlots(entry) > 0) {
                 withRoom.push(entry);
@@ -421,6 +424,8 @@ export function createDispatcher({
 
         try {
             const turn = requestLanes(dueLanes);
+            // The handlers of the claim: an unmount during its awaits does not change them
+            const captured = new Map(turn.map(entry => [entry.name, entry]));
             /** @type {HandlerEntry[]} */
             const keyed = [];
             /** @type {HandlerEntry[]} */
@@ -433,7 +438,7 @@ export function createDispatcher({
             const found = keyed.length ? await findCandidatesOf(keyed) : { startable: [], full: [] };
             const reserved = reservedForKeys(turn, found.startable);
             const plain = await claimAndStartPlain(plainEntries, freeProcessSlots() - reserved.slots, reserved.limits);
-            const withKeys = await claimAndStartWithKeys(found);
+            const withKeys = await claimAndStartWithKeys(found, captured);
 
             return { candidates: plain.candidates + withKeys.candidates, claimed: plain.claimed + withKeys.claimed };
         } finally {
@@ -647,11 +652,14 @@ export function createDispatcher({
         for (const lane of limited ?? []) {
             // Its jobs got global limits from their enqueue options: from now on, claimed with their limits
             lanesWithLimits.add(lane);
+            learnedLimits.add(lane);
             backlog.add(lane);
         }
 
+        const byLane = new Map(entries.map(entry => [entry.name, entry]));
+
         for (const job of jobs) {
-            startJob(job, job.payload);
+            startJob(job, job.payload, /** @type {HandlerEntry} */ (byLane.get(job.lane)));
         }
 
         // Lanes with due jobs left and none claimed: other processes hold them
@@ -662,9 +670,10 @@ export function createDispatcher({
      * The candidates of lanes with global limits: a claim of those whose keys have room, by share, then their
      * payloads. The claim blocks the jobs with a full key: they leave the due jobs until a release of the key.
      * @param {import('./store/store.js').FoundCandidates} found
+     * @param {ReadonlyMap<string, HandlerEntry>} captured The entries of the claim, by lane.
      * @returns {Promise<{ candidates: number, claimed: number }>}
      */
-    async function claimAndStartWithKeys({ startable, full }) {
+    async function claimAndStartWithKeys({ startable, full }, captured) {
         if (!startable.length && !full.length) {
             return { candidates: 0, claimed: 0 };
         }
@@ -675,7 +684,7 @@ export function createDispatcher({
             lockToken: lockToken(),
             lockedBy,
             leaseMs: t.leaseMs,
-            pick,
+            pick: (locked, held, debts) => pick(locked, held, debts, captured),
             withRates: [...startable, ...full].some(candidate => lanesWithRates.has(candidate.lane)),
         });
 
@@ -717,23 +726,30 @@ export function createDispatcher({
         }
 
         for (const job of claimed) {
-            startJob(job, { found: payloads.has(job.id), payload: payloads.get(job.id) });
+            startJob(job, { found: payloads.has(job.id), payload: payloads.get(job.id) },
+                /** @type {HandlerEntry} */ (captured.get(job.lane)));
         }
 
         return { candidates: startable.length, claimed: claimed.length };
     }
 
-    /** @returns {string[]} The added lanes with a free slot. A lane over a local rate limit wakes at its time. */
+    /**
+     * @returns {string[]} The handled lanes with a free slot, not paused. A lane over a local rate limit wakes at its
+     *     time.
+     */
     function lanesWithFreeSlots() {
-        // Each poll checks every added lane: the loop goes over the few with local rate limits only. A loop over all
+        // Each poll checks every handled lane: the loop goes over the few with local rate limits only. A loop over all
         // of them cost an idle worker more instructions per poll (its allocations until optimized, then its compile)
         for (const entry of entriesWithLocalRates) {
-            if (freeSlots(entry) <= 0) {
+            if (!paused.has(entry.name) && freeSlots(entry) <= 0) {
                 wakeAfterRates(entry);
             }
         }
 
-        return registry.entries().filter(entry => freeSlots(entry) > 0).map(entry => entry.name);
+        const entries = registry.entries();
+        const runnable = paused.size ? entries.filter(entry => !paused.has(entry.name)) : entries;
+
+        return runnable.filter(entry => freeSlots(entry) > 0).map(entry => entry.name);
     }
 
     /**
@@ -749,13 +765,15 @@ export function createDispatcher({
             lanes = new Set();
 
             for (const lane of [...scope.claim, ...scope.probe]) {
-                const entry = registry.getEntry(lane);
+                const entry = runnableEntry(lane);
 
                 if (entry && freeSlots(entry) > 0) {
                     lanes.add(lane);
                 } else if (entry) {
-                    // No free slot: the turn after a completion looks at it again, or the time of its rate limit
+                    // No free slot: the turn after a completion looks at it again, or the time of its rate limit. Its
+                    // passed due time no longer wakes a turn
                     (scope.claim.has(lane) ? backlog : wakeProbeLanes).add(lane);
+                    unschedule(lane);
                     wakeAfterRates(entry);
                 }
             }
@@ -765,8 +783,19 @@ export function createDispatcher({
 
         if (!lanes.size) {
             if (!scope) {
-                // A completion probes all lanes
+                // A completion probes all lanes. No lane can run here (none mounted, all paused, or no free slot): no
+                // probe until the poll, or a wake. The lanes whose due time passed wait in the backlog
+                const now = Date.now();
+
                 wakeAll = true;
+                fullProbeAt = Math.max(fullProbeAt, now + t.pollIntervalMs);
+
+                for (const [lane, at] of scheduled) {
+                    if (at <= now) {
+                        backlog.add(lane);
+                        unschedule(lane);
+                    }
+                }
             }
 
             return nextDelayMs();
@@ -777,7 +806,7 @@ export function createDispatcher({
         const probed = scope ? [...lanes].filter(lane => !scope.claim.has(lane)) : null;
         const probe = probed?.length === 0
             ? []
-            : (await store.probe(probed)).filter(row => registry.getEntry(row.name));
+            : (await store.probe(probed)).filter(row => runnableEntry(row.name));
         const now = Date.now();
 
         if (probed) {
@@ -900,12 +929,49 @@ export function createDispatcher({
     return {
         wake,
         prepare: () => {
-            lanesWithLimits = new Set(registry.lanesWithLimits());
+            lanesWithLimits = new Set([...registry.lanesWithLimits(), ...learnedLimits]);
             lanesWithRates = new Set(registry.lanesWithRateLimits());
             entriesWithLocalRates = registry.entries().filter(entry => entry.rates.length);
-            addedCount = Math.max(registry.entries().length, 1);
-            tiePointer = Math.floor(random() * addedCount);
+            tiePointer = Math.floor(random() * tieSpan());
         },
+        added: (entries) => {
+            for (const entry of entries) {
+                if (entry.definition.globalConcurrencyLimits || entry.definition.globalRateLimits) {
+                    lanesWithLimits.add(entry.name);
+                }
+
+                if (entry.definition.globalRateLimits) {
+                    lanesWithRates.add(entry.name);
+                }
+            }
+
+            entriesWithLocalRates = registry.entries().filter(entry => entry.rates.length);
+        },
+        removed: (entries) => {
+            for (const { name } of entries) {
+                if (!registry.getEntry(name)) {
+                    if (!learnedLimits.has(name)) {
+                        lanesWithLimits.delete(name);
+                    }
+
+                    lanesWithRates.delete(name);
+                    backlog.delete(name);
+                    unschedule(name);
+                }
+            }
+
+            entriesWithLocalRates = registry.entries().filter(entry => entry.rates.length);
+        },
+        setPaused: (lane, isPaused) => {
+            if (isPaused) {
+                paused.add(lane);
+                backlog.delete(lane);
+                unschedule(lane);
+            } else {
+                paused.delete(lane);
+            }
+        },
+        isPaused: lane => paused.has(lane),
         run,
         claimAndStart,
         freeSlots,

@@ -40,7 +40,7 @@ own `Pool`, and `dialect` is `'mysql'` or `'mariadb'`.
 
 ```js
 import mysql from 'mysql2/promise';
-import { createSqlane, defineLane } from '@sqlane/core';
+import { createRunner, createSqlane, defineHandler, defineLane } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
 
 // Shared by producers and workers
@@ -53,7 +53,7 @@ export const buildReport = defineLane({
 
 const appPool = mysql.createPool({ uri: process.env.DATABASE_URL }); // your app's connection pool
 const queuePool = mysql.createPool({ uri: process.env.DATABASE_URL, connectionLimit: 3 }); // the queue's own pool
-const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }), lanes: [buildReport] });
+const sqlane = createSqlane({ adapter: mysql2Adapter(queuePool, { dialect: 'mysql' }) });
 
 await sqlane.schema.migrate(); // creates or updates the sqlane_* tables
 
@@ -75,10 +75,12 @@ export async function orderReport(reportId) {
 }
 
 // Worker: in the same process or in another one
-sqlane.lanes.add(buildReport, async ({ payload, signal }) => {
+const runner = createRunner(sqlane);
+
+runner.mount([defineHandler(buildReport, async ({ payload, signal }) => {
     await generateReport(payload.reportId, { signal }); // your code: it stops when the signal aborts
-});
-await sqlane.start();
+})]);
+await runner.start();
 
 process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));
 ```
@@ -110,7 +112,6 @@ const appPool = new Pool({ connectionString: process.env.DATABASE_URL }); // you
 const queuePool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }); // the queue's own pool
 const sqlane = createSqlane({
     adapter: pgAdapter(queuePool, { dialect: 'postgres', notify: true }),
-    lanes: [buildReport],
 });
 
 const client = await appPool.connect();
@@ -175,7 +176,6 @@ const queueSql = postgres(process.env.DATABASE_URL, { max: 3 }); // the queue's 
 // With { notify: true }, NOTIFY wakes the workers at the commit. This also works after an enqueue in a transaction.
 const sqlane = createSqlane({
     adapter: postgresJsAdapter(queueSql, { dialect: 'postgres', notify: true }),
-    lanes: [buildReport],
 });
 
 await sql.begin(async (sql) => {
@@ -218,7 +218,7 @@ import { knexAdapter } from '@sqlane/core/adapter-knex';
 
 const db = knex({ client: 'pg', connection: process.env.DATABASE_URL }); // your app's connection pool
 const queueDb = knex({ client: 'pg', connection: process.env.DATABASE_URL, pool: { max: 3 } }); // the queue's own pool
-const sqlane = createSqlane({ adapter: knexAdapter(queueDb, { dialect: 'postgres' }), lanes: [buildReport] });
+const sqlane = createSqlane({ adapter: knexAdapter(queueDb, { dialect: 'postgres' }) });
 
 await db.transaction(async (trx) => {
     await trx('reports').insert({ id: reportId });
@@ -264,7 +264,7 @@ import { kyselyAdapter } from '@sqlane/core/adapter-kysely';
 const queueDb = new Kysely({
     dialect: new PostgresDialect({ pool: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) }),
 });
-const sqlane = createSqlane({ adapter: kyselyAdapter(queueDb, { dialect: 'postgres' }), lanes: [buildReport] });
+const sqlane = createSqlane({ adapter: kyselyAdapter(queueDb, { dialect: 'postgres' }) });
 
 await db.transaction().execute(async (trx) => {
     await trx.insertInto('reports').values({ id: reportId }).execute();
@@ -301,7 +301,7 @@ import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
 // queueDb is the queue's own Drizzle database, and it must use a pool.
 const queueDb = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) });
 // On PostgreSQL, you can also pass { notify: true }.
-const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }), lanes: [buildReport] });
+const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }) });
 
 await db.transaction(async (tx) => {
     await tx.insert(reports).values({ id: reportId });
@@ -351,7 +351,7 @@ import { PrismaClient } from './generated/prisma/client.js';
 // queuePrisma is the queue's own Prisma client, with a small pool.
 const queuePrisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL, max: 3 }) });
 // Prisma does not expose its provider, so you pass the dialect.
-const sqlane = createSqlane({ adapter: prismaAdapter(queuePrisma, { dialect: 'postgres' }), lanes: [buildReport] });
+const sqlane = createSqlane({ adapter: prismaAdapter(queuePrisma, { dialect: 'postgres' }) });
 
 await prisma.$transaction(async (tx) => {
     await tx.report.create({ data: { id: reportId } });
@@ -418,7 +418,7 @@ import { createSqlane } from '@sqlane/core';
 import { sequelizeAdapter } from '@sqlane/core/adapter-sequelize';
 
 // queueSequelize is the queue's own Sequelize instance.
-const sqlane = createSqlane({ adapter: sequelizeAdapter(queueSequelize, { dialect: 'postgres' }), lanes: [buildReport] });
+const sqlane = createSqlane({ adapter: sequelizeAdapter(queueSequelize, { dialect: 'postgres' }) });
 
 await sequelize.transaction(async (t) => {
     await Report.create({ id: reportId }, { transaction: t });
@@ -474,7 +474,7 @@ import { createSqlane } from '@sqlane/core';
 import { typeOrmAdapter } from '@sqlane/core/adapter-typeorm';
 
 // queueDataSource must be initialized.
-const sqlane = createSqlane({ adapter: typeOrmAdapter(queueDataSource, { dialect: 'postgres' }), lanes: [buildReport] });
+const sqlane = createSqlane({ adapter: typeOrmAdapter(queueDataSource, { dialect: 'postgres' }) });
 
 await dataSource.transaction(async (manager) => {
     await manager.save(Report, { id: reportId });
@@ -508,7 +508,7 @@ import { createSqlane } from '@sqlane/core';
 import { mikroOrmAdapter } from '@sqlane/core/adapter-mikro-orm';
 
 // queueOrm is the queue's own MikroORM instance. The dialect must match its driver.
-const sqlane = createSqlane({ adapter: mikroOrmAdapter(queueOrm.em, { dialect: 'postgres' }), lanes: [buildReport] });
+const sqlane = createSqlane({ adapter: mikroOrmAdapter(queueOrm.em, { dialect: 'postgres' }) });
 
 await orm.em.transactional(async (em) => {
     em.persist(em.create(Report, { id: reportId }));
@@ -557,7 +557,7 @@ const db = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_U
 // The queue's own pool
 const queueDb = drizzle({ client: new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) });
 
-const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }), lanes: [buildReport] });
+const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }) });
 ```
 
 `close()` never ends your pools. Close them yourself after `sqlane.close()`.
@@ -667,7 +667,7 @@ own without `poolTransaction` runs a pool as a caller's connection.
 
 ## Wake-up after the commit
 
-A worker is a process that has called `start()`. Each worker checks the database for due jobs at least once per poll
+A worker is a process whose runner has called `start()`. Each worker checks the database for due jobs at least once per poll
 interval, which is 5 seconds by default. This poll is the safety net, so a job always runs even if nothing wakes the
 worker. sqlane adds faster signals on top of it.
 

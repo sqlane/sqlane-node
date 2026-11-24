@@ -8,6 +8,7 @@ import { connectTestDatabase } from '../support/test_database.js';
 import { dialectOptions } from './helpers/test_adapter.js';
 import { sequelizeAdapter } from '../../src/adapters/sequelize.js';
 import { createSqlane } from '../../src/index.js';
+import { handle, testLane, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/adapters/sequelize.js').SequelizeConnection} SequelizeConnection */
 /** @typedef {import('../../src/types.js').Sqlane<SequelizeConnection>} Sqlane */
@@ -116,11 +117,11 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         const { sqlane, p } = await freshSqlane();
 
         await expect(sequelize.transaction(async () => {
-            await sqlane.enqueue(sequelize, 'ping', {}, { dedupeKey: 'rolled_back' });
+            await sqlane.enqueue(sequelize, testLane('ping'), {}, { dedupeKey: 'rolled_back' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
         await sequelize.transaction(async () => {
-            await sqlane.enqueue(sequelize, 'ping', {}, { dedupeKey: 'committed' });
+            await sqlane.enqueue(sequelize, testLane('ping'), {}, { dedupeKey: 'committed' });
             // Not visible before the commit of the CLS transaction
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
@@ -131,11 +132,11 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
     test('the commit of the CLS transaction wakes the worker at once', async () => {
         const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
 
-        sqlane.lanes.add('ping', () => {});
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle('ping', () => {})]);
+        await runnerOf(sqlane).start();
         await sleep(100);
         await sequelize.transaction(async () => {
-            await sqlane.enqueue(sequelize, 'ping', {});
+            await sqlane.enqueue(sequelize, testLane('ping'), {});
             // The re-probes after the enqueue: 20, 50, 100, 200, then 500 ms
             await sleep(300);
         });
@@ -151,13 +152,13 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
         /** @type {unknown[]} */
         const transactions = [];
 
-        sqlane.lanes.add('ping', () => {
+        runnerOf(sqlane).mount([handle('ping', () => {
             transactions.push(namespace.get('transaction'));
-        });
-        await sqlane.start();
+        })]);
+        await runnerOf(sqlane).start();
         await sleep(100);
         await sequelize.transaction(async () => {
-            await sqlane.enqueue(sequelize, 'ping', {});
+            await sqlane.enqueue(sequelize, testLane('ping'), {});
             // After the re-probes of the enqueue: the commit wakes the worker
             await sleep(300);
         });
@@ -168,7 +169,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
 
     test('the bulk methods on the instance join the CLS transaction: they roll back with it', async () => {
         const { sqlane } = await freshSqlane();
-        const { id } = await sqlane.enqueue(sequelize, 'ping', {}, { delay: '1h' });
+        const { id } = await sqlane.enqueue(sequelize, testLane('ping'), {}, { delay: '1h' });
 
         await expect(sequelize.transaction(async () => {
             await expect(sqlane.jobs.cancel({ jobIds: [id] }, { connection: sequelize })).resolves
@@ -184,7 +185,7 @@ describe.each(SEQUELIZE_DIALECTS)('sequelize, dialect %s', (sequelizeDialect) =>
     test('outside a CLS transaction: a transaction of its own', async () => {
         const { sqlane, p } = await freshSqlane();
 
-        await sqlane.enqueue(sequelize, 'ping', {});
+        await sqlane.enqueue(sequelize, testLane('ping'), {});
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
     });
 });

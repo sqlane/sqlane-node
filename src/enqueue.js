@@ -1,5 +1,5 @@
 import { createMonotonicUlid } from './ulid.js';
-import { InvalidOptionsError, UnknownLaneError } from './errors.js';
+import { InvalidOptionsError } from './errors.js';
 import { buildNewJob } from './new_job.js';
 import { insertJobsMariadb } from './store/mariadb_enqueue.js';
 import { insertJobsMysql } from './store/mysql_enqueue.js';
@@ -13,9 +13,6 @@ const enqueueToken = createMonotonicUlid();
  * @typedef {object} EnqueuerOptions
  * @property {import('./types.js').Adapter<C>} adapter
  * @property {string} tablePrefix Checked.
- * @property {(lane: string) => import('./types.js').LaneDefinition | null} findDefinition The known definition of
- *     a lane.
- * @property {'allow' | 'reject'} unknownLanes
  * @property {import('./defaults.js').ResolvedDefaults} defaults
  * @property {number} maxPayloadBytes
  * @property {string | null} notifyChannel PostgreSQL NOTIFY: `pg_notify` in the enqueue transaction, delivered on
@@ -27,7 +24,24 @@ const enqueueToken = createMonotonicUlid();
  * @typedef {object} Enqueuer
  * @property {import('./types.js').Sqlane<C>['enqueue']} enqueue
  * @property {import('./types.js').Sqlane<C>['enqueueMany']} enqueueMany
+ * @property {(connection: C | undefined, newJob: import('./new_job.js').NewJob)
+ *     => Promise<import('./types.js').EnqueueResult>} insertOne A built job. No connection: on the queue's pool, in
+ *     a transaction of its own.
  */
+
+/**
+ * @param {unknown} given
+ * @returns {{ lane: string, definition: import('./types.js').LaneDefinition }}
+ */
+function resolveLane(given) {
+    if (!isPlainObject(given) || typeof given.name !== 'string') {
+        throw new InvalidOptionsError(
+            `enqueue(${JSON.stringify(given)}): the lane must be a lane definition, from defineLane()`,
+        );
+    }
+
+    return { lane: given.name, definition: /** @type {import('./types.js').LaneDefinition} */ (given) };
+}
 
 /**
  * The enqueue side of an instance.
@@ -38,8 +52,6 @@ const enqueueToken = createMonotonicUlid();
 export function createEnqueuer({
     adapter,
     tablePrefix,
-    findDefinition,
-    unknownLanes,
     defaults,
     maxPayloadBytes,
     notifyChannel,
@@ -50,30 +62,42 @@ export function createEnqueuer({
     const insertJobs = insertJobsByDialect[adapter.dialect];
 
     /**
-     * @param {import('./types.js').LaneDefinition | string} given
-     * @returns {{ lane: string, definition: import('./types.js').LaneDefinition | null }}
+     * @param {C | undefined} connection Undefined: the queue's pool.
+     * @param {import('./new_job.js').NewJob[]} jobs Distinct ids.
+     * @returns {Promise<Set<string>>} The ids that it created.
      */
-    function resolveLane(given) {
-        if (isPlainObject(given) && typeof given.name === 'string') {
-            return { lane: given.name, definition: given };
+    function insertJobsOf(connection, jobs) {
+        const token = enqueueToken();
+
+        if (insertJobs) {
+            const mysqlInsert = insertJobs;
+            /**
+             * @param {import('./types.js').Executor} executor
+             * @returns {Promise<Set<string>>}
+             */
+            const write = executor => mysqlInsert(executor, tablePrefix, jobs, token);
+
+            return connection === undefined
+                ? adapter.queueTransaction(write)
+                : adapter.inTransaction(connection, write);
         }
 
-        if (typeof given !== 'string') {
-            throw new InvalidOptionsError('enqueue: the lane must be a lane definition or a lane name');
+        // PostgreSQL: one statement, with its NOTIFY; atomic outside a transaction
+        const options = { enqueueToken: token, notifyChannel };
+
+        if (connection === undefined) {
+            return insertJobsPostgres(adapter.queue, tablePrefix, jobs, options);
         }
 
-        const definition = findDefinition(given);
-
-        if (!definition && unknownLanes === 'reject') {
-            throw new UnknownLaneError(`enqueue("${given}"): the lane is not in "lanes" and not added`);
-        }
-
-        return { lane: given, definition };
+        return (adapter.inStatement ?? adapter.inTransaction)(
+            connection,
+            executor => insertJobsPostgres(executor, tablePrefix, jobs, options),
+        );
     }
 
     /**
      * @param {C} connection
-     * @param {import('./types.js').LaneDefinition | string} given
+     * @param {import('./types.js').LaneDefinition} given
      * @param {readonly { payload: unknown, options?: import('./types.js').EnqueueOptions }[]} items
      * @returns {Promise<import('./types.js').EnqueueResult[]>}
      */
@@ -101,25 +125,7 @@ export function createEnqueuer({
             return [];
         }
 
-        const token = enqueueToken();
-        const jobs = [...firstById.values()];
-        /** @type {Set<string>} */
-        let created;
-
-        if (insertJobs) {
-            created = await adapter.inTransaction(
-                connection,
-                executor => insertJobs(executor, tablePrefix, jobs, token),
-            );
-        } else {
-            // PostgreSQL: one statement, with its NOTIFY; atomic outside a transaction
-            const options = { enqueueToken: token, notifyChannel };
-
-            created = await (adapter.inStatement ?? adapter.inTransaction)(
-                connection,
-                executor => insertJobsPostgres(executor, tablePrefix, jobs, options),
-            );
-        }
+        const created = await insertJobsOf(connection, [...firstById.values()]);
 
         return newJobs.map(newJob => ({
             id: newJob.id,
@@ -140,5 +146,9 @@ export function createEnqueuer({
 
             return insert(connection, lane, items);
         },
+        insertOne: async (connection, newJob) => ({
+            id: newJob.id,
+            created: (await insertJobsOf(connection, [newJob])).has(newJob.id),
+        }),
     };
 }
