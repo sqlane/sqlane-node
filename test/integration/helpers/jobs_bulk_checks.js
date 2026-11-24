@@ -1,4 +1,5 @@
 import { expect } from 'vitest';
+import { testLane } from '../../support/runners.js';
 
 /**
  * The bulk methods of sqlane.jobs through an adapter: its pool given as `connection` (a transaction of sqlane's own),
@@ -11,7 +12,7 @@ import { expect } from 'vitest';
  */
 export async function checkJobsBulk(sqlane, pool, inTransaction) {
     const items = [{ n: 1 }, { n: 2 }, { n: 3 }].map(payload => ({ payload, options: { delay: '1h' } }));
-    const [first, second, third] = (await sqlane.enqueueMany(pool, 'bulk_check', items)).map(({ id }) => id);
+    const [first, second, third] = (await sqlane.enqueueMany(pool, testLane('bulk_check'), items)).map(({ id }) => id);
 
     // A pool: a transaction of sqlane's own
     await expect(sqlane.jobs.cancel({ jobIds: [first, 'bulk_check:none'] }, { connection: pool })).resolves

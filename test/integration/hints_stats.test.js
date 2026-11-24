@@ -7,6 +7,7 @@ import { createSqlane, defineConcurrencyLimit, defineLane } from '../../src/inde
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { handle, testLane, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 
@@ -120,14 +121,14 @@ test('lanes.stats: the counts of each name', async () => {
     const store = createStore(testAdapter.adapter, p);
 
     await sqlane.schema.migrate();
-    await sqlane.enqueueMany(testAdapter.pool, 'a', [
+    await sqlane.enqueueMany(testAdapter.pool, testLane('a'), [
         // Wide margins: runAt comes from the clock of this host, and the database compares it with its own
         { payload: {}, options: { runAt: new Date(Date.now() - 60_000) } },
         { payload: {}, options: { runAt: new Date(Date.now() - 30_000) } },
         { payload: {}, options: { delay: '1h' } },
     ]);
 
-    const ids = await Promise.all([1, 2, 3, 4].map(async () => (await sqlane.enqueue(testAdapter.pool, 'b', {})).id));
+    const ids = await Promise.all([1, 2, 3, 4].map(async () => (await sqlane.enqueue(testAdapter.pool, testLane('b'), {})).id));
     const [runningId, failedId, ...completedIds] = ids;
     const { jobs: claimed } = await store.claim({
         candidateIds: ids,
@@ -180,9 +181,9 @@ test('lanes.stats: a name with only completed jobs has an entry', async () => {
     const sqlane = sqlaneOn(p);
 
     await sqlane.schema.migrate();
-    await sqlane.enqueue(testAdapter.pool, 'done', {});
-    sqlane.lanes.add('done', () => {});
-    await sqlane.drain();
+    await sqlane.enqueue(testAdapter.pool, testLane('done'), {});
+    runnerOf(sqlane).mount([handle('done', () => {})]);
+    await runnerOf(sqlane).drain();
 
     await expect(sqlane.lanes.stats()).resolves.toStrictEqual([{
         name: 'done',
@@ -205,15 +206,15 @@ describe('hints', () => {
         const worker = sqlaneOn(p, { hint, pollInterval: '10s' });
 
         await producer.schema.migrate();
-        worker.lanes.add('ping', () => {});
-        await worker.start();
+        runnerOf(worker).mount([handle('ping', () => {})]);
+        await runnerOf(worker).start();
         await sleep(100);
 
         const connection = await testAdapter.connect();
 
         try {
             await connection.begin();
-            await producer.enqueue(connection.raw, 'ping', {});
+            await producer.enqueue(connection.raw, testLane('ping'), {});
             await sleep(30);
             await connection.commit();
         } finally {
@@ -236,13 +237,13 @@ describe('hints', () => {
         const stores = [];
 
         await producer.schema.migrate();
-        worker.lanes.add('ping', () => {
+        runnerOf(worker).mount([handle('ping', () => {
             stores.push(storage.getStore());
-        });
-        await storage.run({ owner: 'worker' }, () => worker.start());
+        })]);
+        await storage.run({ owner: 'worker' }, () => runnerOf(worker).start());
         await sleep(100);
         // The memory hint delivers the message in the context of the enqueue
-        await storage.run({ owner: 'request' }, () => producer.enqueue(testAdapter.pool, 'ping', {}));
+        await storage.run({ owner: 'request' }, () => producer.enqueue(testAdapter.pool, testLane('ping'), {}));
 
         await expect(timeUntil(async () => (await statuses(p))[0] === 'completed', 5000))
             .resolves.toBeLessThan(2000);
@@ -267,7 +268,7 @@ describe('hints', () => {
         });
 
         await producer.schema.migrate();
-        await expect(producer.enqueue(testAdapter.pool, 'ping', {})).resolves.toMatchObject({ created: true });
+        await expect(producer.enqueue(testAdapter.pool, testLane('ping'), {})).resolves.toMatchObject({ created: true });
         await sleep(20);
         expect(errors).toMatchObject([{ type: 'error', operation: 'hint_publish' }]);
     });
@@ -285,15 +286,15 @@ describe('hints', () => {
         let finishFirst = null;
 
         await first.schema.migrate();
-        first.lanes.add(firstJob, () => new Promise((resolve) => {
+        runnerOf(first).mount([handle(firstJob, () => new Promise((resolve) => {
             finishFirst = () => resolve(undefined);
-        }));
-        second.lanes.add(secondJob, () => {});
+        }))]);
+        runnerOf(second).mount([handle(secondJob, () => {})]);
 
         await first.enqueue(testAdapter.pool, firstJob, {});
-        await first.start();
+        await runnerOf(first).start();
         await timeUntil(async () => (await statuses(p))[0] === 'running', 5000);
-        await second.start();
+        await runnerOf(second).start();
         await second.enqueue(testAdapter.pool, secondJob, {});
         await sleep(200);
         // The second job is blocked on the key; the first process unblocks it, and its hint wakes the second process
@@ -312,15 +313,15 @@ describe('hints', () => {
         const worker = sqlaneOn(p, { adapter, pollInterval: '10s' });
 
         await producer.schema.migrate();
-        worker.lanes.add('ping', () => {});
-        await worker.start();
+        runnerOf(worker).mount([handle('ping', () => {})]);
+        await runnerOf(worker).start();
         await sleep(200);
 
         const connection = await testAdapter.connect();
 
         try {
             await connection.begin();
-            await producer.enqueue(connection.raw, 'ping', {});
+            await producer.enqueue(connection.raw, testLane('ping'), {});
             await sleep(300);
             // Not delivered before the commit
             await expect(statuses(p)).resolves.toStrictEqual([]);

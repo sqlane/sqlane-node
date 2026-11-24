@@ -9,6 +9,7 @@ import {
 } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { testLane } from '../support/runners.js';
 
 /** @type {Record<'mysql' | 'postgres', (p: string) => string>} */
 const READ_JOB_SQL = {
@@ -39,7 +40,7 @@ const buildReport = defineLane({
     maxAttempts: 5,
     retention: { completed: '10m' },
     globalConcurrencyLimits: ({ payload }) => [reports, report.key(payload.reportId)],
-    failureLane: 'report_failed',
+    failureLane: defineLane({ name: 'report_failed' }),
 });
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
@@ -52,7 +53,7 @@ let sqlane;
 beforeAll(async () => {
     database = await connectTestDatabase();
     testAdapter = createTestAdapter();
-    sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: database.tablePrefix, lanes: [buildReport] });
+    sqlane = createSqlane({ adapter: testAdapter.adapter, tablePrefix: database.tablePrefix });
     await sqlane.schema.migrate();
 });
 
@@ -203,7 +204,7 @@ test('a duplicate in a concurrent transaction waits for it, then is not created'
 
 test('a runAt is stored as that instant, whatever the session time zone', async () => {
     const runAt = new Date('2031-03-04T05:06:07.089Z');
-    const { id } = await inTransaction(connection => sqlane.enqueue(connection, 'build_report', { reportId: 'r5' }, {
+    const { id } = await inTransaction(connection => sqlane.enqueue(connection, buildReport, { reportId: 'r5' }, {
         runAt,
     }));
 
@@ -228,7 +229,7 @@ test('enqueueMany: the results in the order of the items; a dedupeKey repeated i
 
 test('a JSON scalar payload is stored as it is: null, a number, a boolean, a string', async () => {
     const payloads = [null, 0, false, '', 'text', []];
-    const results = await sqlane.enqueueMany(testAdapter.pool, 'scalar_payload', payloads.map(payload => ({ payload })));
+    const results = await sqlane.enqueueMany(testAdapter.pool, testLane('scalar_payload'), payloads.map(payload => ({ payload })));
 
     expect(results.map(result => result.created)).toStrictEqual(payloads.map(() => true));
 
@@ -239,7 +240,7 @@ test('a JSON scalar payload is stored as it is: null, a number, a boolean, a str
 
 test('enqueueMany adds 1,200 jobs at once', async () => {
     const items = Array.from({ length: 1200 }, (_, index) => ({ payload: { index }, options: { dedupeKey: `bulk-${index}` } }));
-    const results = await sqlane.enqueueMany(testAdapter.pool, 'send_email', items);
+    const results = await sqlane.enqueueMany(testAdapter.pool, testLane('send_email'), items);
 
     expect(results.filter(result => result.created)).toHaveLength(1200);
 

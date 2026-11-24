@@ -7,6 +7,7 @@ import { buildNewJob } from '../../src/new_job.js';
 import { createStore } from '../../src/store/store.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { testLane } from '../support/runners.js';
 
 /** @typedef {import('../../src/store/store.js').ClaimedJob} ClaimedJob */
 /** @typedef {import('../../src/store/store.js').Store} Store */
@@ -90,7 +91,7 @@ const withKeys = defineLane({
     name: 'sync_order',
     globalConcurrencyLimits: ({ payload }) => [order.key(payload.orderId)],
     timeout: '1m',
-    failureLane: 'sync_failed',
+    failureLane: defineLane({ name: 'sync_failed' }),
 });
 
 /** @type {import('../support/test_database.js').TestDatabaseConnection} */
@@ -330,7 +331,7 @@ test.runIf(inject('databaseDialect') === 'postgres')('completeJobs: PostgreSQL r
 test('completeJobs: one write for many jobs, the own ones only; the payload of a job not completed stays', async () => {
     const tables = await freshTables();
     const job = await claimedJob(tables);
-    const ids = (await tables.sqlane.enqueueMany(testAdapter.pool, 'plain', [{ payload: { n: 1 } }, { payload: { n: 2 } }]))
+    const ids = (await tables.sqlane.enqueueMany(testAdapter.pool, testLane('plain'), [{ payload: { n: 1 } }, { payload: { n: 2 } }]))
         .map(result => result.id);
     const { jobs: [plain, lost] } = await tables.store.claim({
         candidateIds: ids,

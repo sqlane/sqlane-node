@@ -12,6 +12,7 @@ import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 import { checkSchemaChanges, SCHEMA_CHANGES } from './helpers/schema_checks.js';
 import { checkStartTimes } from './helpers/start_time_checks.js';
+import { handle, testLane, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<import('../../src/adapters/knex.js').KnexConnection>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -115,7 +116,7 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
     test('schedules: start() without the table asks for schema.migrate(); a slot adds its job', async () => {
         const { sqlane, p } = await freshSqlane();
 
-        await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:\d{4}-/);
+        await expect(checkSchedules(sqlane, p, database)).resolves.toMatch(/^tick:schedule:k:\d{4}-/);
     });
 
     test('sqlane.jobs: get and list through the adapter', async () => {
@@ -169,7 +170,7 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
         const { sqlane, p } = await freshSqlane();
 
         await knex.transaction(async (trx) => {
-            await expect(sqlane.enqueue(trx, 'ping', { n: 1 }, { dedupeKey: 'a' })).resolves.toStrictEqual({
+            await expect(sqlane.enqueue(trx, testLane('ping'), { n: 1 }, { dedupeKey: 'a' })).resolves.toStrictEqual({
                 id: 'ping:a',
                 created: true,
             });
@@ -177,33 +178,33 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(knex.transaction(async (trx) => {
-            await sqlane.enqueue(trx, 'ping', { n: 2 }, { dedupeKey: 'b' });
+            await sqlane.enqueue(trx, testLane('ping'), { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
         // The dedupe sees the committed job
-        await expect(sqlane.enqueue(knex, 'ping', { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
+        await expect(sqlane.enqueue(knex, testLane('ping'), { n: 3 }, { dedupeKey: 'a' })).resolves.toMatchObject({ created: false });
     });
 
     test('enqueue on a knex instance: a transaction of its own', async () => {
         const { sqlane, p } = await freshSqlane();
 
-        await sqlane.enqueueMany(knex, 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
+        await sqlane.enqueueMany(knex, testLane('ping'), [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
         await expect(statuses(p)).resolves.toStrictEqual(['pending', 'pending']);
     });
 
     test('the commit wakes the worker at once: the job does not wait for a re-probe', async () => {
         const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
 
-        sqlane.lanes.add('ping', () => {});
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle('ping', () => {})]);
+        await runnerOf(sqlane).start();
         await sleep(100);
 
         let committedAt = 0;
 
         await knex.transaction(async (trx) => {
-            await sqlane.enqueue(trx, 'ping', {});
+            await sqlane.enqueue(trx, testLane('ping'), {});
             // The re-probes after the enqueue: 20, 50, 100, 200, then 500 ms
             await sleep(300);
         });
@@ -215,17 +216,17 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
     test('a nested transaction: the job runs after the outer commit, and never after an outer rollback', async () => {
         const { sqlane, p, events } = await freshSqlane({ pollInterval: '10s' });
 
-        sqlane.lanes.add('ping', () => {});
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle('ping', () => {})]);
+        await runnerOf(sqlane).start();
         await expect(knex.transaction(async (outer) => {
             await outer.transaction(async (inner) => {
-                await sqlane.enqueue(inner, 'ping', {}, { dedupeKey: 'rolled_back' });
+                await sqlane.enqueue(inner, testLane('ping'), {}, { dedupeKey: 'rolled_back' });
             });
             throw new Error('outer rollback');
         })).rejects.toThrow('outer rollback');
         await knex.transaction(async (outer) => {
             await outer.transaction(async (inner) => {
-                await sqlane.enqueue(inner, 'ping', {}, { dedupeKey: 'committed' });
+                await sqlane.enqueue(inner, testLane('ping'), {}, { dedupeKey: 'committed' });
             });
         });
 
@@ -247,21 +248,21 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
             backoff: { type: 'fixed', delay: 10, jitter: 0 },
             failureLane: reportFailed,
         });
-        const { sqlane, p } = await freshSqlane({ lanes: [report, reportFailed, failing] });
+        const { sqlane, p } = await freshSqlane();
         /** @type {unknown[]} */
         const failures = [];
 
-        sqlane.lanes.add(report, () => {});
-        sqlane.lanes.add(failing, () => {
+        runnerOf(sqlane).mount([handle(report, () => {})]);
+        runnerOf(sqlane).mount([handle(failing, () => {
             throw new Error('always');
-        });
-        sqlane.lanes.add(reportFailed, ({ payload }) => {
+        })]);
+        runnerOf(sqlane).mount([handle(reportFailed, ({ payload }) => {
             failures.push(payload.job.lane);
-        });
+        })]);
         await sqlane.enqueueMany(knex, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
         await sqlane.enqueue(knex, failing, {});
 
-        await expect(sqlane.drain({ includeDelayed: true }))
+        await expect(runnerOf(sqlane).drain({ includeDelayed: true }))
             .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
         expect(failures).toStrictEqual(['failing']);
         await expect(sqlane.lanes.stats()).resolves.toMatchObject([
@@ -298,7 +299,7 @@ describe.each(CLIENTS)('knex, client %s', (client) => {
             const queueStatements = await preparedAfterAJob(sqlane, queueOne, query);
             // The caller's transaction: on the app's connection
             const appStatements = await appOne.transaction(async (trx) => {
-                await sqlane.enqueue(trx, 'ping', {});
+                await sqlane.enqueue(trx, testLane('ping'), {});
 
                 return (await trx.raw(SQLANE_STATEMENTS_SQL)).rows[0].statements;
             });

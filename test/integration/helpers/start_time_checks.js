@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { expect } from 'vitest';
 import { defineConcurrencyLimit, defineLane } from '../../../src/index.js';
+import { handle, runnerOf } from '../../support/runners.js';
 
 /**
  * The start time of a run through an adapter: its claim writes one time to the job and to its new slots (on MySQL and
@@ -23,7 +24,7 @@ export async function checkStartTimes(sqlane, connection, { p, database, events 
     /** @type {{ info: import('../../../src/types.js').JobInfo, record: any, slots: number[] }[]} */
     const runs = [];
 
-    sqlane.lanes.add(sync, async ({ job }) => {
+    runnerOf(sqlane).mount([handle(sync, async ({ job }) => {
         const record = await sqlane.jobs.get(job.id);
         const rows = await database.query(
             `SELECT ${epochMs('created_at')} AS ms FROM ${p}concurrency_slots WHERE job_id = ${
@@ -32,8 +33,8 @@ export async function checkStartTimes(sqlane, connection, { p, database, events 
         );
 
         runs.push({ info: job, record, slots: rows.map(row => Number(row.ms)) });
-    });
-    await sqlane.start();
+    })]);
+    await runnerOf(sqlane).start();
 
     const { id } = await sqlane.enqueue(connection, sync, {});
     const deadline = Date.now() + 5000;

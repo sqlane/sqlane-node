@@ -12,6 +12,7 @@ import {
 } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { handle, testLane, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -214,21 +215,21 @@ describe('the first run, on each claim path', () => {
         const a = recording(sqlane);
         const b = recording(sqlane);
 
-        sqlane.lanes.add('only_a', a.handler);
-        sqlane.lanes.add('only_b', b.handler);
+        runnerOf(sqlane).mount([handle('only_a', a.handler)]);
+        runnerOf(sqlane).mount([handle('only_b', b.handler)]);
 
-        const first = await sqlane.enqueue(testAdapter.pool, 'only_a', {});
-        const second = await sqlane.enqueue(testAdapter.pool, 'only_b', {});
+        const first = await sqlane.enqueue(testAdapter.pool, testLane('only_a'), {});
+        const second = await sqlane.enqueue(testAdapter.pool, testLane('only_b'), {});
 
         // Both due before the start: one claim of two names
-        await sqlane.start();
+        await runnerOf(sqlane).start();
         await waitFor(() => a.runs.length + b.runs.length === 2);
         expect(claimedOf(events, first.id)).toHaveLength(1);
         expectOneTime(claimedOf(events, first.id)[0], a.runs[0]);
         expectOneTime(claimedOf(events, second.id)[0], b.runs[0]);
 
         // One name due: the claim of one name
-        const third = await sqlane.enqueue(testAdapter.pool, 'only_a', {});
+        const third = await sqlane.enqueue(testAdapter.pool, testLane('only_a'), {});
 
         await waitFor(() => a.runs.length === 2);
         expectOneTime(claimedOf(events, third.id)[0], a.runs[1]);
@@ -240,8 +241,8 @@ describe('the first run, on each claim path', () => {
         const sync = defineLane({ name: 'sync', timeout: '10s', globalConcurrencyLimits: () => [order.key(1)] });
         const run = recording(sqlane);
 
-        sqlane.lanes.add(sync, run.handler);
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle(sync, run.handler)]);
+        await runnerOf(sqlane).start();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, sync, {});
 
@@ -256,8 +257,8 @@ describe('the first run, on each claim path', () => {
         const call = defineLane({ name: 'call', globalRateLimits: () => [api.key('t1')] });
         const run = recording(sqlane);
 
-        sqlane.lanes.add(call, run.handler);
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle(call, run.handler)]);
+        await runnerOf(sqlane).start();
 
         const { id } = await sqlane.enqueue(testAdapter.pool, call, {});
 
@@ -272,10 +273,10 @@ test('runAt given with the runAt option is the due time of the run', async () =>
     const run = recording(sqlane);
     const runAt = new Date(Date.now() + 300);
 
-    sqlane.lanes.add('later', run.handler);
-    await sqlane.start();
+    runnerOf(sqlane).mount([handle('later', run.handler)]);
+    await runnerOf(sqlane).start();
 
-    const { id } = await sqlane.enqueue(testAdapter.pool, 'later', {}, { runAt });
+    const { id } = await sqlane.enqueue(testAdapter.pool, testLane('later'), {}, { runAt });
 
     await waitFor(() => run.runs.length === 1);
     expect(claimedOf(events, id)[0].runAt).toStrictEqual(runAt);
@@ -287,8 +288,8 @@ test('after a retry: the due time of the backoff', async () => {
     const flaky = defineLane({ name: 'flaky', backoff: { type: 'fixed', delay: 200, jitter: 0 } });
     const run = recording(sqlane, throwFirst(new Error('boom')));
 
-    sqlane.lanes.add(flaky, run.handler);
-    await sqlane.start();
+    runnerOf(sqlane).mount([handle(flaky, run.handler)]);
+    await runnerOf(sqlane).start();
 
     const { id } = await sqlane.enqueue(testAdapter.pool, flaky, {});
 
@@ -307,12 +308,12 @@ test('after a release on close: the due time of the release', async () => {
     const { sqlane: first, events: firstEvents } = sqlaneOn(p);
 
     await first.schema.migrate();
-    first.lanes.add('long', ({ signal }) => new Promise((resolve) => {
+    runnerOf(first).mount([handle('long', ({ signal }) => new Promise((resolve) => {
         signal.addEventListener('abort', resolve);
-    }));
-    await first.start();
+    }))]);
+    await runnerOf(first).start();
 
-    const { id } = await first.enqueue(testAdapter.pool, 'long', {});
+    const { id } = await first.enqueue(testAdapter.pool, testLane('long'), {});
 
     await waitFor(() => claimedOf(firstEvents, id).length === 1);
     await first.close({ deadline: '50ms', exitsBy: '100ms' });
@@ -330,8 +331,8 @@ test('after a release on close: the due time of the release', async () => {
     const { sqlane: second, events } = sqlaneOn(p);
     const run = recording(second);
 
-    second.lanes.add('long', run.handler);
-    await second.start();
+    runnerOf(second).mount([handle('long', run.handler)]);
+    await runnerOf(second).start();
     await waitFor(() => run.runs.length === 1);
     expect(claimedOf(events, id)[0].runAt).toStrictEqual(due?.runAt);
     expectOneTime(claimedOf(events, id)[0], run.runs[0]);
@@ -343,10 +344,10 @@ test('after a stall: the due time that stall recovery stored', async () => {
     const { sqlane: first, events: firstEvents } = sqlaneOn(p, /** @type {any} */ ({ timings }));
 
     await first.schema.migrate();
-    first.lanes.add('stuck', () => sleep(60_000));
-    await first.start();
+    runnerOf(first).mount([handle('stuck', () => sleep(60_000))]);
+    await runnerOf(first).start();
 
-    const { id } = await first.enqueue(testAdapter.pool, 'stuck', {});
+    const { id } = await first.enqueue(testAdapter.pool, testLane('stuck'), {});
 
     await waitFor(() => claimedOf(firstEvents, id).length === 1);
     // Its lease is not renewed any more: it ends, and another process recovers the job
@@ -354,7 +355,7 @@ test('after a stall: the due time that stall recovery stored', async () => {
 
     const { sqlane: recovery } = sqlaneOn(p, /** @type {any} */ ({ timings: { ...timings, recoveryIntervalMs: 100 } }));
 
-    await recovery.start();
+    await runnerOf(recovery).start();
     await waitFor(async () => (await recovery.jobs.get(id))?.stalls === 1, 8000);
 
     const stalled = await recovery.jobs.get(id);
@@ -367,8 +368,8 @@ test('after a stall: the due time that stall recovery stored', async () => {
     const { sqlane: second, events } = sqlaneOn(p);
     const run = recording(second);
 
-    second.lanes.add('stuck', run.handler);
-    await second.start();
+    runnerOf(second).mount([handle('stuck', run.handler)]);
+    await runnerOf(second).start();
     await waitFor(() => run.runs.length === 1);
     expect(claimedOf(events, id)[0].runAt).toStrictEqual(due?.runAt);
     expectOneTime(claimedOf(events, id)[0], run.runs[0]);
@@ -379,13 +380,13 @@ test('after jobs.retry(): the due time of the retry', async () => {
     const { sqlane: first } = sqlaneOn(p);
 
     await first.schema.migrate();
-    first.lanes.add('broken', () => {
+    runnerOf(first).mount([handle('broken', () => {
         throw new FatalJobError('boom');
-    });
+    })]);
 
-    const { id } = await first.enqueue(testAdapter.pool, 'broken', {});
+    const { id } = await first.enqueue(testAdapter.pool, testLane('broken'), {});
 
-    await first.drain();
+    await runnerOf(first).drain();
 
     const failed = await first.jobs.get(id);
 
@@ -398,8 +399,8 @@ test('after jobs.retry(): the due time of the retry', async () => {
     const { sqlane: second, events } = sqlaneOn(p);
     const run = recording(second);
 
-    second.lanes.add('broken', run.handler);
-    await second.start();
+    runnerOf(second).mount([handle('broken', run.handler)]);
+    await runnerOf(second).start();
     await waitFor(() => run.runs.length === 1);
     expect(claimedOf(events, id)[0].runAt).toStrictEqual(retried?.runAt);
     expectOneTime(claimedOf(events, id)[0], run.runs[0]);
@@ -412,8 +413,8 @@ test('after an unblock: the job keeps its due time; its start delay includes its
     const { body, release } = holdFirst();
     const run = recording(sqlane, body);
 
-    sqlane.lanes.add(sync, run.handler);
-    await sqlane.start();
+    runnerOf(sqlane).mount([handle(sync, run.handler)]);
+    await runnerOf(sqlane).start();
 
     const holder = await sqlane.enqueue(testAdapter.pool, sync, {});
 
@@ -443,8 +444,8 @@ test('after a RateLimitedError on a global rate key: the rerun keeps the due tim
     const call = defineLane({ name: 'call', globalRateLimits: () => [api.key('t1')] });
     const run = recording(sqlane, throwFirst(new RateLimitedError({ limit: api.key('t1'), retryAfter: '300ms' })));
 
-    sqlane.lanes.add(call, run.handler);
-    await sqlane.start();
+    runnerOf(sqlane).mount([handle(call, run.handler)]);
+    await runnerOf(sqlane).start();
 
     const { id } = await sqlane.enqueue(testAdapter.pool, call, {});
 
@@ -461,11 +462,11 @@ test('drain({ includeDelayed }): the delayed job is due at the drain', async () 
     const { sqlane, events } = await fresh();
     const run = recording(sqlane);
 
-    sqlane.lanes.add('delayed', run.handler);
+    runnerOf(sqlane).mount([handle('delayed', run.handler)]);
 
-    const { id } = await sqlane.enqueue(testAdapter.pool, 'delayed', {}, { delay: '1h' });
+    const { id } = await sqlane.enqueue(testAdapter.pool, testLane('delayed'), {}, { delay: '1h' });
 
-    await sqlane.drain({ includeDelayed: true });
+    await runnerOf(sqlane).drain({ includeDelayed: true });
 
     const [claimed] = claimedOf(events, id);
 
@@ -486,8 +487,8 @@ test('the slot of a run is taken at its start time', async () => {
         pairs.push(...rows.map(row => [Number(row.slot_ms), Number(row.started_ms), Number(info.startedAt)]));
     });
 
-    sqlane.lanes.add(sync, run.handler);
-    await sqlane.start();
+    runnerOf(sqlane).mount([handle(sync, run.handler)]);
+    await runnerOf(sqlane).start();
     await sqlane.enqueueMany(testAdapter.pool, sync, [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
     // Two keys per job, two jobs: the reads of both handlers are done
     await waitFor(() => pairs.length === 4);

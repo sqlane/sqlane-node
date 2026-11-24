@@ -17,6 +17,7 @@ import { checkJobsBulk } from './helpers/jobs_bulk_checks.js';
 import { checkJobsRead } from './helpers/jobs_read_checks.js';
 import { checkSchemaChanges, SCHEMA_CHANGES } from './helpers/schema_checks.js';
 import { checkStartTimes } from './helpers/start_time_checks.js';
+import { handle, testLane, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 /** @typedef {import('../../src/types.js').SqlaneEvent} SqlaneEvent */
@@ -199,17 +200,17 @@ describe.each([
         const { sqlane, p } = await freshSqlane();
 
         await orm.em.transactional(async (/** @type {any} */ em) => {
-            await expect(sqlane.enqueue(em, 'ping', { n: 1 }, { dedupeKey: 'a' }))
+            await expect(sqlane.enqueue(em, testLane('ping'), { n: 1 }, { dedupeKey: 'a' }))
                 .resolves.toStrictEqual({ id: 'ping:a', created: true });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
         await expect(orm.em.transactional(async (/** @type {any} */ em) => {
-            await sqlane.enqueue(em, 'ping', { n: 2 }, { dedupeKey: 'b' });
+            await sqlane.enqueue(em, testLane('ping'), { n: 2 }, { dedupeKey: 'b' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
 
         await expect(statuses(p)).resolves.toStrictEqual(['pending']);
-        await expect(sqlane.enqueue(orm.em, 'ping', { n: 3 }, { dedupeKey: 'a' }))
+        await expect(sqlane.enqueue(orm.em, testLane('ping'), { n: 3 }, { dedupeKey: 'a' }))
             .resolves.toMatchObject({ created: false });
     });
 
@@ -217,11 +218,11 @@ describe.each([
         const { sqlane, p } = await freshSqlane();
 
         await expect(orm.em.transactional(async () => {
-            await sqlane.enqueue(orm.em, 'ping', {}, { dedupeKey: 'rolled_back' });
+            await sqlane.enqueue(orm.em, testLane('ping'), {}, { dedupeKey: 'rolled_back' });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
         await orm.em.transactional(async () => {
-            await sqlane.enqueue(orm.em, 'ping', {}, { dedupeKey: 'committed' });
+            await sqlane.enqueue(orm.em, testLane('ping'), {}, { dedupeKey: 'committed' });
             await expect(statuses(p)).resolves.toStrictEqual([]);
         });
 
@@ -231,8 +232,8 @@ describe.each([
     test('an EntityManager outside a transaction: a transaction of its own', async () => {
         const { sqlane, p } = await freshSqlane();
 
-        await sqlane.enqueue(orm.em, 'ping', {});
-        await sqlane.enqueueMany(orm.em.fork(), 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
+        await sqlane.enqueue(orm.em, testLane('ping'), {});
+        await sqlane.enqueueMany(orm.em.fork(), testLane('ping'), [{ payload: { n: 1 } }, { payload: { n: 2 } }]);
         await expect(statuses(p)).resolves.toStrictEqual(['pending', 'pending', 'pending']);
     });
 
@@ -267,11 +268,11 @@ describe.each([
     ])('the commit wakes the worker at once: $how', async ({ run }) => {
         const { sqlane, events } = await freshSqlane({ pollInterval: '10s' });
 
-        sqlane.lanes.add('ping', () => {});
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle('ping', () => {})]);
+        await runnerOf(sqlane).start();
         await sleep(100);
         await run(async (em) => {
-            await sqlane.enqueue(em, 'ping', {});
+            await sqlane.enqueue(em, testLane('ping'), {});
             // The re-probes after the enqueue: 20, 50, 100, 200, then 500 ms
             await sleep(300);
         });
@@ -285,18 +286,18 @@ describe.each([
     test('a nested transaction (a savepoint): the job runs after the outer commit, never after an outer rollback', async () => {
         const { sqlane, p, events } = await freshSqlane();
 
-        sqlane.lanes.add('ping', () => {});
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle('ping', () => {})]);
+        await runnerOf(sqlane).start();
 
         await expect(orm.em.transactional(async (/** @type {any} */ outer) => {
             await outer.transactional(async (/** @type {any} */ inner) => {
-                await sqlane.enqueue(inner, 'ping', {}, { dedupeKey: 'rolled_back' });
+                await sqlane.enqueue(inner, testLane('ping'), {}, { dedupeKey: 'rolled_back' });
             });
             throw new Error('rollback');
         })).rejects.toThrow('rollback');
         await orm.em.transactional(async (/** @type {any} */ outer) => {
             await outer.transactional(async (/** @type {any} */ inner) => {
-                await sqlane.enqueue(inner, 'ping', {}, { dedupeKey: 'committed' });
+                await sqlane.enqueue(inner, testLane('ping'), {}, { dedupeKey: 'committed' });
             });
         });
 
@@ -318,21 +319,21 @@ describe.each([
             backoff: { type: 'fixed', delay: 10, jitter: 0 },
             failureLane: reportFailed,
         });
-        const { sqlane, p } = await freshSqlane({ lanes: [report, reportFailed, failing] });
+        const { sqlane, p } = await freshSqlane();
         /** @type {unknown[]} */
         const failures = [];
 
-        sqlane.lanes.add(report, () => {});
-        sqlane.lanes.add(failing, () => {
+        runnerOf(sqlane).mount([handle(report, () => {})]);
+        runnerOf(sqlane).mount([handle(failing, () => {
             throw new Error('always');
-        });
-        sqlane.lanes.add(reportFailed, ({ payload }) => {
+        })]);
+        runnerOf(sqlane).mount([handle(reportFailed, ({ payload }) => {
             failures.push(payload.job.lane);
-        });
+        })]);
         await sqlane.enqueueMany(orm.em, report, [{ payload: { id: 1 } }, { payload: { id: 1 } }]);
         await sqlane.enqueue(orm.em, failing, {});
 
-        await expect(sqlane.drain({ includeDelayed: true }))
+        await expect(runnerOf(sqlane).drain({ includeDelayed: true }))
             .resolves.toStrictEqual({ completed: 3, retried: 1, failed: 1 });
         expect(failures).toStrictEqual(['failing']);
         await expect(sqlane.lanes.stats()).resolves.toMatchObject([

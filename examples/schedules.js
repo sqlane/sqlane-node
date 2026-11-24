@@ -1,53 +1,36 @@
-// Scenarios: cron and repeatable jobs. Call schedule() in the worker code, before start().
-import { defineLane } from '@sqlane/core';
-import { db, sqlane } from './sqlane.js';
+// Scenarios: cron and repeatable jobs. The schedules are defined next to their lane (jobs.js); the runner of a
+// process fires those that it mounts (worker.js). Their handlers, and the admin side here.
+import { defineHandler } from '@sqlane/core';
+import { nightly, nightlyReport, syncTenant } from './jobs.js';
+import { sqlane } from './sqlane.js';
 
-export const nightlyReport = defineLane({ name: 'nightly_report', timeout: '10m' });
-export const syncTenant = defineLane({ name: 'sync_tenant', timeout: '1m' });
+export const scheduleHandlers = [
+    defineHandler(nightlyReport, async ({ job, signal }) => {
+        // The slot, also when the run is late: the day of the report
+        const day = job.scheduledAt;
 
-sqlane.lanes.add(nightlyReport, async ({ job, signal }) => {
-    // The slot, also when the run is late: the day of the report
-    const day = job.scheduledAt;
-
-    await fetch(`https://reports.example.com/nightly?day=${day?.toISOString()}`, { method: 'POST', signal });
-});
-
-sqlane.lanes.add(syncTenant, async ({ payload, signal }) => {
-    await fetch(`https://erp.example.com/tenants/${payload.tenantId}/sync`, { method: 'POST', signal });
-});
-
-// At 03:00 in Berlin, every day. A run missed during a short downtime runs once (missed: 'once').
-sqlane.schedule(nightlyReport, { cron: '0 3 * * *', timezone: 'Europe/Berlin' });
-
-// Every 15 minutes, per tenant: a key per schedule. A slot is skipped while the previous run is not done, and the
-// runs of the tenants spread over 5 minutes.
-for (const tenantId of [41, 42]) {
-    sqlane.schedule(syncTenant, {
-        every: '15m',
-        key: `tenant-${tenantId}`,
-        payload: { tenantId },
-        overlap: 'skip',
-        jitter: '5m',
-    });
-}
+        await fetch(`https://reports.example.com/nightly?day=${day?.toISOString()}`, { method: 'POST', signal });
+    }),
+    defineHandler(syncTenant, async ({ payload, signal }) => {
+        await fetch(`https://erp.example.com/tenants/${payload.tenantId}/sync`, { method: 'POST', signal });
+    }),
+];
 
 /**
- * Starts the schedules and the worker.
+ * The schedules in the database: their next slot and their last job, for every process.
  * @returns {Promise<void>}
  */
-export async function runSchedules() {
-    await sqlane.start();
-
+export async function printSchedules() {
     for (const schedule of await sqlane.schedules.list()) {
-        console.log(schedule.id, schedule.nextRunAt?.toISOString());
+        console.log(schedule.id, schedule.nextRunAt?.toISOString(), schedule.lastJobId);
     }
 }
 
 /**
- * Runs the report of a day by hand: the same job as the slot, so the scheduler adds no second one.
- * @param {Date} slot
+ * Runs the report of a day by hand: the same job as the slot, so the scheduler adds no second one. No runner needed.
+ * @param {Date} slot A slot of the schedule, not in the future.
  * @returns {Promise<void>}
  */
 export async function runReportByHand(slot) {
-    await sqlane.enqueue(db, nightlyReport, {}, { slot: { at: slot } });
+    await sqlane.schedules.runSlot(nightly, { at: slot });
 }

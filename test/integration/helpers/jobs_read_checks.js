@@ -1,5 +1,6 @@
 import { expect, inject } from 'vitest';
 import { defineRateLimit } from '../../../src/index.js';
+import { testLane } from '../../support/runners.js';
 
 /**
  * sqlane.jobs through an adapter: the types of its driver (BigInt, strings of bigint, parsed JSON) and its parameters.
@@ -11,7 +12,7 @@ import { defineRateLimit } from '../../../src/index.js';
  */
 export async function checkJobsRead(sqlane, connection) {
     const api = defineRateLimit({ name: 'api', max: 10, per: '1s' });
-    const [first, ...others] = await sqlane.enqueueMany(connection, 'read_check', /** @type {any[]} */ ([
+    const [first, ...others] = await sqlane.enqueueMany(connection, testLane('read_check'), /** @type {any[]} */ ([
         { payload: false, options: { globalRateLimits: [api.key('t1')] } },
         { payload: { n: 2 } },
         { payload: { n: 3 } },
@@ -51,7 +52,7 @@ export async function checkJobsRead(sqlane, connection) {
     // A JSON null payload is present, as null. Not on PostgreSQL: enqueue() of a null payload fails there (a bug of
     // enqueue, fixed apart)
     if (inject('databaseDialect') !== 'postgres') {
-        const empty = await sqlane.enqueue(connection, 'read_null', null);
+        const empty = await sqlane.enqueue(connection, testLane('read_null'), null);
         const job = await sqlane.jobs.get(empty.id);
 
         expect(job).toHaveProperty('payload', null);

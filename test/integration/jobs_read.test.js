@@ -13,6 +13,7 @@ import {
 import { MAX_STACK_LENGTH } from '../../src/error_json.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { handle, testLane, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 
@@ -134,7 +135,7 @@ async function enqueueUntilTie(sqlane) {
 
     for (let group = 0; group < 10; group++) {
         // oxlint-disable-next-line no-await-in-loop -- one group after the other
-        await sqlane.enqueueMany(testAdapter.pool, 'ping', keys.map(key => ({
+        await sqlane.enqueueMany(testAdapter.pool, testLane('ping'), keys.map(key => ({
             payload: {},
             options: { dedupeKey: `g${group}${key}` },
         })));
@@ -179,7 +180,7 @@ describe('jobs.get()', () => {
     test('a pending job: every field, and its payload', async () => {
         const sqlane = await freshSqlane();
         const runAt = new Date(Date.now() + 3_600_000);
-        const buildReport = defineLane({ name: 'build_report', failureLane: 'report_failed' });
+        const buildReport = defineLane({ name: 'build_report', failureLane: defineLane({ name: 'report_failed' }) });
         const { id } = await sqlane.enqueue(testAdapter.pool, buildReport, { reportId: 'r1' }, {
             dedupeKey: 'r1',
             runAt,
@@ -213,15 +214,15 @@ describe('jobs.get()', () => {
     test('a completed job: its times, no payload; a failed job: its error with its code, its payload kept', async () => {
         const sqlane = await freshSqlane();
 
-        sqlane.lanes.add('ok', () => {});
-        sqlane.lanes.add('broken', () => {
+        runnerOf(sqlane).mount([handle('ok', () => {})]);
+        runnerOf(sqlane).mount([handle('broken', () => {
             throw new FatalJobError('no such report');
-        });
+        })]);
 
-        const ok = await sqlane.enqueue(testAdapter.pool, 'ok', { n: 1 });
-        const broken = await sqlane.enqueue(testAdapter.pool, 'broken', { n: 2 });
+        const ok = await sqlane.enqueue(testAdapter.pool, testLane('ok'), { n: 1 });
+        const broken = await sqlane.enqueue(testAdapter.pool, testLane('broken'), { n: 2 });
 
-        await sqlane.drain();
+        await runnerOf(sqlane).drain();
 
         const completed = await sqlane.jobs.get(ok.id);
         const failed = await sqlane.jobs.get(broken.id);
@@ -252,8 +253,8 @@ describe('jobs.get()', () => {
         const { promise: settled, resolve: finish } = Promise.withResolvers();
 
         // Ignores its signal: runs on after its timeout
-        sqlane.lanes.add(sync, () => settled);
-        await sqlane.start();
+        runnerOf(sqlane).mount([handle(sync, () => settled)]);
+        await runnerOf(sqlane).start();
 
         const first = await sqlane.enqueue(testAdapter.pool, sync, { orderId: 7 });
 
@@ -282,13 +283,13 @@ describe('jobs.get()', () => {
         const api = defineRateLimit({ name: 'api', max: 10, per: '1s' });
         const call = defineLane({ name: 'call_api', globalRateLimits: ({ payload }) => [api.key(payload.token)] });
 
-        sqlane.lanes.add(call, ({ payload }) => {
+        runnerOf(sqlane).mount([handle(call, ({ payload }) => {
             throw new RateLimitedError({ limit: api.key(payload.token), retryAfter: '1h' });
-        });
+        })]);
 
         const { id } = await sqlane.enqueue(testAdapter.pool, call, { token: 't1' });
 
-        await sqlane.drain();
+        await runnerOf(sqlane).drain();
         await expect(sqlane.jobs.get(id)).resolves.toMatchObject({
             status: 'blocked',
             attempts: 0,
@@ -303,12 +304,12 @@ describe('jobs.get()', () => {
         const all = defineConcurrencyLimit({ name: 'all', max: 100 });
         const github = defineRateLimit({ name: 'github', max: 5000, per: '1h', burst: 10 });
         const sms = defineRateLimit({ name: 'sms', max: 10, per: '1s', burst: 3 });
-        const { id } = await sqlane.enqueue(testAdapter.pool, 'sync_repo', {}, {
+        const { id } = await sqlane.enqueue(testAdapter.pool, testLane('sync_repo'), {}, {
             globalConcurrencyLimits: [perClient.key('42'), all],
             globalRateLimits: [sms.cost(2), github.key('t1')],
         });
         const at = new Date('2026-11-11T02:00:00.000Z');
-        const slot = await sqlane.enqueue(testAdapter.pool, 'nightly_report', {}, { slot: { at } });
+        const slot = await sqlane.enqueue(testAdapter.pool, testLane('nightly_report'), {}, { slot: { at } });
 
         await expect(sqlane.jobs.get(id)).resolves.toMatchObject({
             globalConcurrencyLimits: [{ key: 'all', max: 100 }, { key: 'client:42', max: 2 }],
@@ -330,13 +331,13 @@ describe('jobs.get()', () => {
             const error = new FatalJobError('a\u0000b\uD800c');
 
             error.stack = `${'x'.repeat(MAX_STACK_LENGTH - 1)}\u{1F600}`;
-            sqlane.lanes.add('broken_text', () => {
+            runnerOf(sqlane).mount([handle('broken_text', () => {
                 throw error;
-            });
+            })]);
 
-            const { id } = await sqlane.enqueue(testAdapter.pool, 'broken_text', {});
+            const { id } = await sqlane.enqueue(testAdapter.pool, testLane('broken_text'), {});
 
-            await sqlane.drain();
+            await runnerOf(sqlane).drain();
             await expect(sqlane.jobs.get(id)).resolves.toMatchObject({
                 status: 'failed',
                 lastError: { name: 'FatalJobError', message: 'a\uFFFDb\uFFFDc', stack: 'x'.repeat(MAX_STACK_LENGTH - 1) },
@@ -347,12 +348,12 @@ describe('jobs.get()', () => {
         async () => {
             const sqlane = await freshSqlane();
 
-            sqlane.lanes.add(defineLane({ name: 'flaky', backoff: fixedBackoff }), failingOnce('first try'));
+            runnerOf(sqlane).mount([handle(defineLane({ name: 'flaky', backoff: fixedBackoff }), failingOnce('first try'))]);
 
-            const flaky = await sqlane.enqueue(testAdapter.pool, 'flaky', {});
-            const empty = await sqlane.enqueue(testAdapter.pool, 'empty', false, { delay: '1h' });
+            const flaky = await sqlane.enqueue(testAdapter.pool, testLane('flaky'), {});
+            const empty = await sqlane.enqueue(testAdapter.pool, testLane('empty'), false, { delay: '1h' });
 
-            await sqlane.drain({ includeDelayed: true });
+            await runnerOf(sqlane).drain({ includeDelayed: true });
             await expect(sqlane.jobs.get(flaky.id)).resolves.toMatchObject({
                 status: 'completed',
                 attempts: 2,
@@ -363,7 +364,7 @@ describe('jobs.get()', () => {
 
     test('a JSON null payload is present, as null', async () => {
         const sqlane = await freshSqlane();
-        const { id } = await sqlane.enqueue(testAdapter.pool, 'empty', null, { delay: '1h' });
+        const { id } = await sqlane.enqueue(testAdapter.pool, testLane('empty'), null, { delay: '1h' });
         const job = await sqlane.jobs.get(id);
         const { jobs: [listed] } = await sqlane.jobs.list({ lane: 'empty' }, { includePayload: true });
 
@@ -374,7 +375,7 @@ describe('jobs.get()', () => {
     test('an unknown id, or a string that cannot be an id: null; not a string: InvalidOptionsError', async () => {
         const sqlane = await freshSqlane();
 
-        await sqlane.enqueue(testAdapter.pool, 'build_report', {}, { dedupeKey: 'r1' });
+        await sqlane.enqueue(testAdapter.pool, testLane('build_report'), {}, { dedupeKey: 'r1' });
 
         for (const jobId of ['build_report:none', '', 'build_report:r1 ', ' build_report:r1', 'build_report:é',
             `build_report:${'x'.repeat(300)}`]) {
@@ -405,11 +406,11 @@ describe('jobs.list()', () => {
         const sqlane = await freshSqlane();
         const ok = defineLane({ name: 'ok' });
 
-        sqlane.lanes.add(ok, () => {});
+        runnerOf(sqlane).mount([handle(ok, () => {})]);
 
         const done = await sqlane.enqueue(testAdapter.pool, ok, { n: 1 });
 
-        await sqlane.drain();
+        await runnerOf(sqlane).drain();
         await sleep(5);
 
         const first = await sqlane.enqueue(testAdapter.pool, ok, { n: 2 }, { delay: '1h' });
@@ -418,7 +419,7 @@ describe('jobs.list()', () => {
 
         const second = await sqlane.enqueue(testAdapter.pool, ok, { n: 3 }, { delay: '1h' });
 
-        await sqlane.enqueue(testAdapter.pool, 'other', {});
+        await sqlane.enqueue(testAdapter.pool, testLane('other'), {});
 
         const all = await sqlane.jobs.list({ lane: 'ok' });
 
@@ -455,7 +456,7 @@ describe('jobs.list()', () => {
         const page1 = await sqlane.jobs.list({ lane: 'ping' }, { limit });
 
         // A newer job, enqueued between the pages: before the cursor, not in the next pages
-        await sqlane.enqueue(testAdapter.pool, 'ping', {}, { dedupeKey: 'late' });
+        await sqlane.enqueue(testAdapter.pool, testLane('ping'), {}, { dedupeKey: 'late' });
 
         expect(page1.nextCursor).not.toBeNull();
 
@@ -471,9 +472,9 @@ describe('jobs.list()', () => {
         const sqlane = await freshSqlane();
         const flip = defineLane({ name: 'flip', maxAttempts: 1 });
 
-        sqlane.lanes.add(flip, () => {
+        runnerOf(sqlane).mount([handle(flip, () => {
             throw new Error('fails');
-        });
+        })]);
 
         // The oldest is due now; the others wait: drain() runs only it
         const target = await sqlane.enqueue(testAdapter.pool, flip, {});
@@ -490,7 +491,7 @@ describe('jobs.list()', () => {
         expect(page1.jobs).toHaveLength(4);
         expect(page1.nextCursor).not.toBeNull();
 
-        await sqlane.drain();
+        await runnerOf(sqlane).drain();
         await expect(sqlane.jobs.get(target.id)).resolves.toMatchObject({ status: 'failed' });
 
         // The target left the filter: the last page is empty
@@ -504,9 +505,9 @@ describe('jobs.list()', () => {
         const sqlane = await freshSqlane();
         const flip = defineLane({ name: 'flip', maxAttempts: 1 });
 
-        sqlane.lanes.add(flip, () => {
+        runnerOf(sqlane).mount([handle(flip, () => {
             throw new Error('fails');
-        });
+        })]);
 
         // The oldest waits; the newer ones are due now: the first drain() fails only them
         const target = await sqlane.enqueue(testAdapter.pool, flip, {}, { delay: '1h' });
@@ -518,13 +519,13 @@ describe('jobs.list()', () => {
             await sqlane.enqueue(testAdapter.pool, flip, {});
         }
 
-        await sqlane.drain();
+        await runnerOf(sqlane).drain();
 
         const page1 = await sqlane.jobs.list({ lane: flip, status: 'failed' }, { limit: 3 });
 
         expect(page1.jobs).toHaveLength(3);
 
-        await sqlane.drain({ includeDelayed: true });
+        await runnerOf(sqlane).drain({ includeDelayed: true });
 
         const page2 = await sqlane.jobs.list({ lane: flip, status: 'failed' }, { limit: 3, cursor: page1.nextCursor });
 
@@ -536,7 +537,7 @@ describe('jobs.list()', () => {
     test('the default limit is 100', async () => {
         const sqlane = await freshSqlane();
 
-        await sqlane.enqueueMany(testAdapter.pool, 'ping', Array.from({ length: 101 }, () => ({ payload: {} })));
+        await sqlane.enqueueMany(testAdapter.pool, testLane('ping'), Array.from({ length: 101 }, () => ({ payload: {} })));
 
         const page1 = await sqlane.jobs.list({ lane: 'ping' });
 
@@ -550,7 +551,7 @@ describe('jobs.list()', () => {
         const other = createSqlane({ adapter: testAdapter.adapter, tablePrefix: `${database.tablePrefix}${prefixCount}_` });
 
         instances.push(other);
-        await sqlane.enqueueMany(testAdapter.pool, 'ping', [{ payload: {} }, { payload: {} }, { payload: {} }]);
+        await sqlane.enqueueMany(testAdapter.pool, testLane('ping'), [{ payload: {} }, { payload: {} }, { payload: {} }]);
 
         const page1 = await sqlane.jobs.list({ lane: 'ping' }, { limit: 2 });
         const all = await sqlane.jobs.list({ lane: 'ping' });
@@ -561,7 +562,7 @@ describe('jobs.list()', () => {
 
     test('a job that commits after a page was read, older than the cursor, is listed by the next page', async () => {
         const sqlane = await freshSqlane();
-        const older = await sqlane.enqueue(testAdapter.pool, 'late', {});
+        const older = await sqlane.enqueue(testAdapter.pool, testLane('late'), {});
 
         await sleep(5);
 
@@ -570,10 +571,10 @@ describe('jobs.list()', () => {
         try {
             await connection.begin();
 
-            const late = await sqlane.enqueue(connection.raw, 'late', {});
+            const late = await sqlane.enqueue(connection.raw, testLane('late'), {});
 
             await sleep(5);
-            await sqlane.enqueueMany(testAdapter.pool, 'late', [{ payload: {} }, { payload: {} }]);
+            await sqlane.enqueueMany(testAdapter.pool, testLane('late'), [{ payload: {} }, { payload: {} }]);
 
             const page1 = await sqlane.jobs.list({ lane: 'late' }, { limit: 2 });
 
@@ -589,7 +590,7 @@ describe('jobs.list()', () => {
     test('cursors: bound to their filter; limit and includePayload may change between pages', async () => {
         const sqlane = await freshSqlane();
 
-        await sqlane.enqueueMany(testAdapter.pool, 'ping', [{ payload: { n: 1 } }, { payload: { n: 2 } },
+        await sqlane.enqueueMany(testAdapter.pool, testLane('ping'), [{ payload: { n: 1 } }, { payload: { n: 2 } },
             { payload: { n: 3 } }]);
 
         const pending = await sqlane.jobs.list({ lane: 'ping', status: 'pending' }, { limit: 1 });
@@ -667,11 +668,11 @@ describe('sqlane.jobs', () => {
         async () => {
             const sqlane = await freshSqlane({ unknownLanes: 'reject', lanes: [defineLane({ name: 'known' })] });
 
-            const { id } = await sqlane.enqueue(testAdapter.pool, 'known', {}, { dedupeKey: 'k1' });
+            const { id } = await sqlane.enqueue(testAdapter.pool, testLane('known'), {}, { dedupeKey: 'k1' });
 
             await expect(sqlane.jobs.list({ lane: 'unknown' })).resolves.toStrictEqual({ jobs: [], nextCursor: null });
             await expect(sqlane.jobs.get('unknown:x')).resolves.toBeNull();
-            await sqlane.start();
+            await runnerOf(sqlane).start();
             await sqlane.close();
             await expect(sqlane.jobs.get(id)).resolves.toMatchObject({ id });
             await expect(sqlane.jobs.list({ lane: 'known' })).resolves.toMatchObject({ jobs: [{ id }] });

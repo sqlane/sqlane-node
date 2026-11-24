@@ -12,6 +12,7 @@ import { mysql2Adapter } from '../../src/adapters/mysql2.js';
 import { parseServerVersion, SERVER_VERSION_SQL } from '../../src/server_check.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { testLane, runnerOf } from '../support/runners.js';
 
 /** @type {Record<'mysql' | 'postgres', (table: string) => string>} */
 const INSERT_TWO_PAYLOADS_SQL = {
@@ -269,7 +270,7 @@ test('a database of 6.0: 0007 adds the rate keys in µs and the rate limits of t
     expect(Number((await database.query(read))[0].tat_us)).toBe(Date.UTC(2030, 0, 2, 3, 4, 5, 123) * 1000 + 456);
 
     // An enqueue after the migration writes the column
-    const { id } = await sqlane.enqueue(testAdapter.pool, 'sync', {}, { globalRateLimits: [api.key(1)] });
+    const { id } = await sqlane.enqueue(testAdapter.pool, testLane('sync'), {}, { globalRateLimits: [api.key(1)] });
     const [enqueued] = await database.query(`SELECT rate_limits FROM ${tablePrefix}jobs WHERE id = '${id}'`);
 
     expect(parsedJson(enqueued.rate_limits))
@@ -283,7 +284,7 @@ test('a database of 7.x: 0008 adds the index of the lists; jobs.list pages throu
     await migrateAllBut(tablePrefix, JOB_LIST.length + LANES.length, []);
     await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: [...JOB_LIST, ...LANES] });
 
-    const added = await sqlane.enqueueMany(testAdapter.pool, 'ping', [{ payload: {} }, { payload: {} }, { payload: {} }]);
+    const added = await sqlane.enqueueMany(testAdapter.pool, testLane('ping'), [{ payload: {} }, { payload: {} }, { payload: {} }]);
     const page1 = await sqlane.jobs.list({ lane: 'ping' }, { limit: 2 });
     const page2 = await sqlane.jobs.list({ lane: 'ping' }, { limit: 2, cursor: page1.nextCursor });
 
@@ -968,7 +969,7 @@ test('the check of the server: another dialect, a ConfigError before any table',
     await expect(sqlane.schema.migrate()).rejects.toThrow(ConfigError);
     await expect(sqlane.schema.migrate())
         .rejects.toThrow(`schema.migrate(): "dialect" is "${other}", but the database is `);
-    await expect(sqlane.start()).rejects.toThrow(ConfigError);
+    await expect(runnerOf(sqlane).start()).rejects.toThrow(ConfigError);
     await sqlane.close({ deadline: 0 });
     await expect(listTables(p)).resolves.toStrictEqual([]);
 });
@@ -999,7 +1000,7 @@ test.runIf(isMysqlFamily)('the check of the server: a sql_mode without strict mo
     try {
         await expect(sqlane.schema.migrate()).rejects.toThrow(ConfigError);
         await expect(sqlane.schema.migrate()).rejects.toThrow(`schema.migrate(): ${LACKING_STRICT}`);
-        await expect(sqlane.start()).rejects.toThrow(`start(): ${LACKING_STRICT}`);
+        await expect(runnerOf(sqlane).start()).rejects.toThrow(`start(): ${LACKING_STRICT}`);
         await expect(listTables(p)).resolves.toStrictEqual([]);
     } finally {
         await sqlane.close({ deadline: 0 });

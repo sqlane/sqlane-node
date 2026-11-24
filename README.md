@@ -34,25 +34,23 @@ Node.js 22.12+ · ESM · TypeScript types · zero dependencies · npm provenance
 ```ts
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import { createSqlane, defineLane } from '@sqlane/core';
+import { createSqlane, defineHandler, defineLane } from '@sqlane/core';
 import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
+import { createRunner } from '@sqlane/core/runner';
 import { orders } from './schema.js';
 
 const url = process.env.DATABASE_URL;
 const db = drizzle({ client: new Pool({ connectionString: url }) }); // yours
-const queuePool = new Pool({ connectionString: url, max: 3 }); // sqlane's own
-const queueDb = drizzle({ client: queuePool });
+const queueDb = drizzle({ client: new Pool({ connectionString: url, max: 3 }) }); // sqlane's own
 
 const sendReceipt = defineLane<{ orderId: number }>({ name: 'send_receipt' });
-const sqlane = createSqlane({
-    adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }),
-    lanes: [sendReceipt],
-});
+const sqlane = createSqlane({ adapter: drizzleAdapter(queueDb, { dialect: 'postgres' }) });
 await sqlane.schema.migrate(); // creates the sqlane_* tables
 
 // Worker: runs the job after the commit, in this process or another
-sqlane.lanes.add(sendReceipt, ({ payload }) => sendReceiptEmail(payload.orderId));
-await sqlane.start();
+const runner = createRunner(sqlane);
+runner.mount([defineHandler(sendReceipt, ({ payload }) => sendReceiptEmail(payload.orderId))]);
+await runner.start();
 
 // Producer: the order and its job commit together, or not at all
 await db.transaction(async (tx) => {
@@ -183,7 +181,7 @@ transaction, so:
 - **[Atomic enqueue](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue).** Enqueue in your own
   transaction: commit → the job runs, rollback → it's gone.
   [`enqueueMany`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueuemany) adds a batch at once.
-- **[Cron and interval schedules](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedule).** Time zones,
+- **[Cron and interval schedules](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedules).** Time zones,
   one job per slot across the cluster, a missed run caught up once, and jitter to spread the runs of many schedules.
 - **[Rate limits, global or local](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineratelimit).** "100
   calls a second to the mail API", per key, across the cluster or per process. A job over the limit waits without
@@ -283,7 +281,6 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { createSqlane } from '@sqlane/core';
 import { drizzleAdapter } from '@sqlane/core/adapter-drizzle';
-import { sendReceipt } from './jobs.js';
 
 const url = process.env.DATABASE_URL;
 const queuePool = new Pool({ connectionString: url, max: 3 }); // sqlane's own
@@ -292,7 +289,6 @@ const queueDb = drizzle({ client: queuePool });
 export const sqlane = createSqlane({
     // notify: NOTIFY wakes the workers of every process at the commit
     adapter: drizzleAdapter(queueDb, { dialect: 'postgres', notify: true }),
-    lanes: [sendReceipt],
 });
 
 await sqlane.schema.migrate();
@@ -319,21 +315,27 @@ export async function placeOrder(total: number) {
 }
 ```
 
-**4. Handle jobs, start the worker, close on shutdown.** Pass the handler's `signal` to APIs that accept one, such as
-`fetch`: it aborts on a timeout or a shutdown. A handler must stop when it aborts: one that runs on past its lease can
+**4. Handle jobs, start the runner, close on shutdown.** The runner of a process (`@sqlane/core/runner`) runs the
+handlers that it mounts; a process that only enqueues never loads it. Pass the handler's `signal` to APIs that accept
+one, such as `fetch`: it aborts on a timeout or a shutdown. A handler must stop when it aborts: one that runs on past its lease can
 exceed a concurrency limit ([guarantees](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#guarantees)).
 
 ```ts
 // worker.ts
+import { defineHandler } from '@sqlane/core';
+import { createRunner } from '@sqlane/core/runner';
 import { sendReceipt } from './jobs.js';
 import { sqlane } from './sqlane.js';
 
-sqlane.lanes.add(sendReceipt, async ({ payload, signal }) => {
-    await sendReceiptEmail(payload.orderId, { signal }); // your code
-});
+const runner = createRunner(sqlane, { localMaxConcurrency: 10 });
 
-await sqlane.start();
-process.once('SIGTERM', () => sqlane.close({ deadline: '30s' }));
+runner.mount([
+    defineHandler(sendReceipt, async ({ payload, signal }) => {
+        await sendReceiptEmail(payload.orderId, { signal }); // your code
+    }),
+]);
+await runner.start();
+process.once('SIGTERM', () => sqlane.close({ deadline: '30s' })); // closes the runner, then the hint
 ```
 
 ## Documentation

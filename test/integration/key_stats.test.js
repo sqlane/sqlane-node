@@ -11,6 +11,7 @@ import {
 } from '../../src/index.js';
 import { createTestAdapter } from './helpers/test_adapter.js';
 import { connectTestDatabase } from '../support/test_database.js';
+import { handle, runnerOf } from '../support/runners.js';
 
 /** @typedef {import('../../src/types.js').Sqlane<any>} Sqlane */
 
@@ -236,12 +237,12 @@ describe('keyStats', () => {
         /** @type {Date[]} */
         const started = [];
 
-        sqlane.lanes.add(sync, ({ job }) => {
+        runnerOf(sqlane).mount([handle(sync, ({ job }) => {
             started.push(job.startedAt);
 
             return promise;
-        });
-        await sqlane.start();
+        })]);
+        await runnerOf(sqlane).start();
         await sqlane.enqueue(testAdapter.pool, sync, {});
         await waitFor(() => started.length === 1);
 
@@ -304,10 +305,10 @@ describe('keyStats', () => {
         const sync = defineLane({ name: 'sync', timeout: '10s', globalConcurrencyLimits: () => [ORDER.key('a')] });
 
         await first.schema.migrate();
-        first.lanes.add(sync, ({ signal }) => new Promise((resolve) => {
+        runnerOf(first).mount([handle(sync, ({ signal }) => new Promise((resolve) => {
             signal.addEventListener('abort', resolve);
-        }));
-        await first.start();
+        }))]);
+        await runnerOf(first).start();
         await first.enqueue(testAdapter.pool, sync, {});
         await waitFor(async () => (await first.jobs.list({ lane: 'sync', status: 'running' })).jobs.length === 1);
         await first.close({ deadline: '50ms', exitsBy: '5s' });
@@ -574,7 +575,7 @@ describe('keyStats', () => {
         // A process that does not handle the name sweeps: the job is pending, and the key is gone
         const sweeper = sqlaneOn(p, { timings: { ...TIMINGS, recoveryIntervalMs: 100 } });
 
-        await sweeper.start();
+        await runnerOf(sweeper).start();
         await waitFor(async () => (await sqlane.jobs.get(job))?.status === 'pending');
         await expect(sqlane.jobs.keyStats()).resolves.toStrictEqual({ keys: [], truncated: false });
     });

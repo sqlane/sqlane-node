@@ -2,6 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { expect } from 'vitest';
 import { ConfigError } from '../../../src/index.js';
 import { migrationsOf } from '../../../src/migrations.js';
+import { runnerOf, schedule } from '../../support/runners.js';
 
 /**
  * The schedules through an adapter: start() without the table of the schedules asks for schema.migrate() (the error of
@@ -28,12 +29,12 @@ export async function checkSchedules(sqlane, p, database) {
     }
 
     await database.query(`DELETE FROM ${p}migrations WHERE id IN ('0004_schedules', '0009_lanes')`);
-    sqlane.schedule('tick', { every: '1s' });
+    runnerOf(sqlane).mount([schedule('tick', { every: '1s' })]);
 
-    await expect(sqlane.start()).rejects.toThrow(ConfigError);
-    await expect(sqlane.start()).rejects.toThrow(`start(): the table ${p}schedules is missing: run schema.migrate()`);
+    await expect(runnerOf(sqlane).start()).rejects.toThrow(ConfigError);
+    await expect(runnerOf(sqlane).start()).rejects.toThrow(`start(): the table ${p}schedules is missing: run schema.migrate()`);
     await expect(sqlane.schema.migrate()).resolves.toStrictEqual({ applied: ['0004_schedules', '0009_lanes'] });
-    await sqlane.start();
+    await runnerOf(sqlane).start();
 
     const deadline = Date.now() + 5000;
     /** @type {Record<string, unknown>[]} */

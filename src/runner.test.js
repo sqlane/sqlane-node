@@ -9,6 +9,21 @@ import { createHintChannel } from './hint_channel.js';
 import { createRegistry } from './registry.js';
 import { createRunner } from './runner.js';
 
+/**
+ * Adds a handler of a lane to the registry, as a mount does.
+ * @param {import('./registry.js').Registry} registry
+ * @param {import('./types.js').LaneDefinition | string} lane A definition, or a name: a definition without options.
+ * @param {import('./types.js').Handler} handler
+ * @param {import('./types.js').HandlerOptions} [settings] Its local settings.
+ * @returns {import('./registry.js').HandlerEntry}
+ */
+function addLane(registry, lane, handler, settings = {}) {
+    const definition = typeof lane === 'string' ? defineLane({ name: lane }) : lane;
+    const [entry] = registry.addEntries([{ name: definition.name, definition, handler, settings, where: 'test' }]);
+
+    return entry;
+}
+
 /** A stall recovery that finds no work: no stale job, nothing to sweep */
 const NO_RECOVERY_WORK = { stale: [], lingers: false, orphans: false, blocked: false, idleRateKeys: false };
 
@@ -40,7 +55,7 @@ function runnerWith(makeDueErrors) {
         deleteIdleRateKeys: async () => 0,
     }));
 
-    registry.add('ping', () => {});
+    addLane(registry, 'ping', () => {});
 
     return {
         runner: createRunner({
@@ -110,7 +125,7 @@ async function runnerWithHint(hintsAfterCommit) {
         },
     }));
 
-    registry.add('ping', () => {});
+    addLane(registry, 'ping', () => {});
 
     const runner = createRunner({
         store,
@@ -171,8 +186,8 @@ test('hints before the commit: the re-probes of a name end with its steps, while
         },
     }));
 
-    registry.add('old', () => {});
-    registry.add('new', () => {});
+    addLane(registry, 'old', () => {});
+    addLane(registry, 'new', () => {});
 
     const runner = createRunner({
         store,
@@ -369,8 +384,8 @@ function runnerWithHeldJobs(withKeys, {
     }));
     const lane = defineConcurrencyLimit({ name: 'lane', max: laneConcurrency });
     const definition = withKeys
-        ? defineLane({ name: 'ping', globalConcurrencyLimits: () => [], timeout: '1m', localConcurrencyLimits: [lane] })
-        : defineLane({ name: 'ping', localConcurrencyLimits: [lane] });
+        ? defineLane({ name: 'ping', globalConcurrencyLimits: () => [], timeout: '1m' })
+        : defineLane({ name: 'ping' });
     let nextError = handlerError;
 
     /** @param {import('./types.js').HandlerContext} context */
@@ -387,8 +402,8 @@ function runnerWithHeldJobs(withKeys, {
         }
     }
 
-    registry.add(definition, handler);
-    registry.add('later', handler);
+    addLane(registry, definition, handler, { localConcurrencyLimits: [lane] });
+    addLane(registry, 'later', handler);
 
     return {
         runner: createRunner({
@@ -668,7 +683,7 @@ async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
         findRecoveryWork: async () => NO_RECOVERY_WORK,
     }));
 
-    registry.add('ping', ({ signal }) => new Promise((resolve) => {
+    addLane(registry, 'ping', ({ signal }) => new Promise((resolve) => {
         signal.addEventListener('abort', () => {
             aborts.push({ reason: signal.reason, at: Date.now() });
             resolve(undefined);
@@ -870,7 +885,7 @@ test('stall recovery: the stalled event has the attempt of the run that stalled'
         deleteIdleRateKeys: async () => 0,
     }));
 
-    registry.add('ping', () => {});
+    addLane(registry, 'ping', () => {});
 
     const runner = createRunner({
         store,
@@ -920,7 +935,7 @@ test.each([
         },
     }));
 
-    registry.add('ping', () => {});
+    addLane(registry, 'ping', () => {});
 
     const runner = createRunner({
         store,
@@ -961,7 +976,7 @@ test.each([
         defaultTimeoutMs: null,
     });
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({ probe: async () => [] }));
-    registry.add('ping', () => {});
+    addLane(registry, 'ping', () => {});
 
     const runner = createRunner({
         store,
@@ -1060,7 +1075,7 @@ test('dispatch: many due names take turns, a claim requests at most 4 names per 
     const ran = [];
 
     for (const name of names) {
-        registry.add(name, () => {
+        addLane(registry, name, () => {
             ran.push(name);
         });
     }
@@ -1111,7 +1126,7 @@ test('the handler gets the slot of a job of a schedule as job.scheduledAt; null 
     };
 
     for (const name of ['report', 'ping']) {
-        registry.add(name, ({ job }) => {
+        addLane(registry, name, ({ job }) => {
             seen[job.lane] = job.scheduledAt;
         });
     }
@@ -1176,10 +1191,10 @@ function recordingRunner({ maxConcurrency = 4, names = 2, pointer = 0 } = {}) {
         renewLeases: async () => new Set(),
     }));
 
-    registry.add(defineLane({ name: 'keyed', globalConcurrencyLimits: () => [], timeout: '1m' }), () => {});
+    addLane(registry, defineLane({ name: 'keyed', globalConcurrencyLimits: () => [], timeout: '1m' }), () => {});
 
     for (let index = 0; index < names - 1; index++) {
-        registry.add(`plain_${index}`, () => {});
+        addLane(registry, `plain_${index}`, () => {});
     }
 
     const runner = createRunner({
@@ -1304,14 +1319,11 @@ function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}
         held.push(() => resolve(undefined));
     });
 
-    registry.add(defineLane({ name: 'plain', localConcurrencyLimits: [pair] }), hold);
-    registry.add(defineLane({
-        name: 'keyed',
-        globalConcurrencyLimits: () => [],
-        timeout: '1m',
+    addLane(registry, 'plain', hold, { localConcurrencyLimits: [pair] });
+    addLane(registry, defineLane({ name: 'keyed', globalConcurrencyLimits: () => [], timeout: '1m' }), hold, {
         localConcurrencyLimits: [pair],
-    }), hold);
-    registry.add('free', hold);
+    });
+    addLane(registry, 'free', hold);
 
     const runner = createRunner({
         store,
@@ -1457,7 +1469,7 @@ async function runnerWithClaims(errors) {
         },
     }));
 
-    registry.add('ping', () => {});
+    addLane(registry, 'ping', () => {});
 
     const runner = createRunner({
         store,
@@ -1651,7 +1663,7 @@ function runnerWithRateKey({ waitMs, unblock = async () => ({ lanes: [], waits: 
         deleteIdleRateKeys: async () => 0,
     }));
 
-    registry.add(defineLane({ name: 'tick', globalRateLimits: () => [smooth] }), () => {});
+    addLane(registry, defineLane({ name: 'tick', globalRateLimits: () => [smooth] }), () => {});
 
     return {
         runner: createRunner({
@@ -1839,12 +1851,12 @@ test('dispatch: a probe of more than 100 names that gives the names of the claim
             },
         }, 4);
 
-        registry.add('busy', () => new Promise((resolve) => {
+        addLane(registry, 'busy', () => new Promise((resolve) => {
             holds.push(() => resolve(undefined));
         }));
 
         for (const name of others) {
-            registry.add(name, () => {});
+            addLane(registry, name, () => {});
         }
 
         try {
@@ -1886,7 +1898,7 @@ test('a claim that gives one job twice: it runs once, with an error event', asyn
         claimDue: async () => ({ jobs: claims.splice(0, 1).flat(), next: [], limited: [] }),
     }, 10, events);
 
-    registry.add('ping', async ({ job }) => {
+    addLane(registry, 'ping', async ({ job }) => {
         started.push(job.id);
         await sleep(20);
     });
@@ -1927,9 +1939,9 @@ test('a job past its maxStalls fails at its claim, as fatal: no handler, no atte
         },
     }, 10, events);
 
-    registry.add(defineLane({ name: 'ping', localRateLimits: [once], failureLane }), ({ job }) => {
+    addLane(registry, defineLane({ name: 'ping', failureLane }), ({ job }) => {
         started.push(job.id);
-    });
+    }, { localRateLimits: [once] });
 
     try {
         await expect(runner.drain()).resolves.toStrictEqual({ completed: 1, retried: 0, failed: 1 });
@@ -1964,7 +1976,7 @@ test('a job that fails: its failure job by the definition of this process, and t
         },
     }, 10);
 
-    registry.add(defineLane({ name: 'ping', failureLane: defineLane({ name: 'ping_failed' }) }), () => {
+    addLane(registry, defineLane({ name: 'ping', failureLane: defineLane({ name: 'ping_failed' }) }), () => {
         throw new Error('broken');
     });
 
@@ -1993,9 +2005,9 @@ test.each([
             claimDue: async () => ({ jobs: claims.splice(0, 1).flat(), next: [], limited: [] }),
         }, 10);
 
-        registry.add(defineLane({ name: 'ping', localRateLimits: [once] }), ({ job }) => {
+        addLane(registry, 'ping', ({ job }) => {
             started.push(job.id);
-        });
+        }, { localRateLimits: [once] });
 
         try {
             await expect(runner.drain()).resolves.toStrictEqual({ completed: 1, retried: 0, failed: 0 });
@@ -2029,7 +2041,7 @@ test('a job past its maxStalls: a close() in release mode during the write of it
         },
     }, 10);
 
-    registry.add('ping', () => {});
+    addLane(registry, 'ping', () => {});
     await runner.start();
     await waitFor(() => failing, 1000);
 

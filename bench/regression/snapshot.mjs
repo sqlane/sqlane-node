@@ -27,6 +27,7 @@ const { values: args } = parseArgs({
 const runs = Number(args.runs ?? (args.update ? 10 : 1));
 const databases = args.db ? TEST_DATABASES.filter(database => args.db?.includes(database.name)) : TEST_DATABASES;
 const lib = await import('../../src/index.js');
+const { createRunner } = await import('../../src/create_runner.js');
 const { pgAdapter } = await import('../../src/adapters/pg.js');
 const { mysql2Adapter } = await import('../../src/adapters/mysql2.js');
 
@@ -104,6 +105,7 @@ async function runScenario(database, stats, adminUrl, scenario) {
             lib,
             pool,
             create: options => lib.createSqlane({ adapter, ...options }),
+            createRunner,
             measure: async (func) => {
                 await stats.reset(name);
                 await func();

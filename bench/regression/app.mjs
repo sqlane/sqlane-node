@@ -75,6 +75,9 @@ const { createSqlane, defineConcurrencyLimit, defineRateLimit, RateLimitedError,
 // The names of the version of `--src`: lanes from 9.0, job definitions before
 const defineLane = lib.defineLane ?? lib.defineJob;
 const definitionsOption = lib.defineLane ? 'lanes' : 'jobs';
+// The runner of 10.0 (`@sqlane/core/runner`), with handlers and schedules to mount; the worker methods of the instance
+// before. Imported only when there: a producer of 10.0 loads none of it
+const runnerModule = lib.defineHandler ? await import(join(src, 'src/create_runner.js')) : null;
 const names = Array.from({ length: Number(args.names) }, (_, index) => `job_${String(index).padStart(4, '0')}`);
 const trace = args.trace
     ? generateTrace({ profile: args.trace, seed: Number(args.seed), seconds: Number(args['trace-seconds']) })
@@ -231,13 +234,19 @@ function traceDefinitions(traced) {
 }
 
 /**
- * The instance, with its cap as the version of `--src` names it: `localMaxConcurrency` from 6.0, `maxConcurrency` in
- * 5.x, `concurrency` before.
+ * The instance, with its cap as the version of `--src` names it: on the runner from 10.0, `localMaxConcurrency` from
+ * 6.0, `maxConcurrency` in 5.x, `concurrency` before.
  * @param {Record<string, unknown>} options
  * @returns {any}
  */
 function createInstance(options) {
     const max = Number(args.cap);
+
+    if (runnerModule) {
+        const { [definitionsOption]: _definitions, ...rest } = options;
+
+        return createSqlane(rest);
+    }
 
     for (const cap of ['localMaxConcurrency', 'maxConcurrency']) {
         try {
@@ -274,6 +283,11 @@ const sqlane = createInstance({
         }
     },
 });
+
+// The runner of a worker or a scheduler of 10.0; before, the instance runs them
+const runner = runnerModule && (role === 'worker' || role === 'scheduler')
+    ? runnerModule.createRunner(sqlane, { localMaxConcurrency: Number(args.cap) })
+    : null;
 
 /**
  * Most jobs go to the 10 hot names, every 10th to one of the others.
@@ -497,19 +511,31 @@ let producerDone = null;
 if (role === 'setup') {
     await sqlane.schema.migrate();
 } else if (role === 'worker') {
-    for (const definition of definitions) {
-        // `lanes.add` from 9.0, `handle` before
-        (sqlane.lanes?.add ?? sqlane.handle)(definition, trace ? runTraceJob : async () => {});
-    }
+    const handler = trace ? runTraceJob : async () => {};
 
-    await sqlane.start();
+    if (runner) {
+        runner.mount(definitions.map(definition => lib.defineHandler(definition, handler)));
+        await runner.start();
+    } else {
+        for (const definition of definitions) {
+            // `lanes.add` from 9.0, `handle` before
+            (sqlane.lanes?.add ?? sqlane.handle)(definition, handler);
+        }
+
+        await sqlane.start();
+    }
 } else if (role === 'scheduler') {
-    // The schedules of all names, no handler
-    for (const definition of definitions) {
-        sqlane.schedule(definition, { every: String(args.every) });
-    }
+    // The schedules of all names, no handler; a key: the schedules of 10.0 have one
+    if (runner) {
+        runner.mount(definitions.map(definition => lib.defineSchedule(definition, { key: 's', every: String(args.every) })));
+        await runner.start();
+    } else {
+        for (const definition of definitions) {
+            sqlane.schedule(definition, { key: 's', every: String(args.every) });
+        }
 
-    await sqlane.start();
+        await sqlane.start();
+    }
 } else if (role === 'producer') {
     producerDone = producer.run();
 } else {
