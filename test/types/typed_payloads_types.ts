@@ -11,6 +11,8 @@ import {
 } from '@sqlane/core';
 import type { Handler, HandlerPayload, LaneHandler, ScheduleDefinition, ScheduleOptions } from '@sqlane/core';
 import { mysql2Adapter } from '@sqlane/core/adapter-mysql2';
+import { createRunner } from '@sqlane/core/runner';
+import type { LaneRunStatus, Mount, Runner, RunnerOptions, ScheduleRunStatus } from '@sqlane/core/runner';
 
 type Report = { reportId: string; pages?: number };
 
@@ -128,6 +130,27 @@ export async function typedPayloadsTypes() {
     const weekly: ScheduleOptions<Report> = { key: 'weekly', cron: '0 6 * * 1', payload: { reportId: 'w' } };
 
     defineSchedule(buildReport, weekly);
+
+    // The runner of this process: @sqlane/core/runner
+    const runnerOptions: RunnerOptions = { localMaxConcurrency: 5 };
+    const runner: Runner = createRunner(sqlane, runnerOptions);
+    const mount = runner.mount([reportHandler, daily, defineHandler(untyped, () => {})]);
+
+    expectTypeOf(mount).toEqualTypeOf<Mount>();
+    expectTypeOf(mount.unmount()).toBeVoid();
+    expectTypeOf(runner.getStatus(buildReport)).toEqualTypeOf<LaneRunStatus>();
+    expectTypeOf(runner.getStatus('build_report')).toEqualTypeOf<LaneRunStatus>();
+    expectTypeOf(runner.getStatus(daily)).toEqualTypeOf<ScheduleRunStatus>();
+    expectTypeOf(runner.getStatus('build_report:daily')).toEqualTypeOf<ScheduleRunStatus>();
+    runner.pauseLocally(buildReport);
+    runner.resumeLocally('build_report');
+    await runner.start();
+    expectTypeOf(await runner.drain({ timeout: '1s' })).toEqualTypeOf<{ completed: number; retried: number; failed: number }>();
+    await runner.close({ deadline: '5s' });
+    // @ts-expect-error a lane definition is not a part: mount its handler
+    runner.mount([buildReport]);
+    // @ts-expect-error pollInterval is an option of the sqlane
+    createRunner(sqlane, { pollInterval: '1s' });
 
     expectTypeOf<Page>().toEqualTypeOf<Report>();
 }

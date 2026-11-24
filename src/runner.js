@@ -77,6 +77,7 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  * @property {() => boolean} isClosed
  * @property {() => boolean} isStarted
  * @property {() => boolean} isIdle Neither started, draining nor closed.
+ * @property {() => boolean} isDraining
  * @property {() => boolean} isBusy Started, draining or closing: its queries run.
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit Calls `onEvent`; logs what it throws.
  * @property {(keys: string[]) => Promise<void>} unblockKeys Makes due the jobs blocked on keys with room, wakes and
@@ -674,6 +675,7 @@ export function createRunner({
         isClosed: () => state === 'closing' || state === 'closed',
         isStarted: () => state === 'started',
         isIdle: () => state === 'idle',
+        isDraining: () => state === 'draining',
         isBusy: () => state === 'started' || state === 'draining' || state === 'closing',
         emit,
         unblockKeys,

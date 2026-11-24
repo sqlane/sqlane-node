@@ -112,6 +112,11 @@ export {
  */
 /** @typedef {import('./types.js').JobSelector} JobSelector */
 /** @typedef {import('./types.js').LaneStats} LaneStats */
+/** @typedef {import('./types.js').LaneRunStatus} LaneRunStatus */
+/** @typedef {import('./sqlane.js').Mount} Mount */
+/** @typedef {import('./sqlane.js').Runner} Runner */
+/** @typedef {import('./types.js').RunnerOptions} RunnerOptions */
+/** @typedef {import('./types.js').ScheduleRunStatus} ScheduleRunStatus */
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 /** @typedef {import('./types.js').ListJobsOptions} ListJobsOptions */
 /** @typedef {import('./types.js').KeyStats} KeyStats */

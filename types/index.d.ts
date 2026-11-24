@@ -44,6 +44,11 @@ export type JobRecord<P = any> = import('./types.js').JobRecord<P>;
 export type LaneOptions<P = any> = import('./types.js').LaneOptions<P>;
 export type JobSelector = import('./types.js').JobSelector;
 export type LaneStats = import('./types.js').LaneStats;
+export type LaneRunStatus = import('./types.js').LaneRunStatus;
+export type Mount = import('./sqlane.js').Mount;
+export type Runner = import('./sqlane.js').Runner;
+export type RunnerOptions = import('./types.js').RunnerOptions;
+export type ScheduleRunStatus = import('./types.js').ScheduleRunStatus;
 export type JobStatus = import('./types.js').JobStatus;
 export type ListJobsOptions = import('./types.js').ListJobsOptions;
 export type KeyStats = import('./types.js').KeyStats;
@@ -152,6 +157,11 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
  */
 /** @typedef {import('./types.js').JobSelector} JobSelector */
 /** @typedef {import('./types.js').LaneStats} LaneStats */
+/** @typedef {import('./types.js').LaneRunStatus} LaneRunStatus */
+/** @typedef {import('./sqlane.js').Mount} Mount */
+/** @typedef {import('./sqlane.js').Runner} Runner */
+/** @typedef {import('./types.js').RunnerOptions} RunnerOptions */
+/** @typedef {import('./types.js').ScheduleRunStatus} ScheduleRunStatus */
 /** @typedef {import('./types.js').JobStatus} JobStatus */
 /** @typedef {import('./types.js').ListJobsOptions} ListJobsOptions */
 /** @typedef {import('./types.js').KeyStats} KeyStats */

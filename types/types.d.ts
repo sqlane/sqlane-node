@@ -709,6 +709,36 @@ export type SqlaneOptions<C> = {
      */
     cleanup?: boolean;
 };
+export type RunnerOptions = {
+    /**
+     * The handlers that run at the same time in this runner. Default: 10.
+     */
+    localMaxConcurrency?: number;
+    /**
+     * Default: the logger of the sqlane. The queries of the sqlane log to the sqlane's.
+     */
+    logger?: Logger;
+};
+export type LaneRunStatus = {
+    /**
+     * A handler of the lane is mounted in this runner.
+     */
+    mounted: boolean;
+    /**
+     * `runner.pauseLocally()` holds the lane in this runner.
+     */
+    pausedLocally: boolean;
+    /**
+     * Its jobs that run in this runner, by any of its handlers.
+     */
+    running: number;
+};
+export type ScheduleRunStatus = {
+    /**
+     * The schedule is mounted in this runner: it fires here.
+     */
+    mounted: boolean;
+};
 export type DrainOptions = {
     /**
      * Default: `'10s'`.
@@ -1572,6 +1602,24 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * @property {Duration} [pollInterval] Default: `'5s'`.
  * @property {number} [maxPayloadBytes] Default: 256 KiB.
  * @property {boolean} [cleanup] Built-in deletion of the expired jobs. Default: true.
+ */
+/**
+ * The options of `createRunner()`.
+ * @typedef {object} RunnerOptions
+ * @property {number} [localMaxConcurrency] The handlers that run at the same time in this runner. Default: 10.
+ * @property {Logger} [logger] Default: the logger of the sqlane. The queries of the sqlane log to the sqlane's.
+ */
+/**
+ * A lane in this process: `runner.getStatus(lane)`.
+ * @typedef {object} LaneRunStatus
+ * @property {boolean} mounted A handler of the lane is mounted in this runner.
+ * @property {boolean} pausedLocally `runner.pauseLocally()` holds the lane in this runner.
+ * @property {number} running Its jobs that run in this runner, by any of its handlers.
+ */
+/**
+ * A schedule in this process: `runner.getStatus(schedule)`.
+ * @typedef {object} ScheduleRunStatus
+ * @property {boolean} mounted The schedule is mounted in this runner: it fires here.
  */
 /**
  * @typedef {object} DrainOptions

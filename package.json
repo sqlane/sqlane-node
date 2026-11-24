@@ -33,6 +33,10 @@
             "types": "./types/index.d.ts",
             "default": "./src/index.js"
         },
+        "./runner": {
+            "types": "./types/create_runner.d.ts",
+            "default": "./src/create_runner.js"
+        },
         "./adapter-mysql2": {
             "types": "./types/adapters/mysql2.d.ts",
             "default": "./src/adapters/mysql2.js"

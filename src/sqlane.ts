@@ -21,6 +21,8 @@ import type {
     KeyStatsOptions,
     KeyStatsPage,
     LaneDefinition,
+    LaneHandler,
+    LaneRunStatus,
     LaneStats,
     ListJobsOptions,
     MigrateOptions,
@@ -28,8 +30,10 @@ import type {
     RetryOptions,
     RollbackOptions,
     ScheduleBaseOptions,
+    ScheduleDefinition,
     ScheduleInfo,
     SchedulePayload,
+    ScheduleRunStatus,
     ScheduleTiming,
     SchemaProblems,
 } from './types.js';
@@ -321,4 +325,103 @@ export interface Sqlane<C> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#wake | wake}
      */
     wake(): void;
+}
+
+/**
+ * The parts of one `runner.mount()` call.
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#mount | Mount}
+ */
+export interface Mount {
+    /**
+     * Removes the parts of the mount from this process: it stops claiming their lanes and firing their schedules here,
+     * at once. A claim or a fire in flight completes with the old parts; the jobs that run go on to their end, and
+     * `close()` waits for them. The lanes can be mounted again at once, with any handler: the old jobs still running
+     * count toward its local limits and its share. Sync and idempotent. During `drain()`: a `ConfigError`.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#mountunmount | Mount.unmount}
+     */
+    unmount(): void;
+}
+
+/**
+ * The runner of this process, made by `createRunner()` of `@sqlane/core/runner`: it runs the handlers and fires the
+ * schedules that it mounts. Its methods act on this process: memory, sync, but `start`, `drain` and `close`. The
+ * methods of the sqlane act on the database, for every process.
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runner | Runner}
+ */
+export interface Runner {
+    /**
+     * Runs the handlers and fires the schedules of the parts in this process, from now on: before `start()`, or after
+     * it (it claims and fires at once). A schedule fires here whether its lane is handled here or not.
+     *
+     * Throws a `ConfigError` for a lane handled here already, a schedule id mounted here already, two definitions
+     * with one name among the mounted lanes and their failure lanes, two maxes of one local limit, global limits
+     * without a `timeout`, or a schedule whose job would be refused (payload size, limits); nothing is mounted then.
+     * During `drain()`: a `ConfigError`. After `close()`: a `ClosedError`.
+     * @param parts Handlers from `defineHandler()` and schedules from `defineSchedule()`.
+     * @returns The mount: `unmount()` removes all its parts.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnermount | runner.mount}
+     */
+    mount(parts: readonly (LaneHandler<any> | ScheduleDefinition<any>)[]): Mount;
+
+    /**
+     * This process stops claiming the jobs of the lane, for the life of the runner: before it is mounted too, and
+     * across an unmount and a mount. Its running jobs finish; its schedules go on; the enqueues of the lane in this
+     * process send the hint to the others. Idempotent.
+     * @param lane A lane definition or the name of a lane.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerpauselocally | runner.pauseLocally}
+     */
+    pauseLocally(lane: LaneDefinition | string): void;
+
+    /**
+     * This process claims the jobs of the lane again, at once. Idempotent.
+     * @param lane A lane definition or the name of a lane.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerpauselocally | runner.resumeLocally}
+     */
+    resumeLocally(lane: LaneDefinition | string): void;
+
+    /**
+     * A schedule in this process. An unknown id: `mounted: false`.
+     * @param schedule A schedule definition, or a schedule id: `<lane>:<key>`.
+     * @returns Whether it is mounted here.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnergetstatus | runner.getStatus}
+     */
+    getStatus(schedule: ScheduleDefinition<any> | `${string}:${string}`): ScheduleRunStatus;
+
+    /**
+     * A lane in this process. An unknown name: `mounted: false`.
+     * @param lane A lane definition or the name of a lane.
+     * @returns Whether a handler of the lane is mounted here, whether it is paused here, and its jobs that run here.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnergetstatus | runner.getStatus}
+     */
+    getStatus(lane: LaneDefinition | string): LaneRunStatus;
+
+    /**
+     * Starts this process: it claims and runs the due jobs of the mounted lanes that no pause holds, renews leases,
+     * recovers stalled jobs, deletes expired ones and fires the mounted schedules. A second call does nothing.
+     *
+     * Rejects with a `ConfigError` for a missing table, or a server that fails the check of the adapter's `dialect`.
+     * If the database is down, it resolves anyway, emits an `error` event, and retries.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerstart | runner.start}
+     */
+    start(): Promise<void>;
+
+    /**
+     * For tests: runs the due jobs of the mounted lanes that no pause holds, until none is left, without `start()`. It
+     * fires no schedule: run a slot with `sqlane.schedules.runSlot()`. After `start()`: a `ConfigError`.
+     * @param options `timeout` (default `'10s'`), and `includeDelayed` to run delayed jobs and retries at once.
+     * @returns The jobs that completed, the attempts that will be retried, and the jobs that failed for good.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerdrain | runner.drain}
+     */
+    drain(options?: DrainOptions): Promise<DrainResult>;
+
+    /**
+     * Stops this process: it claims no more jobs, fires no more schedules, waits for the running handlers until the
+     * deadline, then aborts their `signal`. It never ends your pools. `sqlane.close()` closes the runner too.
+     * @param options `deadline` (default `'30s'`); `mode`: `'release'` (default) puts unfinished jobs back in the
+     *     queue without using an attempt; `exitsBy`: the latest time the process exits.
+     * @returns Resolves when the handlers have settled or the deadline has passed. It never rejects because of its
+     *     options.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerclose | runner.close}
+     */
+    close(options?: CloseOptions): Promise<void>;
 }
