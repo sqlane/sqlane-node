@@ -5,6 +5,7 @@ import { nextUnblockMs, RATE_UNBLOCK_BATCH, toleranceUs, waitMsOf, waitUs as key
 import { isRateKey } from '../rate_keys.js';
 import { STALLED_ERROR } from '../error_json.js';
 import { createMonotonicUlid } from '../ulid.js';
+import { notPaused } from './pauses.js';
 import { insertJobsPostgres } from './postgres_enqueue.js';
 import { arrayParam, rateLimitsOf } from './postgres_worker.js';
 
@@ -430,7 +431,8 @@ export async function recoverStaleJob(executor, p, id, { leaseMs }) {
 
 /**
  * Makes the jobs blocked on the keys pending again, the oldest first: on each key, as many as it has room for, by the
- * max of its oldest blocked job. One statement.
+ * max of its oldest blocked job. The jobs of paused lanes stay blocked, and take no room: they are not read. One
+ * statement.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
@@ -448,7 +450,7 @@ export async function unblock(executor, p, keys) {
               FROM k
              CROSS JOIN LATERAL (
                  SELECT j.limit_maxes[array_position(j.limit_keys, k.limit_key)] AS max FROM ${p}jobs j
-                  WHERE j.status = 'blocked' AND j.blocked_on = k.limit_key
+                  WHERE j.status = 'blocked' AND j.blocked_on = k.limit_key AND ${notPaused(p, 'j.lane')}
                   ORDER BY j.run_at, j.id LIMIT 1
              ) AS head
         ),
@@ -456,7 +458,7 @@ export async function unblock(executor, p, keys) {
             SELECT b.id FROM room
              CROSS JOIN LATERAL (
                  SELECT j.id FROM ${p}jobs j
-                  WHERE j.status = 'blocked' AND j.blocked_on = room.limit_key
+                  WHERE j.status = 'blocked' AND j.blocked_on = room.limit_key AND ${notPaused(p, 'j.lane')}
                   ORDER BY j.run_at, j.id LIMIT GREATEST(room.room, 0)
                     FOR UPDATE SKIP LOCKED
              ) AS b
@@ -485,12 +487,15 @@ export async function unblock(executor, p, keys) {
  *     writes, after the read.
  * @property {Map<string, number>} [floors] The least debt of some keys (µs): the jobs that an earlier unblock made
  *     pending, not claimed yet.
+ * @property {readonly string[] | null} [paused] MySQL and MariaDB: the paused lanes of the last probe
+ *     (`pausedFilter`); null: none seen. PostgreSQL filters in SQL.
  */
 
 /**
  * Makes the jobs blocked on the rate keys pending again, the oldest first: on each key, as many as its quota allows
  * now, each job by its own settings (gcra.js, `admitQueue`), at most RATE_UNBLOCK_BATCH. It does not take the quota:
- * the claim does, and blocks again a job that another one got ahead of. One statement.
+ * the claim does, and blocks again a job that another one got ahead of. The jobs of paused lanes stay blocked: they
+ * are not read. One statement.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
@@ -522,6 +527,7 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
                  SELECT e.inc, e.allow FROM ${p}jobs j
                   CROSS JOIN LATERAL ${rateLimitsOf('j.rate_limits')}
                   WHERE j.status = 'blocked' AND j.blocked_on = debt.limit_key AND e.key = debt.limit_key
+                    AND ${notPaused(p, 'j.lane')}
                   ORDER BY j.run_at, j.id LIMIT 1
              ) AS head
         ),
@@ -532,6 +538,7 @@ export async function unblockRates(executor, p, keys, { floors = new Map() } = {
              CROSS JOIN LATERAL (
                  SELECT j.id, j.run_at, j.rate_limits FROM ${p}jobs j
                   WHERE heads.lim > 0 AND j.status = 'blocked' AND j.blocked_on = heads.limit_key
+                    AND ${notPaused(p, 'j.lane')}
                   ORDER BY j.run_at, j.id LIMIT heads.lim + 1
                     FOR UPDATE SKIP LOCKED
              ) AS b
@@ -730,7 +737,7 @@ export async function deleteExpiredJobs(executor, p, limit) {
 }
 
 /**
- * For drain({ includeDelayed }): the pending jobs of the lanes are due now.
+ * For drain({ includeDelayed }): the pending jobs of the lanes are due now, but those of the paused lanes.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} lanes
@@ -738,8 +745,9 @@ export async function deleteExpiredJobs(executor, p, limit) {
  */
 export async function makeDue(executor, p, lanes) {
     await executor.run(`
-        UPDATE ${p}jobs SET run_at = ${runAt('interval \'0\'')}
-         WHERE status = 'pending' AND lane = ANY(${arrayParam(1, 'text')}) AND run_at > ${NOW}
+        UPDATE ${p}jobs j SET run_at = ${runAt('interval \'0\'')}
+         WHERE j.status = 'pending' AND j.lane = ANY(${arrayParam(1, 'text')}) AND j.run_at > ${NOW}
+           AND ${notPaused(p, 'j.lane')}
     `, [lanes]);
 }
 

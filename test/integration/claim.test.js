@@ -260,17 +260,25 @@ describe('probe', () => {
         await expect(store.probe(null)).resolves.toMatchObject([{ name: 'busy' }]);
     });
 
-    test.runIf(inject('databaseDialect') !== 'postgres')('mysql: a loose index scan', async () => {
-        const { p, sqlane } = await freshTables();
-        const items = Array.from({ length: 2000 }, (_, index) => ({ payload: {}, options: { dedupeKey: `j${index}` } }));
+    test.runIf(inject('databaseDialect') !== 'postgres')('mysql, mariadb: a loose index scan, with a paused lane too',
+        async () => {
+            const { p, sqlane, store } = await freshTables();
+            const items = Array.from({ length: 2000 }, (_, index) => ({
+                payload: {},
+                options: { dedupeKey: `j${index}` },
+            }));
 
-        await Promise.all(Array.from({ length: 20 }, (_, index) => sqlane.enqueueMany(testAdapter.pool, testLane(`n${index}`), items)));
-        await database.query(`ANALYZE TABLE ${p}jobs`);
+            await Promise.all(Array.from({ length: 20 }, (_, index) => sqlane.enqueueMany(testAdapter.pool, testLane(`n${index}`), items)));
+            // The paused lanes come in the same statement, without a filter in the scan
+            await store.pauseLane('n3');
+            await database.query(`ANALYZE TABLE ${p}jobs`);
 
-        const [plan] = await database.query(`EXPLAIN ${probeSql(p)}`);
+            const [plan] = await database.query(`EXPLAIN ${probeSql(p)}`);
 
-        expect(plan.Extra).toContain('Using index for group-by');
-    });
+            expect(plan.Extra).toContain('Using index for group-by');
+            await expect(store.probe(null).then(rows => rows.map(row => row.name))).resolves.not.toContain('n3');
+            await expect(store.probe(null)).resolves.toHaveLength(19);
+        });
 });
 
 describe('findCandidates', () => {

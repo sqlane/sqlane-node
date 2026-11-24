@@ -108,7 +108,7 @@ export function createSqlane(options) {
     const testTimings = /** @type {{ timings?: Record<string, any> }} */ (options).timings ?? {};
     // Undocumented, for the tests of sqlane: in place of the version of package.json
     const { installedVersion } = /** @type {{ installedVersion?: string }} */ (options);
-    const store = createStore(adapter, tablePrefix, logger);
+    const store = createStore(adapter, tablePrefix, logger, { pausedSeenMs: pollIntervalMs });
     /** @type {import('./sqlane_internals.js').AttachedRunner | null} The runner of this process, if any */
     let attached = null;
     let closed = false;

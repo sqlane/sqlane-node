@@ -181,3 +181,89 @@ describe.each(/** @type {const} */ (['mysql', 'mariadb', 'postgres']))('sweepSlo
         expect(transactions()).toBe(1);
     });
 });
+
+/**
+ * A MySQL store whose probe reads the paused lanes given, and the SQL of the unblocks of concurrency keys.
+ * @param {string[]} paused
+ * @param {{ pausedSeenMs?: number }} [options]
+ * @returns {{ store: import('./store.js').Store, heads: () => string | undefined }}
+ */
+function storeWithPauses(paused, options) {
+    /** @type {string[]} */
+    const sent = [];
+    const executor = {
+        query: async (/** @type {string} */ sql) => {
+            sent.push(sql);
+
+            return sql.includes('UNION ALL') && sql.includes('paused_lanes)')
+                ? paused.map(lane => ({ lane, delay_ms: null }))
+                : [];
+        },
+        run: async () => 0,
+    };
+    const adapter = /** @type {import('../types.js').Adapter<any>} */ (/** @type {unknown} */ ({
+        dialect: 'mysql',
+        queue: executor,
+        queueTransaction: async (/** @type {(e: typeof executor) => Promise<unknown>} */ func) => func(executor),
+    }));
+    const store = createStore(adapter, 'sqlane_', undefined, options);
+
+    return { store, heads: () => sent.findLast(sql => sql.includes('JSON_TABLE(?')) };
+}
+
+describe('mysql: the paused lanes of the last probe, in the reads of the blocked jobs', () => {
+    test('no probe yet: the subquery; after a probe: its lanes as parameters, none when no lane is paused', async () => {
+        const { store, heads } = storeWithPauses(['a']);
+
+        await store.unblock(['k']);
+        expect(heads()).toContain('NOT EXISTS (SELECT 1 FROM sqlane_paused_lanes');
+        await store.probe(null);
+        await store.unblock(['k']);
+        expect(heads()).toContain('j.lane NOT IN (?)');
+
+        const none = storeWithPauses([]);
+
+        await none.store.probe(null);
+        await none.store.unblock(['k']);
+        expect(none.heads()).not.toMatch(/paused_lanes|NOT IN/u);
+    });
+
+    test('the lanes of a probe expire after pausedSeenMs: the subquery again', async () => {
+        vi.useFakeTimers();
+
+        try {
+            const { store, heads } = storeWithPauses(['a'], { pausedSeenMs: 5000 });
+
+            await store.probe(null);
+            vi.advanceTimersByTime(5000);
+            await store.unblock(['k']);
+            expect(heads()).toContain('j.lane NOT IN (?)');
+            vi.advanceTimersByTime(1);
+            await store.unblock(['k']);
+            expect(heads()).toContain('NOT EXISTS (SELECT 1 FROM sqlane_paused_lanes');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('forgetPausedLanes (a resume): the subquery until the next probe', async () => {
+        const { store, heads } = storeWithPauses(['a']);
+
+        await store.probe(null);
+        store.forgetPausedLanes();
+        await store.unblock(['k']);
+        expect(heads()).toContain('NOT EXISTS (SELECT 1 FROM sqlane_paused_lanes');
+        await store.probe(null);
+        await store.unblock(['k']);
+        expect(heads()).toContain('j.lane NOT IN (?)');
+    });
+
+    test('more paused lanes than 50: the subquery, not a list of parameters', async () => {
+        const { store, heads } = storeWithPauses(Array.from({ length: 51 }, (_, index) => `lane_${index}`));
+
+        await store.probe(null);
+        await store.unblock(['k']);
+        expect(heads()).toContain('NOT EXISTS (SELECT 1 FROM sqlane_paused_lanes');
+        expect(heads()).not.toContain('NOT IN');
+    });
+});

@@ -83,6 +83,11 @@ export type ClaimParams = {
      * rows of the rate keys in the statement that locks the jobs. Without, a statement of its own, if they have some.
      */
     withRates?: boolean;
+    /**
+     * MySQL and MariaDB: the paused lanes of the last probe, for the
+     * heads of the rate keys (`pausedFilter`). Set by the store.
+     */
+    pausedLanes?: readonly string[] | null;
 };
 export type RateWait = import('../gcra.js').RateWait;
 export type RateUnblockWait = RateWait & {
@@ -233,10 +238,13 @@ export type FailParams = {
      */
     attemptUsed: boolean;
 };
-export type Store = {
+export type Store = StoreMethods & import('./pauses.js').PauseStore & {
+    forgetPausedLanes: () => void;
+};
+export type StoreMethods = {
     /**
      * The next due time of each given lane with
-     * pending jobs; null: of each lane. It may give other lanes too.
+     * pending jobs, not paused; null: of each lane. It may give other lanes too.
      */
     probe: (lanes: string[] | null) => Promise<ProbeRow[]>;
     /**
@@ -471,6 +479,8 @@ export type SweepResult = {
  *     and the quota of each rate key, with the picked ones.
  * @property {boolean} [withRates] The candidates may have rate keys (their lanes are known to): PostgreSQL locks the
  *     rows of the rate keys in the statement that locks the jobs. Without, a statement of its own, if they have some.
+ * @property {readonly string[] | null} [pausedLanes] MySQL and MariaDB: the paused lanes of the last probe, for the
+ *     heads of the rate keys (`pausedFilter`). Set by the store.
  */
 /** @typedef {import('../gcra.js').RateWait} RateWait */
 /**
@@ -563,9 +573,17 @@ export type SweepResult = {
  * @property {boolean} attemptUsed False: a job past its `maxStalls`, failed at its claim, without a run.
  */
 /**
- * @typedef {object} Store
+ * The store. Wherever a claim chooses a lane (the probe, the search of candidates, the claims, the heads of the keys,
+ * the unblocks, `makeDue`), it skips the paused lanes (`<p>paused_lanes`, pauses.js); the sweep's scan of the keys
+ * does not.
+ * @typedef {StoreMethods & import('./pauses.js').PauseStore & { forgetPausedLanes: () => void }} Store The paused
+ *     lanes of the last probe stand for the reads of the blocked jobs until `forgetPausedLanes()` (a resume: its delete
+ *     may not have committed) or for `pausedSeenMs`.
+ */
+/**
+ * @typedef {object} StoreMethods
  * @property {(lanes: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given lane with
- *     pending jobs; null: of each lane. It may give other lanes too.
+ *     pending jobs, not paused; null: of each lane. It may give other lanes too.
  * @property {(limitsByLane: Map<string, number>, ratedLanes?: Set<string>) => Promise<FoundCandidates>} findCandidates
  *     Of lanes with global limits: their oldest due jobs, at most 500 per lane. `ratedLanes`: the lanes that may have
  *     jobs with rate keys (`findCandidates` below); none: each search has the rate keys.
@@ -659,6 +677,10 @@ export type SweepResult = {
  * @param {import('../types.js').Adapter<any>} adapter
  * @param {string} tablePrefix Checked.
  * @param {import('../types.js').Logger} [logger]
+ * @param {{ pausedSeenMs?: number }} [options] `pausedSeenMs`: how long the paused lanes of a probe stand for the
+ *     reads of the blocked jobs (MySQL and MariaDB). Default: 5 s, the default poll interval.
  * @returns {Store}
  */
-export declare function createStore(adapter: import('../types.js').Adapter<any>, tablePrefix: string, logger?: import('../types.js').Logger): Store;
+export declare function createStore(adapter: import('../types.js').Adapter<any>, tablePrefix: string, logger?: import('../types.js').Logger, { pausedSeenMs }?: {
+    pausedSeenMs?: number;
+}): Store;

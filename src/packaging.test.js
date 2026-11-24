@@ -67,9 +67,9 @@ test('the core, src/create_sqlane.js, reaches only the modules of the allowlist:
         'server_check.js', 'sqlane_internals.js', 'store/fire_slots.js', 'store/job_reads.js', 'store/job_writes.js',
         'store/key_stats.js', 'store/mariadb_enqueue.js', 'store/mariadb_final.js', 'store/mariadb_schedules.js',
         'store/mariadb_worker.js', 'store/mysql_enqueue.js', 'store/mysql_final.js', 'store/mysql_schedules.js',
-        'store/mysql_worker.js', 'store/postgres_enqueue.js', 'store/postgres_final.js', 'store/postgres_schedules.js',
-        'store/postgres_worker.js', 'store/schema_reads.js', 'store/store.js', 'time_zone.js', 'transient_error.js',
-        'ulid.js', 'validate.js', 'version.js',
+        'store/mysql_worker.js', 'store/pauses.js', 'store/postgres_enqueue.js', 'store/postgres_final.js',
+        'store/postgres_schedules.js', 'store/postgres_worker.js', 'store/schema_reads.js', 'store/store.js',
+        'time_zone.js', 'transient_error.js', 'ulid.js', 'validate.js', 'version.js',
     ]);
 });
 

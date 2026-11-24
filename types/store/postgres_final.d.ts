@@ -111,7 +111,8 @@ export declare function recoverStaleJob(executor: Executor, p: string, id: strin
 }): Promise<import('./store.js').StaleJobResult>;
 /**
  * Makes the jobs blocked on the keys pending again, the oldest first: on each key, as many as it has room for, by the
- * max of its oldest blocked job. One statement.
+ * max of its oldest blocked job. The jobs of paused lanes stay blocked, and take no room: they are not read. One
+ * statement.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
@@ -134,6 +135,11 @@ export type RateUnblockOptions = {
      * pending, not claimed yet.
      */
     floors?: Map<string, number>;
+    /**
+     * MySQL and MariaDB: the paused lanes of the last probe
+     * (`pausedFilter`); null: none seen. PostgreSQL filters in SQL.
+     */
+    paused?: readonly string[] | null;
 };
 /**
  * A rate key after an unblock that found blocked jobs on it: when the next unblock is due (`nextUnblockMs`), the jobs
@@ -147,11 +153,14 @@ export type RateUnblockOptions = {
  *     writes, after the read.
  * @property {Map<string, number>} [floors] The least debt of some keys (µs): the jobs that an earlier unblock made
  *     pending, not claimed yet.
+ * @property {readonly string[] | null} [paused] MySQL and MariaDB: the paused lanes of the last probe
+ *     (`pausedFilter`); null: none seen. PostgreSQL filters in SQL.
  */
 /**
  * Makes the jobs blocked on the rate keys pending again, the oldest first: on each key, as many as its quota allows
  * now, each job by its own settings (gcra.js, `admitQueue`), at most RATE_UNBLOCK_BATCH. It does not take the quota:
- * the claim does, and blocks again a job that another one got ahead of. One statement.
+ * the claim does, and blocks again a job that another one got ahead of. The jobs of paused lanes stay blocked: they
+ * are not read. One statement.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} keys
@@ -194,7 +203,7 @@ export declare function deleteIdleRateKeys(executor: Executor, p: string, limit:
  */
 export declare function deleteExpiredJobs(executor: Executor, p: string, limit: number): Promise<number>;
 /**
- * For drain({ includeDelayed }): the pending jobs of the lanes are due now.
+ * For drain({ includeDelayed }): the pending jobs of the lanes are due now, but those of the paused lanes.
  * @param {Executor} executor
  * @param {string} p
  * @param {string[]} lanes

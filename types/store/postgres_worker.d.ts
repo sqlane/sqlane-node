@@ -29,9 +29,9 @@ export declare const arrayParam: (position: number, type: 'text' | 'integer' | '
  */
 export declare const rateLimitsOf: (json: string) => string;
 /**
- * The next due time of each given lane with pending jobs; null: of each lane. PostgreSQL has no loose index
+ * The next due time of each given lane with pending jobs, not paused; null: of each lane. PostgreSQL has no loose index
  * scan: for all lanes, a recursive CTE skips from one pending lane to the next on the partial index, two index probes
- * per pending lane.
+ * per pending lane (a paused lane: one, and its row in `<p>paused_lanes`).
  * @param {Executor} executor
  * @param {string} p
  * @param {string[] | null} lanes
@@ -46,10 +46,13 @@ export declare function probe(executor: Executor, p: string, lanes: string[] | n
  * @param {Executor} executor
  * @param {string} p
  * @param {Map<string, number>} limitsByLane
- * @param {boolean} withRates
+ * @param {{ withRates: boolean, paused?: readonly string[] | null }} options `paused`: MySQL and MariaDB only.
  * @returns {Promise<import('./store.js').FoundCandidatesOf>}
  */
-export declare function findCandidates(executor: Executor, p: string, limitsByLane: Map<string, number>, withRates: boolean): Promise<import('./store.js').FoundCandidatesOf>;
+export declare function findCandidates(executor: Executor, p: string, limitsByLane: Map<string, number>, { withRates }: {
+    withRates: boolean;
+    paused?: readonly string[] | null;
+}): Promise<import('./store.js').FoundCandidatesOf>;
 /**
  * Claims due jobs among the candidates, and blocks those with a full key. Call it in a queue transaction. The order of
  * the locks: the jobs, the rows of their rate keys, then their slots; the tat of a rate key moves only for the jobs
