@@ -177,15 +177,15 @@ transaction, so:
 
 - **[PostgreSQL, MySQL and MariaDB](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#the-dialect-and-the-server-check).**
   PostgreSQL 15+, MySQL 8.4+, MariaDB 10.11+. The same API on all three.
-- **[Atomic enqueue](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue).** Enqueue in your own
+- **[Atomic enqueue](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneenqueue).** Enqueue in your own
   transaction: commit → the job runs, rollback → it's gone.
-  [`enqueueMany`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueuemany) adds a batch at once.
+  [`enqueueMany`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneenqueuemany) adds a batch at once.
 - **[Cron and interval schedules](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedules).** Time zones,
   one job per slot across the cluster, a missed run caught up once, and jitter to spread the runs of many schedules.
 - **[Rate limits, global or local](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineratelimit).** "100
   calls a second to the mail API", per key, across the cluster or per process. A job over the limit waits without
   using an attempt. A handler that gets a 429 throws
-  [`RateLimitedError`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#errors-that-handlers-throw) to
+  [`RateLimitedError`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#how-a-handler-ends) to
   pause the key for every job. For APIs that charge points, a job can cost several units of a limit.
 - **[Concurrency limits, global or local](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#defineconcurrencylimit).**
   "One sync per order at a time": a job takes several keys, each with its own max, across processes and lanes.
@@ -197,7 +197,7 @@ transaction, so:
   Knex, Kysely, Drizzle, Prisma, Sequelize, TypeORM and MikroORM.
 - **[Idle lanes cost nothing](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#dispatcher-one-loop-per-process).**
   One query per poll covers all lanes, so 1000 idle lanes cost about what one does.
-- **[Fair share across lanes](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#how-free-slots-are-shared).**
+- **[Fair share across lanes](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#how-a-runner-shares-localmaxconcurrency).**
   A backlog of one lane never starves the others; weights tune the shares.
 - **[Fair groups within a lane](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#fair-groups).**
   One lane for every tenant: in each runner, a tenant with a big backlog never starves the others.
@@ -206,16 +206,16 @@ transaction, so:
   polling as the fallback.
 - **[Failure jobs](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#failedjobpayload).** A job of your choice
   runs when another fails for good.
-- **[Graceful shutdown](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#close).** Running jobs get a
+- **[Graceful shutdown](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerclose).** Running jobs get a
   deadline; the unfinished ones go back to the queue without using an attempt.
 - **And the basics:** [retries with backoff](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#backoff),
-  delayed jobs and deduplication by `dedupeKey` ([enqueue](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue)),
+  delayed jobs and deduplication by `dedupeKey` ([enqueue](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneenqueue)),
   timeouts that abort the handler ([defineLane](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#definelane)),
   [crash recovery](https://github.com/sqlane/sqlane-node/blob/main/docs/design.md#leases-and-stalls),
   [typed payloads](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#typed-payloads),
   [events](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#events) and
-  [stats](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesstats), and
-  [migrations by version](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate), with rollback
+  [stats](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanelanesstats), and
+  [migrations by version](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschemamigrate), with rollback
   and schema checks.
 
 How sqlane compares with BullMQ, pg-boss and 5 more:
@@ -274,7 +274,7 @@ export const sendReceipt = defineLane<{ orderId: number }>({
 **2. Create the instance and the tables.** Give sqlane a small pool of its own, with 2–3 connections, so the queue and
 your app never wait for each other's connections. `schema.migrate()` creates the `sqlane_*` tables and is safe to run
 from several processes at once. To run it from your own migration tool, pin a version in each migration file: see
-[`schema.migrate`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate).
+[`schema.migrate`](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschemamigrate).
 
 ```ts
 // sqlane.ts
@@ -297,7 +297,7 @@ await sqlane.schema.migrate();
 
 **3. Enqueue in your transaction.** Pass your transaction to `enqueue`: the job commits or rolls back with the order. A
 `dedupeKey` deduplicates, and `delay` runs the job later
-([enqueue options](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue)).
+([enqueue options](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneenqueue)).
 
 ```ts
 // orders.ts

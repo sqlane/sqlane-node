@@ -1,7 +1,7 @@
 import type { BulkOptions, BulkResult, CloseOptions, DrainOptions, DrainResult, DropOptions, EnqueueManyItem, EnqueueOptions, EnqueuePayload, EnqueueResult, GroupStatsOptions, GroupStatsPage, HandlerPayload, JobFilter, JobPage, JobRecord, JobSelector, KeyStatsOptions, KeyStatsPage, LaneDefinition, LaneHandler, LaneRunStatus, LaneStats, ListJobsOptions, MigrateOptions, MigrationStatus, PauseGloballyOptions, RetryOptions, RollbackOptions, RunSlotOptions, ScheduleDefinition, ScheduleInfo, ScheduleRunStatus, SchemaProblems } from './types.js';
 /**
  * The tables of sqlane: `sqlane.schema`. Each migration is tagged with the lowest version of sqlane that ships it.
- * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate | schema}
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschemamigrate | schema}
  */
 export interface SqlaneSchema {
     /**
@@ -11,7 +11,7 @@ export interface SqlaneSchema {
      * @param options `targetVersion`: apply only the migrations tagged at or below it, from `'6.0.0'` up to the
      *     installed version; default: every migration. `lockTimeout`: how long to wait for the lock; default `'10m'`.
      * @returns The ids of the migrations that it applied.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemamigrate | schema.migrate}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschemamigrate | schema.migrate}
      */
     migrate(options?: MigrateOptions): Promise<{
         applied: string[];
@@ -27,7 +27,7 @@ export interface SqlaneSchema {
      * @param options `targetVersion`: the version to go back to, from `'6.0.0'` up to the installed version.
      *     `lockTimeout`: how long to wait for the migration lock, and for each lock of a table; default `'10m'`.
      * @returns The ids of the migrations that it reverted, newest first.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemarollback | schema.rollback}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschemarollback | schema.rollback}
      */
     rollback(options: RollbackOptions): Promise<{
         reverted: string[];
@@ -40,7 +40,7 @@ export interface SqlaneSchema {
      * @param options `lockTimeout`: how long to wait for the migration lock, and for the locks of the tables; default
      *     `'10m'`.
      * @returns The tables that existed.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemadrop | schema.drop}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschemadrop | schema.drop}
      */
     drop(options?: DropOptions): Promise<{
         dropped: string[];
@@ -50,7 +50,7 @@ export interface SqlaneSchema {
      * mismatch.
      * @returns `ok` when no migration that the installed major needs is missing; the missing ids, required (tagged up
      *     to `X.0.0` of the installed major) or optional; the recorded ids unknown to this version.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemagetmigrationstatus}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschemagetmigrationstatus}
      */
     getMigrationStatus(): Promise<MigrationStatus>;
     /**
@@ -58,7 +58,7 @@ export interface SqlaneSchema {
      * collation) and indexes that its migrations create, by name. Anything extra is ignored. A read, for a readiness
      * probe: it never throws on a mismatch.
      * @returns `ok` when no problem is required, and the problems.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schemafindschemaproblems}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschemafindschemaproblems}
      */
     findSchemaProblems(): Promise<SchemaProblems>;
 }
@@ -66,7 +66,7 @@ export interface SqlaneSchema {
  * The lanes in the database: `sqlane.lanes`. A lane is the jobs that share a name; their default options come from its
  * definition. A runner runs a lane in a process: `runner.mount([defineHandler(lane, fn)])`.
  * @template C The connections that the pauses accept as `connection`: those of the adapter.
- * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesstats | lanes}
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanelanesstats | lanes}
  */
 export interface SqlaneLanes<C = any> {
     /**
@@ -76,7 +76,7 @@ export interface SqlaneLanes<C = any> {
      * lane with no job yet is fine: pause it before its first deploy. Idempotent.
      * @param lane A lane definition, or the name of a lane.
      * @param options `connection`: your transaction, or a pool (default: the queue's pool).
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanespauseglobally-and-resumeglobally | lanes.pauseGlobally}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanelanespauseglobally-and-resumeglobally | lanes.pauseGlobally}
      */
     pauseGlobally(lane: LaneDefinition | string, options?: PauseGloballyOptions<C>): Promise<void>;
     /**
@@ -85,7 +85,7 @@ export interface SqlaneLanes<C = any> {
      * adapter can tell; else at once. A lane that is not paused: nothing to resume. Idempotent.
      * @param lane A lane definition, or the name of a lane.
      * @param options `connection`: your transaction, or a pool (default: the queue's pool).
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanespauseglobally-and-resumeglobally | lanes.resumeGlobally}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanelanespauseglobally-and-resumeglobally | lanes.resumeGlobally}
      */
     resumeGlobally(lane: LaneDefinition | string, options?: PauseGloballyOptions<C>): Promise<void>;
     /**
@@ -94,7 +94,7 @@ export interface SqlaneLanes<C = any> {
      * holds its jobs back (see `jobs.keyStats`). It reads every row kept: mind the interval of a metric scrape.
      * @returns One entry per lane with jobs in any status, and per globally paused lane, sorted by name. The failed and
      *     completed jobs count until the cleanup deletes them.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesstats | lanes.stats}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanelanesstats | lanes.stats}
      */
     stats(): Promise<LaneStats[]>;
     /**
@@ -105,7 +105,7 @@ export interface SqlaneLanes<C = any> {
      * @param lane A lane definition, or the name of a lane.
      * @param options `limit` (1–1000, default 100) and `orderBy` (`'oldestDue'`, default, or `'pending'`).
      * @returns At most `limit` groups, and `truncated` when more matched. A lane without groups: one entry, `null`.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesgroupstats | lanes.groupStats}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanelanesgroupstats | lanes.groupStats}
      */
     groupStats(lane: LaneDefinition | string, options?: GroupStatsOptions): Promise<GroupStatsPage>;
 }
@@ -113,14 +113,14 @@ export interface SqlaneLanes<C = any> {
  * The jobs in the database: `sqlane.jobs`. Read them; retry, cancel or remove them in bulk; see the keys of the global
  * limits. Before `start()` and after `close()` too.
  * @template C The connections that the bulk methods accept as `connection`: those of the adapter.
- * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobs | jobs}
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanejobsget | jobs}
  */
 export interface SqlaneJobs<C = any> {
     /**
      * Reads one job, with its payload.
      * @param jobId The full id, as `enqueue` returns it: `<lane>:<dedupeKey>`, a slot id, or a ULID.
      * @returns The job. Null: no job has this id, or the string cannot be a job id.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsget | jobs.get}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanejobsget | jobs.get}
      */
     get<P = any>(jobId: string): Promise<JobRecord<P> | null>;
     /**
@@ -131,7 +131,7 @@ export interface SqlaneJobs<C = any> {
      * @param options `limit` (1 to 1000, default 100), `cursor` (the `nextCursor` of the previous page),
      *     `includePayload` (default `false`).
      * @returns A page: its jobs, and the cursor of the next page, null on the last page.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobslist | jobs.list}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanejobslist | jobs.list}
      */
     list<J extends LaneDefinition | string>(filter: JobFilter<J>, options?: ListJobsOptions): Promise<JobPage<HandlerPayload<J>>>;
     /**
@@ -141,7 +141,7 @@ export interface SqlaneJobs<C = any> {
      * @param options `budget` (`'reset'`, the default: attempts and stalls back to 0; `'one_more'`: one more
      *     attempt), `connection`, `mode`, `strict`, `includeAffectedJobIds`.
      * @returns The count of the retried jobs, their ids with `includeAffectedJobIds`, and the ignored ids.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsretry | jobs.retry}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanejobsretry | jobs.retry}
      */
     retry(selector: JobSelector, options?: RetryOptions<C>): Promise<BulkResult>;
     /**
@@ -151,7 +151,7 @@ export interface SqlaneJobs<C = any> {
      *     both by default).
      * @param options `connection`, `mode`, `strict`, `includeAffectedJobIds`.
      * @returns The count of the cancelled jobs, their ids with `includeAffectedJobIds`, and the ignored ids.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobscancel | jobs.cancel}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanejobscancel | jobs.cancel}
      */
     cancel(selector: JobSelector, options?: BulkOptions<C>): Promise<BulkResult>;
     /**
@@ -160,7 +160,7 @@ export interface SqlaneJobs<C = any> {
      *     `'blocked'`, `'completed'`, `'failed'`; all four by default).
      * @param options `connection`, `mode`, `strict`, `includeAffectedJobIds`.
      * @returns The count of the removed jobs, their ids with `includeAffectedJobIds`, and the ignored ids.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#jobsremove | jobs.remove}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanejobsremove | jobs.remove}
      */
     remove(selector: JobSelector, options?: BulkOptions<C>): Promise<BulkResult>;
     /**
@@ -170,14 +170,14 @@ export interface SqlaneJobs<C = any> {
      * @param options `limit` (1 to 1000, default 100), `type` (`'concurrency'` or `'rate'`; default: all types),
      *     `orderBy` (`'blocked'`, the default, or `'held'`).
      * @returns The keys of the page, and `truncated` when more keys matched.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#key-stats | jobs.keyStats}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanejobskeystats | jobs.keyStats}
      */
     keyStats(options?: KeyStatsOptions): Promise<KeyStatsPage>;
 }
 /**
  * The schedules in the database: `sqlane.schedules`. No runner needed, before `start()` and after `close()` too.
  * @template C The connections that `runSlot` accepts as `connection`: those of the adapter.
- * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#scheduleslist | schedules}
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanescheduleslist | schedules}
  */
 export interface SqlaneSchedules<C = any> {
     /**
@@ -185,7 +185,7 @@ export interface SqlaneSchedules<C = any> {
      * schedule is listed once a started runner has mounted it, or a pause has created its row.
      * @returns The schedules: their spec, their next slot (none while paused), their last slot, their last job, and
      *     whether they are paused.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#scheduleslist | schedules.list}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlanescheduleslist | schedules.list}
      */
     list(): Promise<ScheduleInfo[]>;
     /**
@@ -198,7 +198,7 @@ export interface SqlaneSchedules<C = any> {
      *     `connection`: your transaction, or a pool (default: the queue's pool). An `at` off the spec or in the
      *     future: an `InvalidOptionsError`.
      * @returns The id of the job of the slot, and `created: false` when it exists already.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulesrunslot | schedules.runSlot}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschedulesrunslot | schedules.runSlot}
      */
     runSlot(schedule: ScheduleDefinition<any>, options?: RunSlotOptions<C>): Promise<EnqueueResult>;
     /**
@@ -207,7 +207,7 @@ export interface SqlaneSchedules<C = any> {
      * (pause before the first deploy; the row of a typo shows in `list()`, and `remove()` deletes it). Idempotent.
      * @param schedule A schedule definition, or its id `<lane>:<key>`.
      * @param options `connection`: your transaction, or a pool (default: the queue's pool).
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulespauseglobally-and-resumeglobally | schedules.pauseGlobally}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschedulespauseglobally-and-resumeglobally | schedules.pauseGlobally}
      */
     pauseGlobally(schedule: ScheduleDefinition<any> | string, options?: PauseGloballyOptions<C>): Promise<void>;
     /**
@@ -215,7 +215,7 @@ export interface SqlaneSchedules<C = any> {
      * caught up. A schedule that is not paused, or with no row: nothing changes. Idempotent.
      * @param schedule A schedule definition, or its id `<lane>:<key>`.
      * @param options `connection`: your transaction, or a pool (default: the queue's pool).
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulespauseglobally-and-resumeglobally | schedules.resumeGlobally}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschedulespauseglobally-and-resumeglobally | schedules.resumeGlobally}
      */
     resumeGlobally(schedule: ScheduleDefinition<any> | string, options?: PauseGloballyOptions<C>): Promise<void>;
     /**
@@ -224,7 +224,7 @@ export interface SqlaneSchedules<C = any> {
      * @param schedule A schedule definition, or its id: `<lane>:<key>`, or `<lane>` for a keyless schedule of 9.x.
      * @param options `connection`: your transaction, or a pool (default: the queue's pool).
      * @returns `removed`: a row was deleted.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#schedulesremove | schedules.remove}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneschedulesremove | schedules.remove}
      */
     remove(schedule: ScheduleDefinition<any> | string, options?: PauseGloballyOptions<C>): Promise<{
         removed: boolean;
@@ -249,7 +249,7 @@ export interface Sqlane<C> {
      * @param payload JSON. With a typed definition, such as `defineLane<{ orderId: number }>(…)`, its type is checked.
      * @param options `dedupeKey` to dedupe; `delay` or `runAt`; and overrides of the definition for this job.
      * @returns The job id, and `created: false` when a job with this id exists already: nothing was added.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueue | enqueue}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneenqueue | enqueue}
      */
     enqueue<J extends LaneDefinition, P>(connection: C, lane: J, payload: EnqueuePayload<J, P>, options?: EnqueueOptions): Promise<EnqueueResult>;
     /**
@@ -260,7 +260,7 @@ export interface Sqlane<C> {
      * @param items Each a `payload` and optional `options`, as in `enqueue`.
      * @returns The results, in the order of the items. Two items with one `dedupeKey`: the first adds the job, the
      *     next get `created: false`.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#enqueuemany | enqueueMany}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlaneenqueuemany | enqueueMany}
      */
     enqueueMany<J extends LaneDefinition, P>(connection: C, lane: J, items: readonly EnqueueManyItem<J, P>[]): Promise<EnqueueResult[]>;
     /**
@@ -271,7 +271,7 @@ export interface Sqlane<C> {
      *     queue without using an attempt; `exitsBy`: the latest time the process exits.
      * @returns Resolves when the runner is closed: its handlers have settled or the deadline has passed. It never
      *     rejects because of its options.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerclose-and-sqlaneclose | close}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerclose | close}
      */
     close(options?: CloseOptions): Promise<void>;
     /** The lanes: count the jobs of each lane; pause and resume a lane in every process. */
@@ -285,7 +285,7 @@ export interface Sqlane<C> {
 }
 /**
  * The parts of one `runner.mount()` call.
- * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#mount | Mount}
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnermount | Mount}
  */
 export interface Mount {
     /**
@@ -301,7 +301,7 @@ export interface Mount {
  * The runner of this process, made by `createRunner()`: it runs the handlers and fires the
  * schedules that it mounts. Its methods act on this process, sync, but `start`, `drain` and `close`. The
  * methods of the sqlane act on the database, for every process.
- * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runner | Runner}
+ * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#sqlane-runner | Runner}
  */
 export interface Runner {
     /**
@@ -322,13 +322,13 @@ export interface Runner {
      * across an unmount and a mount. Its running jobs finish; its schedules go on; the enqueues of the lane in this
      * process send the hint to the others. Idempotent.
      * @param lane A lane definition or the name of a lane.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerpauselocally | runner.pauseLocally}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerpauselocally-and-resumelocally | runner.pauseLocally}
      */
     pauseLocally(lane: LaneDefinition | string): void;
     /**
      * This process claims the jobs of the lane again, at once. Idempotent.
      * @param lane A lane definition or the name of a lane.
-     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerpauselocally | runner.resumeLocally}
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#runnerpauselocally-and-resumelocally | runner.resumeLocally}
      */
     resumeLocally(lane: LaneDefinition | string): void;
     /**
