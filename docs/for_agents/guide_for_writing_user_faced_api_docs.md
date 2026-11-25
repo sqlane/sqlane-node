@@ -14,8 +14,10 @@ sqlane works inside, and they do not need to.
 2. **Current version only.** Describe the API as it is today. Assume the user runs the latest version with every
    migration applied. History, renames, upgrade steps and migration requirements go in `docs/migrations/<major>.md`
    and `CHANGELOG.md`.
-3. **One term, one meaning.** The Glossary section of `api.md` defines the project's terms. Use them exactly, and the
-   same term every time. A new concept gets a glossary entry before it appears elsewhere in `api.md`.
+3. **Self-explaining terms.** Prefer words that explain themselves: "the time at which a job may start", not "due
+   time". When a term needs a definition, give it where the term first appears. The Glossary of `api.md` holds only
+   sqlane's own words that no plain phrase replaces, such as lane. Keep it as short as possible. Use each
+   term with one meaning, the same way every time.
 4. **Fixed section template.** Each method's section has these parts, in this order, and skips the empty ones:
    one-sentence summary → signature → parameters table → return value → errors → notes → example.
 5. **One-sentence table cells.** Put longer explanations in the notes under the table.
