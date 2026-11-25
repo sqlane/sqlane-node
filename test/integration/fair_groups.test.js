@@ -934,4 +934,88 @@ describe('the runner: a lane with fair groups', () => {
 
             expect(started).toStrictEqual(['now', 'soon']);
         });
+
+    test('a schema without 0011: FIFO, fairGroups false, one warning; schema.migrate() at runtime: by group, no restart',
+        async () => {
+            /** @type {unknown[][]} */
+            const warnings = [];
+            const logger = {
+                debug: noop, info: noop, warn: (/** @type {unknown[]} */ ...args) => warnings.push(args), error: noop,
+            };
+
+            prefixCount++;
+
+            const p = `${database.tablePrefix}${prefixCount}_`;
+            const on = instanceOn(p);
+            const runner = createRunner(on, { localMaxConcurrency: 1, logger });
+            /** @type {(string | null)[]} */
+            const seen = [];
+
+            await on.schema.migrate({ targetVersion: '10.0.0' });
+            runner.mount([defineHandler(convert, ({ job }) => {
+                seen.push(job.fairGroup);
+            })]);
+            await on.enqueue(testAdapter.pool, convert, { queue: null });
+            await runner.start();
+            await waitFor(() => seen.length === 1);
+
+            expect(seen).toStrictEqual([null]);
+            expect(runner.getStatus(convert)).toMatchObject({ mounted: true, fairGroups: false });
+            expect(warnings.filter(([, message]) => String(message).includes('0011_fair_groups'))).toHaveLength(1);
+
+            await on.schema.migrate();
+            await waitFor(() => runner.getStatus(convert).fairGroups);
+            await enqueueGroup(on, 'a', 1);
+            await waitFor(() => seen.length === 2);
+
+            expect(seen).toStrictEqual([null, 'a']);
+        });
+
+    test('drain() reads the records again while 0011 is missing: by group after schema.migrate()', async () => {
+        prefixCount++;
+
+        const p = `${database.tablePrefix}${prefixCount}_`;
+        const on = instanceOn(p);
+        const runner = createRunner(on, { localMaxConcurrency: 1 });
+
+        await on.schema.migrate({ targetVersion: '10.0.0' });
+        runner.mount([defineHandler(convert, () => {})]);
+        await runner.drain();
+        expect(runner.getStatus(convert).fairGroups).toBe(false);
+
+        await on.schema.migrate();
+        await runner.drain();
+        expect(runner.getStatus(convert).fairGroups).toBe(true);
+    });
+
+    test('a schema without 0011: the failure jobs and the slots of a runner are added, without a group', async () => {
+        prefixCount++;
+
+        const p = `${database.tablePrefix}${prefixCount}_`;
+        const on = instanceOn(p);
+        const runner = createRunner(on, { localMaxConcurrency: 2 });
+        const failed = defineLane({ name: 'convert_failed', fairGroup: () => 'failures' });
+        const failing = defineLane({ name: 'convert_once', maxAttempts: 1, failureLane: failed,
+            fairGroup: ({ payload }) => payload.queue });
+        const ticking = defineSchedule(failed, { key: 'tick', every: '1s', payload: {} });
+        /** @type {string[]} */
+        const groups = [];
+
+        await on.schema.migrate({ targetVersion: '10.0.0' });
+        runner.mount([
+            defineHandler(failing, () => {
+                throw new Error('broken');
+            }),
+            defineHandler(failed, ({ job }) => {
+                groups.push(String(job.fairGroup));
+            }),
+            ticking,
+        ]);
+        await on.enqueue(testAdapter.pool, failing, { queue: null });
+        await runner.start();
+        // The failure job, and at least one slot of the schedule: both in the failure lane, without a group
+        await waitFor(() => groups.length >= 2, 5000);
+
+        expect(groups.slice(0, 2)).toStrictEqual(['null', 'null']);
+    });
 });

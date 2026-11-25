@@ -1,6 +1,7 @@
 // The scheduler of an instance: one timer for the earliest slot of its schedules, and the fire of the due slots. No
 // leader: every started process with a schedule tries its slots, and the cursor row of the schedule lets one of them
 // add the job. See docs/design.md › Schedules.
+import { withoutGroupUnless } from './failure_lanes.js';
 import { ConfigError, InvalidConcurrencyLimitError, InvalidOptionsError, PayloadTooLargeError } from './errors.js';
 import { buildNewJob } from './new_job.js';
 import { dueOf, latestSlot, nextSlot, pendingSlots, previousSlot } from './schedule.js';
@@ -112,6 +113,8 @@ function advance(entry, slot, dbNow) {
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit
  * @property {import('./types.js').Logger | undefined} logger
  * @property {Partial<SchedulerTimings>} [timings] For tests.
+ * @property {() => boolean} [fairGroupsReady] The schema has `0011_fair_groups`. Without, the slots get no fair group.
+ *     Default: it has.
  */
 
 /**
@@ -169,6 +172,7 @@ export function createScheduler({
     emit,
     logger,
     timings = {},
+    fairGroupsReady = () => true,
 }) {
     const t = { ...DEFAULT_SCHEDULER_TIMINGS, ...timings };
     const { now } = t;
@@ -314,7 +318,7 @@ export function createScheduler({
             options = { delay: candidate.due - candidate.slot };
         }
 
-        return buildNewJob({
+        return withoutGroupUnless(fairGroupsReady(), buildNewJob({
             lane: entry.lane,
             definition: entry.definition,
             defaults,
@@ -322,7 +326,7 @@ export function createScheduler({
             options,
             maxPayloadBytes,
             slot: { at: candidate.slot, key: entry.key },
-        });
+        }));
     }
 
     /** A fire or a read succeeded: after failures, the next results log the recovery once */

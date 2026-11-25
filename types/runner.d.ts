@@ -57,6 +57,11 @@ export type RunnerParams = {
      * For tests: the random start of the tie pointer.
      */
     random?: () => number;
+    /**
+     * The schema has `0011_fair_groups`: the claims read the groups, the lanes
+     * with `fairGroup` are claimed by group, the failure jobs keep their group. Default: it has.
+     */
+    fairGroupsReady?: () => boolean;
 };
 export type Runner = {
     /**
@@ -130,6 +135,11 @@ export type Runner = {
      */
     resumeLocally: (lane: string) => void;
     isPausedLocally: (lane: string) => boolean;
+    /**
+     * The lane is claimed by fair group now
+     * (`LaneRunStatus.fairGroups`).
+     */
+    claimsByGroup: (lane: string) => boolean;
 };
 /** @typedef {'idle' | 'started' | 'draining' | 'closing' | 'closed'} RunnerState */
 /**
@@ -146,6 +156,8 @@ export type Runner = {
  *     at once, with no re-probes.
  * @property {Partial<Timings>} [timings] For tests.
  * @property {() => number} [random] For tests: the random start of the tie pointer.
+ * @property {() => boolean} [fairGroupsReady] The schema has `0011_fair_groups`: the claims read the groups, the lanes
+ *     with `fairGroup` are claimed by group, the failure jobs keep their group. Default: it has.
  */
 /**
  * @typedef {object} Runner
@@ -176,9 +188,11 @@ export type Runner = {
  * @property {(lane: string) => void} pauseLocally This process claims no job of the lane, until resumeLocally().
  * @property {(lane: string) => void} resumeLocally Claims the lane again, at once.
  * @property {(lane: string) => boolean} isPausedLocally
+ * @property {(lane: string) => boolean} claimsByGroup The lane is claimed by fair group now
+ *     (`LaneRunStatus.fairGroups`).
  */
 /**
  * @param {RunnerParams} params
  * @returns {Runner}
  */
-export declare function createRunner({ store, registry, localMaxConcurrency, defaults, cleanup, logger, onEvent, hintChannel, hintsAfterCommit, timings, random, }: RunnerParams): Runner;
+export declare function createRunner({ store, registry, localMaxConcurrency, defaults, cleanup, logger, onEvent, hintChannel, hintsAfterCommit, timings, random, fairGroupsReady, }: RunnerParams): Runner;

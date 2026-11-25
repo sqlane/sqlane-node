@@ -23,12 +23,15 @@ const RUNNER_OPTION_NAMES = ['localMaxConcurrency', 'logger'];
 
 /** The latest migration that the claims and the scheduler need: their statements read its table and column */
 const REQUIRED_MIGRATION = '0010_pause';
+/** The migration of the fair groups: optional in 10.x. Without it, the lanes with fairGroup are claimed FIFO */
+const FAIR_GROUPS_MIGRATION = '0011_fair_groups';
 
 /**
  * Reads the records of the migrations: the required one must be there.
  * @param {import('./sqlane_internals.js').SqlaneInternals} core
  * @param {string} where The caller, for the errors.
- * @returns {Promise<void>} Rejects with a `ConfigError` when it is missing, or with the error of the read.
+ * @returns {Promise<Set<string>>} The recorded ids. Rejects with a `ConfigError` when the required one is missing, or
+ *     with the error of the read.
  */
 async function checkMigrations(core, where) {
     const p = core.tablePrefix;
@@ -49,6 +52,8 @@ async function checkMigrations(core, where) {
     if (!recorded.has(REQUIRED_MIGRATION)) {
         throw new ConfigError(`${where}: the migration ${REQUIRED_MIGRATION} is not applied: run schema.migrate()`);
     }
+
+    return recorded;
 }
 
 /**
@@ -65,6 +70,9 @@ async function checkMigrations(core, where) {
 function buildRunner(core, { localMaxConcurrency, logger }) {
     const { store, defaults, hintChannel, testTimings } = core;
     const registry = createRegistry({ defaultTimeoutMs: defaults.timeoutMs });
+    /** The schema has 0011_fair_groups, by the records of the migrations: false until they are read */
+    let hasFairGroups = false;
+    const fairGroupsReady = () => hasFairGroups;
     const worker = createWorker({
         store,
         registry,
@@ -78,6 +86,7 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
         timings: { pollIntervalMs: core.pollIntervalMs, ...testTimings },
         // Undocumented, for the tests of sqlane: the random start of the tie pointer
         random: testTimings.random ?? Math.random,
+        fairGroupsReady,
     });
     const scheduler = createScheduler({
         store,
@@ -88,6 +97,7 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
         emit: worker.emit,
         logger,
         timings: testTimings.schedules,
+        fairGroupsReady,
     });
     const mounts = createMounts({ registry, scheduler, runner: worker });
     /** @type {Promise<void> | null} */
@@ -100,6 +110,85 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
     let migrationsChecked = null;
     /** drain() checks the migrations: it counts as draining already */
     let drainChecking = false;
+    /** @type {Set<string>} The lanes with fairGroup claimed FIFO for lack of 0011_fair_groups: warned once */
+    const warnedFifo = new Set();
+    /** @type {NodeJS.Timeout | null} The read of the records again, while 0011_fair_groups is missing */
+    let fairGroupsTimer = null;
+
+    /**
+     * @returns {boolean} A mounted lane, a mounted schedule's lane, or a mounted lane's failure lane has `fairGroup`:
+     *     this runner claims, fires or adds jobs with groups once the schema has 0011_fair_groups.
+     */
+    function hasGroupedNeed() {
+        return registry.entries().some(entry => entry.definition.fairGroup || entry.definition.failureLane?.fairGroup)
+            || [...scheduler.entries().values()].some(entry => entry.definition.fairGroup);
+    }
+
+    /**
+     * Notes whether the records have 0011_fair_groups; without, warns once per lane with fairGroup.
+     * @param {Set<string>} recorded
+     */
+    function noteFairGroups(recorded) {
+        const had = hasFairGroups;
+
+        hasFairGroups = recorded.has(FAIR_GROUPS_MIGRATION);
+
+        if (hasFairGroups) {
+            if (!had && warnedFifo.size) {
+                logger?.info(
+                    { lanes: [...warnedFifo] },
+                    `sqlane: ${FAIR_GROUPS_MIGRATION} is applied: the lanes with fairGroup are claimed by group now`,
+                );
+            }
+
+            return;
+        }
+
+        for (const entry of registry.entries()) {
+            if (entry.definition.fairGroup && !warnedFifo.has(entry.name)) {
+                warnedFifo.add(entry.name);
+                logger?.warn(
+                    { lane: entry.name },
+                    `sqlane: the lane has fairGroup, but the schema lacks ${FAIR_GROUPS_MIGRATION}: this runner claims `
+                    + 'it FIFO until schema.migrate() applies it',
+                );
+            }
+        }
+    }
+
+    /**
+     * While 0011_fair_groups is missing, and this runner would use it: reads the records again. The cached check of the
+     * migrations (once per runner) does not see a later schema.migrate().
+     * @returns {Promise<void>}
+     */
+    async function refreshFairGroups() {
+        if (!hasFairGroups && hasGroupedNeed()) {
+            noteFairGroups(await recordedIds(core.adapter.queue, core.tablePrefix));
+        }
+    }
+
+    /** While 0011_fair_groups is missing: the records again at each poll interval, until it is there or close() */
+    function armFairGroupsTimer() {
+        if (hasFairGroups || fairGroupsTimer) {
+            return;
+        }
+
+        fairGroupsTimer = setInterval(async () => {
+            if (hasFairGroups || worker.isClosed()) {
+                clearInterval(/** @type {NodeJS.Timeout} */ (fairGroupsTimer));
+                fairGroupsTimer = null;
+
+                return;
+            }
+
+            try {
+                await refreshFairGroups();
+            } catch (error) {
+                core.reportError('fair_groups_check', error);
+            }
+        }, core.pollIntervalMs);
+        fairGroupsTimer.unref();
+    }
 
     /**
      * Checks that the required migration is applied, once: then the calls share the result.
@@ -109,7 +198,7 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
     function checkMigrationsOnce(where) {
         migrationsChecked ??= (async () => {
             try {
-                await checkMigrations(core, where);
+                noteFairGroups(await checkMigrations(core, where));
             } catch (error) {
                 migrationsChecked = null;
                 throw error;
@@ -126,6 +215,7 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
     async function checkStart() {
         await core.checkServerOnce('start()');
         await checkMigrationsOnce('start()');
+        await refreshFairGroups();
     }
 
     /**
@@ -179,6 +269,7 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
 
                     if (!worker.isClosed()) {
                         scheduler.startRegistering();
+                        armFairGroupsTimer();
                     }
                 },
             });
@@ -187,6 +278,7 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
         }
 
         await worker.start();
+        armFairGroupsTimer();
 
         // close() ran during worker.start()
         if (!worker.isClosed()) {
@@ -230,6 +322,11 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
         closePromise ??= (async () => {
             const workerClosed = worker.close(closeOptions);
 
+            if (fairGroupsTimer) {
+                clearInterval(fairGroupsTimer);
+                fairGroupsTimer = null;
+            }
+
             await Promise.all([scheduler.stop(), startPromise?.catch(() => {}), workerClosed]);
         })();
 
@@ -249,6 +346,7 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
 
         try {
             await checkMigrationsOnce('drain()');
+            await refreshFairGroups();
         } finally {
             drainChecking = false;
         }
@@ -363,6 +461,7 @@ export function createRunner(sqlane, options = {}) {
                 mounted: NAME_REGEXP.test(name) && registry.getEntry(name) !== undefined,
                 pausedLocally: worker.isPausedLocally(name),
                 running: registry.runningOf(name),
+                fairGroups: worker.claimsByGroup(name),
             };
         })),
         start: async () => {

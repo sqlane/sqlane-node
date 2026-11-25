@@ -468,6 +468,9 @@
  * @property {boolean} mounted A handler of the lane is mounted in this runner.
  * @property {boolean} pausedLocally `runner.pauseLocally()` holds the lane in this runner.
  * @property {number} running Its jobs that run in this runner, by any of its handlers.
+ * @property {boolean} fairGroups This runner claims the lane by fair group now: its handler's definition has
+ *     `fairGroup`, the schema has `0011_fair_groups`, and no job of the lane brought global limits. False in each case
+ *     where it claims the lane FIFO.
  */
 
 /**

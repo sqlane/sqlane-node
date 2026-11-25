@@ -61,6 +61,8 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  *     at once, with no re-probes.
  * @property {Partial<Timings>} [timings] For tests.
  * @property {() => number} [random] For tests: the random start of the tie pointer.
+ * @property {() => boolean} [fairGroupsReady] The schema has `0011_fair_groups`: the claims read the groups, the lanes
+ *     with `fairGroup` are claimed by group, the failure jobs keep their group. Default: it has.
  */
 
 /**
@@ -92,6 +94,8 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  * @property {(lane: string) => void} pauseLocally This process claims no job of the lane, until resumeLocally().
  * @property {(lane: string) => void} resumeLocally Claims the lane again, at once.
  * @property {(lane: string) => boolean} isPausedLocally
+ * @property {(lane: string) => boolean} claimsByGroup The lane is claimed by fair group now
+ *     (`LaneRunStatus.fairGroups`).
  */
 
 /**
@@ -110,6 +114,7 @@ export function createRunner({
     hintsAfterCommit,
     timings = {},
     random = Math.random,
+    fairGroupsReady = () => true,
 }) {
     const t = { ...DEFAULT_TIMINGS, ...timings };
     /** @type {RunnerState} */
@@ -192,6 +197,7 @@ export function createRunner({
             onEnqueued([lane]);
             hintChannel.publish(lane);
         },
+        fairGroupsReady,
     });
     const { keepRenewing: keepRenewingLeases } = createLeases({
         store,
@@ -214,8 +220,7 @@ export function createRunner({
         armRateWake,
         wake: wakeUp,
         hintChannel,
-        // The schema has 0011_fair_groups (the next step reads the records of the migrations)
-        fairGroupsReady: () => true,
+        fairGroupsReady,
     });
     const { runJob } = createJobRuns({
         store,
@@ -252,7 +257,7 @@ export function createRunner({
         unblockKeys,
         armRateWake,
         wakeAfterRates,
-        fairGroupsReady: () => true,
+        fairGroupsReady,
         groupRunningOf: lane => (group) => {
             let count = 0;
 
@@ -723,5 +728,6 @@ export function createRunner({
             }
         },
         isPausedLocally: lane => dispatcher.isPaused(lane),
+        claimsByGroup: lane => dispatcher.claimsByGroup(lane),
     };
 }

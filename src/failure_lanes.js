@@ -21,14 +21,27 @@ const NO_FAILURE_JOB = {
  */
 
 /**
+ * A job that a runner adds itself (a failure job, the slot of a schedule), on a schema without `0011_fair_groups`: no
+ * group, so its insert does not write the missing column.
+ * @param {boolean} ready The schema has `0011_fair_groups`.
+ * @param {import('./new_job.js').NewJob} job
+ * @returns {import('./new_job.js').NewJob}
+ */
+export function withoutGroupUnless(ready, job) {
+    return ready || job.fairGroup === null ? job : { ...job, fairGroup: null };
+}
+
+/**
  * @param {object} params
  * @param {import('./defaults.js').ResolvedDefaults} params.defaults
  * @param {(event: import('./types.js').SqlaneEvent) => void} params.emit
  * @param {(operation: string, error: unknown) => void} params.reportError
  * @param {(lane: string) => void} params.onAdded A failure job of the lane was added: its commit is to come.
+ * @param {() => boolean} [params.fairGroupsReady] The schema has `0011_fair_groups`. Without, a failure job gets no
+ *     fair group (its insert has no column to write it). Default: it has.
  * @returns {FailureLanes}
  */
-export function createFailureLanes({ defaults, emit, reportError, onAdded }) {
+export function createFailureLanes({ defaults, emit, reportError, onAdded, fairGroupsReady = () => true }) {
     return {
         builderOf: ({ failureLane }) => {
             if (!failureLane) {
@@ -37,7 +50,7 @@ export function createFailureLanes({ defaults, emit, reportError, onAdded }) {
 
             return {
                 lane: failureLane.name,
-                build: failed => buildNewJob({
+                build: failed => withoutGroupUnless(fairGroupsReady(), buildNewJob({
                     lane: failureLane.name,
                     definition: failureLane,
                     defaults,
@@ -53,7 +66,7 @@ export function createFailureLanes({ defaults, emit, reportError, onAdded }) {
                     },
                     options: undefined,
                     maxPayloadBytes: Infinity,
-                }),
+                })),
             };
         },
         report: (job, result) => {
