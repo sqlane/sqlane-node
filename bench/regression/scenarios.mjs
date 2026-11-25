@@ -147,6 +147,38 @@ export const SCENARIOS = [
         },
     },
     {
+        name: 'fair_groups_run',
+        unit: 'job claimed, run and completed, of one lane with 100 fair groups, one with half the jobs',
+        // The probes of the lanes and of the groups: both read `delay_ms`
+        timing: ROUNDS,
+        async run({ lib, create, createRunner, pool, measure }) {
+            const convert = lib.defineLane({ name: 'convert', fairGroup: (/** @type {any} */ { payload }) => payload.group });
+            const sqlane = create();
+            const runner = createRunner(sqlane, { localMaxConcurrency: 1 });
+
+            runner.mount([lib.defineHandler(convert, async () => {})]);
+            await sqlane.schema.migrate();
+
+            for (let index = 0; index < JOBS; index++) {
+                const group = index % 2 ? 'big' : `g${String(index % 99).padStart(2, '0')}`;
+
+                await sqlane.enqueue(pool, convert, { group });
+            }
+
+            const stats = await measure(async () => {
+                const { completed } = await runner.drain({ timeout: '60s' });
+
+                if (completed !== JOBS) {
+                    throw new Error(`fair_groups_run: ${completed} of ${JOBS} jobs completed`);
+                }
+            });
+
+            await sqlane.close();
+
+            return { operations: JOBS, stats };
+        },
+    },
+    {
         name: 'idle',
         unit: '`drain()` of 1000 added lanes with no job: its rounds until it finds none',
         async run({ lib, create, createRunner, measure }) {

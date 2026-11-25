@@ -73,12 +73,12 @@ function checkDedupeKey(dedupeKey, where) {
 /**
  * The fair group of a job, from the definition's function: the rule of a limit key.
  * @param {import('./types.js').LaneDefinition} definition
- * @param {string} payloadJson
+ * @param {() => { payload: unknown }} contextOf The context of the definition's functions.
  * @param {Record<string, unknown>} options
  * @param {string} where
  * @returns {string | null} Null: no group.
  */
-function fairGroupOf(definition, payloadJson, options, where) {
+function fairGroupOf(definition, contextOf, options, where) {
     if (!definition.fairGroup) {
         return null;
     }
@@ -93,7 +93,7 @@ function fairGroupOf(definition, payloadJson, options, where) {
     }
 
     // From the payload as the handler gets it: as JSON gives it back. A throw propagates
-    const group = definition.fairGroup({ payload: JSON.parse(payloadJson) });
+    const group = definition.fairGroup(contextOf());
 
     if (group === null || group === undefined) {
         return null;
@@ -162,12 +162,12 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
     }
 
     const payloadJson = serializePayload(payload, maxPayloadBytes, where);
-    const fairGroup = fairGroupOf(definition, payloadJson, options, where);
-    // The limits come from the payload as the handler gets it: as JSON gives it back.
-    const rawLimits = options.globalConcurrencyLimits
-        ?? definition.globalConcurrencyLimits?.({ payload: JSON.parse(payloadJson) }) ?? [];
-    const rawRateLimits = options.globalRateLimits
-        ?? definition.globalRateLimits?.({ payload: JSON.parse(payloadJson) }) ?? [];
+    /** @type {{ payload: unknown } | null} The payload as the handler gets it, as JSON gives it back: parsed once */
+    let context = null;
+    const contextOf = () => (context ??= { payload: JSON.parse(payloadJson) });
+    const fairGroup = fairGroupOf(definition, contextOf, options, where);
+    const rawLimits = options.globalConcurrencyLimits ?? definition.globalConcurrencyLimits?.(contextOf()) ?? [];
+    const rawRateLimits = options.globalRateLimits ?? definition.globalRateLimits?.(contextOf()) ?? [];
     const limits = normalizeGlobalLimits(rawLimits, where);
     const retention = { ...definition.retention, ...options.retention };
 
@@ -185,4 +185,15 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
         ...getSchedule(options, where),
         fairGroup,
     };
+}
+
+/**
+ * A job that a runner adds itself (a failure job, the slot of a schedule), on a schema without `0011_fair_groups`: no
+ * group, so its insert does not write the missing column.
+ * @param {boolean} ready The schema has `0011_fair_groups`.
+ * @param {NewJob} job
+ * @returns {NewJob}
+ */
+export function withoutGroupUnless(ready, job) {
+    return ready || job.fairGroup === null ? job : { ...job, fairGroup: null };
 }

@@ -1,9 +1,8 @@
 // The scheduler of an instance: one timer for the earliest slot of its schedules, and the fire of the due slots. No
 // leader: every started process with a schedule tries its slots, and the cursor row of the schedule lets one of them
 // add the job. See docs/design.md › Schedules.
-import { withoutGroupUnless } from './failure_lanes.js';
 import { ConfigError, InvalidConcurrencyLimitError, InvalidOptionsError, PayloadTooLargeError } from './errors.js';
-import { buildNewJob } from './new_job.js';
+import { buildNewJob, withoutGroupUnless } from './new_job.js';
 import { dueOf, latestSlot, nextSlot, pendingSlots, previousSlot } from './schedule.js';
 import { isConnectionError, isTransientDbError } from './transient_error.js';
 

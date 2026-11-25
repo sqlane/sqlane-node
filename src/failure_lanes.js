@@ -1,6 +1,6 @@
 // The failure job of a job that fails for good: its lane and its options from the definition of the job's lane in this
 // process, inserted by the store in the transaction of the fail, then reported. See docs/design.md › Failure jobs.
-import { buildNewJob } from './new_job.js';
+import { buildNewJob, withoutGroupUnless } from './new_job.js';
 
 /** @type {import('./store/store.js').FailureJobBuilder} A lane without a failure lane: the store adds no failure job */
 const NO_FAILURE_JOB = {
@@ -19,17 +19,6 @@ const NO_FAILURE_JOB = {
  *     result: import('./store/store.js').FailureJobResult | null) => void} report An added failure job wakes its lane
  *     here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
  */
-
-/**
- * A job that a runner adds itself (a failure job, the slot of a schedule), on a schema without `0011_fair_groups`: no
- * group, so its insert does not write the missing column.
- * @param {boolean} ready The schema has `0011_fair_groups`.
- * @param {import('./new_job.js').NewJob} job
- * @returns {import('./new_job.js').NewJob}
- */
-export function withoutGroupUnless(ready, job) {
-    return ready || job.fairGroup === null ? job : { ...job, fairGroup: null };
-}
 
 /**
  * @param {object} params

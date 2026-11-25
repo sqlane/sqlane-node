@@ -64,11 +64,12 @@ export declare function movedPointer({ requests, claimed, left, pointer }: {
 }): FairGroup | undefined;
 /**
  * The locked rows of a claim of due jobs, with the rows of each grouped lane in the order of its share
- * (`orderGroupRows`), the other lanes as they are: `chooseRows()` takes the rows of each lane in their order. MySQL and
- * MariaDB, whose runner chooses among the locked rows.
+ * (`orderGroupRows`) and cut at its `maxJobs` (it locks more: the extra groups and the slack), the other lanes as they
+ * are: `chooseRows()` takes the rows of each lane in their order. MySQL and MariaDB, whose runner chooses among the
+ * locked rows; PostgreSQL makes the same cut in SQL.
  * @template {{ lane: string, fairGroup: FairGroup }} T
  * @param {readonly T[]} rows In the order of run_at, id.
- * @param {readonly { name: string, groups?: readonly GroupRequest[] }[]} requests Of the claim.
+ * @param {readonly { name: string, maxJobs: number, groups?: readonly GroupRequest[] }[]} requests Of the claim.
  * @returns {T[]}
  */
 export declare function orderDueRows<T extends {
@@ -76,5 +77,6 @@ export declare function orderDueRows<T extends {
     fairGroup: FairGroup;
 }>(rows: readonly T[], requests: readonly {
     name: string;
+    maxJobs: number;
     groups?: readonly GroupRequest[];
 }[]): T[];

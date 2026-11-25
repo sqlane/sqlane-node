@@ -67,7 +67,15 @@ describe('the group at enqueue', () => {
         ]);
 
         await expect(groupOf(one.id)).resolves.toBe('backend-1');
-        await expect(Promise.all(many.map(({ id }) => groupOf(id)))).resolves.toStrictEqual(['backend-2', null, null]);
+        // One after the other: one client of the test database
+        const groups = [];
+
+        for (const { id } of many) {
+            // oxlint-disable-next-line no-await-in-loop -- one client
+            groups.push(await groupOf(id));
+        }
+
+        expect(groups).toStrictEqual(['backend-2', null, null]);
     });
 
     test('a lane without fairGroup: no group', async () => {
@@ -891,6 +899,42 @@ describe('the runner: a lane with fair groups', () => {
 
         expect(started.slice(0, 20).filter(lane => lane === 'convert').length).toBeGreaterThanOrEqual(8);
         expect(started.slice(0, 20).filter(lane => lane === 'other').length).toBeGreaterThanOrEqual(8);
+    });
+
+    test('a grouped lane under a local limit, beside a plain lane, 4 slots: never above its limit', async () => {
+        const { sqlane: on, runner } = await freshRunner({ localMaxConcurrency: 4 });
+        const one = defineConcurrencyLimit({ name: 'one', max: 1 });
+        const plain = defineLane({ name: 'plain' });
+        const jobs = holdingGroups();
+        /** @type {number[]} */
+        const convertRunning = [];
+        let convertNow = 0;
+
+        await enqueueGroup(on, 'a', 5);
+        await enqueueGroup(on, 'b', 5);
+        await on.enqueueMany(testAdapter.pool, plain, Array.from({ length: 10 }, () => ({ payload: { queue: 'p' } })));
+        runner.mount([
+            defineHandler(convert, async (context) => {
+                convertNow++;
+                convertRunning.push(convertNow);
+                await jobs.handler(context);
+                convertNow--;
+            }, { localConcurrencyLimits: [one] }),
+            defineHandler(plain, jobs.handler),
+        ]);
+        await runner.start();
+        await waitFor(() => jobs.started.length === 4);
+
+        for (let round = 0; round < 6; round++) {
+            jobs.release(/** @type {string} */ (jobs.started[round]));
+            // oxlint-disable-next-line no-await-in-loop -- one release at a time
+            await waitFor(() => jobs.started.length === 5 + round);
+        }
+
+        jobs.releaseAll();
+
+        expect(Math.max(...convertRunning)).toBe(1);
+        expect(jobs.started.filter(group => group !== 'p').length).toBeGreaterThanOrEqual(2);
     });
 
     test('rows with global limits in a grouped lane: claimed FIFO with their limits; one warning', async () => {

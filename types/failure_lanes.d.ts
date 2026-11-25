@@ -25,14 +25,6 @@ export type FailureLanes = {
  *     here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
  */
 /**
- * A job that a runner adds itself (a failure job, the slot of a schedule), on a schema without `0011_fair_groups`: no
- * group, so its insert does not write the missing column.
- * @param {boolean} ready The schema has `0011_fair_groups`.
- * @param {import('./new_job.js').NewJob} job
- * @returns {import('./new_job.js').NewJob}
- */
-export declare function withoutGroupUnless(ready: boolean, job: import('./new_job.js').NewJob): import('./new_job.js').NewJob;
-/**
  * @param {object} params
  * @param {import('./defaults.js').ResolvedDefaults} params.defaults
  * @param {(event: import('./types.js').SqlaneEvent) => void} params.emit

@@ -55,3 +55,11 @@ export type NewJobParams = {
  * @returns {NewJob}
  */
 export declare function buildNewJob({ lane, definition, defaults, payload, options, maxPayloadBytes, slot }: NewJobParams): NewJob;
+/**
+ * A job that a runner adds itself (a failure job, the slot of a schedule), on a schema without `0011_fair_groups`: no
+ * group, so its insert does not write the missing column.
+ * @param {boolean} ready The schema has `0011_fair_groups`.
+ * @param {NewJob} job
+ * @returns {NewJob}
+ */
+export declare function withoutGroupUnless(ready: boolean, job: NewJob): NewJob;

@@ -13,6 +13,7 @@ import { isMissingTableError } from './transient_error.js';
 import { checkedLaneName } from './lane_names.js';
 import { checkInteger, checkObject, isPlainObject, NAME_REGEXP } from './validate.js';
 
+/** @typedef {import('./types.js').LaneDefinition} LaneDefinition */
 /** @typedef {import('./sqlane.js').Runner} Runner */
 /** @typedef {import('./sqlane.js').Mount} Mount */
 /** @typedef {import('./types.js').RunnerOptions} RunnerOptions */
@@ -114,6 +115,8 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
     const warnedFifo = new Set();
     /** @type {NodeJS.Timeout | null} The read of the records again, while 0011_fair_groups is missing */
     let fairGroupsTimer = null;
+    /** @type {Promise<void> | null} A read of the records again, in flight: the calls share it */
+    let refreshing = null;
 
     /**
      * @returns {boolean} A mounted lane, a mounted schedule's lane, or a mounted lane's failure lane has `fairGroup`:
@@ -144,13 +147,20 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
             return;
         }
 
-        for (const entry of registry.entries()) {
-            if (entry.definition.fairGroup && !warnedFifo.has(entry.name)) {
-                warnedFifo.add(entry.name);
+        // The lanes that this runner claims, fires or adds failure jobs of, with fairGroup
+        const lanes = [
+            ...registry.entries().flatMap(entry => [entry.definition, entry.definition.failureLane]),
+            ...[...scheduler.entries().values()].map(entry => entry.definition),
+        ].filter(definition => definition?.fairGroup)
+            .map(definition => /** @type {LaneDefinition} */ (definition).name);
+
+        for (const lane of new Set(lanes)) {
+            if (!warnedFifo.has(lane)) {
+                warnedFifo.add(lane);
                 logger?.warn(
-                    { lane: entry.name },
+                    { lane },
                     `sqlane: the lane has fairGroup, but the schema lacks ${FAIR_GROUPS_MIGRATION}: this runner claims `
-                    + 'it FIFO until schema.migrate() applies it',
+                    + 'it FIFO, and adds its slots and failure jobs without a group, until schema.migrate() applies it',
                 );
             }
         }
@@ -161,10 +171,20 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
      * migrations (once per runner) does not see a later schema.migrate().
      * @returns {Promise<void>}
      */
-    async function refreshFairGroups() {
-        if (!hasFairGroups && hasGroupedNeed()) {
-            noteFairGroups(await recordedIds(core.adapter.queue, core.tablePrefix));
+    function refreshFairGroups() {
+        if (hasFairGroups || !hasGroupedNeed()) {
+            return Promise.resolve();
         }
+
+        refreshing ??= (async () => {
+            try {
+                noteFairGroups(await recordedIds(core.adapter.queue, core.tablePrefix));
+            } finally {
+                refreshing = null;
+            }
+        })();
+
+        return refreshing;
     }
 
     /** While 0011_fair_groups is missing: the records again at each poll interval, until it is there or close() */

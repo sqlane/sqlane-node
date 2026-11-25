@@ -35,26 +35,32 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
     const withGroups = jobs.some(job => job.fairGroup !== null);
     const values = jobs.map(job => `(?, ?, 'pending', ${runAtSql(job).sql}, ?, ?, ?, ?, ?, ?, ?, ?, `
         + `UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)${withGroups ? ', ?' : ''})`);
-    const params = jobs.flatMap(job => [
-        job.id,
-        job.lane,
-        ...runAtSql(job).params,
-        job.maxAttempts,
-        job.maxStalls,
-        job.limits.length ? JSON.stringify(job.limits.map(limit => limit.key)) : null,
-        job.limits.length ? JSON.stringify(job.limits.map(limit => limit.max)) : null,
-        job.rateLimits.length ? JSON.stringify(job.rateLimits) : null,
-        enqueueToken,
-        job.completedRetentionMs,
-        job.failedRetentionMs,
-        ...withGroups ? [job.fairGroup] : [],
-    ]);
+    const params = jobs.flatMap((job) => {
+        const row = [
+            job.id,
+            job.lane,
+            ...runAtSql(job).params,
+            job.maxAttempts,
+            job.maxStalls,
+            job.limits.length ? JSON.stringify(job.limits.map(limit => limit.key)) : null,
+            job.limits.length ? JSON.stringify(job.limits.map(limit => limit.max)) : null,
+            job.rateLimits.length ? JSON.stringify(job.rateLimits) : null,
+            enqueueToken,
+            job.completedRetentionMs,
+            job.failedRetentionMs,
+        ];
+
+        if (withGroups) {
+            row.push(job.fairGroup);
+        }
+
+        return row;
+    });
 
     // A duplicate id keeps its row: its token is not this one.
     await executor.query(`
         INSERT INTO ${p}jobs (id, lane, status, run_at, max_attempts, max_stalls, limit_keys, limit_maxes,
-            rate_limits, enqueue_token, completed_retention_ms, failed_retention_ms, created_at, updated_at
-            ${withGroups ? ', fair_group' : ''})
+            rate_limits, enqueue_token, completed_retention_ms, failed_retention_ms, created_at, updated_at${withGroups ? ', fair_group' : ''})
         VALUES ${values.join(', ')}
         ON DUPLICATE KEY UPDATE id = id
     `, params);

@@ -6,7 +6,8 @@
  * @returns {Record<string, unknown>}
  */
 export function toJobInput(job) {
-    return {
+    /** @type {Record<string, unknown>} */
+    const input = {
         id: job.id,
         lane: job.lane,
         // As text: a JSON null in a jsonb column of the recordset would be SQL NULL
@@ -20,8 +21,15 @@ export function toJobInput(job) {
         failed_retention_ms: job.failedRetentionMs,
         delay_ms: job.delayMs,
         run_at: job.runAt?.toISOString() ?? null,
-        fair_group: job.fairGroup,
     };
+
+    // Only a job with a group: a missing key of the recordset is null, and the rows of the lanes without groups stay
+    // as small as in 10.0
+    if (job.fairGroup !== null) {
+        input.fair_group = job.fairGroup;
+    }
+
+    return input;
 }
 
 /**

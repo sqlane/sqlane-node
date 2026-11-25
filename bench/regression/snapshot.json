@@ -119,6 +119,21 @@
                 "min": 215502,
                 "max": 215702
             }
+        },
+        "fair_groups_run": {
+            "operations": 200,
+            "statements": {
+                "min": 201,
+                "max": 201
+            },
+            "rows": {
+                "min": 211,
+                "max": 211
+            },
+            "blocks": {
+                "min": 3859,
+                "max": 3884
+            }
         }
     },
     "mysql-8.4": {
@@ -236,6 +251,21 @@
             "rows": {
                 "min": 221705,
                 "max": 221705
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "fair_groups_run": {
+            "operations": 200,
+            "statements": {
+                "min": 2001,
+                "max": 2001
+            },
+            "rows": {
+                "min": 1812,
+                "max": 1812
             },
             "blocks": {
                 "min": 0,
@@ -363,6 +393,21 @@
                 "min": 0,
                 "max": 0
             }
+        },
+        "fair_groups_run": {
+            "operations": 200,
+            "statements": {
+                "min": 2001,
+                "max": 2001
+            },
+            "rows": {
+                "min": 1812,
+                "max": 1812
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
         }
     },
     "mariadb-11.8": {
@@ -480,6 +525,21 @@
             "rows": {
                 "min": 162006,
                 "max": 162006
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "fair_groups_run": {
+            "operations": 200,
+            "statements": {
+                "min": 2001,
+                "max": 2001
+            },
+            "rows": {
+                "min": 1812,
+                "max": 1812
             },
             "blocks": {
                 "min": 0,
@@ -606,6 +666,21 @@
             "blocks": {
                 "min": 215253,
                 "max": 215255
+            }
+        },
+        "fair_groups_run": {
+            "operations": 200,
+            "statements": {
+                "min": 201,
+                "max": 201
+            },
+            "rows": {
+                "min": 211,
+                "max": 211
+            },
+            "blocks": {
+                "min": 3848,
+                "max": 3904
             }
         }
     }

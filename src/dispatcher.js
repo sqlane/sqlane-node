@@ -685,15 +685,16 @@ export function createDispatcher({
             withFairGroups: fairGroupsReady(),
             // MySQL and MariaDB: the choice over the locked rows, those of a grouped lane in the order of its groups
             choose: (locked) => {
+                // The rows of a grouped lane past its maxJobs are cut, but count as left for the pointer of its groups
                 const rows = orderDueRows(locked, requests);
 
-                choiceRows = rows;
+                choiceRows = locked;
 
                 if (entries.length === 1) {
-                    // One lane: no tie. Its maxJobs: a grouped lane locks more rows (extra groups, slack)
+                    // One lane: no tie. Its maxJobs held the rows within the free slots
                     chosenTie = null;
 
-                    return rows.slice(0, requests[0].maxJobs);
+                    return rows;
                 }
 
                 // The counts and the rooms of the requests: the locked rows kept under them
@@ -786,7 +787,8 @@ export function createDispatcher({
      */
     function moveGroupPointers(requests, claimed, left) {
         for (const request of requests) {
-            if (request.groups) {
+            // An unmount during the claim dropped its pointer: none again
+            if (request.groups && registry.getEntry(request.name)) {
                 const moved = movedPointer({
                     requests: request.groups,
                     claimed: claimed.filter(job => job.lane === request.name),

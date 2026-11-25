@@ -715,9 +715,10 @@ export const convertVideo = defineLane({
   after the last one that won a tie. FIFO within a group. As between lanes, the rule equalizes the running counts as
   jobs end: a group that was alone keeps its slots until its jobs end.
 - **The jobs without a group** (`null`, or enqueued by a definition without `fairGroup`) form one group together.
-- **Per runner.** Each runner takes turns on its own, with no count in the database. With one runner and one slot,
-  between two starts of a group, every other group that was due starts once. With several runners, the starts are
-  balanced on average.
+- **Per runner.** Each runner takes turns on its own, with no count in the database. With one runner, one slot and no
+  other process on the lane's rows, between two starts of a group, every other group that was due gets one turn: a
+  start, or a claim that fails a job past its `maxStalls` or puts back a job without its payload. With several
+  runners, the starts are balanced on average.
 - **Fixed at enqueue.** A retry, a stall, a release and `jobs.retry` keep the group. Groups are per lane: the same
   string in two lanes is two groups.
 - **`dedupeKey` is per lane, not per group.** Producers that share a lane and reuse their own ids prefix the
@@ -732,7 +733,7 @@ export const convertVideo = defineLane({
   (failure jobs, slots of schedules) get no group; `JobInfo.fairGroup` is `null`. While it lacks it, a runner with a
   lane, a schedule or a failure lane with `fairGroup` reads the records of the migrations at `start()`, `drain()` and
   each poll interval: after `schema.migrate()`, it claims by group without a restart. A runner without such a lane
-  reads them at `start()` and `drain()` only.
+  reads them once, at its first `start()` or `drain()`.
 - **Upgrading.** Every process that imports a definition with `fairGroup` needs 10.1: a 10.0 `defineLane` rejects the
   unknown option, so a package that exports one declares a peer dependency on `@sqlane/core >=10.1`. Then run
   `schema.migrate()`, then add `fairGroup`. Producers with an older definition put their jobs in the group without a

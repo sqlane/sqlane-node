@@ -258,16 +258,18 @@ export function createRunner({
         armRateWake,
         wakeAfterRates,
         fairGroupsReady,
-        groupRunningOf: lane => (group) => {
-            let count = 0;
+        // Once per lane and claim: the running jobs of the lane, by group
+        groupRunningOf: (lane) => {
+            /** @type {Map<string | null, number>} */
+            const byGroup = new Map();
 
             for (const job of running.values()) {
-                if (job.claimed.lane === lane && job.claimed.fairGroup === group) {
-                    count++;
+                if (job.claimed.lane === lane) {
+                    byGroup.set(job.claimed.fairGroup, (byGroup.get(job.claimed.fairGroup) ?? 0) + 1);
                 }
             }
 
-            return count;
+            return group => byGroup.get(group) ?? 0;
         },
     });
 
