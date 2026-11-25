@@ -25,8 +25,10 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 7. **Rate limits.** A key of a global rate limit starts at most `max` jobs per `per` in the cluster, spread evenly, and
    a job over the limit waits without using an attempt.
 8. **Failure jobs.** When a job fails for good, sqlane adds a job of another lane, in the same transaction that marks the job as failed.
-9. **Library hygiene.** sqlane has no global state, does not read `process.env`, writes nothing to the console and never
-   exits the process. The app injects the connections, the logger and the metrics.
+9. **Fair groups.** One group of a lane (a tenant) with a big backlog does not starve the other groups of the lane:
+   a runner gives the lane's slots to its due groups in turn.
+10. **Library hygiene.** sqlane has no global state, does not read `process.env`, writes nothing to the console and never
+    exits the process. The app injects the connections, the logger and the metrics.
 
 ## Non-goals
 
@@ -49,6 +51,7 @@ MySQL also stands for MariaDB, except in [MariaDB](#mariadb), which lists the di
 | **Concurrency limit** | The most jobs that run at once: local (per process, in memory) or global (per key, in the cluster).                                                                                                                                               |
 | **Rate limit**        | The most job starts per period: local (per process, in memory) or global (per key, in the cluster).                                                                                                                                               |
 | **Fair share weight** | A lane's share of the free slots against the other due lanes.                                                                                                                                                                                     |
+| **Fair group**        | A string of a job, from its lane's `fairGroup` at enqueue. A runner whose definition of the lane has `fairGroup` gives the lane's slots to its due groups in turn.                                                                                |
 | **Key**               | A string (`order:42`): a global limit counts the running jobs of each key.                                                                                                                                                                        |
 | **Rate key**          | A key of a global rate limit, `@<name>` or `@<name>:<value>`: it counts the starts of its jobs.                                                                                                                                                   |
 | **Slot of a key**     | One of the `max` places of a key. A running job holds one slot of each of its keys.                                                                                                                                                               |
@@ -139,6 +142,7 @@ not depend on the `timezone` or `dateStrings` settings of the pool.
 | `limit_keys`, `limit_maxes`                                           | json / array null | The keys of the global limits and their maxes, frozen at enqueue, sorted by key. Written with the job row.         |
 | `rate_limits`                                                         | json null         | The rate keys with their settings, `[{ key, max, per_us, burst, cost }]`, frozen at enqueue, sorted by key.        |
 | `blocked_on`                                                          | varchar(255) null | The full key, or the rate key, of a `blocked` job.                                                                 |
+| `fair_group`                                                          | varchar(255) null | The fair group, from the lane's `fairGroup` at enqueue. Since `0011_fair_groups`; written only when a job has one. |
 | `enqueue_token`                                                       | varchar(26)       | Per enqueue call: tells created rows from duplicates.                                                              |
 | `lock_token`                                                          | varchar(26) null  | Set by the claim. Every final write checks it.                                                                     |
 | `locked_by`                                                           | varchar(255) null | `<host>:<pid>:<ULID>`.                                                                                             |
@@ -157,9 +161,16 @@ count.
 
 Indexes:
 
-- MySQL: `(status, lane, run_at)`, `(status, blocked_on, run_at, id)`, `(expires_at)`, `(lane, created_at, id)`.
+- MySQL: `(status, lane, run_at)`, `(status, blocked_on, run_at, id)`, `(expires_at)`, `(lane, created_at, id)`,
+  `(status, lane, fair_group, run_at, id)`.
 - PostgreSQL: partial `(lane, run_at, id) WHERE status = 'pending'`, partial `(locked_until) WHERE status =
-  'running'`, partial `(blocked_on, run_at, id) WHERE status = 'blocked'`, `(expires_at)`, `(lane, created_at, id)`.
+  'running'`, partial `(blocked_on, run_at, id) WHERE status = 'blocked'`, `(expires_at)`, `(lane, created_at, id)`,
+  partial `(lane, fair_group, run_at, id) WHERE status = 'pending'`.
+
+The index of the fair groups (`0011_fair_groups`) serves the claim of a lane with fair groups: the skip from one group
+to the next with pending jobs, and the oldest due jobs of a group. It covers the pending rows of every lane (MySQL and
+MariaDB have no partial index: their status changes too), so it costs every enqueue a few blocks: the statement
+snapshot records it.
 
 `(lane, created_at, id)` serves `sqlane.jobs.list()`: the jobs of a lane, newest first, of any status. Its columns
 never change after the insert, so the index costs one entry per insert, and an update never moves it.
@@ -230,6 +241,7 @@ it).
 | `0008_job_list`           | 7.1.0      | 7.1.0  | 7.1.0   |
 | `0009_lanes`              | 9.0.0      | 9.0.0  | 9.0.0   |
 | `0010_pause`              | 10.0.0     | 10.0.0 | 10.0.0  |
+| `0011_fair_groups`        | 10.1.0     | 10.1.0 | 10.1.0  |
 
 A migration merged before its release is tagged with the version that its changeset gives: the next minor, or the next
 major. If the release turns out higher, because a major is cut after it, the tag stays lower than the real release.
@@ -348,6 +360,19 @@ again. `runner.start()` and `runner.drain()` read the records of the migrations 
 `schema.migrate()` shares, which must work on a schema without it. A read of the pauses on a schema without it (a
 missing table or column: `42P01`, `42703`, `1146`, `1054`) is a `ConfigError` that asks for `schema.migrate()`.
 
+`0011_fair_groups` adds `<prefix>jobs.fair_group` (nullable, no default: metadata only) and the index of the fair
+groups. PostgreSQL runs both in the transaction of the migration: the build of the index holds the lock of the table,
+so on a large table build it `CONCURRENTLY` beforehand, under its name. MySQL runs two steps, each only while the
+catalog lacks its part (a new kind of step, `unlessIndexExists`): the column first (a nullable column at the end:
+INSTANT), then the index (in place: the table stays writable); one `ALTER` with both would rebuild the table. MariaDB
+has `IF NOT EXISTS`. The down drops the index, then the column, and the groups with it. It is optional in 10.x: a
+runner reads its record with the check of `0010_pause`, and without it claims its lanes with `fairGroup` FIFO, adds
+its own jobs (failure jobs, slots) without a group and reads no group in its claims. While it lacks it and has a lane, a
+schedule or a failure lane with `fairGroup`, it reads the records again at `start()`, `drain()` and each poll interval,
+so a later `schema.migrate()` takes effect without a restart. An enqueue with a group on a schema without it, and
+`lanes.groupStats()`, are a `ConfigError` (a missing column: `42703`, `1054`); an enqueue without a group writes no
+`fair_group` column, with the statement of 10.0.
+
 ### Versions
 
 sqlane follows semantic versioning, and its schema follows these rules.
@@ -430,8 +455,10 @@ loop while started
   lanes with global limits in the turn: their candidates (due jobs whose keys have room), and their due jobs with a
     full key, once per turn; a plan with fill() leaves them their share of the free slots, of the instance and of
     their local limits
+  plain lanes with fair groups (a runner definition with fairGroup): their groups with pending jobs (one statement)
   plain lanes: lock the oldest due jobs of each, up to min(the rooms of its local limits, the free slots), and take
-    them by share (fill(): the lowest running / weight first, ties round-robin)
+    them by share (fill(): the lowest running / weight first, ties round-robin); a lane with fair groups locks the
+    oldest due jobs of its groups instead, in the order of its groups
   lanes with global limits: claim their candidates whose keys have room, by share; block those with a full key
   claimed: start the handlers, loop at once
   none (other processes took them): back off 10–200 ms, with ±50 % jitter
@@ -611,6 +638,35 @@ counts as one without limits, here and in the claim of lanes with global limits:
 So one turn of a process makes 2 round trips to the database on PostgreSQL: the probe and the claim statement. On
 MySQL with the mysql2 adapter, it makes 6 round trips: the probe, and 5 for the claim transaction (the isolation level, `BEGIN`, the locking
 read, the `UPDATE` and `COMMIT`).
+
+**Lanes with fair groups.** A lane whose runner definition has `fairGroup` (with `0011_fair_groups`, and no job of it
+with global limits) is a plain lane whose rows come in the order of its groups: the share between lanes, the caps and
+the tie pointer of the lanes are those of the plain claim. Before the claim, one statement reads its groups with pending
+jobs and the first due time of each: on PostgreSQL a recursive CTE skips from one group to the next on the index of the
+groups (`min(fair_group) > the last one`), plus the null group; on MySQL and MariaDB a loose index scan, `GROUP BY
+status, lane, fair_group`. A lane with no due group leaves the claim (with only delayed groups, its next due time is
+scheduled). `fair_groups.js` ranks the due groups: the fewest jobs running in this runner first, then the rotation of
+the groups (byte order, the null group last) from a pointer after the last group that won a tie, random at first. The
+claim requests at most `min(4 × maxJobs, maxJobs + 8)` of them: the extra groups cover rows that other claims hold.
+Each group locks its water-fill share of the lane's `maxJobs`, plus one for a group with fewer due rows than its share.
+
+- PostgreSQL: the claim statement of grouped lanes (the plain one is unchanged) locks the groups in two CTEs, one for a
+  group (`fair_group = $grp`), one for the null group (`fair_group IS NULL`), each a LATERAL with `ORDER BY fair_group,
+  run_at, id … FOR UPDATE SKIP LOCKED`: the group is fixed per branch, and that order makes the generic plan read the
+  index of the groups; `ORDER BY run_at, id` would read the old index and filter out the backlog of the other groups,
+  and an `OR` would lose the ordered scan. PostgreSQL rejects `FOR UPDATE` in a `UNION`: the CTEs are united after
+  their locks. The rows of a grouped lane rank by `running of the group + rank in the group − 1`, then the tie of the
+  group: the order of `fill()` over its groups, row by row. Its rows past its `maxJobs` are cut; then the lane share of
+  the k-th row and the pick, as for plain lanes. The statement also returns the groups with locked rows left: the
+  runner replays the choice of the groups (`movedPointer`) for the pointer of the lane.
+- MySQL and MariaDB: a branch of the `UNION ALL` per group, on the index of the groups (`FORCE INDEX`); the null group
+  orders by `run_at, id`, which MySQL 8.4 reads from the index, where `ORDER BY fair_group, …` with `fair_group IS NULL`
+  sorts every due row of the group. The runner orders the locked rows of each grouped lane by its groups before the
+  choice by share. One lane alone takes at most its `maxJobs` of them: it locks more.
+- Rows with global limits in a grouped lane (from another definition of the lane, or older enqueue options) make the
+  lane a lane with global limits, FIFO, until the runner restarts, as any lane: with a warning.
+- The claimed rows of a grouped lane are a prefix of the order of its groups: the walk of the local limits skips every
+  later row of a lane once a limit is full, and `LIMIT` cuts a prefix. The pointer of the groups relies on it.
 
 **Names with global limits** (concurrency or rate): the candidates, then one short transaction on the queue's pool. The
 candidates are the oldest 500 due jobs of each lane, split by the held slots and the quota of their keys: those whose
@@ -1071,21 +1127,22 @@ MySQL files, changed where MariaDB differs. A change of the MySQL SQL must be ma
 
 The table lists each guarantee and the mechanism that keeps it.
 
-| Guarantee                                                                                                                                                                                      | Mechanism                                                                                                                                                     |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A job exists only if the caller's transaction commits.                                                                                                                                         | The INSERT runs in the caller's transaction, so a connection must be in one.                                                                                  |
-| A job does not start before its data is visible.                                                                                                                                               | Other connections see only committed rows.                                                                                                                    |
-| A committed job runs at least once.                                                                                                                                                            | Leases, stall recovery, and the release on close.                                                                                                             |
-| Only the current owner saves the result of a job.                                                                                                                                              | The claim uses SKIP LOCKED, and every write checks the `lock_token`.                                                                                          |
-| A job with a `dedupeKey` is added once while its row exists.                                                                                                                                   | The primary key is `<lane>:<dedupeKey>`.                                                                                                                      |
-| At most `max` jobs with a common key of a global limit run at the same time, unless a handler ignores its `signal` past the lease or `exitsBy`, or two claims race during a change of the max. | The primary key `(key, slot)` of `sqlane_concurrency_slots`, the claim, and the linger of slots.                                                              |
-| A job blocked on a key is due again once the key has room.                                                                                                                                     | The unblock after each release and after each claim that blocks, and the sweep of the stall recovery.                                                         |
-| Any window of length `per` sees at most `max + burst − 1` starts of a key of a global rate limit, counted by cost, while its jobs carry one setting of the key.                                | The row of the key in `sqlane_rate_limits`, locked by the claim, whose `tat` moves in the transaction of the claim.                                           |
-| A job blocked on a rate key is due again once the key allows its start.                                                                                                                        | The timer of the process that blocked it, and the sweep of the stall recovery (up to about 30 s later if that process stopped).                               |
-| A job that fails for good adds its failure job, if the database accepts it.                                                                                                                    | The INSERT of the failure job runs in the transaction of the fail.                                                                                            |
-| A lost hint does not lose a job.                                                                                                                                                               | Hints only wake processes, and the database keeps the jobs.                                                                                                   |
-| Each slot of a schedule adds at most one job, ever.                                                                                                                                            | The cursor in `sqlane_schedules`, locked and moved in the transaction of the enqueue.                                                                         |
-| A slot adds a job if a started process with the schedule is up within 1 minute after it, or, with `missed: 'once'`, at the next start within the catch-up reach (the latest missed slot only). | The timer of each process, the lock pass and the cursor. If a fire rolls back and a later slot of the schedule is decided first, the earlier slot is skipped. |
+| Guarantee                                                                                                                                                                                      | Mechanism                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A job exists only if the caller's transaction commits.                                                                                                                                         | The INSERT runs in the caller's transaction, so a connection must be in one.                                                                                                                                             |
+| A job does not start before its data is visible.                                                                                                                                               | Other connections see only committed rows.                                                                                                                                                                               |
+| A committed job runs at least once.                                                                                                                                                            | Leases, stall recovery, and the release on close.                                                                                                                                                                        |
+| Only the current owner saves the result of a job.                                                                                                                                              | The claim uses SKIP LOCKED, and every write checks the `lock_token`.                                                                                                                                                     |
+| A job with a `dedupeKey` is added once while its row exists.                                                                                                                                   | The primary key is `<lane>:<dedupeKey>`.                                                                                                                                                                                 |
+| At most `max` jobs with a common key of a global limit run at the same time, unless a handler ignores its `signal` past the lease or `exitsBy`, or two claims race during a change of the max. | The primary key `(key, slot)` of `sqlane_concurrency_slots`, the claim, and the linger of slots.                                                                                                                         |
+| A job blocked on a key is due again once the key has room.                                                                                                                                     | The unblock after each release and after each claim that blocks, and the sweep of the stall recovery.                                                                                                                    |
+| Any window of length `per` sees at most `max + burst − 1` starts of a key of a global rate limit, counted by cost, while its jobs carry one setting of the key.                                | The row of the key in `sqlane_rate_limits`, locked by the claim, whose `tat` moves in the transaction of the claim.                                                                                                      |
+| A job blocked on a rate key is due again once the key allows its start.                                                                                                                        | The timer of the process that blocked it, and the sweep of the stall recovery (up to about 30 s later if that process stopped).                                                                                          |
+| A job that fails for good adds its failure job, if the database accepts it.                                                                                                                    | The INSERT of the failure job runs in the transaction of the fail.                                                                                                                                                       |
+| In one runner with one slot, between two starts of a fair group of a lane, every other group of the lane that was due starts once.                                                             | The claim locks the oldest due jobs of the groups that `fair_groups.js` ranks (fewest running here, then the rotation from the last tie winner), and ranks them as `fill()` over the groups; a property test replays it. |
+| A lost hint does not lose a job.                                                                                                                                                               | Hints only wake processes, and the database keeps the jobs.                                                                                                                                                              |
+| Each slot of a schedule adds at most one job, ever.                                                                                                                                            | The cursor in `sqlane_schedules`, locked and moved in the transaction of the enqueue.                                                                                                                                    |
+| A slot adds a job if a started process with the schedule is up within 1 minute after it, or, with `missed: 'once'`, at the next start within the catch-up reach (the latest missed slot only). | The timer of each process, the lock pass and the cursor. If a fire rolls back and a later slot of the schedule is decided first, the earlier slot is skipped.                                                            |
 
 ## Observability
 
