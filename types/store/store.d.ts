@@ -400,6 +400,11 @@ export type StoreMethods = {
      */
     keyStats: (params: import('./key_stats.js').KeyStatsParams) => Promise<import('../types.js').KeyStatsPage>;
     /**
+     * One statement on the queue's pool, no lock. Needs
+     * `0011_fair_groups`.
+     */
+    groupStats: (params: import('./group_stats.js').GroupStatsParams) => Promise<import('../types.js').GroupStatsPage>;
+    /**
      * Inserts the missing rows (2 statements per 500), then reads them.
      */
     registerSchedules: (schedules: {
@@ -702,6 +707,9 @@ export type SweepResult = {
  *     last: { enqueuedAtMs: number, id: string } | null }>} listJobs A plain read, no lock.
  * @property {(params: import('./key_stats.js').KeyStatsParams)
  *     => Promise<import('../types.js').KeyStatsPage>} keyStats One statement on the queue's pool, no lock.
+ * @property {(params: import('./group_stats.js').GroupStatsParams)
+ *     => Promise<import('../types.js').GroupStatsPage>} groupStats One statement on the queue's pool, no lock. Needs
+ *     `0011_fair_groups`.
  * @property {(schedules: { id: string, lane: string, spec: string }[], now: () => number)
  *     => Promise<ScheduleRead>} registerSchedules Inserts the missing rows (2 statements per 500), then reads them.
  * @property {(ids: string[] | null, now: () => number) => Promise<ScheduleRead>} readSchedules A plain read, no

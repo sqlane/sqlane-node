@@ -577,6 +577,25 @@ export async function publicApiTypes() {
     }));
     // @ts-expect-error a lane is a definition or a name
     await sqlane.lanes.pauseGlobally(7);
+    // fairGroup: from the declared payload; a string, null or undefined
+    const typedConvert = defineLane(/** @type {import('@sqlane/core').LaneOptions<{ queue: string }>} */ ({
+        name: 'convert',
+        fairGroup: context => context.payload.queue,
+    }));
+
+    // @ts-expect-error a fair group is a string, null or undefined
+    defineLane({ name: 'convert', fairGroup: () => 42 });
+
+    // groupStats: a page of the groups of a lane
+    const groupPage = await sqlane.lanes.groupStats(typedConvert, { limit: 10, orderBy: 'pending' });
+
+    expectTypeOf(groupPage.truncated).toBeBoolean();
+    expectTypeOf(groupPage.groups[0].fairGroup).toEqualTypeOf(/** @type {string | null} */ (null));
+    expectTypeOf(groupPage.groups[0].oldestDueAgeMs).toEqualTypeOf(/** @type {number | null} */ (null));
+    // @ts-expect-error not an order of the groups
+    await sqlane.lanes.groupStats('convert', { orderBy: 'running' });
+    expectTypeOf(runner.getStatus(typedConvert).fairGroups).toBeBoolean();
+
     // @ts-expect-error pauseGlobally() takes options, not a duration
     await sqlane.lanes.pauseGlobally('build_report', '1h');
     // @ts-expect-error stats() is lanes.stats()
@@ -598,7 +617,7 @@ export async function publicApiTypes() {
         keyStats: anyMethod,
     };
     /** @type {import('@sqlane/core').SqlaneLanes} */
-    const lanesMock = { stats: anyMethod, pauseGlobally: anyMethod, resumeGlobally: anyMethod };
+    const lanesMock = { stats: anyMethod, pauseGlobally: anyMethod, resumeGlobally: anyMethod, groupStats: anyMethod };
 
     void mockWithoutKeyStats;
     void mock;

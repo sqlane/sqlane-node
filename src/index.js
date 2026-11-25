@@ -125,6 +125,9 @@ export {
 /** @typedef {import('./types.js').KeyStats} KeyStats */
 /** @typedef {import('./types.js').KeyStatsOptions} KeyStatsOptions */
 /** @typedef {import('./types.js').KeyStatsPage} KeyStatsPage */
+/** @typedef {import('./types.js').GroupStatsOptions} GroupStatsOptions */
+/** @typedef {import('./types.js').GroupStats} GroupStats */
+/** @typedef {import('./types.js').GroupStatsPage} GroupStatsPage */
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').RollbackOptions} RollbackOptions */

@@ -1153,6 +1153,53 @@ export type KeyStatsPage = {
      */
     truncated: boolean;
 };
+export type GroupStatsOptions = {
+    /**
+     * The most groups of the page: 1 to 1000. Default: 100.
+     */
+    limit?: number | undefined;
+    /**
+     * `oldestDue` (default): by the oldest due job, the groups
+     * without a due job last. `pending`: by the pending jobs.
+     */
+    orderBy?: 'oldestDue' | 'pending' | undefined;
+};
+export type GroupStats = {
+    /**
+     * The group; null: the jobs without one.
+     */
+    fairGroup: string | null;
+    /**
+     * Its pending jobs, due or not, not blocked.
+     */
+    pending: number;
+    /**
+     * Its pending jobs that are due now.
+     */
+    due: number;
+    /**
+     * Its jobs blocked on a key of a global limit (rows that brought global limits).
+     */
+    blocked: number;
+    /**
+     * Its jobs that run now, in the whole cluster.
+     */
+    running: number;
+    /**
+     * How long its oldest due pending job has waited, in ms. Null: none due.
+     */
+    oldestDueAgeMs: number | null;
+};
+export type GroupStatsPage = {
+    /**
+     * Worst first, by `orderBy`; ties by the group in byte order, the null group last.
+     */
+    groups: GroupStats[];
+    /**
+     * More groups matched than `limit`.
+     */
+    truncated: boolean;
+};
 export type FailedJobPayload = {
     /**
      * The job that
@@ -1833,6 +1880,29 @@ export type Sqlane<C> = import('./sqlane.js').Sqlane<C>;
  * @typedef {object} KeyStatsPage
  * @property {KeyStats[]} keys Worst first, by `orderBy`; ties by the stored key in byte order.
  * @property {boolean} truncated More keys matched than `limit`.
+ */
+/**
+ * The options of `sqlane.lanes.groupStats()`.
+ * @typedef {object} GroupStatsOptions
+ * @property {number | undefined} [limit] The most groups of the page: 1 to 1000. Default: 100.
+ * @property {'oldestDue' | 'pending' | undefined} [orderBy] `oldestDue` (default): by the oldest due job, the groups
+ *     without a due job last. `pending`: by the pending jobs.
+ */
+/**
+ * A fair group of a lane, by `sqlane.lanes.groupStats()`.
+ * @typedef {object} GroupStats
+ * @property {string | null} fairGroup The group; null: the jobs without one.
+ * @property {number} pending Its pending jobs, due or not, not blocked.
+ * @property {number} due Its pending jobs that are due now.
+ * @property {number} blocked Its jobs blocked on a key of a global limit (rows that brought global limits).
+ * @property {number} running Its jobs that run now, in the whole cluster.
+ * @property {number | null} oldestDueAgeMs How long its oldest due pending job has waited, in ms. Null: none due.
+ */
+/**
+ * A page of `sqlane.lanes.groupStats()`.
+ * @typedef {object} GroupStatsPage
+ * @property {GroupStats[]} groups Worst first, by `orderBy`; ties by the group in byte order, the null group last.
+ * @property {boolean} truncated More groups matched than `limit`.
  */
 /**
  * The payload of a failure job.

@@ -55,6 +55,9 @@ export type ListJobsOptions = import('./types.js').ListJobsOptions;
 export type KeyStats = import('./types.js').KeyStats;
 export type KeyStatsOptions = import('./types.js').KeyStatsOptions;
 export type KeyStatsPage = import('./types.js').KeyStatsPage;
+export type GroupStatsOptions = import('./types.js').GroupStatsOptions;
+export type GroupStats = import('./types.js').GroupStats;
+export type GroupStatsPage = import('./types.js').GroupStatsPage;
 export type Logger = import('./types.js').Logger;
 export type MigrateOptions = import('./types.js').MigrateOptions;
 export type RollbackOptions = import('./types.js').RollbackOptions;
@@ -172,6 +175,9 @@ export type SqlaneEvent = import('./types.js').SqlaneEvent;
 /** @typedef {import('./types.js').KeyStats} KeyStats */
 /** @typedef {import('./types.js').KeyStatsOptions} KeyStatsOptions */
 /** @typedef {import('./types.js').KeyStatsPage} KeyStatsPage */
+/** @typedef {import('./types.js').GroupStatsOptions} GroupStatsOptions */
+/** @typedef {import('./types.js').GroupStats} GroupStats */
+/** @typedef {import('./types.js').GroupStatsPage} GroupStatsPage */
 /** @typedef {import('./types.js').Logger} Logger */
 /** @typedef {import('./types.js').MigrateOptions} MigrateOptions */
 /** @typedef {import('./types.js').RollbackOptions} RollbackOptions */

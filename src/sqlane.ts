@@ -12,6 +12,8 @@ import type {
     EnqueueOptions,
     EnqueuePayload,
     EnqueueResult,
+    GroupStatsOptions,
+    GroupStatsPage,
     HandlerPayload,
     JobFilter,
     JobPage,
@@ -135,6 +137,18 @@ export interface SqlaneLanes<C = any> {
      * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesstats | lanes.stats}
      */
     stats(): Promise<LaneStats[]>;
+
+    /**
+     * The fair groups of one lane with a pending, blocked or running job, worst first: for alerts such as "a tenant
+     * has waited too long", and to see who holds the backlog. A paused lane's `oldestDueAgeMs` keeps growing: check
+     * `stats()` `pausedGlobally` too. It reads the unfinished rows of the lane: mind the interval of a metric scrape.
+     * Rejects with a `ConfigError` when the schema lacks `0011_fair_groups`.
+     * @param lane A lane definition, or the name of a lane.
+     * @param options `limit` (1–1000, default 100) and `orderBy` (`'oldestDue'`, default, or `'pending'`).
+     * @returns At most `limit` groups, and `truncated` when more matched. A lane without groups: one entry, `null`.
+     * @see {@link https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#lanesgroupstats | lanes.groupStats}
+     */
+    groupStats(lane: LaneDefinition | string, options?: GroupStatsOptions): Promise<GroupStatsPage>;
 }
 
 /**

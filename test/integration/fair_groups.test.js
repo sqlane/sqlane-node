@@ -2,6 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, test } from 'vitest';
 import {
     ConfigError, createRunner, createSqlane, defineConcurrencyLimit, defineHandler, defineLane, defineSchedule,
+    InvalidOptionsError,
 } from '../../src/index.js';
 import { resolveDefaults } from '../../src/defaults.js';
 import { orderDueRows, requestGroups } from '../../src/fair_groups.js';
@@ -1017,5 +1018,74 @@ describe('the runner: a lane with fair groups', () => {
         await waitFor(() => groups.length >= 2, 5000);
 
         expect(groups.slice(0, 2)).toStrictEqual(['null', 'null']);
+    });
+});
+
+describe('lanes.groupStats', () => {
+    test('the groups with unfinished jobs: counts, the oldest due, worst first; the null group last on a tie',
+        async () => {
+            const { p, sqlane: on } = await freshTables();
+            const [running] = await enqueueGroup(on, 'a', 3, { secondsAgo: 100 });
+
+            await enqueueGroup(on, 'b', 1, { secondsAgo: 300 });
+            await enqueueGroup(on, null, 2, { secondsAgo: 50 });
+            await enqueueGroup(on, 'later', 2, { delay: '1h' });
+            await database.query(`UPDATE ${p}jobs SET status = 'running', lock_token = 'T', locked_until = ${PAST_LEASE} `
+                + `WHERE id = ${PARAM_1}`, [running]);
+
+            const { groups, truncated } = await on.lanes.groupStats(convert);
+
+            expect(truncated).toBe(false);
+            expect(groups.map(group => group.fairGroup)).toStrictEqual(['b', 'a', null, 'later']);
+            expect(groups[1]).toMatchObject({ fairGroup: 'a', pending: 2, due: 2, blocked: 0, running: 1 });
+            expect(groups[3]).toStrictEqual({
+                fairGroup: 'later', pending: 2, due: 0, blocked: 0, running: 0, oldestDueAgeMs: null,
+            });
+            expect(groups[0].oldestDueAgeMs).toBeGreaterThanOrEqual(299_000);
+        });
+
+    test('orderBy pending, a limit: truncated; by the name of the lane too', async () => {
+        const { sqlane: on } = await freshTables();
+
+        await enqueueGroup(on, 'a', 1);
+        await enqueueGroup(on, 'b', 3);
+        await enqueueGroup(on, 'c', 2);
+
+        await expect(on.lanes.groupStats('convert', { orderBy: 'pending', limit: 2 })).resolves.toMatchObject({
+            groups: [{ fairGroup: 'b', pending: 3 }, { fairGroup: 'c', pending: 2 }],
+            truncated: true,
+        });
+    });
+
+    test('a lane without groups: one entry, null; a lane without jobs: none', async () => {
+        const { sqlane: on } = await freshTables();
+        const plain = defineLane({ name: 'plain' });
+
+        await on.enqueue(testAdapter.pool, plain, {});
+
+        await expect(on.lanes.groupStats(plain)).resolves.toMatchObject({ groups: [{ fairGroup: null, pending: 1 }] });
+        await expect(on.lanes.groupStats('empty')).resolves.toStrictEqual({ groups: [], truncated: false });
+    });
+
+    test.each([
+        ['a bad lane', 'Bad', undefined],
+        ['a limit of 0', 'convert', { limit: 0 }],
+        ['a limit above 1000', 'convert', { limit: 1001 }],
+        ['an unknown order', 'convert', { orderBy: 'running' }],
+        ['an unknown option', 'convert', { type: 'x' }],
+    ])('%s: an InvalidOptionsError', async (_, lane, options) => {
+        await expect(sqlane.lanes.groupStats(lane, /** @type {any} */ (options))).rejects.toThrow(InvalidOptionsError);
+    });
+
+    test('a schema without 0011_fair_groups: a ConfigError that asks for schema.migrate()', async () => {
+        prefixCount++;
+
+        const old = createSqlane({ adapter: testAdapter.adapter, tablePrefix: `${database.tablePrefix}${prefixCount}_` });
+
+        await old.schema.migrate({ targetVersion: '10.0.0' });
+
+        await expect(old.lanes.groupStats(convert)).rejects.toThrow(new ConfigError('lanes.groupStats(): the fair '
+            + 'groups need the migration 0011_fair_groups: run schema.migrate()'));
+        await old.close({ deadline: 0 });
     });
 });

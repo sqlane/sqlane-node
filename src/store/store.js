@@ -1,4 +1,5 @@
 // The store: the SQL of one dialect, bound to an adapter and a table prefix.
+import { readGroupStats } from './group_stats.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { getJob, listJobs } from './job_reads.js';
 import { keyStats } from './key_stats.js';
@@ -276,6 +277,9 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  *     last: { enqueuedAtMs: number, id: string } | null }>} listJobs A plain read, no lock.
  * @property {(params: import('./key_stats.js').KeyStatsParams)
  *     => Promise<import('../types.js').KeyStatsPage>} keyStats One statement on the queue's pool, no lock.
+ * @property {(params: import('./group_stats.js').GroupStatsParams)
+ *     => Promise<import('../types.js').GroupStatsPage>} groupStats One statement on the queue's pool, no lock. Needs
+ *     `0011_fair_groups`.
  * @property {(schedules: { id: string, lane: string, spec: string }[], now: () => number)
  *     => Promise<ScheduleRead>} registerSchedules Inserts the missing rows (2 statements per 500), then reads them.
  * @property {(ids: string[] | null, now: () => number) => Promise<ScheduleRead>} readSchedules A plain read, no
@@ -557,6 +561,7 @@ export function createStore(adapter, tablePrefix, logger, { pausedSeenMs = 5000 
         deleteIdleRateKeys: limit => inQueue(executor => final.deleteIdleRateKeys(executor, p, limit)),
         deleteExpiredJobs: limit => inQueue(executor => final.deleteExpiredJobs(executor, p, limit)),
         makeDue: lanes => inQueue(executor => final.makeDue(executor, p, lanes)),
+        groupStats: params => readGroupStats(adapter.queue, family, p, params),
         getStats: () => final.getStats(adapter.queue, p),
         getJob: id => getJob(adapter.queue, family, p, id),
         listJobs: params => listJobs(adapter.queue, family, p, params),

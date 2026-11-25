@@ -55,11 +55,11 @@ export type GlobalPausesParams = {
 /**
  * @param {GlobalPausesParams} params
  * @returns {{
- *     lanes: Pick<import('./sqlane.js').SqlaneLanes, 'pauseGlobally' | 'resumeGlobally' | 'stats'>,
+ *     lanes: Pick<import('./sqlane.js').SqlaneLanes, 'pauseGlobally' | 'resumeGlobally' | 'stats' | 'groupStats'>,
  *     schedules: Pick<import('./sqlane.js').SqlaneSchedules, 'pauseGlobally' | 'resumeGlobally' | 'remove'>,
  * }}
  */
 export declare function createGlobalPauses({ store, adapter, attached, hintChannel, unblockKeys, reportError, isClosed }: GlobalPausesParams): {
-    lanes: Pick<import('./sqlane.js').SqlaneLanes, 'pauseGlobally' | 'resumeGlobally' | 'stats'>;
+    lanes: Pick<import('./sqlane.js').SqlaneLanes, 'pauseGlobally' | 'resumeGlobally' | 'stats' | 'groupStats'>;
     schedules: Pick<import('./sqlane.js').SqlaneSchedules, 'pauseGlobally' | 'resumeGlobally' | 'remove'>;
 };
