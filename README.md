@@ -199,6 +199,8 @@ transaction, so:
   One query per poll covers all lanes, so 1000 idle lanes cost about what one does.
 - **[Fair share across lanes](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#how-free-slots-are-shared).**
   A backlog of one lane never starves the others; weights tune the shares.
+- **[Fair groups within a lane](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#fair-groups).**
+  One lane for every tenant: in each runner, a tenant with a big backlog never starves the others.
 - **[Wake-up within milliseconds](https://github.com/sqlane/sqlane-node/blob/main/docs/adapters.md#wake-up-after-the-commit).**
   NOTIFY on PostgreSQL, or any pub/sub such as Redis as a [hint](https://github.com/sqlane/sqlane-node/blob/main/docs/api.md#hint);
   polling as the fallback.

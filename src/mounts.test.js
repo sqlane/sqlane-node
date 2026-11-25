@@ -206,6 +206,7 @@ function harness({ localMaxConcurrency = 10, random = () => 0 } = {}) {
                 startedAt: new Date(0),
                 waitedMs: 0,
                 lockToken: `token-${ids}`,
+                fairGroup: null,
                 payload: { found: true, payload: null },
             });
         },

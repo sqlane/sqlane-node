@@ -41,6 +41,7 @@ explains how sqlane works and why.
 - [`schema.getMigrationStatus`](#schemagetmigrationstatus)
 - [`schema.findSchemaProblems`](#schemafindschemaproblems)
 - [`lanes.stats`](#lanesstats)
+- [`lanes.groupStats`](#lanesgroupstats)
 - [`jobs`](#jobs)
 - [Retry, cancel and remove](#retry-cancel-and-remove)
 - [Key stats](#key-stats)
@@ -120,24 +121,27 @@ defineLane<P = any>(options: LaneOptions<P>): LaneDefinition<P>
 The definition is a frozen object. Keep it in a small module that both producers and workers import. A producer then
 does not need to import the handler and its dependencies.
 
-| Option                    | Type                                                                    | Default                                                             | Description                                                                                                                                                                                                                                                                                                                                                        |
-| ------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `name`                    | `string`                                                                | Required                                                            | The name of the lane. It must match `^[a-z][a-z0-9_.-]{0,127}$`, so it cannot contain `:`. It is case-sensitive.                                                                                                                                                                                                                                                   |
-| `maxAttempts`             | integer, at least 1                                                     | `3`                                                                 | The number of times a job runs before it fails for good. Set at enqueue; a `one_more` retry changes it.                                                                                                                                                                                                                                                            |
-| `maxStalls`               | integer, at least 0                                                     | `2`                                                                 | The number of stalls that a job survives. After the next stall, the next claim of the job fails it for good, without running it. Set at enqueue; a `one_more` retry changes it.                                                                                                                                                                                    |
-| `backoff`                 | [`Backoff`](#backoff)                                                   | `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }` | The wait before the next attempt after a failed attempt.                                                                                                                                                                                                                                                                                                           |
-| `retention`               | `{ completed?: Duration, failed?: Duration }`                           | `{ completed: '1h', failed: '30d' }`                                | How long sqlane keeps a completed or a failed job before it deletes the row. A `dedupeKey` blocks duplicates while the row exists. That is while the job is pending or running, then during this retention, until the next cleanup. A started runner runs the cleanup every 5 minutes. If every sqlane sets `cleanup: false`, the rows stay until you delete them. |
-| `timeout`                 | positive duration                                                       | None                                                                | The time after which sqlane aborts the handler. A definition with `globalConcurrencyLimits` needs a timeout, here or in the `defaults` of the sqlane.                                                                                                                                                                                                              |
-| `globalConcurrencyLimits` | `({ payload }) => readonly (ConcurrencyLimit \| ConcurrencyLimitKey)[]` | None                                                                | A function that returns the global limits of a job: [limits and their keys](#defineconcurrencylimit). It must be synchronous and use only its argument. sqlane calls it at enqueue, with the payload as JSON gives it back, and stores the keys with their maxes in the job.                                                                                       |
-| `globalRateLimits`        | `({ payload }) => readonly (RateLimit \| RateLimitKey)[]`               | None                                                                | A function that returns the global rate limits of a job: [limits, their keys and costs](#defineratelimit). It follows the rules of `globalConcurrencyLimits`: synchronous, called at enqueue, and the keys are stored with their settings in the job.                                                                                                              |
-| `failureLane`             | `LaneDefinition`                                                        | None                                                                | The lane of the job that sqlane adds when a job of this lane fails for good: its failure job. The definition in the process that fails the job decides, not the one of its enqueue. A lane cannot be its own failure lane, and the failure lane cannot have a `failureLane` of its own. Its payload is a [`FailedJobPayload`](#failedjobpayload).                  |
+| Option                    | Type                                                                    | Default                                                             | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                    | `string`                                                                | Required                                                            | The name of the lane. It must match `^[a-z][a-z0-9_.-]{0,127}$`, so it cannot contain `:`. It is case-sensitive.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `maxAttempts`             | integer, at least 1                                                     | `3`                                                                 | The number of times a job runs before it fails for good. Set at enqueue; a `one_more` retry changes it.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `maxStalls`               | integer, at least 0                                                     | `2`                                                                 | The number of stalls that a job survives. After the next stall, the next claim of the job fails it for good, without running it. Set at enqueue; a `one_more` retry changes it.                                                                                                                                                                                                                                                                                                                                                                                   |
+| `backoff`                 | [`Backoff`](#backoff)                                                   | `{ type: 'exponential', delay: '5s', maxDelay: '1h', jitter: 0.2 }` | The wait before the next attempt after a failed attempt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `retention`               | `{ completed?: Duration, failed?: Duration }`                           | `{ completed: '1h', failed: '30d' }`                                | How long sqlane keeps a completed or a failed job before it deletes the row. A `dedupeKey` blocks duplicates while the row exists. That is while the job is pending or running, then during this retention, until the next cleanup. A started runner runs the cleanup every 5 minutes. If every sqlane sets `cleanup: false`, the rows stay until you delete them.                                                                                                                                                                                                |
+| `timeout`                 | positive duration                                                       | None                                                                | The time after which sqlane aborts the handler. A definition with `globalConcurrencyLimits` needs a timeout, here or in the `defaults` of the sqlane.                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `globalConcurrencyLimits` | `({ payload }) => readonly (ConcurrencyLimit \| ConcurrencyLimitKey)[]` | None                                                                | A function that returns the global limits of a job: [limits and their keys](#defineconcurrencylimit). It must be synchronous and use only its argument. sqlane calls it at enqueue, with the payload as JSON gives it back, and stores the keys with their maxes in the job.                                                                                                                                                                                                                                                                                      |
+| `globalRateLimits`        | `({ payload }) => readonly (RateLimit \| RateLimitKey)[]`               | None                                                                | A function that returns the global rate limits of a job: [limits, their keys and costs](#defineratelimit). It follows the rules of `globalConcurrencyLimits`: synchronous, called at enqueue, and the keys are stored with their settings in the job.                                                                                                                                                                                                                                                                                                             |
+| `fairGroup`               | `({ payload }) => string \| null \| undefined`                          | None                                                                | A function that returns the [fair group](#fair-groups) of a job: the due jobs of the lane take its slots in a runner by group, in turn, so one group with a big backlog does not starve the others. Synchronous, from its argument only, called at enqueue with the payload as JSON gives it back; the group is stored in the job. 1–255 printable ASCII characters, without spaces at the ends (hash an id that may not fit); `null` or `undefined`: no group. Not with `globalConcurrencyLimits` or `globalRateLimits`. Needs the migration `0011_fair_groups`. |
+| `failureLane`             | `LaneDefinition`                                                        | None                                                                | The lane of the job that sqlane adds when a job of this lane fails for good: its failure job. The definition in the process that fails the job decides, not the one of its enqueue. A lane cannot be its own failure lane, and the failure lane cannot have a `failureLane` of its own. Its payload is a [`FailedJobPayload`](#failedjobpayload).                                                                                                                                                                                                                 |
 
-`defineLane` throws a `ConfigError` if an option is unknown or has a bad value, or if the failure lane has a failure
-lane of its own. It does not check whether a definition with global limits has a timeout, because `runner.mount()`
+`defineLane` throws a `ConfigError` if an option is unknown or has a bad value, if the failure lane has a failure
+lane of its own, or if `fairGroup` and `globalConcurrencyLimits` or `globalRateLimits` are both set (to a value other
+than `undefined`). It does not check whether a definition with global limits has a timeout, because `runner.mount()`
 checks that, with the defaults of its sqlane.
 
 **When a lane option takes effect.** The options stored on the job row (`maxAttempts`, `maxStalls`, `retention`, the
-global limits) are fixed at enqueue, from the producer's definition: a change applies to the jobs enqueued after it.
+global limits, the fair group) are fixed at enqueue, from the producer's definition: a change applies to the jobs
+enqueued after it. Whether a lane is claimed by fair group is up to the definition mounted in each runner.
 `backoff`, `timeout` and `failureLane` take effect in the process that runs or fails the job, from the definition
 mounted there. So the stalled-out jobs of a lane that no process handles wait pending.
 
@@ -444,8 +448,8 @@ A job gets each option from the first place that sets it, in this order:
 3. The `defaults` of `createSqlane`.
 4. The built-in defaults.
 
-`retention` is merged field by field, so you can override only `completed` or only `failed`. `backoff`, `timeout` and
-`failureLane` are not enqueue options: the runner reads them from the definition of the mounted handler, else from
+`retention` is merged field by field, so you can override only `completed` or only `failed`. `fairGroup` comes from
+the definition only: it is not an enqueue option. `backoff`, `timeout` and `failureLane` are not enqueue options: the runner reads them from the definition of the mounted handler, else from
 `defaults`. `fairShareWeight` and the local limits come from the handler.
 
 sqlane fixes the other options of a job, the global limits with their maxes and settings included, when you enqueue
@@ -496,7 +500,11 @@ The global limits follow the rules of [`defineConcurrencyLimit`](#defineconcurre
 
 - `InvalidOptionsError` for a lane that is not a definition, a bad option, `delay` together with `runAt`, a
   `dedupeKey` that starts with `schedule:`, or a payload that is not JSON, or a `jobId` of `jobs.get` that is not a
-  string.
+  string. Also for a bad [fair group](#fair-groups), and for the options `globalConcurrencyLimits` or
+  `globalRateLimits` on a lane with `fairGroup`, unless `[]`.
+- `ConfigError` for a job with a fair group on a schema without the migration `0011_fair_groups`: run
+  `schema.migrate()`. A job without a group works on that schema.
+- The error of a `fairGroup` function that throws, as it is.
 - `PayloadTooLargeError` if the payload is larger than `maxPayloadBytes`.
 - `InvalidConcurrencyLimitError` if a global limit breaks the rules of `defineConcurrencyLimit`.
 - `InvalidRateLimitError` if a global rate limit breaks the rules of `defineRateLimit`, or the job has more than 10
@@ -589,17 +597,18 @@ The handler receives one object with three fields:
 
 The `job` object has these fields:
 
-| Field                     | Type                                      | Description                                                                                   |
-| ------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `id`                      | `string`                                  | The job id.                                                                                   |
-| `lane`                    | `string`                                  | The lane.                                                                                     |
-| `attempt`                 | `number`                                  | The current attempt. It is 1 for the first run.                                               |
-| `maxAttempts`             | `number`                                  | The highest number of attempts for this job. Set at enqueue; a `one_more` retry changes it.   |
-| `enqueuedAt`              | `Date`                                    | The time of the enqueue.                                                                      |
-| `globalConcurrencyLimits` | `readonly { key: string, max: number }[]` | The keys of the global limits of the job, sorted, with their maxes.                           |
-| `scheduledAt`             | `Date` or `null`                          | The slot of a job of a [schedule](#schedules), also when it runs late. `null` for other jobs. |
-| `runAt`                   | `Date`                                    | The job's due time, as stored: its place in line (below).                                     |
-| `startedAt`               | `Date`                                    | The start of this run, by the database clock, as `JobRecord.startedAt` shows it.              |
+| Field                     | Type                                      | Description                                                                                                          |
+| ------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `id`                      | `string`                                  | The job id.                                                                                                          |
+| `lane`                    | `string`                                  | The lane.                                                                                                            |
+| `attempt`                 | `number`                                  | The current attempt. It is 1 for the first run.                                                                      |
+| `maxAttempts`             | `number`                                  | The highest number of attempts for this job. Set at enqueue; a `one_more` retry changes it.                          |
+| `enqueuedAt`              | `Date`                                    | The time of the enqueue.                                                                                             |
+| `globalConcurrencyLimits` | `readonly { key: string, max: number }[]` | The keys of the global limits of the job, sorted, with their maxes.                                                  |
+| `scheduledAt`             | `Date` or `null`                          | The slot of a job of a [schedule](#schedules), also when it runs late. `null` for other jobs.                        |
+| `runAt`                   | `Date`                                    | The job's due time, as stored: its place in line (below).                                                            |
+| `startedAt`               | `Date`                                    | The start of this run, by the database clock, as `JobRecord.startedAt` shows it.                                     |
+| `fairGroup`               | `string` or `null`                        | Its [fair group](#fair-groups), whatever claimed it. `null`: none, or this runner's schema lacks `0011_fair_groups`. |
 
 **The start delay** of a run is `startedAt − runAt`, and the time since the enqueue is `startedAt − enqueuedAt`. Both come
 from one clock, the database's, whatever the clock of the process.
@@ -653,7 +662,7 @@ the jobs of the lane that run in this runner, by any of its handlers, retries in
 its local limits and the runner's cap. Ties go round-robin, in the order of the mounts.
 
 - **Within a lane**, jobs start in FIFO order: `run_at`, then the id. Jobs of a key of a global limit start in FIFO
-  order among those that can start.
+  order among those that can start. A lane with [fair groups](#fair-groups) shares its slots between its groups.
 - **A lane is not in the race, and banks nothing,** while it has no due job, its due jobs have full keys, it is paused
   in this process, or it is at one of its local limits or over one of its local rate limits. The rule keeps no history: only the running counts of
   the moment.
@@ -683,6 +692,56 @@ between a completion and the next claim, so its measured slot time is a little b
 **Local limits.** Take T (weight 2, with a local limit of 1 of its own) and R (weight 1), which share a local limit
 `heavy` of 2, and E (weight 3), on 10 slots. T and R each run 1 job, and E runs 8. With `heavy` at 4, R and E share
 the 9 slots that T leaves by 1:3. A lane can have several local limits: it takes a slot while each of them has room.
+
+### Fair groups
+
+A lane with `fairGroup` in its definition shares its slots between the groups of its jobs, so one group with a big
+backlog does not starve the others: one lane for the jobs of all tenants, each tenant a group.
+
+```js
+export const convertVideo = defineLane({
+    name: 'convert_video',
+    timeout: '2h',
+    fairGroup: ({ payload }) => payload.outputQueueName,
+});
+```
+
+- **The runner's definition decides.** A runner claims a lane by group when the definition of its mounted handler has
+  `fairGroup`, and the schema has `0011_fair_groups`. Else it claims the lane FIFO, whatever groups the rows carry.
+  `runner.getStatus(lane).fairGroups` tells which.
+- **Within the lane, in one runner.** The lane's share of the free slots against the other lanes is unchanged: a lane
+  with 50 groups takes one share, not 50. Each free slot of the lane goes to the due group with the fewest jobs running
+  in this runner; ties go round-robin in the byte order of the groups, the jobs without a group last, from the group
+  after the last one that won a tie. FIFO within a group. As between lanes, the rule equalizes the running counts as
+  jobs end: a group that was alone keeps its slots until its jobs end.
+- **The jobs without a group** (`null`, or enqueued by a definition without `fairGroup`) form one group together.
+- **Per runner.** Each runner takes turns on its own, with no count in the database. With one runner, one slot and no
+  other process on the lane's rows, between two starts of a group, every other group that was due gets one turn: a
+  start, or a claim that fails a job past its `maxStalls` or puts back a job without its payload. With several
+  runners, the starts are balanced on average.
+- **Fixed at enqueue.** A retry, a stall, a release and `jobs.retry` keep the group. Groups are per lane: the same
+  string in two lanes is two groups.
+- **`dedupeKey` is per lane, not per group.** Producers that share a lane and reuse their own ids prefix the
+  `dedupeKey` with their group, or their jobs collide.
+- **Not with global limits.** `defineLane` rejects `fairGroup` with `globalConcurrencyLimits` or `globalRateLimits`. Jobs
+  that bring global limits anyway (from another definition of the lane, or older enqueue options) make the runner claim
+  the lane FIFO with their limits until it restarts, with a warning.
+- **Cost.** A turn with a grouped lane reads its groups that have pending jobs (due or not) on the index of
+  `0011_fair_groups`, then locks the oldest due jobs of a few groups per free slot. Hundreds of groups with pending jobs
+  per lane are fine. The index covers the pending rows of every lane: a few more blocks per enqueue.
+- **Without `0011_fair_groups`.** A runner claims the lane FIFO and logs a warning once; the jobs that it adds itself
+  (failure jobs, slots of schedules) get no group; `JobInfo.fairGroup` is `null`. While it lacks it, a runner with a
+  lane, a schedule or a failure lane with `fairGroup` reads the records of the migrations at `start()`, `drain()` and
+  each poll interval: after `schema.migrate()`, it claims by group without a restart. A runner without such a lane
+  reads them once, at its first `start()` or `drain()`.
+- **Upgrading.** Every process that imports a definition with `fairGroup` needs 10.1: a 10.0 `defineLane` rejects the
+  unknown option, so a package that exports one declares a peer dependency on `@sqlane/core >=10.1`. Then run
+  `schema.migrate()`, then add `fairGroup`. Producers with an older definition put their jobs in the group without a
+  name; a 10.0 runner claims FIFO.
+- **Not in 10.1:** weights per group, a pause of one group, and a `fairGroup` filter of `jobs.list`. To clear the
+  backlog of one group, list the lane's jobs with their payloads and cancel them by id.
+
+[`lanes.groupStats`](#lanesgroupstats) shows the groups of a lane, worst first.
 
 ## Schedules
 
@@ -1023,11 +1082,12 @@ definition nor a name.
 `runner.getStatus` tells what a lane or a schedule does in this process.
 
 ```ts
-runner.getStatus(lane: LaneDefinition | string): { mounted: boolean, pausedLocally: boolean, running: number }
+runner.getStatus(lane: LaneDefinition | string): { mounted: boolean, pausedLocally: boolean, running: number, fairGroups: boolean }
 runner.getStatus(schedule: ScheduleDefinition | `${string}:${string}`): { mounted: boolean }
 ```
 
-For a lane: a handler of it is mounted here; a local pause holds it; its jobs that run here, by any of its handlers. For
+For a lane: a handler of it is mounted here; a local pause holds it; its jobs that run here, by any of its handlers;
+this runner claims it by [fair group](#fair-groups) now (false in each case where it claims the lane FIFO). For
 a schedule, a definition or an id (a string with `:`): it is mounted here. An unknown name or id gives `mounted: false`.
 
 ## `runner.start`
@@ -1151,7 +1211,10 @@ is not the database of the adapter's `dialect`, is below the supported version, 
 not support: the first `schema.migrate()` or `start()` of an instance checks it
 ([server check](adapters.md#the-dialect-and-the-server-check)). After `close()`, it rejects with a `ClosedError`.
 
-10.x requires `0010_pause`, the global pauses: `runner.start()` and `runner.drain()` reject without it. 9.x requires
+10.x requires `0010_pause`, the global pauses: `runner.start()` and `runner.drain()` reject without it. 10.1 adds
+`0011_fair_groups`, the column and the index of the [fair groups](#fair-groups): optional, only a lane with
+`fairGroup` needs it. Its index covers the pending rows of every lane: on a large PostgreSQL table, build it
+`CONCURRENTLY` first, as for `0008_job_list`. 9.x requires
 `0009_lanes`, which renames the columns of the lane. `get`, `list` and the batches of
 [`sqlane.jobs`](#jobs) also require the migration `0008_job_list`, an index of the jobs. The build of the index waits
 for the writes of the jobs, and they wait for it: on a large PostgreSQL table, build the index `CONCURRENTLY` first, as the
@@ -1261,8 +1324,9 @@ table of the migrations: `reverted` is empty. It holds the lock of `schema.migra
 - Each down statement is safe to run again. A rollback that was cut, by a crash or a timeout, finishes when you run it
   again.
 - A down that drops a column or a table loses its data. Today, the downs are those of `0008_job_list`, which drops an
-  index, of `0009_lanes`, which renames the columns of the lane back, and of `0010_pause`, which drops the global
-  pauses: the paused lanes and schedules run again.
+  index, of `0009_lanes`, which renames the columns of the lane back, of `0010_pause`, which drops the global pauses
+  (the paused lanes and schedules run again), and of `0011_fair_groups`, which drops the groups of the jobs: run it with
+  the runners stopped, as a runner that saw it fails its claims until it restarts.
 - Run it only when no process of a newer version uses the tables.
 - `'6.0.0'` is the lowest version: the migrations of 6.0 turned the mutex keys of 5.x into slots, and they have no way
   back.
@@ -1414,6 +1478,39 @@ It is two statements, without locks, on the queue's pool (the counts, and the pa
 `start()` and after `close()`. On every dialect it reads every row that sqlane keeps, so its cost grows with the
 throughput times the retentions: mind the interval of your metric scrape. On a schema without the migration
 `0010_pause`, it rejects with a `ConfigError`.
+
+## `lanes.groupStats`
+
+`lanes.groupStats` returns the [fair groups](#fair-groups) of one lane that have unfinished jobs, worst first: for
+alerts such as "a tenant has waited too long", and to see who holds the backlog.
+
+```ts
+sqlane.lanes.groupStats(lane: LaneDefinition | string, options?: GroupStatsOptions): Promise<GroupStatsPage>
+```
+
+| Option    | Type                       | Default       | Description                                                                         |
+| --------- | -------------------------- | ------------- | ----------------------------------------------------------------------------------- |
+| `limit`   | integer                    | `100`         | The most groups of the page: 1 to 1000.                                             |
+| `orderBy` | `'oldestDue'`, `'pending'` | `'oldestDue'` | By `oldestDueAgeMs` descending, the groups without a due job last; or by `pending`. |
+
+It resolves to `{ groups, truncated }`: at most `limit` groups, and `truncated` when more matched. There is no cursor:
+it is a view of the worst groups, as [`keyStats`](#key-stats). Ties go by the group in byte order, the jobs without a
+group last.
+
+| Field            | Type             | Description                                                                           |
+| ---------------- | ---------------- | ------------------------------------------------------------------------------------- |
+| `fairGroup`      | `string \| null` | The group; `null`: the jobs without one.                                              |
+| `pending`        | `number`         | Its pending jobs, due or not. It does not count the blocked jobs.                     |
+| `due`            | `number`         | Its pending jobs that are due now.                                                    |
+| `blocked`        | `number`         | Its jobs blocked on a key of a global limit (jobs that brought global limits).        |
+| `running`        | `number`         | Its jobs that run now, in the whole cluster.                                          |
+| `oldestDueAgeMs` | `number \| null` | How long its oldest due pending job has waited, in milliseconds. `null`: none is due. |
+
+A group is listed while it has a pending, blocked or running job. A lane without groups gives one entry, `null`. A
+globally paused lane's `oldestDueAgeMs` keeps growing: check `lanes.stats()` `pausedGlobally` in such an alert. It is
+one statement, without locks, on the queue's pool, and reads the unfinished rows of the lane: mind the interval of your
+metric scrape. It rejects with an `InvalidOptionsError` for a bad lane or option, and with a `ConfigError` on a schema
+without the migration `0011_fair_groups`.
 
 ## `jobs`
 
@@ -1899,6 +1996,9 @@ Every event except `error` and `schedule_fired` has these fields:
 | `jobId`   | `string` | The job id.                                                                                                 |
 | `lane`    | `string` | The lane.                                                                                                   |
 | `attempt` | `number` | The attempt, starting at 1. When stall recovery emits the event, it is the attempt of the run that stalled. |
+
+The events of a runner (all but `cancelled`) also have `fairGroup` (`string | null`): the job's
+[fair group](#fair-groups), as `JobInfo` has it.
 
 | `type`                  | Extra fields                                              | When                                                                                                                                                                                                                                                                                                                                                  |
 | ----------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

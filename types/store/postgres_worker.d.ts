@@ -64,7 +64,7 @@ export declare function findCandidates(executor: Executor, p: string, limitsByLa
  * @param {ClaimParams} params
  * @returns {Promise<import('./store.js').ClaimResult>}
  */
-export declare function claim(executor: Executor, p: string, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, withRates }: ClaimParams): Promise<import('./store.js').ClaimResult>;
+export declare function claim(executor: Executor, p: string, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, withRates, withFairGroups, }: ClaimParams): Promise<import('./store.js').ClaimResult>;
 /**
  * Finds, chooses, claims and reads the due jobs of lanes without global limits, in one statement (a transaction of its
  * own). Each lane locks its oldest due jobs that no other claim holds (SKIP LOCKED), up to its `maxJobs`. The locked
@@ -76,7 +76,19 @@ export declare function claim(executor: Executor, p: string, { candidateIds, ful
  * @param {import('./store.js').ClaimDueParams} params
  * @returns {Promise<import('./store.js').ClaimDueResult>} The jobs in the order of run_at.
  */
-export declare function claimDue(executor: Executor, p: string, { requests, limitRooms, free, lockToken, lockedBy, leaseMs }: import('./store.js').ClaimDueParams): Promise<import('./store.js').ClaimDueResult>;
+export declare function claimDue(executor: Executor, p: string, { requests, limitRooms, free, lockToken, lockedBy, leaseMs, withFairGroups, }: import('./store.js').ClaimDueParams): Promise<import('./store.js').ClaimDueResult>;
+/**
+ * The groups of each given lane with pending jobs, and the next due time of each (zero or less: due), not paused. A
+ * recursive CTE skips from one group to the next on `<p>jobs_pending_group` (`min(fair_group) > the last one`), then
+ * one
+ * lookup of the first due time per group; and a lookup of the null group (`ORDER BY fair_group, run_at`: the same
+ * index). Two index lookups per pending group.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} lanes
+ * @returns {Promise<import('./store.js').GroupProbeRow[]>}
+ */
+export declare function probeGroups(executor: Executor, p: string, lanes: string[]): Promise<import('./store.js').GroupProbeRow[]>;
 /**
  * @param {Executor} executor
  * @param {string} p

@@ -99,6 +99,11 @@ export type SchedulerParams = {
      * For tests.
      */
     timings?: Partial<SchedulerTimings>;
+    /**
+     * The schema has `0011_fair_groups`. Without, the slots get no fair group.
+     * Default: it has.
+     */
+    fairGroupsReady?: () => boolean;
 };
 export type Scheduler = {
     /**
@@ -187,6 +192,8 @@ export type FireOutcome = {
  * @property {(event: import('./types.js').SqlaneEvent) => void} emit
  * @property {import('./types.js').Logger | undefined} logger
  * @property {Partial<SchedulerTimings>} [timings] For tests.
+ * @property {() => boolean} [fairGroupsReady] The schema has `0011_fair_groups`. Without, the slots get no fair group.
+ *     Default: it has.
  */
 /**
  * @typedef {object} Scheduler
@@ -231,4 +238,4 @@ export type FireOutcome = {
  * @param {SchedulerParams} params
  * @returns {Scheduler}
  */
-export declare function createScheduler({ store, defaults, maxPayloadBytes, notifyChannel, onCreated, emit, logger, timings, }: SchedulerParams): Scheduler;
+export declare function createScheduler({ store, defaults, maxPayloadBytes, notifyChannel, onCreated, emit, logger, timings, fairGroupsReady, }: SchedulerParams): Scheduler;

@@ -8,6 +8,17 @@ export type ProbeRow = {
      */
     delayMs: number;
 };
+export type GroupProbeRow = {
+    lane: string;
+    /**
+     * Null: the jobs without a group.
+     */
+    group: string | null;
+    /**
+     * Until its oldest pending job is due: 0 or less means due now.
+     */
+    delayMs: number;
+};
 export type Candidate = {
     id: string;
     lane: string;
@@ -56,6 +67,10 @@ export type ClaimedJob = {
      */
     waitedMs: number;
     lockToken: string;
+    /**
+     * Its fair group, read when the claim asks for it (`withFairGroups`); else null.
+     */
+    fairGroup: string | null;
 };
 export type ClaimParams = {
     candidateIds: string[];
@@ -88,6 +103,10 @@ export type ClaimParams = {
      * heads of the rate keys (`pausedFilter`). Set by the store.
      */
     pausedLanes?: readonly string[] | null;
+    /**
+     * The schema has `0011_fair_groups`: the claimed jobs have their fair group.
+     */
+    withFairGroups?: boolean;
 };
 export type RateWait = import('../gcra.js').RateWait;
 export type RateUnblockWait = RateWait & {
@@ -135,6 +154,12 @@ export type DueRequest = {
      * Its place in the order of the ties.
      */
     tie: number;
+    /**
+     * A lane with fair groups: the groups to lock the
+     * oldest due jobs of, in the order of `requestGroups` (fair_groups.js). Its rows rank in the order of `fill()` over
+     * them, and the claim takes at most its `maxJobs`. Never empty.
+     */
+    groups?: import('../fair_groups.js').GroupRequest[];
 };
 export type ClaimDueParams = {
     requests: DueRequest[];
@@ -160,6 +185,11 @@ export type ClaimDueParams = {
      * ones (in the order of run_at), by share. PostgreSQL makes the same choice in SQL.
      */
     choose: (locked: StartableJob[]) => StartableJob[];
+    /**
+     * The schema has `0011_fair_groups`: the claimed jobs have their fair group. Set
+     * with a request that has `groups`.
+     */
+    withFairGroups?: boolean;
 };
 export type StartableJob = ClaimedJob & {
     payload: {
@@ -188,6 +218,12 @@ export type ClaimDueResult = {
      * not taken, they need the claim of lanes with global limits.
      */
     limited: string[];
+    /**
+     * PostgreSQL, a claim with grouped lanes: the groups of each
+     * grouped lane with a locked row that the claim did not take. The runner replays the choice of its groups with
+     * them, to move the pointer of the lane's groups.
+     */
+    leftGroups?: Map<string, (string | null)[]>;
 };
 export type OwnedJob = {
     id: string;
@@ -249,6 +285,11 @@ export type StoreMethods = {
      */
     probe: (lanes: string[] | null) => Promise<ProbeRow[]>;
     /**
+     * The groups of each given lane with pending
+     * jobs, and the next due time of each. Needs `0011_fair_groups`.
+     */
+    probeGroups: (lanes: string[]) => Promise<GroupProbeRow[]>;
+    /**
      *     Of lanes with global limits: their oldest due jobs, at most 500 per lane. `ratedLanes`: the lanes that may have
      *     jobs with rate keys (`findCandidates` below); none: each search has the rate keys.
      */
@@ -306,10 +347,11 @@ export type StoreMethods = {
      */
     rateLimited: (job: OwnedJob, params: RateLimitedParams) => Promise<RateLimitedResult>;
     /**
-     * One read, with no lock: the stale jobs, and
+     * One read, with no
+     * lock (`withFairGroups`: the schema has `0011_fair_groups`, the stale jobs have their group): the stale jobs, and
      * the parts of the sweep that have work.
      */
-    findRecoveryWork: (limit: number) => Promise<RecoveryWork>;
+    findRecoveryWork: (limit: number, withFairGroups?: boolean) => Promise<RecoveryWork>;
     /**
      * One more stall:
      * the job is pending again, its slots linger for one lease. Past its `maxStalls`, it keeps its due time, so it is
@@ -357,6 +399,11 @@ export type StoreMethods = {
      * One statement on the queue's pool, no lock.
      */
     keyStats: (params: import('./key_stats.js').KeyStatsParams) => Promise<import('../types.js').KeyStatsPage>;
+    /**
+     * One statement on the queue's pool, no lock. Needs
+     * `0011_fair_groups`.
+     */
+    groupStats: (params: import('./group_stats.js').GroupStatsParams) => Promise<import('../types.js').GroupStatsPage>;
     /**
      * Inserts the missing rows (2 statements per 500), then reads them.
      */
@@ -415,6 +462,7 @@ export type RecoveryWork = SweepParts & {
     stale: {
         id: string;
         lane: string;
+        fairGroup: string | null;
     }[];
     idleRateKeys: boolean;
 };
@@ -434,6 +482,13 @@ export type SweepResult = {
 /**
  * @typedef {object} ProbeRow
  * @property {string} name A lane with pending jobs.
+ * @property {number} delayMs Until its oldest pending job is due: 0 or less means due now.
+ */
+/**
+ * A fair group of a lane with pending jobs, by `probeGroups`.
+ * @typedef {object} GroupProbeRow
+ * @property {string} lane
+ * @property {string | null} group Null: the jobs without a group.
  * @property {number} delayMs Until its oldest pending job is due: 0 or less means due now.
  */
 /**
@@ -469,6 +524,7 @@ export type SweepResult = {
  * @property {Date} startedAt The database time of the claim, as stored in `started_at`; also the time of its new slots.
  * @property {number} waitedMs Since it was due.
  * @property {string} lockToken
+ * @property {string | null} fairGroup Its fair group, read when the claim asks for it (`withFairGroups`); else null.
  */
 /**
  * @typedef {object} ClaimParams
@@ -485,6 +541,7 @@ export type SweepResult = {
  *     rows of the rate keys in the statement that locks the jobs. Without, a statement of its own, if they have some.
  * @property {readonly string[] | null} [pausedLanes] MySQL and MariaDB: the paused lanes of the last probe, for the
  *     heads of the rate keys (`pausedFilter`). Set by the store.
+ * @property {boolean} [withFairGroups] The schema has `0011_fair_groups`: the claimed jobs have their fair group.
  */
 /** @typedef {import('../gcra.js').RateWait} RateWait */
 /**
@@ -509,6 +566,9 @@ export type SweepResult = {
  * @property {number} weight Its fairShareWeight.
  * @property {number[]} limits Its local limits, as indexes in `limitRooms`.
  * @property {number} tie Its place in the order of the ties.
+ * @property {import('../fair_groups.js').GroupRequest[]} [groups] A lane with fair groups: the groups to lock the
+ *     oldest due jobs of, in the order of `requestGroups` (fair_groups.js). Its rows rank in the order of `fill()` over
+ *     them, and the claim takes at most its `maxJobs`. Never empty.
  */
 /**
  * @typedef {object} ClaimDueParams
@@ -520,6 +580,8 @@ export type SweepResult = {
  * @property {number} leaseMs
  * @property {(locked: StartableJob[]) => StartableJob[]} choose MySQL and MariaDB: the jobs to take among the locked
  *     ones (in the order of run_at), by share. PostgreSQL makes the same choice in SQL.
+ * @property {boolean} [withFairGroups] The schema has `0011_fair_groups`: the claimed jobs have their fair group. Set
+ *     with a request that has `groups`.
  */
 /**
  * A claimed job with its payload.
@@ -535,6 +597,9 @@ export type SweepResult = {
  *     any cap. The runner replays the choice with them, to move the tie pointer as the choice did.
  * @property {string[]} limited The requested lanes with a locked row with global limits (from its enqueue options):
  *     not taken, they need the claim of lanes with global limits.
+ * @property {Map<string, (string | null)[]>} [leftGroups] PostgreSQL, a claim with grouped lanes: the groups of each
+ *     grouped lane with a locked row that the claim did not take. The runner replays the choice of its groups with
+ *     them, to move the pointer of the lane's groups.
  */
 /**
  * A job that this process claimed: every write of it checks the lock token.
@@ -592,6 +657,8 @@ export type SweepResult = {
  * @typedef {object} StoreMethods
  * @property {(lanes: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given lane with
  *     pending jobs, not paused; null: of each lane. It may give other lanes too.
+ * @property {(lanes: string[]) => Promise<GroupProbeRow[]>} probeGroups The groups of each given lane with pending
+ *     jobs, and the next due time of each. Needs `0011_fair_groups`.
  * @property {(limitsByLane: Map<string, number>, ratedLanes?: Set<string>) => Promise<FoundCandidates>} findCandidates
  *     Of lanes with global limits: their oldest due jobs, at most 500 per lane. `ratedLanes`: the lanes that may have
  *     jobs with rate keys (`findCandidates` below); none: each search has the rate keys.
@@ -620,7 +687,8 @@ export type SweepResult = {
  * @property {(job: OwnedJob, params: RateLimitedParams) => Promise<RateLimitedResult>} rateLimited The handler threw a
  *     RateLimitedError on global rate keys of the job: their next start is `retryAfter` from now at the earliest, the
  *     job is blocked on the first of them, without an attempt used; its slots are freed.
- * @property {(limit: number) => Promise<RecoveryWork>} findRecoveryWork One read, with no lock: the stale jobs, and
+ * @property {(limit: number, withFairGroups?: boolean) => Promise<RecoveryWork>} findRecoveryWork One read, with no
+ *     lock (`withFairGroups`: the schema has `0011_fair_groups`, the stale jobs have their group): the stale jobs, and
  *     the parts of the sweep that have work.
  * @property {(id: string, params: { leaseMs: number }) => Promise<StaleJobResult>} recoverStaleJob One more stall:
  *     the job is pending again, its slots linger for one lease. Past its `maxStalls`, it keeps its due time, so it is
@@ -639,6 +707,9 @@ export type SweepResult = {
  *     last: { enqueuedAtMs: number, id: string } | null }>} listJobs A plain read, no lock.
  * @property {(params: import('./key_stats.js').KeyStatsParams)
  *     => Promise<import('../types.js').KeyStatsPage>} keyStats One statement on the queue's pool, no lock.
+ * @property {(params: import('./group_stats.js').GroupStatsParams)
+ *     => Promise<import('../types.js').GroupStatsPage>} groupStats One statement on the queue's pool, no lock. Needs
+ *     `0011_fair_groups`.
  * @property {(schedules: { id: string, lane: string, spec: string }[], now: () => number)
  *     => Promise<ScheduleRead>} registerSchedules Inserts the missing rows (2 statements per 500), then reads them.
  * @property {(ids: string[] | null, now: () => number) => Promise<ScheduleRead>} readSchedules A plain read, no
@@ -670,7 +741,8 @@ export type SweepResult = {
  */
 /**
  * The work of a stall recovery, as one read found it.
- * @typedef {SweepParts & { stale: { id: string, lane: string }[], idleRateKeys: boolean }} RecoveryWork stale: the
+ * @typedef {SweepParts & { stale: { id: string, lane: string, fairGroup: string | null }[], idleRateKeys: boolean }}
+ *     RecoveryWork stale: the
  *     running jobs whose lease ended, the oldest first. idleRateKeys: rows of rate keys whose tat passed.
  */
 /**

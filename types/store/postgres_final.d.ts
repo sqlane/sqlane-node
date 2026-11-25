@@ -91,10 +91,11 @@ export declare function rateLimited(executor: Executor, p: string, job: OwnedJob
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit Of the stale jobs.
- * @returns {Promise<readonly Record<string, unknown>[]>} id, lane, and the parts: lingers, orphans, blocked,
- *     idle_rate_keys (0 or 1).
+ * @param {boolean} [withFairGroups] The schema has `0011_fair_groups`: the stale jobs with their fair group.
+ * @returns {Promise<readonly Record<string, unknown>[]>} id, lane, fair_group (with `withFairGroups`), and the parts:
+ *     lingers, orphans, blocked, idle_rate_keys (0 or 1).
  */
-export declare function readRecoveryWork(executor: Executor, p: string, limit: number): Promise<readonly Record<string, unknown>[]>;
+export declare function readRecoveryWork(executor: Executor, p: string, limit: number, withFairGroups?: boolean): Promise<readonly Record<string, unknown>[]>;
 /**
  * A running job whose lease ended: one more stall, pending again after 30 s × 2^stalls (at most 1 h). Its slots linger
  * for one lease: its old handler may still run. Past its maxStalls, it keeps its due time (due at once), and its next

@@ -60,6 +60,7 @@ export function createLeases({ store, running, timings: t, state, setTimer, emit
             jobId: job.claimed.id,
             lane: job.claimed.lane,
             attempt: job.claimed.attempts + 1,
+            fairGroup: job.claimed.fairGroup,
         });
     }
 

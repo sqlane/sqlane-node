@@ -32,6 +32,16 @@ export declare const rateLimitsTable: (json: string) => string;
  */
 export declare function probeSql(p: string, laneCount?: number): string;
 /**
+ * The groups of each given lane with pending jobs, and the next due time of each (zero or less: due). One index dive
+ * per group: a loose index scan of `<p>jobs_status_lane_group`, as the probe of the lanes (the null group is one
+ * group). The paused lanes are not filtered: the claim skips them.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} lanes
+ * @returns {Promise<import('./store.js').GroupProbeRow[]>}
+ */
+export declare function probeGroups(executor: Executor, p: string, lanes: string[]): Promise<import('./store.js').GroupProbeRow[]>;
+/**
  * The next due time of each given lane with pending jobs, not paused; null, or many lanes: of each lane. One index dive
  * per lane (loose index scan).
  * @param {Executor} executor
@@ -77,7 +87,7 @@ export declare function findCandidates(executor: Executor, p: string, limitsByLa
  * @param {ClaimParams} params
  * @returns {Promise<import('./store.js').ClaimResult>}
  */
-export declare function claim(executor: Executor, p: string, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, pausedLanes, }: ClaimParams): Promise<import('./store.js').ClaimResult>;
+export declare function claim(executor: Executor, p: string, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, pausedLanes, withFairGroups, }: ClaimParams): Promise<import('./store.js').ClaimResult>;
 /**
  * The prefix of the claim statement of claimDue. With `innodb_snapshot_isolation` (MariaDB 10.11.8, 11.0.6, 11.1.5,
  * 11.2.4, 11.4.2 and later; ON by default since 11.6.2), a locking read of a row that the statement's read view does
@@ -98,7 +108,7 @@ export declare const SNAPSHOT_ISOLATION_OFF = "/*M!101108 SET STATEMENT innodb_s
  *     turns `innodb_snapshot_isolation` off (SNAPSHOT_ISOLATION_OFF). False on a server that does not know it.
  * @returns {Promise<import('./store.js').ClaimDueResult>} The jobs in the order of run_at.
  */
-export declare function claimDue(executor: Executor, p: string, { requests, free, lockToken, lockedBy, leaseMs, choose }: import('./store.js').ClaimDueParams, { snapshotIsolationOff }?: {
+export declare function claimDue(executor: Executor, p: string, { requests, free, lockToken, lockedBy, leaseMs, choose, withFairGroups, }: import('./store.js').ClaimDueParams, { snapshotIsolationOff }?: {
     snapshotIsolationOff?: boolean;
 }): Promise<import('./store.js').ClaimDueResult>;
 /**

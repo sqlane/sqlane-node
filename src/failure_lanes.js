@@ -1,6 +1,6 @@
 // The failure job of a job that fails for good: its lane and its options from the definition of the job's lane in this
 // process, inserted by the store in the transaction of the fail, then reported. See docs/design.md › Failure jobs.
-import { buildNewJob } from './new_job.js';
+import { buildNewJob, withoutGroupUnless } from './new_job.js';
 
 /** @type {import('./store/store.js').FailureJobBuilder} A lane without a failure lane: the store adds no failure job */
 const NO_FAILURE_JOB = {
@@ -15,7 +15,7 @@ const NO_FAILURE_JOB = {
  * @property {(definition: import('./types.js').LaneDefinition) => import('./store/store.js').FailureJobBuilder}
  *     builderOf The failure job of a job of a lane with this definition in this process. None without a
  *     `failureLane`.
- * @property {(job: { id: string, lane: string, attempt: number },
+ * @property {(job: { id: string, lane: string, attempt: number, fairGroup: string | null },
  *     result: import('./store/store.js').FailureJobResult | null) => void} report An added failure job wakes its lane
  *     here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
  */
@@ -26,9 +26,11 @@ const NO_FAILURE_JOB = {
  * @param {(event: import('./types.js').SqlaneEvent) => void} params.emit
  * @param {(operation: string, error: unknown) => void} params.reportError
  * @param {(lane: string) => void} params.onAdded A failure job of the lane was added: its commit is to come.
+ * @param {() => boolean} [params.fairGroupsReady] The schema has `0011_fair_groups`. Without, a failure job gets no
+ *     fair group (its insert has no column to write it). Default: it has.
  * @returns {FailureLanes}
  */
-export function createFailureLanes({ defaults, emit, reportError, onAdded }) {
+export function createFailureLanes({ defaults, emit, reportError, onAdded, fairGroupsReady = () => true }) {
     return {
         builderOf: ({ failureLane }) => {
             if (!failureLane) {
@@ -37,7 +39,7 @@ export function createFailureLanes({ defaults, emit, reportError, onAdded }) {
 
             return {
                 lane: failureLane.name,
-                build: failed => buildNewJob({
+                build: failed => withoutGroupUnless(fairGroupsReady(), buildNewJob({
                     lane: failureLane.name,
                     definition: failureLane,
                     defaults,
@@ -53,7 +55,7 @@ export function createFailureLanes({ defaults, emit, reportError, onAdded }) {
                     },
                     options: undefined,
                     maxPayloadBytes: Infinity,
-                }),
+                })),
             };
         },
         report: (job, result) => {
@@ -64,6 +66,7 @@ export function createFailureLanes({ defaults, emit, reportError, onAdded }) {
                     jobId: job.id,
                     lane: job.lane,
                     attempt: job.attempt,
+                    fairGroup: job.fairGroup,
                     failureLane: result.failureLane,
                     error: result.notAdded,
                 });

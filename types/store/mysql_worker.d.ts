@@ -32,6 +32,16 @@ export declare const rateLimitsTable: (json: string) => string;
  */
 export declare function probeSql(p: string, laneCount?: number): string;
 /**
+ * The groups of each given lane with pending jobs, and the next due time of each (zero or less: due). One index dive
+ * per group: a loose index scan of `<p>jobs_status_lane_group`, as the probe of the lanes (the null group is one
+ * group). The paused lanes are not filtered: the claim skips them.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} lanes
+ * @returns {Promise<import('./store.js').GroupProbeRow[]>}
+ */
+export declare function probeGroups(executor: Executor, p: string, lanes: string[]): Promise<import('./store.js').GroupProbeRow[]>;
+/**
  * The next due time of each given lane with pending jobs, not paused; null, or many lanes: of each lane. One index dive
  * per lane (loose index scan).
  * @param {Executor} executor
@@ -77,7 +87,7 @@ export declare function findCandidates(executor: Executor, p: string, limitsByLa
  * @param {ClaimParams} params
  * @returns {Promise<import('./store.js').ClaimResult>}
  */
-export declare function claim(executor: Executor, p: string, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, pausedLanes, }: ClaimParams): Promise<import('./store.js').ClaimResult>;
+export declare function claim(executor: Executor, p: string, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, pausedLanes, withFairGroups, }: ClaimParams): Promise<import('./store.js').ClaimResult>;
 /**
  * Finds, claims and reads the due jobs of lanes without global limits. Call it in a queue transaction. One statement
  * locks the oldest due jobs of each lane that no other claim holds (SKIP LOCKED), with their payloads; the ones that
@@ -87,7 +97,7 @@ export declare function claim(executor: Executor, p: string, { candidateIds, ful
  * @param {import('./store.js').ClaimDueParams} params
  * @returns {Promise<import('./store.js').ClaimDueResult>} The jobs in the order of run_at.
  */
-export declare function claimDue(executor: Executor, p: string, { requests, free, lockToken, lockedBy, leaseMs, choose }: import('./store.js').ClaimDueParams): Promise<import('./store.js').ClaimDueResult>;
+export declare function claimDue(executor: Executor, p: string, { requests, free, lockToken, lockedBy, leaseMs, choose, withFairGroups, }: import('./store.js').ClaimDueParams): Promise<import('./store.js').ClaimDueResult>;
 /**
  * @param {Executor} executor
  * @param {string} p

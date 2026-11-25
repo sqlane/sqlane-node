@@ -95,6 +95,34 @@ export function probeSql(p, laneCount = 0) {
     `;
 }
 
+/**
+ * The groups of each given lane with pending jobs, and the next due time of each (zero or less: due). One index dive
+ * per group: a loose index scan of `<p>jobs_status_lane_group`, as the probe of the lanes (the null group is one
+ * group). The paused lanes are not filtered: the claim skips them.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} lanes
+ * @returns {Promise<import('./store.js').GroupProbeRow[]>}
+ */
+export async function probeGroups(executor, p, lanes) {
+    if (!lanes.length) {
+        return [];
+    }
+
+    const rows = await executor.query(`
+        SELECT lane, fair_group, TIMESTAMPDIFF(MICROSECOND, ${NOW}, MIN(run_at)) DIV 1000 AS delay_ms
+          FROM ${p}jobs FORCE INDEX (${p}jobs_status_lane_group)
+         WHERE status = 'pending' AND lane IN (${placeholders(lanes.length)})
+         GROUP BY status, lane, fair_group
+    `, lanes);
+
+    return rows.map(row => ({
+        lane: String(row.lane),
+        group: (row.fair_group ?? null) === null ? null : String(row.fair_group),
+        delayMs: Number(row.delay_ms),
+    }));
+}
+
 /** Above it, the probe reads all lanes: a long list of lanes makes a slow range plan */
 const MAX_PROBE_LANES = 100;
 
@@ -443,7 +471,7 @@ async function startJobs(executor, p, { ids, holds, nowMs, lockToken, lockedBy, 
  * @returns {Promise<import('./store.js').ClaimResult>}
  */
 export async function claim(executor, p, {
-    candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, pausedLanes = null,
+    candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, pausedLanes = null, withFairGroups = false,
 }) {
     const ids = [...candidateIds, ...fullIds];
 
@@ -456,7 +484,8 @@ export async function claim(executor, p, {
                CAST(${unlessStalledOut('limit_maxes')} AS CHAR) AS limit_maxes,
                CAST(${unlessStalledOut('rate_limits')} AS CHAR) AS rate_limits, attempts, max_attempts, stalls, max_stalls,
                ${epochMs('created_at')} AS created_at_ms, ${epochMs('run_at')} AS run_at_ms,
-               TIMESTAMPDIFF(MICROSECOND, run_at, ${NOW}) DIV 1000 AS waited_ms, ${epochMs(NOW)} AS nowms
+               TIMESTAMPDIFF(MICROSECOND, run_at, ${NOW}) DIV 1000 AS waited_ms, ${epochMs(NOW)} AS nowms${
+                    withFairGroups ? ', fair_group' : ''}
           FROM ${p}jobs j
          WHERE j.id IN (${placeholders(ids.length)}) AND j.status = 'pending' AND j.run_at <= ${NOW}
            AND ${notPaused(p, 'j.lane')}
@@ -483,6 +512,7 @@ export async function claim(executor, p, {
             startedAt: new Date(Number.NaN),
             waitedMs: Number(row.waited_ms),
             lockToken,
+            fairGroup: (row.fair_group ?? null) === null ? null : String(row.fair_group),
         },
     }));
     const keys = [...new Set(locked.flatMap(({ job }) => job.limits.map(limit => limit.key)))];
@@ -595,6 +625,33 @@ export async function claim(executor, p, {
 export const SNAPSHOT_ISOLATION_OFF = '/*M!101108 SET STATEMENT innodb_snapshot_isolation = OFF FOR */ ';
 
 /**
+ * The branches of the locking read of `claimDue`: one per plain lane (its oldest due jobs), one per group of a lane
+ * with fair groups (the oldest due jobs of the group, on the index of the groups). The order of a group: `fair_group,
+ * run_at, id`; of the null group: `run_at, id`, the same order with the group fixed (MySQL 8.4 sorts the rows of
+ * `fair_group IS NULL ORDER BY fair_group, …`, which would read the whole due backlog of the null group).
+ * @param {string} p
+ * @param {import('./store.js').DueRequest[]} requests
+ * @returns {{ index: string, where: string, order: string, params: unknown[] }[]}
+ */
+function dueBranches(p, requests) {
+    return requests.flatMap(request => (request.groups
+        ? request.groups.map(({ group, maxJobs }) => ({
+                index: `${p}jobs_status_lane_group`,
+                where: group === null ? ' AND j.fair_group IS NULL' : ' AND j.fair_group = ?',
+                order: group === null ? 'j.run_at, j.id' : 'j.fair_group, j.run_at, j.id',
+                params: group === null
+                    ? [request.name, request.name, maxJobs]
+                    : [request.name, group, request.name, maxJobs],
+            }))
+        : [{
+                index: `${p}jobs_status_lane_run_at`,
+                where: '',
+                order: 'j.run_at, j.id',
+                params: [request.name, request.name, request.maxJobs],
+            }]));
+}
+
+/**
  * Finds, claims and reads the due jobs of lanes without global limits. Call it in a queue transaction. One statement
  * locks the oldest due jobs of each lane that no other claim holds (SKIP LOCKED), with their payloads; the ones that
  * the choice by share takes (`choose`) are claimed. A second read gets the payloads that the statement did not see.
@@ -605,24 +662,27 @@ export const SNAPSHOT_ISOLATION_OFF = '/*M!101108 SET STATEMENT innodb_snapshot_
  *     turns `innodb_snapshot_isolation` off (SNAPSHOT_ISOLATION_OFF). False on a server that does not know it.
  * @returns {Promise<import('./store.js').ClaimDueResult>} The jobs in the order of run_at.
  */
-export async function claimDue(executor, p, { requests, free, lockToken, lockedBy, leaseMs, choose },
-    { snapshotIsolationOff = true } = {}) {
+export async function claimDue(executor, p, {
+    requests, free, lockToken, lockedBy, leaseMs, choose, withFairGroups = false,
+}, { snapshotIsolationOff = true } = {}) {
     if (!requests.length || free <= 0) {
         return { jobs: [], next: [], limited: [] };
     }
 
     const prefix = snapshotIsolationOff ? SNAPSHOT_ISOLATION_OFF : '';
-    const locked = (await executor.query(prefix + requests.map(() => `(
+    const withGroups = withFairGroups || requests.some(request => request.groups);
+    const branches = dueBranches(p, requests);
+    const locked = (await executor.query(prefix + branches.map(branch => `(
         SELECT j.id, j.lane, ${epochMs('j.run_at')} AS run_at_ms, j.attempts, j.max_attempts, j.stalls,
                j.max_stalls, ${epochMs('j.created_at')} AS created_at_ms, ${LIMITED} AS has_limits,
                TIMESTAMPDIFF(MICROSECOND, j.run_at, ${NOW}) DIV 1000 AS waited_ms, ${epochMs(NOW)} AS nowms,
                -- A subquery, not a join: MariaDB has no FOR UPDATE OF, so a join would lock the payload row too
-               (SELECT CAST(pl.payload AS CHAR) FROM ${p}payloads pl WHERE pl.id = j.id) AS payload
-          FROM ${p}jobs j FORCE INDEX (${p}jobs_status_lane_run_at)
-         WHERE j.status = 'pending' AND j.lane = ? AND j.run_at <= ${NOW} AND ${notPaused(p, '?')}
-         ORDER BY j.run_at, j.id LIMIT ?
+               (SELECT CAST(pl.payload AS CHAR) FROM ${p}payloads pl WHERE pl.id = j.id) AS payload${withGroups ? ', j.fair_group' : ''}
+          FROM ${p}jobs j FORCE INDEX (${branch.index})
+         WHERE j.status = 'pending' AND j.lane = ?${branch.where} AND j.run_at <= ${NOW} AND ${notPaused(p, '?')}
+         ORDER BY ${branch.order} LIMIT ?
            FOR UPDATE SKIP LOCKED
-    )`).join(' UNION ALL '), requests.flatMap(request => [request.name, request.name, request.maxJobs])))
+    )`).join(' UNION ALL '), branches.flatMap(branch => branch.params)))
         .map(row => ({
             runAtMs: Number(row.run_at_ms),
             hasLimits: Boolean(Number(row.has_limits)),
@@ -642,6 +702,7 @@ export async function claimDue(executor, p, { requests, free, lockToken, lockedB
                 startedAt: new Date(Number(row.nowms)),
                 waitedMs: Number(row.waited_ms),
                 lockToken,
+                fairGroup: (row.fair_group ?? null) === null ? null : String(row.fair_group),
                 // payload is NOT NULL: a null is a missing payload row
                 payload: row.payload !== null
                     ? { found: true, payload: JSON.parse(String(row.payload)) }

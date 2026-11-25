@@ -383,20 +383,23 @@ function recordSql(adapter) {
 }
 
 describe('getStatus', () => {
+    const IDLE_STATUS = { mounted: false, pausedLocally: false, running: 0, fairGroups: false };
+    const PAUSED_STATUS = { mounted: true, pausedLocally: true, running: 0, fairGroups: false };
+
     test('a lane: mounted, paused here, its running jobs; a typo: not mounted', () => {
         const runner = createRunner(createSqlane({ adapter: fakeAdapter() }));
 
-        expect(runner.getStatus(report)).toStrictEqual({ mounted: false, pausedLocally: false, running: 0 });
+        expect(runner.getStatus(report)).toStrictEqual(IDLE_STATUS);
 
         const mount = runner.mount([defineHandler(report, () => {})]);
 
         runner.pauseLocally('report');
-        expect(runner.getStatus(report)).toStrictEqual({ mounted: true, pausedLocally: true, running: 0 });
-        expect(runner.getStatus('report')).toStrictEqual({ mounted: true, pausedLocally: true, running: 0 });
-        expect(runner.getStatus('unknown_lane')).toStrictEqual({ mounted: false, pausedLocally: false, running: 0 });
+        expect(runner.getStatus(report)).toStrictEqual(PAUSED_STATUS);
+        expect(runner.getStatus('report')).toStrictEqual(PAUSED_STATUS);
+        expect(runner.getStatus('unknown_lane')).toStrictEqual(IDLE_STATUS);
         mount.unmount();
         runner.resumeLocally(report);
-        expect(runner.getStatus(report)).toStrictEqual({ mounted: false, pausedLocally: false, running: 0 });
+        expect(runner.getStatus(report)).toStrictEqual(IDLE_STATUS);
     });
 
     test('a schedule: by definition or id; a typo: not mounted', () => {

@@ -1,9 +1,10 @@
 import { createMonotonicUlid } from './ulid.js';
-import { InvalidOptionsError } from './errors.js';
+import { ConfigError, InvalidOptionsError } from './errors.js';
 import { buildNewJob } from './new_job.js';
 import { insertJobsMariadb } from './store/mariadb_enqueue.js';
 import { insertJobsMysql } from './store/mysql_enqueue.js';
 import { insertJobsPostgres } from './store/postgres_enqueue.js';
+import { isMissingColumnError } from './transient_error.js';
 import { isPlainObject } from './validate.js';
 
 const enqueueToken = createMonotonicUlid();
@@ -64,9 +65,28 @@ export function createEnqueuer({
     /**
      * @param {C | undefined} connection Undefined: the queue's pool.
      * @param {import('./new_job.js').NewJob[]} jobs Distinct ids.
+     * @returns {Promise<Set<string>>} The ids that it created. A job with a fair group on a schema without its column
+     *     (`0011_fair_groups`): a `ConfigError`.
+     */
+    async function insertJobsOf(connection, jobs) {
+        try {
+            return await insertJobsOn(connection, jobs);
+        } catch (error) {
+            if (jobs.some(job => job.fairGroup !== null) && isMissingColumnError(error)) {
+                throw new ConfigError(`enqueue(${JSON.stringify(jobs[0].lane)}): a job with a fair group needs the `
+                    + 'migration 0011_fair_groups: run schema.migrate()', { cause: error });
+            }
+
+            throw error;
+        }
+    }
+
+    /**
+     * @param {C | undefined} connection Undefined: the queue's pool.
+     * @param {import('./new_job.js').NewJob[]} jobs Distinct ids.
      * @returns {Promise<Set<string>>} The ids that it created.
      */
-    function insertJobsOf(connection, jobs) {
+    function insertJobsOn(connection, jobs) {
         const token = enqueueToken();
 
         if (insertJobs) {

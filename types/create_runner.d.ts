@@ -1,3 +1,4 @@
+export type LaneDefinition = import('./types.js').LaneDefinition;
 export type Runner = import('./sqlane.js').Runner;
 export type Mount = import('./sqlane.js').Mount;
 export type RunnerOptions = import('./types.js').RunnerOptions;

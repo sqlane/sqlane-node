@@ -692,7 +692,11 @@ describe('stall recovery', () => {
         await sleep(20);
         await expect(tables.store.findRecoveryWork(10)).resolves.toStrictEqual({
             ...NO_RECOVERY_WORK,
-            stale: [{ id: first.id, lane: 'sync_order' }, { id: second.id, lane: 'sync_order' }],
+            // fairGroup: null without withFairGroups (the runner passes it once the schema has 0011_fair_groups)
+            stale: [
+                { id: first.id, lane: 'sync_order', fairGroup: null },
+                { id: second.id, lane: 'sync_order', fairGroup: null },
+            ],
         });
         await expect(tables.store.findRecoveryWork(1)).resolves.toMatchObject({ stale: [{ id: first.id }] });
 

@@ -61,6 +61,8 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  *     at once, with no re-probes.
  * @property {Partial<Timings>} [timings] For tests.
  * @property {() => number} [random] For tests: the random start of the tie pointer.
+ * @property {() => boolean} [fairGroupsReady] The schema has `0011_fair_groups`: the claims read the groups, the lanes
+ *     with `fairGroup` are claimed by group, the failure jobs keep their group. Default: it has.
  */
 
 /**
@@ -92,6 +94,8 @@ const RELEASE_EXTRA_DELAY_MS = 2000;
  * @property {(lane: string) => void} pauseLocally This process claims no job of the lane, until resumeLocally().
  * @property {(lane: string) => void} resumeLocally Claims the lane again, at once.
  * @property {(lane: string) => boolean} isPausedLocally
+ * @property {(lane: string) => boolean} claimsByGroup The lane is claimed by fair group now
+ *     (`LaneRunStatus.fairGroups`).
  */
 
 /**
@@ -110,6 +114,7 @@ export function createRunner({
     hintsAfterCommit,
     timings = {},
     random = Math.random,
+    fairGroupsReady = () => true,
 }) {
     const t = { ...DEFAULT_TIMINGS, ...timings };
     /** @type {RunnerState} */
@@ -192,6 +197,7 @@ export function createRunner({
             onEnqueued([lane]);
             hintChannel.publish(lane);
         },
+        fairGroupsReady,
     });
     const { keepRenewing: keepRenewingLeases } = createLeases({
         store,
@@ -214,6 +220,7 @@ export function createRunner({
         armRateWake,
         wake: wakeUp,
         hintChannel,
+        fairGroupsReady,
     });
     const { runJob } = createJobRuns({
         store,
@@ -250,6 +257,20 @@ export function createRunner({
         unblockKeys,
         armRateWake,
         wakeAfterRates,
+        fairGroupsReady,
+        // Once per lane and claim: the running jobs of the lane, by group
+        groupRunningOf: (lane) => {
+            /** @type {Map<string | null, number>} */
+            const byGroup = new Map();
+
+            for (const job of running.values()) {
+                if (job.claimed.lane === lane) {
+                    byGroup.set(job.claimed.fairGroup, (byGroup.get(job.claimed.fairGroup) ?? 0) + 1);
+                }
+            }
+
+            return group => byGroup.get(group) ?? 0;
+        },
     });
 
     /**
@@ -316,6 +337,7 @@ export function createRunner({
             jobId: claimed.id,
             lane: claimed.lane,
             attempt: claimed.attempts + 1,
+            fairGroup: claimed.fairGroup,
             runAt: claimed.runAt,
             enqueuedAt: claimed.enqueuedAt,
             startedAt: claimed.startedAt,
@@ -636,6 +658,7 @@ export function createRunner({
                         jobId: job.claimed.id,
                         lane: job.claimed.lane,
                         attempt: job.claimed.attempts + 1,
+                        fairGroup: job.claimed.fairGroup,
                     });
                 } catch (error) {
                     reportError('release', error);
@@ -707,5 +730,6 @@ export function createRunner({
             }
         },
         isPausedLocally: lane => dispatcher.isPaused(lane),
+        claimsByGroup: lane => dispatcher.claimsByGroup(lane),
     };
 }

@@ -63,6 +63,10 @@
  * @property {(context: { payload: P }) => readonly (RateLimit | RateLimitKey)[]} [globalRateLimits] Rate limits that
  *     the whole cluster counts, per key: the starts of jobs. Sync, from the context only; at enqueue. At most 10 keys
  *     with the global concurrency limits.
+ * @property {(context: { payload: P }) => string | null | undefined} [fairGroup] The fair group of a job: the due jobs
+ *     of the lane take its slots in a runner by group, in turn. Sync, from the context only; at enqueue. 1–255
+ *     printable ASCII characters, without spaces at the ends; null or undefined: no group. Not with the global limits.
+ *     Needs the migration `0011_fair_groups`.
  * @property {LaneDefinition} [failureLane] Gets a job, the failure job, when a job fails for good: by the definition in
  *     the process that fails the job. It has no failure lane of its own.
  */
@@ -154,6 +158,8 @@
  *     on a global rate key keep it. So the start delay, `startedAt − runAt`, includes the time on a key and a
  *     rate-limited run. From the app's clock with the `runAt` option, until the first rerun.
  * @property {Date} startedAt The start of this run, by the database clock, as `JobRecord.startedAt` shows it.
+ * @property {string | null} fairGroup Its fair group (the lane's `fairGroup` at enqueue), whatever path claimed it.
+ *     Null: none, or the runner's schema lacks `0011_fair_groups`.
  */
 
 /**
@@ -266,19 +272,20 @@
  */
 
 /**
- * An event of the job lifecycle, by `type`.
+ * An event of the job lifecycle, by `type`. The events of a runner have the job's `fairGroup` (as `JobInfo`); not
+ * `cancelled`, from `jobs.cancel`.
  * @typedef {(JobEventBase & (
- *     | { type: 'claimed', runAt: Date, enqueuedAt: Date, startedAt: Date }
- *     | { type: 'completed', durationMs: number }
- *     | { type: 'retried', durationMs: number, delayMs: number, error: unknown }
- *     | { type: 'failed', durationMs: number, error: unknown }
+ *     | { type: 'claimed', runAt: Date, enqueuedAt: Date, startedAt: Date, fairGroup: string | null }
+ *     | { type: 'completed', durationMs: number, fairGroup: string | null }
+ *     | { type: 'retried', durationMs: number, delayMs: number, error: unknown, fairGroup: string | null }
+ *     | { type: 'failed', durationMs: number, error: unknown, fairGroup: string | null }
  *     | { type: 'rate_limited', durationMs: number, limit: string, key: string | null, scope: 'global' | 'local',
- *         retryAt: Date, error: unknown }
- *     | { type: 'timed_out', durationMs: number }
- *     | { type: 'stalled' }
- *     | { type: 'released' }
- *     | { type: 'lease_lost' }
- *     | { type: 'failure_job_not_added', failureLane: string, error: unknown }
+ *         retryAt: Date, error: unknown, fairGroup: string | null }
+ *     | { type: 'timed_out', durationMs: number, fairGroup: string | null }
+ *     | { type: 'stalled', fairGroup: string | null }
+ *     | { type: 'released', fairGroup: string | null }
+ *     | { type: 'lease_lost', fairGroup: string | null }
+ *     | { type: 'failure_job_not_added', failureLane: string, error: unknown, fairGroup: string | null }
  *     | { type: 'cancelled' }
  * )) | ScheduleFiredEvent | { type: 'error', operation: string, error: unknown }} SqlaneEvent
  */
@@ -461,6 +468,9 @@
  * @property {boolean} mounted A handler of the lane is mounted in this runner.
  * @property {boolean} pausedLocally `runner.pauseLocally()` holds the lane in this runner.
  * @property {number} running Its jobs that run in this runner, by any of its handlers.
+ * @property {boolean} fairGroups This runner claims the lane by fair group now: its handler's definition has
+ *     `fairGroup`, the schema has `0011_fair_groups`, and no job of the lane brought global limits. False in each case
+ *     where it claims the lane FIFO.
  */
 
 /**
@@ -727,6 +737,32 @@
  * @typedef {object} KeyStatsPage
  * @property {KeyStats[]} keys Worst first, by `orderBy`; ties by the stored key in byte order.
  * @property {boolean} truncated More keys matched than `limit`.
+ */
+
+/**
+ * The options of `sqlane.lanes.groupStats()`.
+ * @typedef {object} GroupStatsOptions
+ * @property {number | undefined} [limit] The most groups of the page: 1 to 1000. Default: 100.
+ * @property {'oldestDue' | 'pending' | undefined} [orderBy] `oldestDue` (default): by the oldest due job, the groups
+ *     without a due job last. `pending`: by the pending jobs.
+ */
+
+/**
+ * A fair group of a lane, by `sqlane.lanes.groupStats()`.
+ * @typedef {object} GroupStats
+ * @property {string | null} fairGroup The group; null: the jobs without one.
+ * @property {number} pending Its pending jobs, due or not, not blocked.
+ * @property {number} due Its pending jobs that are due now.
+ * @property {number} blocked Its jobs blocked on a key of a global limit (rows that brought global limits).
+ * @property {number} running Its jobs that run now, in the whole cluster.
+ * @property {number | null} oldestDueAgeMs How long its oldest due pending job has waited, in ms. Null: none due.
+ */
+
+/**
+ * A page of `sqlane.lanes.groupStats()`.
+ * @typedef {object} GroupStatsPage
+ * @property {GroupStats[]} groups Worst first, by `orderBy`; ties by the group in byte order, the null group last.
+ * @property {boolean} truncated More groups matched than `limit`.
  */
 
 /**

@@ -303,6 +303,7 @@ function runnerWithHeldJobs(withKeys, {
         enqueuedAt: new Date(),
         waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: `token-${index + 1}`,
+        fairGroup: null,
         payload: { found: true, payload: null },
     }));
     const template = pending[0];
@@ -647,6 +648,7 @@ async function runnerWithLease(renewLeases, { start = true, handlerMs } = {}) {
         enqueuedAt: new Date(),
         waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: 'token-1',
+        fairGroup: null,
         payload: { found: true, payload: null },
     };
     const store = /** @type {import('./store/store.js').Store} */ (/** @type {unknown} */ ({
@@ -996,6 +998,7 @@ function dueJobOf(name) {
         enqueuedAt: new Date(),
         waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: `token-${name}`,
+        fairGroup: null,
         payload: { found: true, payload: null },
     };
 }
@@ -1239,6 +1242,7 @@ function groupRunner({ maxConcurrency = 4, random = () => 0, groupCap = 2 } = {}
             enqueuedAt: new Date(0), waitedMs: 0, runAt: new Date(0), startedAt: new Date(0), limits: name === 'keyed' ? [{ key: `k${id}`, max: 1 }] : [],
             rateLimits: [],
             lockToken: 't',
+            fairGroup: null,
             payload: { found: true, payload: {} },
         };
     };
@@ -1754,6 +1758,7 @@ function dueJob(id, name) {
         enqueuedAt: new Date(),
         waitedMs: 0, runAt: new Date(0), startedAt: new Date(0),
         lockToken: 'token',
+        fairGroup: null,
         payload: { found: true, payload: null },
     };
 }

@@ -6,6 +6,7 @@ import { isScheduleDefinition, scheduleEntryOf } from './define_schedule.js';
 import { ConfigError, InvalidOptionsError } from './errors.js';
 import { isRateKey } from './rate_keys.js';
 import { isSlotKey } from './schedule.js';
+import { shown } from './jobs_api.js';
 import { isMissingColumnError, isMissingTableError } from './transient_error.js';
 import { checkedLaneName } from './lane_names.js';
 import { checkObject, NAME_REGEXP } from './validate.js';
@@ -103,7 +104,7 @@ export function scheduleOf(schedule, where, { keyless = false } = {}) {
 /**
  * @param {GlobalPausesParams} params
  * @returns {{
- *     lanes: Pick<import('./sqlane.js').SqlaneLanes, 'pauseGlobally' | 'resumeGlobally' | 'stats'>,
+ *     lanes: Pick<import('./sqlane.js').SqlaneLanes, 'pauseGlobally' | 'resumeGlobally' | 'stats' | 'groupStats'>,
  *     schedules: Pick<import('./sqlane.js').SqlaneSchedules, 'pauseGlobally' | 'resumeGlobally' | 'remove'>,
  * }}
  */
@@ -211,6 +212,34 @@ export function createGlobalPauses({ store, adapter, attached, hintChannel, unbl
                 // Not paused: nothing to unblock nor to wake
                 if (await withSchemaError(where, () => store.resumeLane(name, connection))) {
                     await resumeAfterCommit(connection, name);
+                }
+            },
+            groupStats: async (lane, options = {}) => {
+                const where = 'lanes.groupStats()';
+                const name = checkedLaneName(lane, where);
+                const { limit = 100, orderBy = 'oldestDue' } = checkObject(options, ['limit', 'orderBy'], 'options', {
+                    where,
+                    ErrorClass: InvalidOptionsError,
+                });
+
+                if (!Number.isSafeInteger(limit) || /** @type {number} */ (limit) < 1
+                    || /** @type {number} */ (limit) > 1000) {
+                    throw new InvalidOptionsError(`${where}: "limit" must be an integer from 1 to 1000, got ${
+                        shown(limit)}`);
+                }
+
+                if (orderBy !== 'oldestDue' && orderBy !== 'pending') {
+                    throw new InvalidOptionsError(`${where}: "orderBy" must be 'oldestDue' or 'pending', got ${
+                        shown(orderBy)}`);
+                }
+
+                try {
+                    return await store.groupStats({ lane: name, limit: /** @type {number} */ (limit), orderBy });
+                } catch (error) {
+                    throw isMissingColumnError(error)
+                        ? new ConfigError(`${where}: the fair groups need the migration 0011_fair_groups: run `
+                            + 'schema.migrate()', { cause: error })
+                        : error;
                 }
             },
             stats: () => withSchemaError('lanes.stats()', async () => {

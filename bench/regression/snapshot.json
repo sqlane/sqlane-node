@@ -11,8 +11,8 @@
                 "max": 100
             },
             "blocks": {
-                "min": 1114,
-                "max": 1114
+                "min": 1216,
+                "max": 1216
             }
         },
         "enqueue_many": {
@@ -26,23 +26,23 @@
                 "max": 1000
             },
             "blocks": {
-                "min": 16128,
-                "max": 16128
+                "min": 18033,
+                "max": 18034
             }
         },
         "run": {
             "operations": 200,
             "statements": {
-                "min": 201,
-                "max": 201
+                "min": 202,
+                "max": 202
             },
             "rows": {
-                "min": 201,
-                "max": 201
+                "min": 212,
+                "max": 212
             },
             "blocks": {
-                "min": 3882,
-                "max": 3909
+                "min": 3881,
+                "max": 3908
             }
         },
         "idle": {
@@ -52,8 +52,8 @@
                 "max": 3
             },
             "rows": {
-                "min": 10,
-                "max": 10
+                "min": 11,
+                "max": 11
             },
             "blocks": {
                 "min": 4001,
@@ -71,38 +71,38 @@
                 "max": 3000
             },
             "blocks": {
-                "min": 25080,
-                "max": 25405
+                "min": 27131,
+                "max": 27438
             }
         },
         "global_limits": {
             "operations": 100,
             "statements": {
-                "min": 1000,
-                "max": 1000
+                "min": 1001,
+                "max": 1001
             },
             "rows": {
-                "min": 1288,
-                "max": 1288
+                "min": 1299,
+                "max": 1299
             },
             "blocks": {
-                "min": 6450,
-                "max": 6456
+                "min": 7239,
+                "max": 7245
             }
         },
         "global_rate_limits": {
             "operations": 100,
             "statements": {
-                "min": 800,
-                "max": 800
+                "min": 801,
+                "max": 801
             },
             "rows": {
-                "min": 1482,
-                "max": 1482
+                "min": 1493,
+                "max": 1493
             },
             "blocks": {
-                "min": 9352,
-                "max": 9394
+                "min": 10141,
+                "max": 10173
             }
         },
         "paused_lane_blocked": {
@@ -112,12 +112,27 @@
                 "max": 1001
             },
             "rows": {
-                "min": 808,
-                "max": 808
+                "min": 809,
+                "max": 809
             },
             "blocks": {
-                "min": 215004,
-                "max": 215803
+                "min": 215502,
+                "max": 215702
+            }
+        },
+        "fair_groups_run": {
+            "operations": 200,
+            "statements": {
+                "min": 201,
+                "max": 201
+            },
+            "rows": {
+                "min": 211,
+                "max": 211
+            },
+            "blocks": {
+                "min": 3859,
+                "max": 3884
             }
         }
     },
@@ -155,12 +170,12 @@
         "run": {
             "operations": 200,
             "statements": {
-                "min": 2000,
-                "max": 2000
+                "min": 2001,
+                "max": 2001
             },
             "rows": {
-                "min": 2188,
-                "max": 2188
+                "min": 2198,
+                "max": 2198
             },
             "blocks": {
                 "min": 0,
@@ -174,8 +189,8 @@
                 "max": 3
             },
             "rows": {
-                "min": 9,
-                "max": 9
+                "min": 10,
+                "max": 10
             },
             "blocks": {
                 "min": 0,
@@ -200,12 +215,12 @@
         "global_limits": {
             "operations": 100,
             "statements": {
-                "min": 1700,
-                "max": 1700
+                "min": 1701,
+                "max": 1701
             },
             "rows": {
-                "min": 32481,
-                "max": 32481
+                "min": 32890,
+                "max": 32890
             },
             "blocks": {
                 "min": 0,
@@ -215,12 +230,12 @@
         "global_rate_limits": {
             "operations": 100,
             "statements": {
-                "min": 1500,
-                "max": 1500
+                "min": 1501,
+                "max": 1501
             },
             "rows": {
-                "min": 13660,
-                "max": 13660
+                "min": 13669,
+                "max": 13669
             },
             "blocks": {
                 "min": 0,
@@ -234,8 +249,23 @@
                 "max": 1701
             },
             "rows": {
-                "min": 221704,
-                "max": 221704
+                "min": 221705,
+                "max": 221705
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "fair_groups_run": {
+            "operations": 200,
+            "statements": {
+                "min": 2001,
+                "max": 2001
+            },
+            "rows": {
+                "min": 1812,
+                "max": 1812
             },
             "blocks": {
                 "min": 0,
@@ -277,12 +307,12 @@
         "run": {
             "operations": 200,
             "statements": {
-                "min": 2000,
-                "max": 2000
+                "min": 2001,
+                "max": 2001
             },
             "rows": {
-                "min": 2188,
-                "max": 2188
+                "min": 2198,
+                "max": 2198
             },
             "blocks": {
                 "min": 0,
@@ -296,8 +326,8 @@
                 "max": 3
             },
             "rows": {
-                "min": 9,
-                "max": 9
+                "min": 10,
+                "max": 10
             },
             "blocks": {
                 "min": 0,
@@ -322,12 +352,12 @@
         "global_limits": {
             "operations": 100,
             "statements": {
-                "min": 1700,
-                "max": 1700
+                "min": 1701,
+                "max": 1701
             },
             "rows": {
-                "min": 78986,
-                "max": 78986
+                "min": 79296,
+                "max": 79296
             },
             "blocks": {
                 "min": 0,
@@ -337,12 +367,12 @@
         "global_rate_limits": {
             "operations": 100,
             "statements": {
-                "min": 1500,
-                "max": 1500
+                "min": 1501,
+                "max": 1501
             },
             "rows": {
-                "min": 90372,
-                "max": 90372
+                "min": 90382,
+                "max": 90382
             },
             "blocks": {
                 "min": 0,
@@ -356,8 +386,23 @@
                 "max": 1701
             },
             "rows": {
-                "min": 162005,
-                "max": 162064
+                "min": 162006,
+                "max": 162091
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "fair_groups_run": {
+            "operations": 200,
+            "statements": {
+                "min": 2001,
+                "max": 2001
+            },
+            "rows": {
+                "min": 1812,
+                "max": 1812
             },
             "blocks": {
                 "min": 0,
@@ -399,12 +444,12 @@
         "run": {
             "operations": 200,
             "statements": {
-                "min": 2000,
-                "max": 2000
+                "min": 2001,
+                "max": 2001
             },
             "rows": {
-                "min": 2188,
-                "max": 2188
+                "min": 2198,
+                "max": 2198
             },
             "blocks": {
                 "min": 0,
@@ -418,8 +463,8 @@
                 "max": 3
             },
             "rows": {
-                "min": 9,
-                "max": 9
+                "min": 10,
+                "max": 10
             },
             "blocks": {
                 "min": 0,
@@ -444,12 +489,12 @@
         "global_limits": {
             "operations": 100,
             "statements": {
-                "min": 1700,
-                "max": 1700
+                "min": 1701,
+                "max": 1701
             },
             "rows": {
-                "min": 78986,
-                "max": 78986
+                "min": 79296,
+                "max": 79296
             },
             "blocks": {
                 "min": 0,
@@ -459,12 +504,12 @@
         "global_rate_limits": {
             "operations": 100,
             "statements": {
-                "min": 1500,
-                "max": 1500
+                "min": 1501,
+                "max": 1501
             },
             "rows": {
-                "min": 89804,
-                "max": 89804
+                "min": 89814,
+                "max": 89814
             },
             "blocks": {
                 "min": 0,
@@ -478,8 +523,23 @@
                 "max": 1701
             },
             "rows": {
-                "min": 162005,
-                "max": 162005
+                "min": 162006,
+                "max": 162006
+            },
+            "blocks": {
+                "min": 0,
+                "max": 0
+            }
+        },
+        "fair_groups_run": {
+            "operations": 200,
+            "statements": {
+                "min": 2001,
+                "max": 2001
+            },
+            "rows": {
+                "min": 1812,
+                "max": 1812
             },
             "blocks": {
                 "min": 0,
@@ -499,8 +559,8 @@
                 "max": 100
             },
             "blocks": {
-                "min": 1116,
-                "max": 1116
+                "min": 1218,
+                "max": 1218
             }
         },
         "enqueue_many": {
@@ -514,23 +574,23 @@
                 "max": 1000
             },
             "blocks": {
-                "min": 16130,
-                "max": 16130
+                "min": 18035,
+                "max": 18036
             }
         },
         "run": {
             "operations": 200,
             "statements": {
-                "min": 201,
-                "max": 201
+                "min": 202,
+                "max": 202
             },
             "rows": {
-                "min": 201,
-                "max": 201
+                "min": 212,
+                "max": 212
             },
             "blocks": {
-                "min": 3871,
-                "max": 3903
+                "min": 3887,
+                "max": 3904
             }
         },
         "idle": {
@@ -540,8 +600,8 @@
                 "max": 3
             },
             "rows": {
-                "min": 10,
-                "max": 10
+                "min": 11,
+                "max": 11
             },
             "blocks": {
                 "min": 4001,
@@ -559,38 +619,38 @@
                 "max": 3000
             },
             "blocks": {
-                "min": 25080,
-                "max": 25569
+                "min": 27131,
+                "max": 27621
             }
         },
         "global_limits": {
             "operations": 100,
             "statements": {
-                "min": 1000,
-                "max": 1000
+                "min": 1001,
+                "max": 1001
             },
             "rows": {
-                "min": 1288,
-                "max": 1288
+                "min": 1299,
+                "max": 1299
             },
             "blocks": {
-                "min": 6801,
-                "max": 6802
+                "min": 7696,
+                "max": 7697
             }
         },
         "global_rate_limits": {
             "operations": 100,
             "statements": {
-                "min": 800,
-                "max": 800
+                "min": 801,
+                "max": 801
             },
             "rows": {
-                "min": 1482,
-                "max": 1482
+                "min": 1493,
+                "max": 1493
             },
             "blocks": {
-                "min": 9723,
-                "max": 9766
+                "min": 10632,
+                "max": 10664
             }
         },
         "paused_lane_blocked": {
@@ -600,12 +660,27 @@
                 "max": 1001
             },
             "rows": {
-                "min": 808,
-                "max": 808
+                "min": 809,
+                "max": 809
             },
             "blocks": {
-                "min": 215050,
-                "max": 215052
+                "min": 215253,
+                "max": 215255
+            }
+        },
+        "fair_groups_run": {
+            "operations": 200,
+            "statements": {
+                "min": 201,
+                "max": 201
+            },
+            "rows": {
+                "min": 211,
+                "max": 211
+            },
+            "blocks": {
+                "min": 3848,
+                "max": 3904
             }
         }
     }

@@ -212,6 +212,22 @@ export function mariadbMigrations(p) {
                 `ALTER TABLE ${p}schedules DROP COLUMN IF EXISTS paused_at`,
             ],
         },
+        {
+            // 10.1: the fair groups. The column first (a nullable column at the end: INSTANT), then the index that the
+            // claim of a grouped lane reads. The index is not partial: it costs every insert and status change of
+            // every lane. Its down drops both: the groups are lost.
+            id: '0011_fair_groups',
+            version: '10.1.0',
+            statements: [
+                `ALTER TABLE ${p}jobs ADD COLUMN IF NOT EXISTS fair_group VARCHAR(255) ${ASCII} NULL`,
+                `ALTER TABLE ${p}jobs ADD KEY IF NOT EXISTS ${p}jobs_status_lane_group
+                    (status, lane, fair_group, run_at, id)`,
+            ],
+            down: [
+                `ALTER TABLE ${p}jobs DROP KEY IF EXISTS ${p}jobs_status_lane_group`,
+                `ALTER TABLE ${p}jobs DROP COLUMN IF EXISTS fair_group`,
+            ],
+        },
     ];
 }
 

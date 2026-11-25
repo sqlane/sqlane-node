@@ -196,6 +196,23 @@ export function postgresMigrations(p) {
                 `ALTER TABLE ${p}schedules DROP COLUMN IF EXISTS paused_at`,
             ],
         },
+        {
+            // 10.1: the fair groups. A nullable column (metadata only), and the index that the claim of a grouped
+            // lane reads: the oldest due jobs of each group, and the skip from one group to the next. It covers the
+            // pending rows of every lane. On a big table, build it CONCURRENTLY beforehand: the migration's
+            // transaction holds the table's lock while it builds. Its down drops both: the groups are lost.
+            id: '0011_fair_groups',
+            version: '10.1.0',
+            statements: [
+                `ALTER TABLE ${p}jobs ADD COLUMN IF NOT EXISTS fair_group varchar(255) COLLATE "C"`,
+                `CREATE INDEX IF NOT EXISTS ${p}jobs_pending_group ON ${p}jobs (lane, fair_group, run_at, id)
+                    WHERE status = 'pending'`,
+            ],
+            down: [
+                `DROP INDEX IF EXISTS ${p}jobs_pending_group`,
+                `ALTER TABLE ${p}jobs DROP COLUMN IF EXISTS fair_group`,
+            ],
+        },
     ];
 }
 

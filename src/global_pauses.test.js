@@ -385,7 +385,8 @@ test('sqlane.lanes and sqlane.schedules have the methods of the pauses; frozen',
     const sqlane = createSqlane({ adapter: /** @type {any} */ ({ dialect: 'postgres' }) });
 
     expect(Object.isFrozen(sqlane.lanes)).toBe(true);
-    expect(Object.keys(sqlane.lanes).toSorted()).toStrictEqual(['pauseGlobally', 'resumeGlobally', 'stats']);
+    expect(Object.keys(sqlane.lanes).toSorted())
+        .toStrictEqual(['groupStats', 'pauseGlobally', 'resumeGlobally', 'stats']);
     expect(Object.keys(sqlane.schedules).toSorted())
         .toStrictEqual(['list', 'pauseGlobally', 'remove', 'resumeGlobally', 'runSlot']);
 });

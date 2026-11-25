@@ -142,13 +142,11 @@ test('schema.migrate() through Prisma: the tables, once', async () => {
 });
 
 /**
- * The migrations that a rollback to 6.0.0 reverts after one that timed out on the lock of the jobs: on MySQL and
- * MariaDB, the timed-out run reverted 0010 already (its tables were free, and each DDL commits); PostgreSQL rolled back
- * the whole run.
+ * The migrations that a rollback to 6.0.0 reverts after one that timed out on the lock of the jobs: all of them. The
+ * newest, 0011, alters the jobs first, so the timed-out run reverted nothing on MySQL and MariaDB either (each of their
+ * DDL commits); PostgreSQL rolls back the whole run anyway.
  */
-const REVERTED_AFTER_TIMEOUT = dialect === 'postgres'
-    ? ['0010_pause', '0009_lanes', '0008_job_list']
-    : ['0009_lanes', '0008_job_list'];
+const REVERTED_AFTER_TIMEOUT = ['0011_fair_groups', '0010_pause', '0009_lanes', '0008_job_list'];
 
 test('schema.rollback() through Prisma: a table lock held longer than lockTimeout, a MigrationLockTimeoutError', async () => {
     const { sqlane, p } = await freshSqlane();

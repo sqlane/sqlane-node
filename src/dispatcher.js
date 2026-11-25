@@ -3,6 +3,7 @@
 import { hostname } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { ConfigError } from './errors.js';
+import { movedPointer, orderDueRows, requestGroups } from './fair_groups.js';
 import { chooseRows, fill, rankLanes, replayTie, shareLanesOfRequests } from './fair_share.js';
 import { incrementUs, waitUs } from './gcra.js';
 import { ANY_LANE } from './hint_channel.js';
@@ -51,7 +52,29 @@ const CLAIM_LANES_PER_SLOT = 4;
  * @property {(entry: HandlerEntry) => number} freeSlots The jobs of the lane that can start now: under its local
  *     limits and the runner's cap.
  * @property {() => boolean} claiming A claim runs: it may have counted the free slots before a job ended.
+ * @property {(lane: string) => boolean} claimsByGroup The lane is claimed by fair group now: its handler's definition
+ *     has `fairGroup`, the schema has `0011_fair_groups`, and no job of it brought global limits.
  */
+
+/**
+ * MySQL and MariaDB: the groups of each grouped lane with a locked row that the claim did not take.
+ * @param {readonly ClaimedJob[]} rows The rows of the choice.
+ * @param {readonly ClaimedJob[]} claimed
+ * @returns {Map<string, import('./fair_groups.js').FairGroup[]>}
+ */
+function groupsLeft(rows, claimed) {
+    const claimedIds = new Set(claimed.map(job => job.id));
+    /** @type {Map<string, Set<import('./fair_groups.js').FairGroup>>} */
+    const byLane = new Map();
+
+    for (const row of rows) {
+        if (!claimedIds.has(row.id)) {
+            byLane.set(row.lane, (byLane.get(row.lane) ?? new Set()).add(row.fairGroup));
+        }
+    }
+
+    return new Map([...byLane].map(([lane, groups]) => [lane, [...groups]]));
+}
 
 /**
  * @param {object} params
@@ -71,6 +94,10 @@ const CLAIM_LANES_PER_SLOT = 4;
  * @param {(key: string, delayMs: number) => void} params.armRateWake The timer of a rate key with blocked jobs.
  * @param {(entry: HandlerEntry) => void} params.wakeAfterRates Its local rate limits that admit no start now: a wake of
  *     their lanes when one may start.
+ * @param {() => boolean} params.fairGroupsReady The schema has `0011_fair_groups`: the claims read the groups, and the
+ *     lanes with `fairGroup` are claimed by group.
+ * @param {(lane: string) => (group: import('./fair_groups.js').FairGroup) => number} params.groupRunningOf The jobs of
+ *     each group of the lane that run in this process.
  * @returns {Dispatcher}
  */
 export function createDispatcher({
@@ -87,6 +114,8 @@ export function createDispatcher({
     unblockKeys,
     armRateWake,
     wakeAfterRates,
+    fairGroupsReady,
+    groupRunningOf,
 }) {
     const lockedBy = `${hostname()}:${process.pid}:${createMonotonicUlid()()}`;
     const lockToken = createMonotonicUlid();
@@ -108,6 +137,13 @@ export function createDispatcher({
     let lanesWithLimits = new Set();
     /** @type {Set<string>} The lanes whose jobs got limits from their enqueue options: kept across an unmount */
     const learnedLimits = new Set();
+    /**
+     * @type {Map<string, import('./fair_groups.js').FairGroup>} Of each grouped lane: the group after which the
+     *     rotation of its ties starts. None yet: a random group
+     */
+    const groupPointers = new Map();
+    /** @type {Set<string>} The grouped lanes claimed with limits since their rows brought some: warned once */
+    const warnedLimitedGroups = new Set();
     /** @type {Set<string>} The handled lanes with global rate limits: their definition's, set by start(); and the
      *     lanes whose jobs got rate limits from their enqueue options, seen by the search of candidates */
     let lanesWithRates = new Set();
@@ -278,6 +314,33 @@ export function createDispatcher({
      */
     function runnableEntry(lane) {
         return paused.has(lane) ? undefined : registry.getEntry(lane);
+    }
+
+    /**
+     * @param {string} lane
+     * @returns {boolean} Claimed by fair group now: its handler's definition has `fairGroup`, the schema has
+     *     `0011_fair_groups`, and no job of it brought global limits (those claim the lane FIFO with its limits).
+     */
+    function claimsByGroup(lane) {
+        return Boolean(registry.getEntry(lane)?.definition.fairGroup) && fairGroupsReady()
+            && !lanesWithLimits.has(lane);
+    }
+
+    /**
+     * The fair groups of the grouped lanes of a claim, by lane.
+     * @param {HandlerEntry[]} turn
+     * @returns {Promise<Map<string, import('./store/store.js').GroupProbeRow[]>>}
+     */
+    async function probeGroupsOf(turn) {
+        const lanes = turn.filter(entry => claimsByGroup(entry.name)).map(entry => entry.name);
+        /** @type {Map<string, import('./store/store.js').GroupProbeRow[]>} */
+        const byLane = new Map(lanes.map(lane => [lane, []]));
+
+        for (const row of lanes.length ? await store.probeGroups(lanes) : []) {
+            byLane.get(row.lane)?.push(row);
+        }
+
+        return byLane;
     }
 
     /**
@@ -544,6 +607,7 @@ export function createDispatcher({
         const limits = [];
         /** @type {import('./store/store.js').DueRequest[]} */
         const requests = [];
+        const groupsByLane = await probeGroupsOf(turn);
 
         for (const entry of turn) {
             const maxJobs = Math.min(
@@ -558,6 +622,34 @@ export function createDispatcher({
                 continue;
             }
 
+            const groupRows = groupsByLane.get(entry.name);
+            /** @type {import('./fair_groups.js').GroupRequest[] | undefined} */
+            let groups;
+
+            if (groupRows) {
+                const dueGroups = groupRows.filter(row => row.delayMs <= 0).map(row => row.group);
+
+                if (!dueGroups.length) {
+                    // No due group: other processes took them, or only delayed jobs are left. Their next due time
+                    backlog.delete(entry.name);
+                    unschedule(entry.name);
+
+                    if (groupRows.length) {
+                        schedule(entry.name, Date.now() + Math.min(...groupRows.map(row => row.delayMs)));
+                    }
+
+                    continue;
+                }
+
+                groups = requestGroups({
+                    dueGroups,
+                    runningOf: groupRunningOf(entry.name),
+                    pointer: groupPointers.get(entry.name),
+                    maxJobs,
+                    random,
+                });
+            }
+
             entries.push(entry);
             requests.push({
                 name: entry.name,
@@ -570,6 +662,7 @@ export function createDispatcher({
                     return at === -1 ? limits.push(limit) - 1 : at;
                 }),
                 tie: (((entry.index - base) % size) + size) % size,
+                ...groups && { groups },
             });
         }
 
@@ -580,25 +673,33 @@ export function createDispatcher({
         const limitRooms = limits.map(limit => Math.max(0, roomOf(limit) - (reservedInLimits.get(limit) ?? 0)));
         /** @type {number | null | undefined} */
         let chosenTie;
-        const { jobs, next, unpicked, limited } = await store.claimDue({
+        /** @type {ClaimedJob[]} MySQL and MariaDB: the rows that the choice saw, for the pointers of the groups */
+        let choiceRows = [];
+        const { jobs, next, unpicked, limited, leftGroups } = await store.claimDue({
             requests,
             limitRooms,
             free,
             lockToken: lockToken(),
             lockedBy,
             leaseMs: t.leaseMs,
-            // MySQL and MariaDB: the choice over the locked rows. One lane: no tie
+            withFairGroups: fairGroupsReady(),
+            // MySQL and MariaDB: the choice over the locked rows, those of a grouped lane in the order of its groups
             choose: (locked) => {
+                // The rows of a grouped lane past its maxJobs are cut, but count as left for the pointer of its groups
+                const rows = orderDueRows(locked, requests);
+
+                choiceRows = locked;
+
                 if (entries.length === 1) {
-                    // Its maxJobs held the locked rows within the free slots
+                    // One lane: no tie. Its maxJobs held the rows within the free slots
                     chosenTie = null;
 
-                    return locked;
+                    return rows;
                 }
 
                 // The counts and the rooms of the requests: the locked rows kept under them
                 const result = chooseRows({
-                    rows: locked,
+                    rows,
                     lanes: shareLanesOfRequests(entries, requests, limitRooms),
                     free,
                     base,
@@ -610,6 +711,8 @@ export function createDispatcher({
                 return result.chosen;
             },
         });
+
+        moveGroupPointers(requests, jobs, leftGroups ?? groupsLeft(choiceRows, jobs));
 
         // PostgreSQL chose in SQL: the same choice again over the claimed rows, with the lanes that it left rows of.
         // One lane, or no job: no tie
@@ -650,6 +753,15 @@ export function createDispatcher({
         }
 
         for (const lane of limited ?? []) {
+            if (claimsByGroup(lane) && !warnedLimitedGroups.has(lane)) {
+                warnedLimitedGroups.add(lane);
+                logger?.warn(
+                    { lane },
+                    'sqlane: jobs of a lane with fair groups have global limits (from another definition, or older '
+                    + 'enqueue options): this runner claims the lane FIFO with its limits until it restarts',
+                );
+            }
+
             // Its jobs got global limits from their enqueue options: from now on, claimed with their limits
             lanesWithLimits.add(lane);
             learnedLimits.add(lane);
@@ -664,6 +776,31 @@ export function createDispatcher({
 
         // Lanes with due jobs left and none claimed: other processes hold them
         return { candidates: stillDue, claimed: jobs.length };
+    }
+
+    /**
+     * After a claim: the pointer of each grouped lane goes past the last group that won a tie (`movedPointer`).
+     * @param {import('./store/store.js').DueRequest[]} requests
+     * @param {readonly ClaimedJob[]} claimed
+     * @param {Map<string, import('./fair_groups.js').FairGroup[]>} left Of each grouped lane: the groups with a locked
+     *     row that the claim did not take.
+     */
+    function moveGroupPointers(requests, claimed, left) {
+        for (const request of requests) {
+            // An unmount during the claim dropped its pointer: none again
+            if (request.groups && registry.getEntry(request.name)) {
+                const moved = movedPointer({
+                    requests: request.groups,
+                    claimed: claimed.filter(job => job.lane === request.name),
+                    left: left.get(request.name) ?? [],
+                    pointer: groupPointers.get(request.name),
+                });
+
+                if (moved !== undefined) {
+                    groupPointers.set(request.name, moved);
+                }
+            }
+        }
     }
 
     /**
@@ -686,6 +823,7 @@ export function createDispatcher({
             leaseMs: t.leaseMs,
             pick: (locked, held, debts) => pick(locked, held, debts, captured),
             withRates: [...startable, ...full].some(candidate => lanesWithRates.has(candidate.lane)),
+            withFairGroups: fairGroupsReady(),
         });
 
         // A rate key frees by time: its timer, here
@@ -957,6 +1095,7 @@ export function createDispatcher({
                     lanesWithRates.delete(name);
                     backlog.delete(name);
                     unschedule(name);
+                    groupPointers.delete(name);
                 }
             }
 
@@ -976,5 +1115,6 @@ export function createDispatcher({
         claimAndStart,
         freeSlots,
         claiming: () => claimsInFlight > 0,
+        claimsByGroup,
     };
 }

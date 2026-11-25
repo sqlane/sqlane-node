@@ -12,6 +12,7 @@ export type FailureLanes = {
         id: string;
         lane: string;
         attempt: number;
+        fairGroup: string | null;
     }, result: import('./store/store.js').FailureJobResult | null) => void;
 };
 /**
@@ -19,7 +20,7 @@ export type FailureLanes = {
  * @property {(definition: import('./types.js').LaneDefinition) => import('./store/store.js').FailureJobBuilder}
  *     builderOf The failure job of a job of a lane with this definition in this process. None without a
  *     `failureLane`.
- * @property {(job: { id: string, lane: string, attempt: number },
+ * @property {(job: { id: string, lane: string, attempt: number, fairGroup: string | null },
  *     result: import('./store/store.js').FailureJobResult | null) => void} report An added failure job wakes its lane
  *     here and in the other processes; one that the database refused is an error and a `failure_job_not_added` event.
  */
@@ -29,11 +30,14 @@ export type FailureLanes = {
  * @param {(event: import('./types.js').SqlaneEvent) => void} params.emit
  * @param {(operation: string, error: unknown) => void} params.reportError
  * @param {(lane: string) => void} params.onAdded A failure job of the lane was added: its commit is to come.
+ * @param {() => boolean} [params.fairGroupsReady] The schema has `0011_fair_groups`. Without, a failure job gets no
+ *     fair group (its insert has no column to write it). Default: it has.
  * @returns {FailureLanes}
  */
-export declare function createFailureLanes({ defaults, emit, reportError, onAdded }: {
+export declare function createFailureLanes({ defaults, emit, reportError, onAdded, fairGroupsReady }: {
     defaults: import('./defaults.js').ResolvedDefaults;
     emit: (event: import('./types.js').SqlaneEvent) => void;
     reportError: (operation: string, error: unknown) => void;
     onAdded: (lane: string) => void;
+    fairGroupsReady?: () => boolean;
 }): FailureLanes;

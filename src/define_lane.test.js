@@ -32,6 +32,11 @@ test('accepts a definition as the failure job', () => {
     expect(defineLane({ name: 'build_report', failureLane: reportFailed }).failureLane).toBe(reportFailed);
 });
 
+/** @returns {string} A fair group */
+const groupG = () => 'g';
+/** @returns {never[]} No global limit */
+const noLimits = () => [];
+
 test.each([
     ['no options', undefined],
     ['no name', {}],
@@ -72,6 +77,9 @@ test.each([
         localRateLimits: [defineRateLimit({ name: 'b', max: 1, per: '1s' })],
     }],
     ['globalRateLimits as an array', { name: 'a', globalRateLimits: [] }],
+    ['fairGroup as a string', { name: 'a', fairGroup: 'tenant' }],
+    ['fairGroup with globalConcurrencyLimits', { name: 'a', fairGroup: groupG, globalConcurrencyLimits: noLimits }],
+    ['fairGroup with globalRateLimits', { name: 'a', fairGroup: groupG, globalRateLimits: noLimits }],
 ])('rejects %s', (_, options) => {
     expect(() => defineLane(/** @type {any} */ (options))).toThrow(ConfigError);
 });
@@ -81,4 +89,16 @@ test('a failure lane with a failure lane of its own: the message names it', () =
         name: 'a',
         failureLane: defineLane({ name: 'a_failed', failureLane: defineLane({ name: 'other' }) }),
     })).toThrow('defineLane("a"): the failure lane "a_failed" has a failure lane of its own');
+});
+
+test('fairGroup: a function; with a limit option set to undefined, accepted', () => {
+    expect(defineLane({ name: 'a', fairGroup: groupG }).fairGroup).toBe(groupG);
+    expect(defineLane({ name: 'a', fairGroup: groupG, globalConcurrencyLimits: undefined, globalRateLimits: undefined })
+        .fairGroup).toBe(groupG);
+});
+
+test('fairGroup with a global limit: the message names both', () => {
+    expect(() => defineLane({ name: 'a', fairGroup: () => 'g', globalConcurrencyLimits: () => [] }))
+        .toThrow(new ConfigError('defineLane("a"): "fairGroup" does not combine with "globalConcurrencyLimits" or '
+            + '"globalRateLimits"'));
 });

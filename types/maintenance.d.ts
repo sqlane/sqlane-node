@@ -23,10 +23,11 @@ export type Maintenance = {
  * @param {(operation: string, error: unknown) => void} params.reportError
  * @param {(key: string, delayMs: number) => void} params.armRateWake The timer of a rate key with blocked jobs.
  * @param {() => void} params.wake A wake of all lanes of this process.
+ * @param {() => boolean} params.fairGroupsReady The schema has `0011_fair_groups`: the stale jobs have their group.
  * @param {import('./hint_channel.js').HintChannel} params.hintChannel
  * @returns {Maintenance}
  */
-export declare function createMaintenance({ store, running, timings: t, cleanup, state, setTimer, emit, reportError, armRateWake, wake, hintChannel, }: {
+export declare function createMaintenance({ store, running, timings: t, cleanup, state, setTimer, emit, reportError, armRateWake, wake, hintChannel, fairGroupsReady, }: {
     store: import('./store/store.js').Store;
     running: ReadonlyMap<string, import('./job_runs.js').RunningJob>;
     timings: {
@@ -41,5 +42,6 @@ export declare function createMaintenance({ store, running, timings: t, cleanup,
     reportError: (operation: string, error: unknown) => void;
     armRateWake: (key: string, delayMs: number) => void;
     wake: () => void;
+    fairGroupsReady: () => boolean;
     hintChannel: import('./hint_channel.js').HintChannel;
 }): Maintenance;
