@@ -1,13 +1,20 @@
 <!--
 Work in progress: the rewrite of docs/api.md. It replaces docs/api.md when it is complete.
 Writers follow docs/for_agents/guide_for_writing_user_faced_api_docs.md.
-Each TODO names its source lines in the old docs/api.md, and the old text that moves out of this file.
+
+How to write a section:
+- Each TODO lists what the section covers. Write it new, from the code: src/ and types/sqlane.d.ts.
+- "Facts:" names a section of the old docs/api.md by its heading. Use it only as a list of facts to check against the
+  code. Do not copy or rephrase its sentences: much of its wording is what this rewrite replaces.
+- "Leave out:" names old content that does not belong in this file: internals, history and upgrade notes. Do not
+  write it here.
+- "Fix:" names an error of the old text. Do not repeat it.
 -->
 
 # API reference
 
-<!-- TODO: 2–3 sentences: what @sqlane/core is (jobs as rows in your MySQL, MariaDB or PostgreSQL database, enqueued in
-your transaction), the semver promise, and a link to design.md. Source: api.md:1-8. -->
+<!-- TODO: 2–3 sentences: what @sqlane/core is (jobs as rows in your MySQL, MariaDB or PostgreSQL database, added in
+your own transaction), and a link to design.md for how it works. Facts: old intro. -->
 
 ## Contents
 
@@ -26,232 +33,268 @@ explains them.
 
 ## Durations
 
-<!-- TODO: number and string formats, valid and invalid examples. Source: api.md:99-111. -->
+<!-- TODO: Covers: the number form (milliseconds) and the string form, its units, valid and invalid examples.
+Facts: old "Durations". -->
 
 ## Definitions
 
 <!-- TODO: one sentence: definitions are frozen values, created at module load and shared by producers and workers.
-Source: api.md:91-92, 121-122. -->
+Facts: old "Two scopes: the sqlane and the runner", old "defineLane". -->
 
 ### `defineLane`
 
-<!-- TODO: options table, when each option takes effect, example. Source: api.md:113-161, 442-456.
-Move out: none. -->
+<!-- TODO: Covers: the options table (name, timeout, attempts, backoff, retention, failure lane, fair share weight,
+fairGroup, global limits), when each option takes effect (at enqueue or at claim), an example.
+Facts: old "defineLane", old "Where job options come from". -->
 
 #### Backoff
 
-<!-- TODO: Source: api.md:163-175. -->
+<!-- TODO: Covers: the backoff forms, the default, the delay of each attempt. Facts: old "Backoff". -->
 
 #### Typed payloads
 
-<!-- TODO: Source: api.md:177-197. -->
+<!-- TODO: Covers: how a lane's payload type flows to enqueue and to the handler, a TypeScript example.
+Facts: old "Typed payloads". -->
 
 ### `defineHandler`
 
-<!-- TODO: Source: api.md:199-231. Fix: the example's limit name erpCalls is undefined. -->
+<!-- TODO: Covers: the signature, the handler options table (local limits, fair share weight, …), an example.
+Facts: old "defineHandler". Fix: the old example uses a limit name that it never defines. -->
 
 ### `defineConcurrencyLimit`
 
-<!-- TODO: Source: api.md:319-368. Fix: example passes localConcurrencyLimits to defineLane; it is a handler option. -->
+<!-- TODO: Covers: the signature, `max`, `limit.key(value)`, the local use (a handler option) and the global use (a
+lane option), an example of each. Facts: old "defineConcurrencyLimit". Fix: the old example passes
+localConcurrencyLimits to defineLane; it is a handler option. -->
 
 ### `defineRateLimit`
 
-<!-- TODO: Source: api.md:370-440. Fix: example passes localRateLimits to defineLane; it is a handler option.
-Move out to design.md: stored form `@<name>:<value>` (api.md:409-410). -->
+<!-- TODO: Covers: the signature, the limit per period, burst, cost, `limit.key(value)`, the local and the global use,
+an example of each. Facts: old "defineRateLimit". Fix: the old example passes localRateLimits to defineLane; it is a
+handler option. Leave out: how a rate key is stored. -->
 
 ### `defineSchedule`
 
-<!-- TODO: signature, options table, errors, example. Behavior goes to "Schedules" below.
-Source: api.md:233-252, 746-796 (one copy of the signature and errors). -->
+<!-- TODO: Covers: the signature, the options table, the errors, an example. How schedules behave goes to "Schedules"
+below. Facts: old "defineSchedule", old "Schedules". -->
 
 ## sqlane instance
 
 ### `createSqlane`
 
-<!-- TODO: Source: api.md:254-289. -->
+<!-- TODO: Covers: the options table (adapter, tablePrefix, hint, logger, events, …), the return value, an example.
+Facts: old "createSqlane". -->
 
 ### `sqlane.enqueue`
 
-<!-- TODO: Source: api.md:458-522. Fix: the jobs.get item in the error list (api.md:502) belongs to jobs.get. -->
+<!-- TODO: Covers: the signature, the options (connection, runAt, dedupeKey, jobId, limit keys, …), the return
+value, the errors, the transaction rules, an example. Facts: old "enqueue". Fix: the old error list has an item about
+jobs.get; it belongs to jobs.get. -->
 
 ### `sqlane.enqueueMany`
 
-<!-- TODO: Source: api.md:524-545. -->
+<!-- TODO: Covers: how it differs from enqueue (one statement, per-item options, the result), an example.
+Facts: old "enqueueMany". -->
 
 ### `sqlane.jobs.get`
 
-<!-- TODO: Source: api.md:1515-1551. -->
+<!-- TODO: Covers: the signature, the return value (JobRecord or null), the errors. Facts: old "jobs", old "jobs.get".
+-->
 
 ### `sqlane.jobs.list`
 
-<!-- TODO: Source: api.md:1553-1620. Move out to design.md: paging internals that a caller cannot observe. -->
+<!-- TODO: Covers: the filters, the order, the page size, the page cursor, the return value, an example of paging.
+Facts: old "jobs.list". Leave out: how paging works inside, where a caller cannot see it. -->
 
 ### `sqlane.jobs.retry`, `cancel` and `remove`
 
-<!-- TODO: selector, options, result, per-method effects, transactions, events.
-Source: api.md:1662-1791. Move out to design.md: row locks, lock order, gap locks, unblock timing (api.md:1747-1781). -->
+<!-- TODO: Covers: the selector, the options, the result, what each method does, how they behave in a transaction,
+the events. Facts: old "Retry, cancel and remove". Leave out: row locks, lock order, gap locks, when
+blocked keys are unblocked. -->
 
 ### `sqlane.jobs.keyStats`
 
-<!-- TODO: Source: api.md:1793-1872. Move out to design.md: how `max` is chosen (api.md:1817), cost formula
-(api.md:1865-1867). -->
+<!-- TODO: Covers: the signature, the options, the fields of each entry (concurrency and rate), an example.
+Facts: old "Key stats". Leave out: how the `max` field is chosen, the cost of the read. -->
 
 ### `sqlane.lanes.stats`
 
-<!-- TODO: Source: api.md:1445-1480. Move out to design.md: statements and cost (api.md:1477-1479). -->
+<!-- TODO: Covers: the signature, the fields, that it works before start() and after close(), an example.
+Facts: old "lanes.stats". Leave out: its statements and their cost. -->
 
 ### `sqlane.lanes.groupStats`
 
-<!-- TODO: Source: api.md:1482-1513. -->
+<!-- TODO: Covers: the signature, the options (limit, orderBy), the fields, an example.
+Facts: old "lanes.groupStats". -->
 
 ### `sqlane.lanes.pauseGlobally` and `resumeGlobally`
 
-<!-- TODO: Source: api.md:1024-1061. Move out to design.md: the MySQL unblock race (api.md:1044-1045). -->
+<!-- TODO: Covers: the signatures, what a paused lane does and does not do, when the pause takes effect, the
+connection option, an example. Facts: old "lanes.pauseGlobally and resumeGlobally". Leave out: the short
+window after a pause on MySQL and MariaDB in which an unblock can still start a job. -->
 
 ### `sqlane.schedules.list`
 
-<!-- TODO: Source: api.md:914-937. -->
+<!-- TODO: Covers: the signature, the fields of each schedule, an example. Facts: old "schedules.list". -->
 
 ### `sqlane.schedules.runSlot`
 
-<!-- TODO: Source: api.md:939-965. -->
+<!-- TODO: Covers: the signature, what a manual run adds, the errors, an example. Facts: old "schedules.runSlot". -->
 
 ### `sqlane.schedules.pauseGlobally` and `resumeGlobally`
 
-<!-- TODO: Source: api.md:967-1005. -->
+<!-- TODO: Covers: the signatures, what a paused schedule does with its slots, when the pause takes effect, an example.
+Facts: old "schedules.pauseGlobally and resumeGlobally". -->
 
 ### `sqlane.schedules.remove`
 
-<!-- TODO: Source: api.md:1007-1022. Move out to docs/migrations/10.md: keyless schedules of 9.x. -->
+<!-- TODO: Covers: the signature, what it removes and what it keeps, an example. Facts: old "schedules.remove".
+Leave out: schedules without a key from 9.x. -->
 
 ### `sqlane.schema.migrate`
 
-<!-- TODO: Source: api.md:1187-1305 (keep the migration-tool example).
-Move out to docs/migrations/: which version requires which migration (api.md:1214-1221). -->
+<!-- TODO: Covers: the signature, the options, the result, running it from your own migration tool (keep that example).
+Facts: old "schema.migrate". Leave out: which version requires which migration. -->
 
 ### `sqlane.schema.rollback`
 
-<!-- TODO: Source: api.md:1307-1341. Move out to docs/migrations/: 6.0 and 5.x history (api.md:1331-1332). -->
+<!-- TODO: Covers: the signature, the target version, the result, the errors. Facts: old "schema.rollback".
+Leave out: the history of the lowest version (6.0, 5.x). -->
 
 ### `sqlane.schema.drop`
 
-<!-- TODO: Source: api.md:1343-1374. Move out to design.md: how drop recognizes its tables (api.md:1360-1361);
-to docs/migrations/: tables of older versions (api.md:1352). -->
+<!-- TODO: Covers: the signature, what it drops, the result, the errors. Facts: old "schema.drop".
+Leave out: how drop recognizes sqlane's tables; the tables of older versions. -->
 
 ### `sqlane.schema.getMigrationStatus`
 
-<!-- TODO: Source: api.md:1376-1392. -->
+<!-- TODO: Covers: the signature, the fields of the result. Facts: old "schema.getMigrationStatus". -->
 
 ### `sqlane.schema.findSchemaProblems`
 
-<!-- TODO: Source: api.md:1394-1443 (keep the readiness-probe example).
-Move out to design.md: catalog comparison details (api.md:1416-1422). -->
+<!-- TODO: Covers: the signature, the kinds of problems, the fields of each problem, a readiness-probe example (keep
+it). Facts: old "schema.findSchemaProblems". Leave out: how it compares types, collations and indexes
+with the catalog. -->
 
 ### `sqlane.close`
 
-<!-- TODO: what sqlane.close adds to runner.close; link there. Source: api.md:1154-1185. -->
+<!-- TODO: Covers: what sqlane.close adds to runner.close, with a link there. Facts: old "runner.close and
+sqlane.close". -->
 
 ## sqlane runner
 
 ### `createRunner`
 
-<!-- TODO: Source: api.md:291-317. -->
+<!-- TODO: Covers: the signature, the options (localMaxConcurrency, …), one runner per sqlane instance, an example.
+Facts: old "createRunner". -->
 
 ### `runner.mount`
 
-<!-- TODO: Source: api.md:547-576. -->
+<!-- TODO: Covers: the signature, what it mounts (handlers, schedules), mounting after start(), the return value, an
+example. Facts: old "runner.mount". -->
 
 #### `Mount.unmount`
 
-<!-- TODO: Source: api.md:578-586. -->
+<!-- TODO: Covers: what an unmount stops, and what happens to running jobs. Facts: old "Mount.unmount". -->
 
 ### `runner.start`
 
-<!-- TODO: Source: api.md:1093-1115. -->
+<!-- TODO: Covers: the signature, what start() checks and begins, the errors, an example. Facts: old "runner.start".
+-->
 
 ### `runner.drain`
 
-<!-- TODO: Source: api.md:1117-1152. -->
+<!-- TODO: Covers: the signature, when it resolves, the result, its use in tests and scripts, an example.
+Facts: old "runner.drain". -->
 
 ### `runner.close`
 
-<!-- TODO: Source: api.md:1154-1185. -->
+<!-- TODO: Covers: the signature, the options (deadline, mode), what happens to running jobs in each mode, an example.
+Facts: old "runner.close and sqlane.close". -->
 
 ### `runner.pauseLocally` and `resumeLocally`
 
-<!-- TODO: Source: api.md:1063-1078. -->
+<!-- TODO: Covers: the signatures, how a local pause differs from a global pause. Facts: old "runner.pauseLocally".
+-->
 
 ### `runner.getStatus`
 
-<!-- TODO: Source: api.md:1080-1091. -->
+<!-- TODO: Covers: the signature, the fields of the result. Facts: old "runner.getStatus". -->
 
 ## Handlers
 
 ### The handler context
 
-<!-- TODO: payload, job (JobInfo), signal and its reasons. Source: api.md:588-639.
-Move out to design.md: how startedAt is captured per dialect (api.md:622-627). -->
+<!-- TODO: Covers: payload, job (its JobInfo fields), signal and the reasons for an abort. Facts: old "The handler
+context". Leave out: how each dialect captures startedAt. -->
 
 ### How a handler ends
 
-<!-- TODO: return, throw, and the three special errors. Source: api.md:641-655, 1912-1984. -->
+<!-- TODO: Covers: return, throw, and the three errors that a handler throws on purpose (RetryJobError, FatalJobError,
+RateLimitedError). Facts: old "The handler context", old "Errors that handlers throw". -->
 
 ## Behavior
 
 ### Where job options come from
 
-<!-- TODO: Source: api.md:442-456. -->
+<!-- TODO: Covers: which option the lane definition, the enqueue call and the handler each set, and which wins.
+Facts: old "Where job options come from". -->
 
 ### Concurrency and rate limits
 
-<!-- TODO: blocking, FIFO per limit key, maxes and settings fixed at enqueue, at most 10 limit keys, start spacing
-(max + burst − 1). Source: api.md:332-351, 385-415. -->
+<!-- TODO: Covers: blocked jobs, FIFO per limit key, max and settings fixed at enqueue, at most 10 limit keys per job,
+the spacing of starts (max + burst − 1). Facts: old "defineConcurrencyLimit", old "defineRateLimit". -->
 
 ### Sharing worker slots
 
-<!-- TODO: the rule, examples. Source: api.md:657-694. Move out to design.md: the odd remainder maths and very short
-jobs (api.md:684-690); to docs/migrations/: the 4.x comparison (api.md:670-671). -->
+<!-- TODO: Covers: the rule (by weight, the fewest running first, ties in turn), examples. Facts: old "How free slots
+are shared". Leave out: the uneven share of an odd slot, and very short jobs; the
+comparison with 4.x. -->
 
 ### Fair groups
 
-<!-- TODO: Source: api.md:696-744. Move out to design.md: cost, behaviour without the migration (api.md:729-736);
-to docs/migrations/10.md: upgrading and "not in 10.1" (api.md:737-742). -->
+<!-- TODO: Covers: what fairGroup does, how the slots of a lane go to its groups, groupStats, an example.
+Facts: old "Fair groups". Leave out: the cost, and the behavior without the migration
+0011_fair_groups; upgrading, and what is not in 10.1. -->
 
 ### Schedules
 
-<!-- TODO: how a slot fires, cron syntax, time zones and DST, every, missed slots and catch-up, overlap, jitter, deploys,
-database time, guarantees. Source: api.md:746-912. Move out: the River comparison (api.md:821) to
-features_vs_other_libs.md. -->
+<!-- TODO: Covers: how a slot fires, cron syntax, time zones and DST, every, missed slots and catch-up, overlap, jitter,
+deploys, the database clock, the guarantees. Facts: old "Schedules" and its subsections.
+Leave out: the comparison with River. -->
 
 ## Types
 
 ### `JobRecord` and `JobError`
 
-<!-- TODO: Source: api.md:1622-1660. Say which `key` is which: in `JobRecord.globalConcurrencyLimits` and the
-concurrency entries of `jobs.keyStats`, `key` is the full limit key, such as `order:42`; in `JobRecord.globalRateLimits`,
-the `rate_limited` event and the rate entries of `jobs.keyStats`, `limit` is the limit name and `key` is the key value
-only. -->
+<!-- TODO: Covers: the fields of each. Say which `key` is which: in `JobRecord.globalConcurrencyLimits` and the
+concurrency entries of `jobs.keyStats`, `key` is the full limit key, such as `order:42`; in
+`JobRecord.globalRateLimits`, the `rate_limited` event and the rate entries of `jobs.keyStats`, `limit` is the limit
+name and `key` is the key value only. Facts: old "JobRecord". -->
 
 ### `FailedJobPayload`
 
-<!-- TODO: Source: api.md:2034-2060. -->
+<!-- TODO: Covers: the fields, when a failure lane gets it, an example handler. Facts: old "FailedJobPayload". -->
 
 ### `Hint`
 
-<!-- TODO: Source: api.md:2062-2113. Fix: the example passes an unknown `jobs` option to createSqlane.
+<!-- TODO: Covers: the interface, the channel and the message, what happens when publish fails, that without it other
+processes find jobs at their next poll, the PostgreSQL `notify` adapter option, the Redis example.
+Facts: old "Hint". Fix: the old example passes an unknown `jobs` option to createSqlane.
 Words: `hint` names only the option and this type, in code style. Its first mention says what it is: a pub/sub service
 by which sqlane wakes the other processes, so that they check a lane now, not at their next poll. Prose elsewhere uses
 verbs: "sqlane wakes the other processes", not "the hint". -->
 
 ## Errors
 
-<!-- TODO: one table: class, code, meaning. Methods list which classes they throw. Source: api.md:1874-1910.
-Move out to docs/migrations/: "the jobId of 7.x" (api.md:1882). -->
+<!-- TODO: one table: class, code, meaning. Methods list which classes they throw. Facts: old "Errors".
+Leave out: the note on the jobId of 7.x. -->
 
 ## Events
 
-<!-- TODO: Source: api.md:1986-2032. Move out to design.md: retried deadlocks and ER_CHECKREAD (api.md:2016). -->
+<!-- TODO: Covers: the event names, the fields of each, how to subscribe. Facts: old "Events".
+Leave out: which database errors sqlane retries, such as deadlocks. -->
 
 ## Adapters
 
-<!-- TODO: Source: api.md:2115-2142. -->
+<!-- TODO: Covers: the adapter of each driver and ORM, their options, an example of each. Facts: old "Adapters". -->
