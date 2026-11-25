@@ -30,12 +30,12 @@ sqlane works inside, and they do not need to.
 
 ## General terms
 
-| Term            | Meaning                                                                               |
-| --------------- | ------------------------------------------------------------------------------------- |
-| sqlane          | The library, in plain text.                                                           |
-| sqlane instance | The object that `createSqlane` returns, in code font. Not "the sqlane" or "instance". |
-| sqlane runner   | The object that `createRunner` returns, in code font.                                 |
-| user            | The reader: the developer who calls the API. Not their app's end users.               |
+| Term            | Meaning                                      |
+| --------------- | -------------------------------------------- |
+| sqlane          | The library, in plain text.                  |
+| sqlane instance | The object that `createSqlane` returns.      |
+| sqlane runner   | The object that `createRunner` returns.      |
+| user            | The reader: the developer who calls the API. |
 
 ## Before you finish
 
