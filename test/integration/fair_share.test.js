@@ -523,6 +523,62 @@ describe('ties and processes', () => {
 
         expect(keyedOrder).toStrictEqual([1, 2, 3]);
     });
+
+    test('a name with global limits and a plain name, 1 slot: their starts alternate', async () => {
+        const wide = defineConcurrencyLimit({ name: 'wide', max: 100 });
+        const keyed = defineLane({ name: 'keyed', timeout: '10s', globalConcurrencyLimits: () => [wide] });
+        const { sqlane } = await freshSqlane({ localMaxConcurrency: 1 });
+        const jobs = holdingHandlers();
+
+        runnerOf(sqlane).mount([handle(keyed, jobs.handler('keyed'))]);
+        runnerOf(sqlane).mount([handle('plain', jobs.handler('plain'))]);
+        await sqlane.enqueueMany(testAdapter.pool, keyed, Array.from({ length: 12 }, () => ({ payload: {} })));
+        await enqueue(sqlane, 'plain', 12);
+        await runnerOf(sqlane).start();
+        await waitFor(() => jobs.started.length === 1);
+
+        for (let start = 1; start < 20; start++) {
+            // The turn ends: its other claim does not take the slot of the next release
+            // oxlint-disable-next-line no-await-in-loop -- one start after the other
+            await sleep(50);
+            // oxlint-disable-next-line no-await-in-loop -- one start after the other
+            await releaseOne(jobs, /** @type {string} */ (jobs.started.at(-1)));
+        }
+
+        jobs.releaseAll();
+
+        expect(jobs.started.slice(1).every((name, at) => name !== jobs.started[at])).toBe(true);
+    });
+
+    test('2 plain names and a name with global limits, 2 slots freed together: every name keeps starting', async () => {
+        const wide = defineConcurrencyLimit({ name: 'wide', max: 100 });
+        const keyed = defineLane({ name: 'keyed', timeout: '10s', globalConcurrencyLimits: () => [wide] });
+        const { sqlane } = await freshSqlane({ localMaxConcurrency: 2 });
+        const jobs = holdingHandlers();
+
+        runnerOf(sqlane).mount([handle('p1', jobs.handler('p1'))]);
+        runnerOf(sqlane).mount([handle('p2', jobs.handler('p2'))]);
+        runnerOf(sqlane).mount([handle(keyed, jobs.handler('keyed'))]);
+        await enqueue(sqlane, 'p1', 12);
+        await enqueue(sqlane, 'p2', 12);
+        await sqlane.enqueueMany(testAdapter.pool, keyed, Array.from({ length: 12 }, () => ({ payload: {} })));
+        await runnerOf(sqlane).start();
+
+        for (let round = 0; round < 9; round++) {
+            // oxlint-disable-next-line no-await-in-loop -- one round after the other
+            await waitFor(() => jobs.started.length === 2 * (round + 1));
+            jobs.releaseAll();
+        }
+
+        await waitFor(() => jobs.started.length === 20);
+
+        jobs.releaseAll();
+
+        // 20 starts, by share about 7 each: none starves
+        for (const name of ['p1', 'p2', 'keyed']) {
+            expect(jobs.started.filter(other => other === name).length).toBeGreaterThanOrEqual(6);
+        }
+    });
 });
 
 describe('drain(), start()', () => {

@@ -360,10 +360,11 @@ export function createDispatcher({
      * @param {ClaimedJob[]} locked In the order of run_at; none of their keys was full.
      * @param {Map<string, number>} held The held slots of their keys.
      * @param {Map<string, number>} debts The debts of their rate keys, in µs.
-     * @param {ReadonlyMap<string, HandlerEntry>} captured The entries of the claim, by lane.
-     * @returns {ClaimedJob[]}
+     * @param {{ captured: ReadonlyMap<string, HandlerEntry>, base: number }} turn The entries of the claim, by lane,
+     *     and the tie pointer of the turn.
+     * @returns {{ chosen: ClaimedJob[], lastTieWinner: number | null }}
      */
-    function pick(locked, held, debts, captured) {
+    function pick(locked, held, debts, { captured, base }) {
         const taken = new Map(held);
         const used = new Map(debts);
         const fits = (/** @type {ClaimedJob} */ job) => job.limits.every(({ key, max }) => (taken.get(key) ?? 0) < max)
@@ -388,7 +389,7 @@ export function createDispatcher({
         const { chosen, lastTieWinner } = fill({
             lanes,
             free: freeProcessSlots(),
-            base: tiePointer,
+            base,
             size: tieSpan(),
             take: (lane) => {
                 const rows = /** @type {ClaimedJob[]} */ (rowsByLane.get(lane.name));
@@ -412,9 +413,7 @@ export function createDispatcher({
             },
         });
 
-        movePointer(lastTieWinner);
-
-        return chosen;
+        return { chosen, lastTieWinner };
     }
 
     // ---- dispatch ----
@@ -498,10 +497,22 @@ export function createDispatcher({
                 (lanesWithLimits.has(entry.name) ? keyed : plainEntries).push(entry);
             }
 
+            // One base for the plan and both claims: they break their ties alike
+            const base = tiePointer;
             const found = keyed.length ? await findCandidatesOf(keyed) : { startable: [], full: [] };
-            const reserved = reservedForKeys(turn, found.startable);
-            const plain = await claimAndStartPlain(plainEntries, freeProcessSlots() - reserved.slots, reserved.limits);
-            const withKeys = await claimAndStartWithKeys(found, captured);
+            const reserved = reservedForKeys(turn, found.startable, base);
+            const plain = await claimAndStartPlain(
+                plainEntries,
+                freeProcessSlots() - reserved.slots,
+                reserved.limits,
+                base,
+            );
+            const withKeys = await claimAndStartWithKeys(found, captured, base);
+
+            // A turn of both paths: the plan broke the ties between them. One path: its own claim
+            movePointer(reserved.planned && plainEntries.length
+                ? reserved.lastTieWinner
+                : plain.lastTieWinner ?? withKeys.lastTieWinner);
 
             return { candidates: plain.candidates + withKeys.candidates, claimed: plain.claimed + withKeys.claimed };
         } finally {
@@ -541,14 +552,16 @@ export function createDispatcher({
      * them free, in the instance and in their local limits.
      * @param {HandlerEntry[]} turn
      * @param {import('./store/store.js').Candidate[]} candidates
-     * @returns {{ slots: number, limits: Map<LocalLimit, number> }} The slots of the instance, and of each limit.
+     * @param {number} base The tie pointer of the turn.
+     * @returns {{ slots: number, limits: Map<LocalLimit, number>, planned: boolean, lastTieWinner: number | null }}
+     *     The slots of the instance, and of each limit; planned: the plan ran, and its last tie winner.
      */
-    function reservedForKeys(turn, candidates) {
+    function reservedForKeys(turn, candidates, base) {
         /** @type {Map<LocalLimit, number>} */
         const limits = new Map();
 
         if (!candidates.length) {
-            return { slots: 0, limits };
+            return { slots: 0, limits, planned: false, lastTieWinner: null };
         }
 
         /** @type {Map<string, number>} */
@@ -565,10 +578,10 @@ export function createDispatcher({
             lane.available = lanesWithLimits.has(lane.name) ? candidateCounts.get(lane.name) ?? 0 : Infinity;
         }
 
-        const { chosen } = fill({
+        const { chosen, lastTieWinner } = fill({
             lanes,
             free: freeProcessSlots(),
-            base: tiePointer,
+            base,
             size: tieSpan(),
             take: lane => byLane.get(lane.name) ?? null,
         });
@@ -584,7 +597,7 @@ export function createDispatcher({
             }
         }
 
-        return { slots, limits };
+        return { slots, limits, planned: true, lastTieWinner };
     }
 
     /**
@@ -592,14 +605,14 @@ export function createDispatcher({
      * @param {HandlerEntry[]} turn
      * @param {number} free The free slots for them.
      * @param {Map<LocalLimit, number>} reservedInLimits The slots of each local limit for the lanes with global limits.
-     * @returns {Promise<{ candidates: number, claimed: number }>}
+     * @param {number} base The tie pointer of the turn.
+     * @returns {Promise<{ candidates: number, claimed: number, lastTieWinner: number | null }>}
      */
-    async function claimAndStartPlain(turn, free, reservedInLimits) {
+    async function claimAndStartPlain(turn, free, reservedInLimits, base) {
         if (!turn.length) {
-            return { candidates: 0, claimed: 0 };
+            return { candidates: 0, claimed: 0, lastTieWinner: null };
         }
 
-        const base = tiePointer;
         const size = tieSpan();
         /** @type {HandlerEntry[]} */
         const entries = [];
@@ -667,7 +680,7 @@ export function createDispatcher({
         }
 
         if (!entries.length) {
-            return { candidates: 0, claimed: 0 };
+            return { candidates: 0, claimed: 0, lastTieWinner: null };
         }
 
         const limitRooms = limits.map(limit => Math.max(0, roomOf(limit) - (reservedInLimits.get(limit) ?? 0)));
@@ -714,12 +727,12 @@ export function createDispatcher({
 
         moveGroupPointers(requests, jobs, leftGroups ?? groupsLeft(choiceRows, jobs));
 
+        let lastTieWinner = chosenTie ?? null;
+
         // PostgreSQL chose in SQL: the same choice again over the claimed rows, with the lanes that it left rows of.
         // One lane, or no job: no tie
-        if (chosenTie !== undefined) {
-            movePointer(chosenTie);
-        } else if (entries.length > 1 && jobs.length) {
-            movePointer(replayTie({ entries, requests, limitRooms, jobs, unpicked: unpicked ?? [], base, size }));
+        if (chosenTie === undefined && entries.length > 1 && jobs.length) {
+            lastTieWinner = replayTie({ entries, requests, limitRooms, jobs, unpicked: unpicked ?? [], base, size });
         }
 
         const requested = new Set(requests.map(request => request.name));
@@ -775,7 +788,7 @@ export function createDispatcher({
         }
 
         // Lanes with due jobs left and none claimed: other processes hold them
-        return { candidates: stillDue, claimed: jobs.length };
+        return { candidates: stillDue, claimed: jobs.length, lastTieWinner };
     }
 
     /**
@@ -808,11 +821,15 @@ export function createDispatcher({
      * payloads. The claim blocks the jobs with a full key: they leave the due jobs until a release of the key.
      * @param {import('./store/store.js').FoundCandidates} found
      * @param {ReadonlyMap<string, HandlerEntry>} captured The entries of the claim, by lane.
-     * @returns {Promise<{ candidates: number, claimed: number }>}
+     * @param {number} base The tie pointer of the turn.
+     * @returns {Promise<{ candidates: number, claimed: number, lastTieWinner: number | null }>}
      */
-    async function claimAndStartWithKeys({ startable, full }, captured) {
+    async function claimAndStartWithKeys({ startable, full }, captured, base) {
+        /** @type {number | null} */
+        let lastTieWinner = null;
+
         if (!startable.length && !full.length) {
-            return { candidates: 0, claimed: 0 };
+            return { candidates: 0, claimed: 0, lastTieWinner };
         }
 
         const { jobs: claimed, blockedKeys, blockedLanes, rateWaits } = await store.claim({
@@ -821,7 +838,13 @@ export function createDispatcher({
             lockToken: lockToken(),
             lockedBy,
             leaseMs: t.leaseMs,
-            pick: (locked, held, debts) => pick(locked, held, debts, captured),
+            pick: (locked, held, debts) => {
+                const picked = pick(locked, held, debts, { captured, base });
+
+                lastTieWinner = picked.lastTieWinner;
+
+                return picked.chosen;
+            },
             withRates: [...startable, ...full].some(candidate => lanesWithRates.has(candidate.lane)),
             withFairGroups: fairGroupsReady(),
         });
@@ -846,7 +869,7 @@ export function createDispatcher({
         }
 
         if (!claimed.length) {
-            return { candidates: startable.length, claimed: 0 };
+            return { candidates: startable.length, claimed: 0, lastTieWinner };
         }
 
         let payloads;
@@ -860,7 +883,7 @@ export function createDispatcher({
             )));
             await unblockKeys(claimed.flatMap(job => job.limits.map(limit => limit.key)));
 
-            return { candidates: startable.length, claimed: 0 };
+            return { candidates: startable.length, claimed: 0, lastTieWinner };
         }
 
         for (const job of claimed) {
@@ -868,7 +891,7 @@ export function createDispatcher({
                 /** @type {HandlerEntry} */ (captured.get(job.lane)));
         }
 
-        return { candidates: startable.length, claimed: claimed.length };
+        return { candidates: startable.length, claimed: claimed.length, lastTieWinner };
     }
 
     /**
