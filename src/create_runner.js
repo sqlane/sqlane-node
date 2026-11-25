@@ -159,8 +159,8 @@ function buildRunner(core, { localMaxConcurrency, logger }) {
                 warnedFifo.add(lane);
                 logger?.warn(
                     { lane },
-                    `sqlane: the lane has fairGroup, but the schema lacks ${FAIR_GROUPS_MIGRATION}: this runner claims `
-                    + 'it FIFO, and adds its slots and failure jobs without a group, until schema.migrate() applies it',
+                    `sqlane: the lane has fairGroup, but the schema lacks ${FAIR_GROUPS_MIGRATION}: until `
+                    + 'schema.migrate() applies it, this runner claims it FIFO and adds its jobs without a group',
                 );
             }
         }

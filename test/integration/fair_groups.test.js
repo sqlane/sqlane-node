@@ -707,7 +707,13 @@ function holdingGroups() {
             running[group]--;
         },
         release: (group) => {
-            held.splice(held.findIndex(job => job.group === group), 1)[0]?.release();
+            const at = held.findIndex(job => job.group === group);
+
+            if (at === -1) {
+                throw new Error(`holdingGroups: no held job of ${group}`);
+            }
+
+            held.splice(at, 1)[0].release();
         },
         releaseAll: () => {
             for (const job of held.splice(0)) {
