@@ -225,6 +225,35 @@ export function mysqlMigrations(p) {
                 },
             ],
         },
+        {
+            // 10.1: the fair groups. Two steps, each run only while the catalog lacks its part: the column first (a
+            // nullable column at the end: INSTANT, no rebuild), then the index that the claim of a grouped lane
+            // reads (in place, the table stays writable). One ALTER with both would rebuild the table. The index is
+            // not partial: it costs every insert and status change of every lane. Its down drops both: the groups are
+            // lost.
+            id: '0011_fair_groups',
+            version: '10.1.0',
+            statements: [
+                {
+                    unlessColumnExists: [`${p}jobs`, 'fair_group'],
+                    sql: `ALTER TABLE ${p}jobs ADD COLUMN fair_group VARCHAR(255) ${ASCII} NULL`,
+                },
+                {
+                    unlessIndexExists: [`${p}jobs`, `${p}jobs_status_lane_group`],
+                    sql: `ALTER TABLE ${p}jobs ADD KEY ${p}jobs_status_lane_group (status, lane, fair_group, run_at, id)`,
+                },
+            ],
+            down: [
+                {
+                    ifIndexExists: [`${p}jobs`, `${p}jobs_status_lane_group`],
+                    sql: `ALTER TABLE ${p}jobs DROP KEY ${p}jobs_status_lane_group`,
+                },
+                {
+                    ifColumnExists: [`${p}jobs`, 'fair_group'],
+                    sql: `ALTER TABLE ${p}jobs DROP COLUMN fair_group`,
+                },
+            ],
+        },
     ];
 }
 

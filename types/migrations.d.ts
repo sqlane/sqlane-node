@@ -3,6 +3,9 @@ export type Step = string | {
     ifIndexExists: [table: string, index: string];
     sql: string;
 } | {
+    unlessIndexExists: [table: string, index: string];
+    sql: string;
+} | {
     ifColumnExists: [table: string, column: string];
     sql: string;
 } | {

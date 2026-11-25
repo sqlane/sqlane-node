@@ -16,6 +16,7 @@
 const LIMITS = '0005_concurrency_limits';
 const LANES = '0009_lanes';
 const PAUSE = '0010_pause';
+const FAIR_GROUPS = '0011_fair_groups';
 const ASCII = ' collate ascii_bin';
 
 /** @type {Record<string, ExpectedTable>} MySQL; MariaDB with its JSON as `longtext` */
@@ -49,6 +50,7 @@ const MYSQL = {
             ['updated_at', 'datetime(3)', true],
             ['blocked_on', `varchar(255)${ASCII}`, false, LIMITS],
             ['rate_limits', 'json', false, '0007_rate_limits'],
+            ['fair_group', `varchar(255)${ASCII}`, false, FAIR_GROUPS],
         ],
         indexes: [
             ['PRIMARY', 'unique (id)'],
@@ -56,6 +58,7 @@ const MYSQL = {
             ['jobs_expires_at', '(expires_at)'],
             ['jobs_blocked', '(status, blocked_on, run_at, id)', LIMITS],
             ['jobs_list', '(lane, created_at, id)', LANES],
+            ['jobs_status_lane_group', '(status, lane, fair_group, run_at, id)', FAIR_GROUPS],
         ],
     },
     payloads: {
@@ -148,9 +151,11 @@ const POSTGRES = {
             ['updated_at', TIME, true],
             ['blocked_on', `${VARCHAR}(255)${C}`, false, LIMITS],
             ['rate_limits', 'jsonb', false, '0007_rate_limits'],
+            ['fair_group', `${VARCHAR}(255)${C}`, false, FAIR_GROUPS],
         ],
         indexes: [
             ['jobs_pkey', 'unique (id)'],
+            ['jobs_pending_group', `(lane, fair_group, run_at, id)${whereStatus('pending')}`, FAIR_GROUPS],
             ['jobs_pending', `(lane, run_at, id)${whereStatus('pending')}`, LANES],
             ['jobs_running', `(locked_until)${whereStatus('running')}`],
             ['jobs_expires_at', '(expires_at)'],

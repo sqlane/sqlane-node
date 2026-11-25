@@ -12,9 +12,10 @@ import { baseVersion, compareVersions, installedVersion, parseVersion } from './
 /**
  * A statement of a migration: plain SQL, or SQL that runs only if an index or a column exists, or only if a column is
  * missing, by the catalog when the step runs (MySQL has no `DROP KEY IF EXISTS`, no `RENAME COLUMN IF EXISTS` and no
- * `ADD COLUMN IF NOT EXISTS`): a cut run runs again.
+ * `ADD COLUMN IF NOT EXISTS`, no `ADD KEY IF NOT EXISTS`): a cut run runs again.
  * @typedef {string
  *     | { ifIndexExists: [table: string, index: string], sql: string }
+ *     | { unlessIndexExists: [table: string, index: string], sql: string }
  *     | { ifColumnExists: [table: string, column: string], sql: string }
  *     | { unlessColumnExists: [table: string, column: string], sql: string }} Step
  */
@@ -125,6 +126,10 @@ async function runStep(executor, step) {
 async function shouldRun(executor, step) {
     if ('ifIndexExists' in step) {
         return indexExists(executor, ...step.ifIndexExists);
+    }
+
+    if ('unlessIndexExists' in step) {
+        return !await indexExists(executor, ...step.unlessIndexExists);
     }
 
     if ('ifColumnExists' in step) {
