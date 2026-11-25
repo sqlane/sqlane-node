@@ -1,5 +1,13 @@
 # @sqlane/core
 
+## 10.1.1
+
+### Patch Changes
+
+- [#165](https://github.com/sqlane/sqlane-node/pull/165) [`e65e08f`](https://github.com/sqlane/sqlane-node/commit/e65e08f629ff0b4b907dc97ac2b59b03b3db6bf7) - Docs: the API reference (`docs/api.md`) is rewritten: one template per method, a job lifecycle section, and where job
+  options come from. Its methods are headed by their full name (`sqlane.enqueue`, `runner.start`, …): the links in the
+  README and in the JSDoc of the types point to the new sections.
+
 ## 10.1.0
 
 ### Minor Changes
