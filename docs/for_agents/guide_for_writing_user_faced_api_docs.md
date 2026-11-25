@@ -36,7 +36,3 @@ sqlane works inside, and they do not need to.
 | sqlane instance | The object that `createSqlane` returns.      |
 | sqlane runner   | The object that `createRunner` returns.      |
 | user            | The reader: the developer who calls the API. |
-
-## Before you finish
-
-- Every section you touched follows rules 1–8.
