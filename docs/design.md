@@ -221,7 +221,7 @@ services that share the table each know only their own schedules.
 ### Migrations
 
 sqlane ships its schema as versioned migrations for each dialect. `sqlane.schema` applies them, reverts them, drops
-their tables and checks them ([API](api.md#schemamigrate)). `sqlane_migrations` records the id of each applied
+their tables and checks them ([API](api.md#sqlaneschemamigrate)). `sqlane_migrations` records the id of each applied
 migration, with `applied_at`.
 
 **Tags.** Each migration is tagged in code with the lowest version of sqlane that ships it, per dialect. The ids differ
@@ -494,7 +494,7 @@ one: a free slot raises the lowest share by `1 / weight`, and a finished job low
 dispatch, for two lanes with due jobs and room, `running_a / w_a − running_b / w_b ≤ 1 / w_a`: the running counts stay
 within one slot of the water-filling target at every moment, with no state but the counts and the pointer. The odd
 remainder slot goes by ties, not by time, so it favors long jobs (see
-[How free slots are shared](api.md#how-free-slots-are-shared)).
+[How free slots are shared](api.md#how-a-runner-shares-localmaxconcurrency)).
 
 **Which lanes a claim requests.** A claim locks up to the free slots of each lane that it requests, so a claim of all
 1000 due lanes would lock thousands of rows to start a few jobs. A claim requests at most 4 lanes per free slot: the
