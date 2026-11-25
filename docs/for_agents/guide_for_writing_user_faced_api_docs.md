@@ -34,7 +34,7 @@ sqlane works inside, and they do not need to.
 
 | Term            | Meaning                                      |
 | --------------- | -------------------------------------------- |
-| sqlane          | The library, in plain text.                  |
+| sqlane          | The library                                  |
 | sqlane instance | The object that `createSqlane` returns.      |
 | sqlane runner   | The object that `createRunner` returns.      |
 | user            | The reader: the developer who calls the API. |

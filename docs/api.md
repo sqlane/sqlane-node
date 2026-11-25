@@ -1,13 +1,3 @@
-<!--
-Writers follow docs/for_agents/guide_for_writing_user_faced_api_docs.md, with these rules:
-- Only this file changes: internals, history and upgrade notes are left out, not moved elsewhere.
-- Words: "slot" means only a schedule slot. Never a bare "key": limit key, dedupe key or schedule key. local: in one
-  runner, in memory; global: by all processes, in the database. `hint` names only the option and its type: prose says
-  "sqlane wakes the other processes". claim: a runner takes a due job to run it.
-- Templates: a method follows guide rule 4; a type: summary → fields table → notes; a concept: summary → rules →
-  example. Inside a section, use bold labels, not headings.
--->
-
 # API reference
 
 `@sqlane/core` is a job queue that lives in your own MySQL, MariaDB or PostgreSQL database, with no broker to run.
