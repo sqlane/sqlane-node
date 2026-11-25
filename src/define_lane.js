@@ -4,7 +4,7 @@ import { checkOptionFields, checkObject, NAME_REGEXP } from './validate.js';
 
 const LANE_OPTION_NAMES = [
     'name', 'maxAttempts', 'maxStalls', 'backoff', 'retention', 'timeout', 'failureLane', 'globalConcurrencyLimits',
-    'globalRateLimits',
+    'globalRateLimits', 'fairGroup',
 ];
 
 /**
@@ -35,6 +35,18 @@ export function defineLane(options) {
 
     if (options.globalRateLimits !== undefined && typeof options.globalRateLimits !== 'function') {
         throw new ConfigError(`${where}: "globalRateLimits" must be a function of the context, ({ payload })`);
+    }
+
+    if (options.fairGroup !== undefined) {
+        if (typeof options.fairGroup !== 'function') {
+            throw new ConfigError(`${where}: "fairGroup" must be a function of the context, ({ payload })`);
+        }
+
+        // Not in 10.1: a key shared by groups would claim its jobs in the order of the key, not by group
+        if (options.globalConcurrencyLimits !== undefined || options.globalRateLimits !== undefined) {
+            throw new ConfigError(`${where}: "fairGroup" does not combine with "globalConcurrencyLimits" or `
+                + '"globalRateLimits"');
+        }
     }
 
     const { failureLane } = options;

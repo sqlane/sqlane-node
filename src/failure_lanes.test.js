@@ -73,7 +73,7 @@ test('no failure lane: a definition without one', () => {
 test('report: an added failure job wakes its lane; a refused one is a failure_job_not_added event with its lane', () => {
     const { failureLanes, events, added } = failureLanesOf();
     const error = new Error('refused');
-    const job = { id: 'job-1', lane: 'report', attempt: 2 };
+    const job = { id: 'job-1', lane: 'report', attempt: 2, fairGroup: 'tenant-1' };
     const builder = failureLanes.builderOf(defineLane({ name: 'report', failureLane: reportFailed }));
 
     failureLanes.report(job, null);
@@ -86,6 +86,7 @@ test('report: an added failure job wakes its lane; a refused one is a failure_jo
         jobId: 'job-1',
         lane: 'report',
         attempt: 2,
+        fairGroup: 'tenant-1',
         failureLane: 'alert',
         error,
     }]);

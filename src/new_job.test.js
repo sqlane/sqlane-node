@@ -54,6 +54,7 @@ describe('with a definition', () => {
             failedRetentionMs: 2_592_000_000,
             delayMs: 0,
             runAt: null,
+            fairGroup: null,
         });
     });
 
@@ -207,5 +208,79 @@ describe('the job of a slot (the scheduler, schedules.runSlot)', () => {
         expect(build({ slot: { at: 0, key: 'k' } }).id).toBe('build_report:schedule:k:1970-01-01T00:00:00.000Z');
         expect(build({ slot: { at: Date.parse('9999-12-31T23:59:59.999Z'), key: 'k' } }).id)
             .toBe('build_report:schedule:k:9999-12-31T23:59:59.999Z');
+    });
+});
+
+describe('the fair group', () => {
+    const convert = defineLane({ name: 'convert', fairGroup: ({ payload }) => payload.queue });
+
+    /**
+     * @param {unknown} payload
+     * @param {import('./types.js').EnqueueOptions} [options]
+     * @returns {import('./new_job.js').NewJob}
+     */
+    const buildGroup = (payload, options) => buildNewJob({
+        lane: 'convert', definition: convert, defaults, payload, options, maxPayloadBytes: 1000,
+    });
+
+    test('from the payload as JSON gives it back', () => {
+        /** @type {unknown[]} */
+        const seen = [];
+        const lane = defineLane({ name: 'convert', fairGroup: ({ payload }) => {
+            seen.push(payload);
+
+            return 'g';
+        } });
+
+        expect(buildNewJob({ lane: 'convert', definition: lane, defaults, payload: { at: new Date(0) },
+            options: undefined, maxPayloadBytes: 1000 }).fairGroup).toBe('g');
+        expect(seen).toStrictEqual([{ at: '1970-01-01T00:00:00.000Z' }]);
+    });
+
+    test.each([
+        ['a group', 'backend-1:out', 'backend-1:out'],
+        ['255 characters', 'g'.repeat(255), 'g'.repeat(255)],
+        ['null: no group', null, null],
+        ['undefined: no group', undefined, null],
+    ])('%s', (_, queue, fairGroup) => {
+        expect(buildGroup({ queue }).fairGroup).toBe(fairGroup);
+    });
+
+    test('a lane without fairGroup: null', () => {
+        expect(build({}).fairGroup).toBeNull();
+    });
+
+    test.each([
+        ['an empty string', ''],
+        ['256 characters', 'g'.repeat(256)],
+        ['a space at the end', 'g '],
+        ['a non-ASCII character', 'é'],
+        ['a number', 42],
+    ])('rejects %s: an InvalidOptionsError', (_, queue) => {
+        expect(() => buildGroup({ queue })).toThrow(new InvalidOptionsError('enqueue("convert"): a fair group has 1 '
+            + `to 255 printable ASCII characters, without spaces at the ends: ${JSON.stringify(queue)}`));
+    });
+
+    test('a function that throws: its error, as it is', () => {
+        const error = new Error('no queue');
+        const lane = defineLane({ name: 'convert', fairGroup: () => {
+            throw error;
+        } });
+
+        expect(() => buildNewJob({ lane: 'convert', definition: lane, defaults, payload: {}, options: undefined,
+            maxPayloadBytes: 1000 })).toThrow(error);
+    });
+
+    test.each([
+        ['globalConcurrencyLimits', { globalConcurrencyLimits: [report.key('r1')] }],
+        ['globalRateLimits', { globalRateLimits: [reportApi.key('r1')] }],
+    ])('the enqueue option %s on a lane with fairGroup: an InvalidOptionsError', (name, options) => {
+        expect(() => buildGroup({ queue: 'a' }, options)).toThrow(new InvalidOptionsError(`enqueue("convert"): `
+            + `"${name}" does not combine with the "fairGroup" of the lane: only [] is allowed`));
+    });
+
+    test('the enqueue options [] and undefined of the limits: accepted', () => {
+        expect(buildGroup({ queue: 'a' }, { globalConcurrencyLimits: [], globalRateLimits: undefined }))
+            .toMatchObject({ fairGroup: 'a', limits: [], rateLimits: [] });
     });
 });

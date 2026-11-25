@@ -214,6 +214,8 @@ export function createRunner({
         armRateWake,
         wake: wakeUp,
         hintChannel,
+        // The schema has 0011_fair_groups (the next step reads the records of the migrations)
+        fairGroupsReady: () => true,
     });
     const { runJob } = createJobRuns({
         store,
@@ -250,6 +252,18 @@ export function createRunner({
         unblockKeys,
         armRateWake,
         wakeAfterRates,
+        fairGroupsReady: () => true,
+        groupRunningOf: lane => (group) => {
+            let count = 0;
+
+            for (const job of running.values()) {
+                if (job.claimed.lane === lane && job.claimed.fairGroup === group) {
+                    count++;
+                }
+            }
+
+            return count;
+        },
     });
 
     /**
@@ -316,6 +330,7 @@ export function createRunner({
             jobId: claimed.id,
             lane: claimed.lane,
             attempt: claimed.attempts + 1,
+            fairGroup: claimed.fairGroup,
             runAt: claimed.runAt,
             enqueuedAt: claimed.enqueuedAt,
             startedAt: claimed.startedAt,
@@ -636,6 +651,7 @@ export function createRunner({
                         jobId: job.claimed.id,
                         lane: job.claimed.lane,
                         attempt: job.claimed.attempts + 1,
+                        fairGroup: job.claimed.fairGroup,
                     });
                 } catch (error) {
                     reportError('release', error);

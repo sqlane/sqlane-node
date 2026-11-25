@@ -82,6 +82,7 @@ function contextOf(job) {
             scheduledAt: scheduledAtOf(claimed.id),
             runAt: claimed.runAt,
             startedAt: claimed.startedAt,
+            fairGroup: claimed.fairGroup,
         },
         signal: job.controller.signal,
     };
@@ -206,7 +207,9 @@ export function createJobRuns({
      */
     async function finalize(job, error) {
         const { claimed } = job;
-        const base = { jobId: claimed.id, lane: claimed.lane, attempt: claimed.attempts + 1 };
+        const base = {
+            jobId: claimed.id, lane: claimed.lane, attempt: claimed.attempts + 1, fairGroup: claimed.fairGroup,
+        };
         const durationMs = Date.now() - job.startedAt;
 
         if (error === null && !job.timedOut) {
@@ -248,7 +251,9 @@ export function createJobRuns({
      */
     async function failForGood(job, { error, errorJson, attemptUsed, durationMs }) {
         const { claimed } = job;
-        const base = { jobId: claimed.id, lane: claimed.lane, attempt: claimed.attempts + 1 };
+        const base = {
+            jobId: claimed.id, lane: claimed.lane, attempt: claimed.attempts + 1, fairGroup: claimed.fairGroup,
+        };
 
         logger?.error({ error, jobId: claimed.id, lane: claimed.lane }, 'sqlane: job failed');
         await writeResult(job, async () => {
@@ -258,7 +263,9 @@ export function createJobRuns({
                 attemptUsed,
             });
 
-            failureLanes.report({ id: claimed.id, lane: claimed.lane, attempt: base.attempt }, failureResult);
+            failureLanes.report({
+                id: claimed.id, lane: claimed.lane, attempt: base.attempt, fairGroup: claimed.fairGroup,
+            }, failureResult);
         });
         counts.failed++;
         emit({ type: 'failed', ...base, durationMs, error });
@@ -340,6 +347,7 @@ export function createJobRuns({
             jobId: claimed.id,
             lane: claimed.lane,
             attempt: claimed.attempts + 1,
+            fairGroup: claimed.fairGroup,
             ...(globalLimits.length
                 ? { ...parseRateKey(globalLimits[0].key), scope: 'global' }
                 : { limit: localRates[0].limit.name, key: null, scope: 'local' }),
@@ -440,6 +448,7 @@ export function createJobRuns({
             jobId: job.claimed.id,
             lane: job.claimed.lane,
             attempt: job.claimed.attempts + 1,
+            fairGroup: job.claimed.fairGroup,
             durationMs: Date.now() - job.startedAt,
         });
 

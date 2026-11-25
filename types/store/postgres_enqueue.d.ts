@@ -5,6 +5,14 @@
  */
 export declare function toJobInput(job: import('../new_job.js').NewJob): Record<string, unknown>;
 /**
+ * The column of the fair group in the insert, only when a job has a group: an insert without groups runs on a schema
+ * without `0011_fair_groups`.
+ * @param {import('../new_job.js').NewJob[]} jobs
+ * @returns {string} `, fair_group`, for the column list of the INSERT and of its SELECT; or '': the statement of 10.0,
+ *     unchanged (its prepared statement too).
+ */
+export declare function fairGroupColumn(jobs: import('../new_job.js').NewJob[]): string;
+/**
  * Inserts the jobs and their payloads. With a notify channel, a NOTIFY of the lane when it created a job, in the
  * same statement.
  * @param {import('../types.js').Executor} executor

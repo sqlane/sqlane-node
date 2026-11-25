@@ -32,6 +32,14 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  */
 
 /**
+ * A fair group of a lane with pending jobs, by `probeGroups`.
+ * @typedef {object} GroupProbeRow
+ * @property {string} lane
+ * @property {string | null} group Null: the jobs without a group.
+ * @property {number} delayMs Until its oldest pending job is due: 0 or less means due now.
+ */
+
+/**
  * @typedef {object} Candidate
  * @property {string} id
  * @property {string} lane
@@ -67,6 +75,7 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {Date} startedAt The database time of the claim, as stored in `started_at`; also the time of its new slots.
  * @property {number} waitedMs Since it was due.
  * @property {string} lockToken
+ * @property {string | null} fairGroup Its fair group, read when the claim asks for it (`withFairGroups`); else null.
  */
 
 /**
@@ -84,6 +93,7 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  *     rows of the rate keys in the statement that locks the jobs. Without, a statement of its own, if they have some.
  * @property {readonly string[] | null} [pausedLanes] MySQL and MariaDB: the paused lanes of the last probe, for the
  *     heads of the rate keys (`pausedFilter`). Set by the store.
+ * @property {boolean} [withFairGroups] The schema has `0011_fair_groups`: the claimed jobs have their fair group.
  */
 
 /** @typedef {import('../gcra.js').RateWait} RateWait */
@@ -112,6 +122,9 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {number} weight Its fairShareWeight.
  * @property {number[]} limits Its local limits, as indexes in `limitRooms`.
  * @property {number} tie Its place in the order of the ties.
+ * @property {import('../fair_groups.js').GroupRequest[]} [groups] A lane with fair groups: the groups to lock the
+ *     oldest due jobs of, in the order of `requestGroups` (fair_groups.js). Its rows rank in the order of `fill()` over
+ *     them, and the claim takes at most its `maxJobs`. Never empty.
  */
 
 /**
@@ -124,6 +137,8 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {number} leaseMs
  * @property {(locked: StartableJob[]) => StartableJob[]} choose MySQL and MariaDB: the jobs to take among the locked
  *     ones (in the order of run_at), by share. PostgreSQL makes the same choice in SQL.
+ * @property {boolean} [withFairGroups] The schema has `0011_fair_groups`: the claimed jobs have their fair group. Set
+ *     with a request that has `groups`.
  */
 
 /**
@@ -141,6 +156,9 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  *     any cap. The runner replays the choice with them, to move the tie pointer as the choice did.
  * @property {string[]} limited The requested lanes with a locked row with global limits (from its enqueue options):
  *     not taken, they need the claim of lanes with global limits.
+ * @property {Map<string, (string | null)[]>} [leftGroups] PostgreSQL, a claim with grouped lanes: the groups of each
+ *     grouped lane with a locked row that the claim did not take. The runner replays the choice of its groups with
+ *     them, to move the pointer of the lane's groups.
  */
 
 /**
@@ -208,6 +226,8 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @typedef {object} StoreMethods
  * @property {(lanes: string[] | null) => Promise<ProbeRow[]>} probe The next due time of each given lane with
  *     pending jobs, not paused; null: of each lane. It may give other lanes too.
+ * @property {(lanes: string[]) => Promise<GroupProbeRow[]>} probeGroups The groups of each given lane with pending
+ *     jobs, and the next due time of each. Needs `0011_fair_groups`.
  * @property {(limitsByLane: Map<string, number>, ratedLanes?: Set<string>) => Promise<FoundCandidates>} findCandidates
  *     Of lanes with global limits: their oldest due jobs, at most 500 per lane. `ratedLanes`: the lanes that may have
  *     jobs with rate keys (`findCandidates` below); none: each search has the rate keys.
@@ -236,7 +256,8 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
  * @property {(job: OwnedJob, params: RateLimitedParams) => Promise<RateLimitedResult>} rateLimited The handler threw a
  *     RateLimitedError on global rate keys of the job: their next start is `retryAfter` from now at the earliest, the
  *     job is blocked on the first of them, without an attempt used; its slots are freed.
- * @property {(limit: number) => Promise<RecoveryWork>} findRecoveryWork One read, with no lock: the stale jobs, and
+ * @property {(limit: number, withFairGroups?: boolean) => Promise<RecoveryWork>} findRecoveryWork One read, with no
+ *     lock (`withFairGroups`: the schema has `0011_fair_groups`, the stale jobs have their group): the stale jobs, and
  *     the parts of the sweep that have work.
  * @property {(id: string, params: { leaseMs: number }) => Promise<StaleJobResult>} recoverStaleJob One more stall:
  *     the job is pending again, its slots linger for one lease. Past its `maxStalls`, it keeps its due time, so it is
@@ -291,7 +312,8 @@ const ALL_SWEEP_PARTS = { lingers: true, orphans: true, blocked: true };
 
 /**
  * The work of a stall recovery, as one read found it.
- * @typedef {SweepParts & { stale: { id: string, lane: string }[], idleRateKeys: boolean }} RecoveryWork stale: the
+ * @typedef {SweepParts & { stale: { id: string, lane: string, fairGroup: string | null }[], idleRateKeys: boolean }}
+ *     RecoveryWork stale: the
  *     running jobs whose lease ended, the oldest first. idleRateKeys: rows of rate keys whose tat passed.
  */
 
@@ -449,6 +471,7 @@ export function createStore(adapter, tablePrefix, logger, { pausedSeenMs = 5000 
 
             return rows;
         },
+        probeGroups: lanes => sql.probeGroups(adapter.queue, p, lanes),
         findCandidates: (limitsByLane, ratedLanes) => findCandidates(sql, limitsByLane, ratedLanes),
         claim: params => adapter.queueTransaction(executor => sql.claim(executor, tablePrefix, {
             ...params,
@@ -482,14 +505,18 @@ export function createStore(adapter, tablePrefix, logger, { pausedSeenMs = 5000 
         failJob: (job, params) => inQueue(executor => final.failJob(executor, p, job, params)),
         releaseJob: (job, params) => inQueue(executor => final.releaseJob(executor, p, job, params)),
         rateLimited: (job, params) => inQueue(executor => final.rateLimited(executor, p, job, params)),
-        findRecoveryWork: async (limit) => {
-            const rows = await final.readRecoveryWork(adapter.queue, p, limit);
+        findRecoveryWork: async (limit, withFairGroups = false) => {
+            const rows = await final.readRecoveryWork(adapter.queue, p, limit, withFairGroups);
             const [parts] = rows;
 
             return {
                 // No stale job: one row with null ids
                 stale: rows.filter(row => row.id !== null)
-                    .map(row => ({ id: String(row.id), lane: String(row.lane) })),
+                    .map(row => ({
+                        id: String(row.id),
+                        lane: String(row.lane),
+                        fairGroup: (row.fair_group ?? null) === null ? null : String(row.fair_group),
+                    })),
                 lingers: Number(parts.lingers) > 0,
                 orphans: Number(parts.orphans) > 0,
                 blocked: Number(parts.blocked) > 0,

@@ -1,7 +1,7 @@
 import { createMonotonicUlid } from './ulid.js';
 import { parseDuration } from './duration.js';
 import { InvalidOptionsError } from './errors.js';
-import { normalizeGlobalLimits } from './concurrency_keys.js';
+import { MAX_LIMIT_KEY_LENGTH, normalizeGlobalLimits } from './concurrency_keys.js';
 import { normalizeGlobalRateLimits } from './rate_keys.js';
 import { serializePayload } from './payload.js';
 import { SLOT_PREFIX, slotDedupeKeyOf } from './schedule.js';
@@ -36,6 +36,7 @@ const ulid = createMonotonicUlid();
  * @property {number} failedRetentionMs
  * @property {number} delayMs From the DB clock at insert. 0 with `runAt`.
  * @property {Date | null} runAt
+ * @property {string | null} fairGroup Its fair group, from the definition's `fairGroup`; null: none.
  */
 
 /**
@@ -67,6 +68,43 @@ function checkDedupeKey(dedupeKey, where) {
         throw new InvalidOptionsError(`${where}: the "dedupeKey" prefix "${SLOT_PREFIX}" is reserved for the slots `
             + 'of schedules: run a slot by hand with schedules.runSlot()');
     }
+}
+
+/**
+ * The fair group of a job, from the definition's function: the rule of a limit key.
+ * @param {import('./types.js').LaneDefinition} definition
+ * @param {string} payloadJson
+ * @param {Record<string, unknown>} options
+ * @param {string} where
+ * @returns {string | null} Null: no group.
+ */
+function fairGroupOf(definition, payloadJson, options, where) {
+    if (!definition.fairGroup) {
+        return null;
+    }
+
+    for (const name of /** @type {const} */ (['globalConcurrencyLimits', 'globalRateLimits'])) {
+        const limits = options[name];
+
+        if (limits !== undefined && !(Array.isArray(limits) && limits.length === 0)) {
+            throw new InvalidOptionsError(`${where}: "${name}" does not combine with the "fairGroup" of the lane: `
+                + 'only [] is allowed');
+        }
+    }
+
+    // From the payload as the handler gets it: as JSON gives it back. A throw propagates
+    const group = definition.fairGroup({ payload: JSON.parse(payloadJson) });
+
+    if (group === null || group === undefined) {
+        return null;
+    }
+
+    if (typeof group !== 'string' || group.length > MAX_LIMIT_KEY_LENGTH || !PRINTABLE_ID_REGEXP.test(group)) {
+        throw new InvalidOptionsError(`${where}: a fair group has 1 to ${MAX_LIMIT_KEY_LENGTH} printable ASCII `
+            + `characters, without spaces at the ends: ${JSON.stringify(group)}`);
+    }
+
+    return group;
 }
 
 /**
@@ -124,6 +162,7 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
     }
 
     const payloadJson = serializePayload(payload, maxPayloadBytes, where);
+    const fairGroup = fairGroupOf(definition, payloadJson, options, where);
     // The limits come from the payload as the handler gets it: as JSON gives it back.
     const rawLimits = options.globalConcurrencyLimits
         ?? definition.globalConcurrencyLimits?.({ payload: JSON.parse(payloadJson) }) ?? [];
@@ -144,5 +183,6 @@ export function buildNewJob({ lane, definition, defaults, payload, options = {},
         completedRetentionMs: parseDuration(retention.completed) ?? defaults.retention.completedMs,
         failedRetentionMs: parseDuration(retention.failed) ?? defaults.retention.failedMs,
         ...getSchedule(options, where),
+        fairGroup,
     };
 }

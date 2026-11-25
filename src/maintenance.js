@@ -23,6 +23,7 @@ const BATCH = 1000;
  * @param {(operation: string, error: unknown) => void} params.reportError
  * @param {(key: string, delayMs: number) => void} params.armRateWake The timer of a rate key with blocked jobs.
  * @param {() => void} params.wake A wake of all lanes of this process.
+ * @param {() => boolean} params.fairGroupsReady The schema has `0011_fair_groups`: the stale jobs have their group.
  * @param {import('./hint_channel.js').HintChannel} params.hintChannel
  * @returns {Maintenance}
  */
@@ -38,6 +39,7 @@ export function createMaintenance({
     armRateWake,
     wake,
     hintChannel,
+    fairGroupsReady,
 }) {
     /**
      * A timer that runs func again after it settles, while the runner is started.
@@ -66,10 +68,10 @@ export function createMaintenance({
     async function recoverStaleJobs() {
         const ownIds = new Set([...running.values()].map(job => job.claimed.id));
         // One read: the stale jobs, and the parts of the sweeps with work. An idle recovery ends with it
-        const work = await store.findRecoveryWork(100);
+        const work = await store.findRecoveryWork(100, fairGroupsReady());
         let freedKeys = false;
 
-        for (const { id, lane } of work.stale) {
+        for (const { id, lane, fairGroup } of work.stale) {
             if (state() !== 'started' || ownIds.has(id)) {
                 continue;
             }
@@ -80,7 +82,7 @@ export function createMaintenance({
 
             if (recovered.result === 'released') {
                 freedKeys = true;
-                emit({ type: 'stalled', jobId: id, lane, attempt: recovered.attempt });
+                emit({ type: 'stalled', jobId: id, lane, attempt: recovered.attempt, fairGroup });
             }
         }
 

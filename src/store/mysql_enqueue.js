@@ -1,7 +1,7 @@
 // Enqueue on MySQL: in the caller's transaction. MySQL has no RETURNING: the rows of this call are the rows with its
 // enqueue token.
 
-/** Rows per INSERT: 12 placeholders a row stay far below the 65,535 of MySQL. */
+/** Rows per INSERT: 13 placeholders a row stay far below the 65,535 of MySQL. */
 const CHUNK_SIZE = 500;
 
 /**
@@ -30,8 +30,11 @@ function runAtSql(job) {
  * @returns {Promise<Set<string>>} The ids that this call created.
  */
 async function insertChunk(executor, p, jobs, enqueueToken) {
+    // The column of the fair group only when a job has a group: an insert without groups runs on a schema without
+    // 0011_fair_groups
+    const withGroups = jobs.some(job => job.fairGroup !== null);
     const values = jobs.map(job => `(?, ?, 'pending', ${runAtSql(job).sql}, ?, ?, ?, ?, ?, ?, ?, ?, `
-        + 'UTC_TIMESTAMP(3), UTC_TIMESTAMP(3))');
+        + `UTC_TIMESTAMP(3), UTC_TIMESTAMP(3)${withGroups ? ', ?' : ''})`);
     const params = jobs.flatMap(job => [
         job.id,
         job.lane,
@@ -44,12 +47,14 @@ async function insertChunk(executor, p, jobs, enqueueToken) {
         enqueueToken,
         job.completedRetentionMs,
         job.failedRetentionMs,
+        ...withGroups ? [job.fairGroup] : [],
     ]);
 
     // A duplicate id keeps its row: its token is not this one.
     await executor.query(`
         INSERT INTO ${p}jobs (id, lane, status, run_at, max_attempts, max_stalls, limit_keys, limit_maxes,
-            rate_limits, enqueue_token, completed_retention_ms, failed_retention_ms, created_at, updated_at)
+            rate_limits, enqueue_token, completed_retention_ms, failed_retention_ms, created_at, updated_at
+            ${withGroups ? ', fair_group' : ''})
         VALUES ${values.join(', ')}
         ON DUPLICATE KEY UPDATE id = id
     `, params);

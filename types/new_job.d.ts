@@ -25,6 +25,10 @@ export type NewJob = {
      */
     delayMs: number;
     runAt: Date | null;
+    /**
+     * Its fair group, from the definition's `fairGroup`; null: none.
+     */
+    fairGroup: string | null;
 };
 export type NewJobParams = {
     lane: string;

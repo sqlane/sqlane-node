@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { insertJobsPostgres, toJobInput } from './postgres_enqueue.js';
 import { insertScheduledJobsPostgres } from './postgres_schedules.js';
@@ -57,10 +59,48 @@ test('the input of a job: its rate limits as a JSON array, null without', () => 
         failedRetentionMs: 0,
         delayMs: 0,
         runAt: null,
+        fairGroup: null,
     };
 
     expect(toJobInput(job)).toMatchObject({ limit_keys: null, limit_maxes: null, rate_limits: job.rateLimits });
     expect(toJobInput({ ...job, rateLimits: [] })).toMatchObject({ rate_limits: null });
     // The failure lane is not stored: the definition of the process that fails the job decides
     expect(toJobInput(job)).not.toHaveProperty('failure_lane');
+});
+
+test('every insert of jobs in src/ writes the fair group: the inventory of the inserts', () => {
+    const src = join(import.meta.dirname, '..');
+    const insertOfJobs = /INSERT INTO \$\{p\}jobs/u;
+    const files = readdirSync(src, { recursive: true, encoding: 'utf8' })
+        .filter(file => /(?<!\.test)\.js$/u.test(file))
+        .filter(file => insertOfJobs.test(readFileSync(join(src, file), 'utf8')));
+
+    // A new insert of jobs: give it the column of the group (only when a job has one), then add it here
+    expect(files.toSorted()).toStrictEqual([
+        join('store', 'mariadb_enqueue.js'),
+        join('store', 'mysql_enqueue.js'),
+        join('store', 'postgres_enqueue.js'),
+        join('store', 'postgres_schedules.js'),
+    ]);
+
+    for (const file of files) {
+        expect(readFileSync(join(src, file), 'utf8')).toContain('fair_group');
+    }
+});
+
+test('the input of a job: its fair group; the statement names the column only when a job has a group', async () => {
+    /** @type {import('../new_job.js').NewJob} */
+    const job = {
+        id: 'a', hasJobId: false, lane: 'a', payloadJson: '{}', limits: [], rateLimits: [], maxAttempts: 1, maxStalls: 0,
+        completedRetentionMs: 0, failedRetentionMs: 0, delayMs: 0, runAt: null, fairGroup: 'g',
+    };
+    const grouped = await capture(executor => insertJobsPostgres(executor, 'sqlane_', [job, { ...job, id: 'b',
+        fairGroup: null }], { enqueueToken: 't' }));
+    const plain = await capture(executor => insertJobsPostgres(executor, 'sqlane_', [{ ...job, fairGroup: null }], {
+        enqueueToken: 't',
+    }));
+
+    expect(toJobInput(job)).toMatchObject({ fair_group: 'g' });
+    expect(grouped.sql).toMatch(/updated_at, fair_group\)/);
+    expect(plain.sql).not.toMatch(/fair_group/);
 });

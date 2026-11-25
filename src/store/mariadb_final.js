@@ -341,12 +341,13 @@ export async function rateLimited(executor, p, job, { limits, retryAfterMs, erro
  * @param {Executor} executor
  * @param {string} p
  * @param {number} limit Of the stale jobs.
- * @returns {Promise<readonly Record<string, unknown>[]>} id, lane, and the parts: lingers, orphans, blocked,
- *     idle_rate_keys (0 or 1).
+ * @param {boolean} [withFairGroups] The schema has `0011_fair_groups`: the stale jobs with their fair group.
+ * @returns {Promise<readonly Record<string, unknown>[]>} id, lane, fair_group (with `withFairGroups`), and the parts:
+ *     lingers, orphans, blocked, idle_rate_keys (0 or 1).
  */
-export async function readRecoveryWork(executor, p, limit) {
+export async function readRecoveryWork(executor, p, limit, withFairGroups = false) {
     return executor.query(`
-        SELECT stale.id, stale.lane, parts.*
+        SELECT stale.id, stale.lane${withFairGroups ? ', stale.fair_group' : ''}, parts.*
           FROM (
               SELECT EXISTS (SELECT 1 FROM ${p}concurrency_slots WHERE held_until < ${NOW}) AS lingers,
                      EXISTS (
@@ -360,7 +361,7 @@ export async function readRecoveryWork(executor, p, limit) {
                      EXISTS (SELECT 1 FROM ${p}rate_limits WHERE tat < ${NOW_US}) AS idle_rate_keys
           ) AS parts
           LEFT JOIN (
-              SELECT id, lane, locked_until FROM ${p}jobs FORCE INDEX (${p}jobs_status_lane_run_at)
+              SELECT id, lane, locked_until${withFairGroups ? ', fair_group' : ''} FROM ${p}jobs FORCE INDEX (${p}jobs_status_lane_run_at)
                WHERE status = 'running' AND locked_until < ${NOW}
                ORDER BY locked_until LIMIT ?
           ) AS stale ON TRUE

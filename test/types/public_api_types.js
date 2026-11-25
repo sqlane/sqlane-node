@@ -652,7 +652,7 @@ export async function publicApiTypes() {
         id: 'a', lane: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
         scheduledAt: null, runAt: new Date(),
     };
-    const claimedBase = { type: /** @type {const} */ ('claimed'), jobId: 'a', lane: 'a', attempt: 1 };
+    const claimedBase = { type: /** @type {const} */ ('claimed'), jobId: 'a', lane: 'a', attempt: 1, fairGroup: null };
     /** @type {import('@sqlane/core').SqlaneEvent} */
     // @ts-expect-error a claimed event built by hand needs runAt
     const claimedWithoutRunAt = { ...claimedBase, enqueuedAt: new Date(), startedAt: new Date() };
@@ -667,7 +667,7 @@ export async function publicApiTypes() {
     /** @type {import('@sqlane/core').JobInfo} */
     const complete = {
         id: 'a', lane: 'a', attempt: 1, maxAttempts: 1, enqueuedAt: new Date(), globalConcurrencyLimits: [],
-        scheduledAt: null, runAt: new Date(), startedAt: new Date(),
+        scheduledAt: null, runAt: new Date(), startedAt: new Date(), fairGroup: null,
     };
 
     void builtByHand;

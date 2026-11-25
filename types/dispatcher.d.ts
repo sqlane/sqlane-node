@@ -57,29 +57,12 @@ export type Dispatcher = {
      * A claim runs: it may have counted the free slots before a job ended.
      */
     claiming: () => boolean;
+    /**
+     * The lane is claimed by fair group now: its handler's definition
+     * has `fairGroup`, the schema has `0011_fair_groups`, and no job of it brought global limits.
+     */
+    claimsByGroup: (lane: string) => boolean;
 };
-/**
- * @typedef {object} Dispatcher
- * @property {(lanes?: readonly string[], options?: { speculative?: boolean }) => void} wake Ends the sleep of the
- *     loop. The next turn looks at the given lanes, or at all lanes.
- * @property {() => void} prepare For start() and drain(), after the check of the registry: reads the handled
- *     lanes, and starts the tie pointer at a random lane.
- * @property {(entries: readonly HandlerEntry[]) => void} added Lanes handled from now on: mounted after prepare().
- * @property {(entries: readonly HandlerEntry[]) => void} removed Lanes no longer handled: unmounted.
- * @property {(lane: string, paused: boolean) => void} setPaused A lane paused or resumed in this process: no claim of
- *     it while paused. For the life of the dispatcher, whether the lane is handled or not.
- * @property {(lane: string) => boolean} isPaused
- * @property {(serverCheck?: (() => Promise<void>) | null) => Promise<void>} run The loop: one turn after the other,
- *     while the runner is started. An error of a turn is retried, or reported and backed off. `serverCheck`: the check
- *     of the server that start() could not run (the database was down): no turn before it passes; a `ConfigError` of
- *     it ends the loop.
- * @property {(dueLanes: string[]) => Promise<{ candidates: number, claimed: number }>} claimAndStart Claims the due
- *     jobs of the lanes, by share within the free slots, and starts them. For drain(). The lanes not handled here, or
- *     paused, are left out.
- * @property {(entry: HandlerEntry) => number} freeSlots The jobs of the lane that can start now: under its local
- *     limits and the runner's cap.
- * @property {() => boolean} claiming A claim runs: it may have counted the free slots before a job ended.
- */
 /**
  * @param {object} params
  * @param {import('./store/store.js').Store} params.store
@@ -98,9 +81,13 @@ export type Dispatcher = {
  * @param {(key: string, delayMs: number) => void} params.armRateWake The timer of a rate key with blocked jobs.
  * @param {(entry: HandlerEntry) => void} params.wakeAfterRates Its local rate limits that admit no start now: a wake of
  *     their lanes when one may start.
+ * @param {() => boolean} params.fairGroupsReady The schema has `0011_fair_groups`: the claims read the groups, and the
+ *     lanes with `fairGroup` are claimed by group.
+ * @param {(lane: string) => (group: import('./fair_groups.js').FairGroup) => number} params.groupRunningOf The jobs of
+ *     each group of the lane that run in this process.
  * @returns {Dispatcher}
  */
-export declare function createDispatcher({ store, registry, localMaxConcurrency, running, timings: t, random, state, logger, reportError, startJob, unblockKeys, armRateWake, wakeAfterRates, }: {
+export declare function createDispatcher({ store, registry, localMaxConcurrency, running, timings: t, random, state, logger, reportError, startJob, unblockKeys, armRateWake, wakeAfterRates, fairGroupsReady, groupRunningOf, }: {
     store: import('./store/store.js').Store;
     registry: import('./registry.js').Registry;
     localMaxConcurrency: number;
@@ -117,4 +104,6 @@ export declare function createDispatcher({ store, registry, localMaxConcurrency,
     unblockKeys: (keys: readonly string[]) => Promise<void>;
     armRateWake: (key: string, delayMs: number) => void;
     wakeAfterRates: (entry: HandlerEntry) => void;
+    fairGroupsReady: () => boolean;
+    groupRunningOf: (lane: string) => (group: import('./fair_groups.js').FairGroup) => number;
 }): Dispatcher;

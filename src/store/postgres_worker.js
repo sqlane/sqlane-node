@@ -344,7 +344,9 @@ function limitsOf(row) {
  * @param {ClaimParams} params
  * @returns {Promise<import('./store.js').ClaimResult>}
  */
-export async function claim(executor, p, { candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, withRates }) {
+export async function claim(executor, p, {
+    candidateIds, fullIds, lockToken, lockedBy, leaseMs, pick, withRates, withFairGroups = false,
+}) {
     const ids = [...candidateIds, ...fullIds];
 
     if (!ids.length) {
@@ -356,7 +358,8 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
                ${unlessStalledOut('rate_limits')}::text AS rate_limits, attempts, max_attempts, stalls, max_stalls,
                ${epochMs('created_at')} AS created_at_ms,
                ${epochMs('run_at')} AS run_at_ms,
-               (EXTRACT(EPOCH FROM clock_timestamp() - run_at) * 1000)::bigint AS waited_ms`;
+               (EXTRACT(EPOCH FROM clock_timestamp() - run_at) * 1000)::bigint AS waited_ms${
+    withFairGroups ? ', fair_group' : ''}`;
     const pending = `FROM ${p}jobs j
          WHERE j.id = ANY(${arrayParam(1, 'text')}) AND j.status = 'pending' AND j.run_at <= clock_timestamp()
            AND ${notPaused(p, 'j.lane')}
@@ -392,6 +395,7 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
             startedAt: new Date(Number.NaN),
             waitedMs: Number(row.waited_ms),
             lockToken,
+            fairGroup: /** @type {string | null | undefined} */ (row.fair_group) ?? null,
         },
     }));
     const keys = [...new Set(locked.flatMap(({ job }) => job.limits.map(limit => limit.key)))];
@@ -513,13 +517,20 @@ export async function claim(executor, p, { candidateIds, fullIds, lockToken, loc
 }
 
 /**
+ * @param {boolean} withFairGroups The schema has the column of the groups: RETURNING has it.
+ * @returns {string} The column of the fair group in the RETURNING of a claim: ', j.fair_group', or ''.
+ */
+const returnedGroup = withFairGroups => (withFairGroups ? ', j.fair_group' : '');
+
+/**
  * @param {string} p
+ * @param {boolean} withFairGroups The CTE `claimed` returns the fair group.
  * @returns {string} The jobs of the CTE `claimed`, with their payloads, as a JSON text: oldest first.
  */
-function claimedJobsJson(p) {
+function claimedJobsJson(p, withFairGroups) {
     return `(
         SELECT json_agg(json_build_object(
-                   'id', c.id, 'lane', c.lane, 'attempts', c.attempts,
+                   ${withFairGroups ? '\'fairGroup\', c.fair_group, ' : ''}'id', c.id, 'lane', c.lane, 'attempts', c.attempts,
                    'maxAttempts', c.max_attempts, 'stalls', c.stalls, 'maxStalls', c.max_stalls,
                    'createdAtMs', c.created_at_ms, 'waitedMs', c.waited_ms,
                    'runAtMs', ${epochMs('c.run_at')}, 'startedAtMs', ${epochMs('c.started_at')},
@@ -537,7 +548,7 @@ function claimedJobsJson(p) {
 function parseClaimedJobs(json, lockToken) {
     /** @type {{ id: string, lane: string, attempts: number, maxAttempts: number, stalls: number, maxStalls: number,
      *     createdAtMs: number, waitedMs: number, runAtMs: number, startedAtMs: number, found: boolean,
-     *     payload: unknown }[]} */
+     *     payload: unknown, fairGroup?: string | null }[]} */
     const jobs = (json ?? null) === null ? [] : JSON.parse(String(json));
 
     return jobs.map(job => ({
@@ -554,43 +565,22 @@ function parseClaimedJobs(json, lockToken) {
         startedAt: new Date(Number(job.startedAtMs)),
         waitedMs: job.waitedMs,
         lockToken,
+        fairGroup: job.fairGroup ?? null,
         payload: job.found ? { found: true, payload: job.payload } : { found: false, payload: undefined },
     }));
 }
 
 /**
- * Finds, chooses, claims and reads the due jobs of lanes without global limits, in one statement (a transaction of its
- * own). Each lane locks its oldest due jobs that no other claim holds (SKIP LOCKED), up to its `maxJobs`. The locked
- * rows are taken in the order of their share, `(running + rank in the lane − 1) / weight`, then the tie order, within
- * the free slots of the local limits and of the instance: the order of `fill()` (fair_share.js), row by row. Then the
- * next due time of each requested lane, among its pending jobs that this claim did not take.
- * @param {Executor} executor Outside a transaction.
- * @param {string} p
- * @param {import('./store.js').ClaimDueParams} params
- * @returns {Promise<import('./store.js').ClaimDueResult>} The jobs in the order of run_at.
+ * The choice of a claim of due jobs among the rows of the CTE `locked` (`id`, `limits`, `share`, `tie`, `run_at`), as
+ * `fill()`: by share, then the tie, row by row. Without local limits, the free slots of the instance are the only cap:
+ * the first rows by share. With them, a walk row by row: a row is taken while the instance and each of its limits have
+ * room (a lane can have several limits, so one `ROW_NUMBER` per limit would not do). `$7`: the rooms; `$8`: the free
+ * slots.
+ * @param {boolean} withLimits A request has local limits.
+ * @returns {string} The CTEs `ordered`, `walk` and `picked`, or `picked` alone; each followed by a comma.
  */
-export async function claimDue(executor, p, { requests, limitRooms, free, lockToken, lockedBy, leaseMs }) {
-    if (!requests.length || free <= 0) {
-        return { jobs: [], next: [], unpicked: [], limited: [] };
-    }
-
-    if (requests.length === 1) {
-        const [{ name, maxJobs }] = requests;
-        // One lane: nothing to share
-        const result = await claimDueOfLane(executor, p, {
-            name,
-            limit: Math.min(maxJobs, free),
-            lockToken,
-            lockedBy,
-            leaseMs,
-        });
-
-        return { ...result, unpicked: [] };
-    }
-
-    // Without local limits, the free slots of the instance are the only cap: the first rows by share. With them, a
-    // walk row by row, as fill(): a row is taken while the instance and each of its limits have room
-    const pick = requests.some(request => request.limits.length)
+function pickSql(withLimits) {
+    return withLimits
         ? `
         ordered AS (
             SELECT id, limits, ROW_NUMBER() OVER (ORDER BY share, tie, run_at, id) AS n FROM locked
@@ -619,6 +609,47 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
         picked AS (
             SELECT id FROM locked ORDER BY share, tie, run_at, id LIMIT $8
         ),`;
+}
+
+/**
+ * Finds, chooses, claims and reads the due jobs of lanes without global limits, in one statement (a transaction of its
+ * own). Each lane locks its oldest due jobs that no other claim holds (SKIP LOCKED), up to its `maxJobs`. The locked
+ * rows are taken in the order of their share, `(running + rank in the lane − 1) / weight`, then the tie order, within
+ * the free slots of the local limits and of the instance: the order of `fill()` (fair_share.js), row by row. Then the
+ * next due time of each requested lane, among its pending jobs that this claim did not take.
+ * @param {Executor} executor Outside a transaction.
+ * @param {string} p
+ * @param {import('./store.js').ClaimDueParams} params
+ * @returns {Promise<import('./store.js').ClaimDueResult>} The jobs in the order of run_at.
+ */
+export async function claimDue(executor, p, {
+    requests, limitRooms, free, lockToken, lockedBy, leaseMs, withFairGroups = false,
+}) {
+    if (!requests.length || free <= 0) {
+        return { jobs: [], next: [], unpicked: [], limited: [] };
+    }
+
+    if (requests.some(request => request.groups)) {
+        // A lane with fair groups: the general statement, which orders its rows by group and cuts at its maxJobs
+        return claimDueGrouped(executor, p, { requests, limitRooms, free, lockToken, lockedBy, leaseMs });
+    }
+
+    if (requests.length === 1) {
+        const [{ name, maxJobs }] = requests;
+        // One lane: nothing to share
+        const result = await claimDueOfLane(executor, p, {
+            name,
+            limit: Math.min(maxJobs, free),
+            lockToken,
+            lockedBy,
+            leaseMs,
+            withFairGroups,
+        });
+
+        return { ...result, unpicked: [] };
+    }
+
+    const pick = pickSql(requests.some(request => request.limits.length));
     // One row: the claimed jobs, the next due times and the lanes of the locked rows left, as JSON texts. Bigints: a
     // localMaxConcurrency may be above 2^31
     const [row] = await executor.query(`
@@ -663,7 +694,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
              WHERE j.id = picked.id
             RETURNING j.id, j.lane, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
                       ${epochMs('j.created_at')} AS created_at_ms,
-                      (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
+                      (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms${returnedGroup(withFairGroups)}
         ),
         -- The statement's snapshot: the picked jobs are still pending in it. A full claim does not read them: the next
         -- turn claims again
@@ -678,7 +709,7 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
              ) AS n
              WHERE (SELECT count(*) FROM picked) < $8
         )
-        SELECT ${claimedJobsJson(p)} AS jobs,
+        SELECT ${claimedJobsJson(p, withFairGroups)} AS jobs,
                (SELECT count(*) FROM picked) >= $8 AS full,
                (SELECT json_agg(json_build_object('name', lane, 'delayMs', delay_ms)) FROM next)::text AS next,
                -- The lanes with a locked row left, under any cap: the runner replays the choice for its tie pointer
@@ -717,10 +748,11 @@ export async function claimDue(executor, p, { requests, limitRooms, free, lockTo
  * statement, and plans it no more.
  * @param {Executor} executor Outside a transaction.
  * @param {string} p
- * @param {{ name: string, limit: number, lockToken: string, lockedBy: string, leaseMs: number }} params
+ * @param {{ name: string, limit: number, lockToken: string, lockedBy: string, leaseMs: number,
+ *     withFairGroups: boolean }} params
  * @returns {Promise<import('./store.js').ClaimDueResult>}
  */
-async function claimDueOfLane(executor, p, { name, limit, lockToken, lockedBy, leaseMs }) {
+async function claimDueOfLane(executor, p, { name, limit, lockToken, lockedBy, leaseMs, withFairGroups }) {
     const [row] = await executor.query(`
         WITH locked AS (
             SELECT id, ${LIMITED} AS limited FROM ${p}jobs
@@ -741,10 +773,10 @@ async function claimDueOfLane(executor, p, { name, limit, lockToken, lockedBy, l
              WHERE j.id = picked.id
             RETURNING j.id, j.lane, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
                       ${epochMs('j.created_at')} AS created_at_ms,
-                      (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms
+                      (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms${returnedGroup(withFairGroups)}
         )
         -- The statement's snapshot: the picked jobs are still pending in it
-        SELECT ${claimedJobsJson(p)} AS jobs,
+        SELECT ${claimedJobsJson(p, withFairGroups)} AS jobs,
                (
                    SELECT (EXTRACT(EPOCH FROM run_at - clock_timestamp()) * 1000)::bigint FROM ${p}jobs
                     WHERE status = 'pending' AND lane = $1 AND id NOT IN (SELECT id FROM picked)
@@ -760,6 +792,242 @@ async function claimDueOfLane(executor, p, { name, limit, lockToken, lockedBy, l
         next: nextDelay === null ? [] : [{ name, delayMs: Number(nextDelay) }],
         limited: row?.limited ? [name] : [],
     };
+}
+
+/**
+ * `claimDue` with lanes with fair groups (their requests have `groups`). As `claimDue`, but a grouped lane locks the
+ * oldest due jobs of each requested group, not of the lane: per group request, in two CTEs (`grouped`: a group;
+ * `ungrouped`: the null group), each a LATERAL with an ordered scan of `<p>jobs_pending_group` (`ORDER BY fair_group,
+ * run_at, id`: the group is fixed per branch, and the order makes the generic plan read the index, not filter the lane;
+ * no `OR`, which would lose the ordered scan; no `FOR UPDATE` in a `UNION`, which PostgreSQL rejects). The rows of a
+ * grouped lane rank in the order of `fill()` over its groups (`fair_groups.js`): by `running + rank in the group − 1`,
+ * then the tie of the group; its rows past its `maxJobs` are cut (it locks more: the extra groups and the slack). Then
+ * the lane share of the k-th row and the pick, as `claimDue`. Always returns the fair group.
+ * @param {Executor} executor Outside a transaction.
+ * @param {string} p
+ * @param {Omit<import('./store.js').ClaimDueParams, 'choose'>} params
+ * @returns {Promise<import('./store.js').ClaimDueResult>}
+ */
+async function claimDueGrouped(executor, p, { requests, limitRooms, free, lockToken, lockedBy, leaseMs }) {
+    const groups = requests.flatMap(request => (request.groups ?? []).map(({ group, running, tie, maxJobs }) => ({
+        lane: request.name, group, running, tie, maxJobs,
+    })));
+    const [row] = await executor.query(`
+        WITH RECURSIVE limit_rooms AS (
+            SELECT $7::bigint[] AS rooms
+        ),
+        request AS (
+            SELECT r.name, r.max_jobs, r.running, r.weight, r.limits::integer[] AS limits, r.tie
+              FROM unnest(
+                       ${arrayParam(1, 'text')}, ${arrayParam(2, 'bigint')}, ${arrayParam(3, 'bigint')},
+                       ${arrayParam(4, 'integer')}, ${arrayParam(5, 'text')}, ${arrayParam(6, 'integer')}
+                   )
+                AS r(name, max_jobs, running, weight, limits, tie)
+             WHERE ${notPaused(p, 'r.name')}
+        ),
+        -- The groups of the lanes that no pause holds
+        group_request AS (
+            SELECT g.lane, g.grp, g.running AS g_running, g.tie AS g_tie, g.max_jobs AS g_max
+              FROM unnest(
+                       ${arrayParam(12, 'text')}, ${arrayParam(13, 'text')}, ${arrayParam(14, 'bigint')},
+                       ${arrayParam(15, 'integer')}, ${arrayParam(16, 'bigint')}
+                   )
+                AS g(lane, grp, running, tie, max_jobs)
+             WHERE g.lane IN (SELECT name FROM request)
+        ),
+        plain AS (
+            SELECT due.id, due.run_at, due.limited, due.fair_group, request.name, request.limits, request.tie,
+                   request.running, request.weight, request.max_jobs, 0::bigint AS g_running, 0 AS g_tie,
+                   false AS grouped
+              FROM request
+             CROSS JOIN LATERAL (
+                 SELECT id, run_at, fair_group, ${LIMITED} AS limited FROM ${p}jobs
+                  WHERE status = 'pending' AND lane = request.name AND run_at <= clock_timestamp()
+                  ORDER BY run_at, id LIMIT request.max_jobs
+                    FOR UPDATE SKIP LOCKED
+             ) AS due
+             WHERE request.name NOT IN (SELECT lane FROM group_request)
+        ),
+        grouped AS (
+            SELECT due.id, due.run_at, due.limited, due.fair_group, request.name, request.limits, request.tie,
+                   request.running, request.weight, request.max_jobs, gr.g_running, gr.g_tie, true AS grouped
+              FROM group_request gr
+              JOIN request ON request.name = gr.lane
+             CROSS JOIN LATERAL (
+                 SELECT id, run_at, fair_group, ${LIMITED} AS limited FROM ${p}jobs
+                  WHERE status = 'pending' AND lane = gr.lane AND fair_group = gr.grp
+                    AND run_at <= clock_timestamp()
+                  ORDER BY fair_group, run_at, id LIMIT gr.g_max
+                    FOR UPDATE SKIP LOCKED
+             ) AS due
+             WHERE gr.grp IS NOT NULL
+        ),
+        ungrouped AS (
+            SELECT due.id, due.run_at, due.limited, due.fair_group, request.name, request.limits, request.tie,
+                   request.running, request.weight, request.max_jobs, gr.g_running, gr.g_tie, true AS grouped
+              FROM group_request gr
+              JOIN request ON request.name = gr.lane
+             CROSS JOIN LATERAL (
+                 SELECT id, run_at, fair_group, ${LIMITED} AS limited FROM ${p}jobs
+                  WHERE status = 'pending' AND lane = gr.lane AND fair_group IS NULL
+                    AND run_at <= clock_timestamp()
+                  ORDER BY fair_group, run_at, id LIMIT gr.g_max
+                    FOR UPDATE SKIP LOCKED
+             ) AS due
+             WHERE gr.grp IS NULL
+        ),
+        locked_all AS (
+            SELECT * FROM plain UNION ALL SELECT * FROM grouped UNION ALL SELECT * FROM ungrouped
+        ),
+        -- The rank of a row in its group (a plain lane: one group), then in its lane: the order of fill() over the
+        -- groups. The rows with global limits (from their enqueue options) are left to the claim of lanes with limits
+        in_group AS (
+            SELECT *, ROW_NUMBER() OVER (
+                       PARTITION BY name, CASE WHEN grouped THEN fair_group END ORDER BY run_at, id
+                   ) AS group_rank
+              FROM locked_all WHERE NOT limited
+        ),
+        in_lane AS (
+            SELECT *, ROW_NUMBER() OVER (
+                       PARTITION BY name ORDER BY g_running + group_rank - 1, g_tie, run_at, id
+                   ) AS lane_rank
+              FROM in_group
+        ),
+        locked AS (
+            SELECT id, run_at, name, limits, tie, (running + lane_rank - 1)::float8 / weight AS share
+              FROM in_lane WHERE lane_rank <= max_jobs
+        ),
+        ${pickSql(requests.some(request => request.limits.length))}
+        claimed AS (
+            UPDATE ${p}jobs AS j
+               SET status = 'running', lock_token = $9, locked_by = $10,
+                   locked_until = clock_timestamp() + $11 * interval '1 millisecond', started_at = clock_timestamp(),
+                   timed_out_at = NULL, updated_at = clock_timestamp()
+              FROM picked
+             WHERE j.id = picked.id
+            RETURNING j.id, j.lane, j.run_at, j.started_at, j.attempts, j.max_attempts, j.stalls, j.max_stalls,
+                      ${epochMs('j.created_at')} AS created_at_ms,
+                      (EXTRACT(EPOCH FROM clock_timestamp() - j.run_at) * 1000)::bigint AS waited_ms${returnedGroup(true)}
+        ),
+        next AS (
+            SELECT request.name AS lane,
+                   (EXTRACT(EPOCH FROM n.run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
+              FROM request
+             CROSS JOIN LATERAL (
+                 SELECT run_at FROM ${p}jobs
+                  WHERE status = 'pending' AND lane = request.name AND id NOT IN (SELECT id FROM picked)
+                  ORDER BY run_at LIMIT 1
+             ) AS n
+             WHERE (SELECT count(*) FROM picked) < $8
+        )
+        SELECT ${claimedJobsJson(p, true)} AS jobs,
+               (SELECT count(*) FROM picked) >= $8 AS full,
+               (SELECT json_agg(json_build_object('name', lane, 'delayMs', delay_ms)) FROM next)::text AS next,
+               (SELECT json_agg(DISTINCT name) FROM locked WHERE id NOT IN (SELECT id FROM picked))::text AS unpicked,
+               (SELECT json_agg(DISTINCT name) FROM locked_all WHERE limited)::text AS limited,
+               -- The groups of the grouped lanes with a locked row left, cut or not: the replay of their pointers
+               (
+                   SELECT json_agg(DISTINCT jsonb_build_array(name, fair_group))
+                     FROM in_lane WHERE grouped AND id NOT IN (SELECT id FROM picked)
+               )::text AS left_groups
+    `, [
+        requests.map(request => request.name),
+        requests.map(request => request.maxJobs),
+        requests.map(request => request.running),
+        requests.map(request => request.weight),
+        requests.map(request => `{${request.limits.join(',')}}`),
+        requests.map(request => request.tie),
+        limitRooms,
+        free,
+        lockToken,
+        lockedBy,
+        leaseMs,
+        groups.map(group => group.lane),
+        groups.map(group => group.group),
+        groups.map(group => group.running),
+        groups.map(group => group.tie),
+        groups.map(group => group.maxJobs),
+    ]);
+    /** @type {ProbeRow[] | null} */
+    let next = (row?.next ?? null) === null ? [] : JSON.parse(String(row?.next));
+
+    if (row?.full) {
+        next = null;
+    }
+
+    /** @type {Map<string, (string | null)[]>} */
+    const leftGroups = new Map();
+
+    for (const [lane, group] of (row?.left_groups ?? null) === null ? [] : JSON.parse(String(row?.left_groups))) {
+        leftGroups.set(lane, [...leftGroups.get(lane) ?? [], group]);
+    }
+
+    return {
+        jobs: parseClaimedJobs(row?.jobs, lockToken),
+        next,
+        unpicked: (row?.unpicked ?? null) === null ? [] : JSON.parse(String(row?.unpicked)),
+        limited: (row?.limited ?? null) === null ? [] : JSON.parse(String(row?.limited)),
+        leftGroups,
+    };
+}
+
+/**
+ * The groups of each given lane with pending jobs, and the next due time of each (zero or less: due), not paused. A
+ * recursive CTE skips from one group to the next on `<p>jobs_pending_group` (`min(fair_group) > the last one`), then
+ * one
+ * lookup of the first due time per group; and a lookup of the null group (`ORDER BY fair_group, run_at`: the same
+ * index). Two index lookups per pending group.
+ * @param {Executor} executor
+ * @param {string} p
+ * @param {string[]} lanes
+ * @returns {Promise<import('./store.js').GroupProbeRow[]>}
+ */
+export async function probeGroups(executor, p, lanes) {
+    if (!lanes.length) {
+        return [];
+    }
+
+    const rows = await executor.query(`
+        WITH RECURSIVE lane AS (
+            SELECT r.name FROM unnest(${arrayParam(1, 'text')}) AS r(name) WHERE ${notPaused(p, 'r.name')}
+        ),
+        named AS (
+            SELECT lane.name, (
+                       SELECT min(j.fair_group) FROM ${p}jobs j WHERE j.status = 'pending' AND j.lane = lane.name
+                   ) AS grp
+              FROM lane
+            UNION ALL
+            SELECT named.name, (
+                       SELECT min(j.fair_group) FROM ${p}jobs j
+                        WHERE j.status = 'pending' AND j.lane = named.name AND j.fair_group > named.grp
+                   )
+              FROM named WHERE named.grp IS NOT NULL
+        ),
+        heads AS (
+            SELECT named.name, named.grp, (
+                       SELECT j.run_at FROM ${p}jobs j
+                        WHERE j.status = 'pending' AND j.lane = named.name AND j.fair_group = named.grp
+                        ORDER BY j.fair_group, j.run_at LIMIT 1
+                   ) AS run_at
+              FROM named WHERE named.grp IS NOT NULL
+            UNION ALL
+            SELECT lane.name, NULL, (
+                       SELECT j.run_at FROM ${p}jobs j
+                        WHERE j.status = 'pending' AND j.lane = lane.name AND j.fair_group IS NULL
+                        ORDER BY j.fair_group, j.run_at LIMIT 1
+                   )
+              FROM lane
+        )
+        SELECT name AS lane, grp AS fair_group,
+               (EXTRACT(EPOCH FROM run_at - clock_timestamp()) * 1000)::bigint AS delay_ms
+          FROM heads WHERE run_at IS NOT NULL
+    `, [lanes]);
+
+    return rows.map(row => ({
+        lane: String(row.lane),
+        group: (row.fair_group ?? null) === null ? null : String(row.fair_group),
+        delayMs: Number(row.delay_ms),
+    }));
 }
 
 /**
