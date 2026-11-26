@@ -1,5 +1,13 @@
 # @sqlane/core
 
+## 10.1.2
+
+### Patch Changes
+
+- [#167](https://github.com/sqlane/sqlane-node/pull/167) [`0689069`](https://github.com/sqlane/sqlane-node/commit/068906934217ef0ad9ebe750a9d3529dcde54e9f) - Docs: the README's performance table and the performance comparison are measured again with sqlane 10.1.1, where they
+  showed 7.0.0: 3.3 M instructions per job (was 3.1 M), 2,700 jobs per second for one worker (was 2,810), the same 3.0
+  statements per job and 4 / 5 ms from enqueue to start. The throughput and the schedules are now the medians of 3 runs.
+
 ## 10.1.1
 
 ### Patch Changes
