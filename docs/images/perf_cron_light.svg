@@ -19,40 +19,40 @@
 <text x="656" y="433" font-size="12" fill="#59636e">M instr.</text>
 <text x="0" y="458" font-size="13" fill="#59636e">*: enqueue after the COMMIT, not in the caller's transaction.</text>
 <text x="166" y="113" font-size="14" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
-<rect x="174" y="99" width="14.0" height="18" fill="#2a78d6"/>
-<path d="M190.02702786933332,99H198.9A4,4 0 0 1 202.9,103V113A4,4 0 0 1 198.9,117H190.02702786933332Z" fill="#1baf7a"/>
-<text x="208.9" y="113" font-size="14" fill="#1f2328" font-weight="600">1.9 M</text>
+<rect x="174" y="99" width="14.7" height="18" fill="#2a78d6"/>
+<path d="M190.68625138533332,99H202.3A4,4 0 0 1 206.3,103V113A4,4 0 0 1 202.3,117H190.68625138533332Z" fill="#1baf7a"/>
+<text x="212.3" y="113" font-size="14" fill="#1f2328" font-weight="600">2.1 M</text>
 <text x="166" y="149" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (Redis)*</text>
-<rect x="174" y="135" width="33.2" height="18" fill="#2a78d6"/>
-<path d="M209.19446923733332,135H221.3A4,4 0 0 1 225.3,139V149A4,4 0 0 1 221.3,153H209.19446923733332Z" fill="#1baf7a"/>
-<text x="231.3" y="149" font-size="14" fill="#1f2328">3.3 M</text>
+<rect x="174" y="135" width="32.9" height="18" fill="#2a78d6"/>
+<path d="M208.87093317466667,135H221.0A4,4 0 0 1 225.0,139V149A4,4 0 0 1 221.0,153H208.87093317466667Z" fill="#1baf7a"/>
+<text x="231.0" y="149" font-size="14" fill="#1f2328">3.3 M</text>
 <text x="166" y="185" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (PostgreSQL)*</text>
-<rect x="174" y="171" width="32.0" height="18" fill="#2a78d6"/>
-<path d="M207.98334337933335,171H295.6A4,4 0 0 1 299.6,175V185A4,4 0 0 1 295.6,189H207.98334337933335Z" fill="#1baf7a"/>
-<text x="305.6" y="185" font-size="14" fill="#1f2328">8.2 M</text>
+<rect x="174" y="171" width="21.7" height="18" fill="#2a78d6"/>
+<path d="M197.67460864533334,171H261.4A4,4 0 0 1 265.4,175V185A4,4 0 0 1 261.4,189H197.67460864533334Z" fill="#1baf7a"/>
+<text x="271.4" y="185" font-size="14" fill="#1f2328">6.0 M</text>
 <text x="166" y="221" font-size="14" fill="#1f2328" text-anchor="end">pg-boss</text>
-<rect x="174" y="207" width="34.4" height="18" fill="#2a78d6"/>
-<path d="M210.372807338,207H307.8A4,4 0 0 1 311.8,211V221A4,4 0 0 1 307.8,225H210.372807338Z" fill="#1baf7a"/>
-<text x="317.8" y="221" font-size="14" fill="#1f2328">9.0 M</text>
+<rect x="174" y="207" width="37.7" height="18" fill="#2a78d6"/>
+<path d="M213.66790315066666,207H324.7A4,4 0 0 1 328.7,211V221A4,4 0 0 1 324.7,225H213.66790315066666Z" fill="#1baf7a"/>
+<text x="334.7" y="221" font-size="14" fill="#1f2328">10.1 M</text>
 <text x="166" y="257" font-size="14" fill="#1f2328" text-anchor="end">Graphile Worker</text>
 <rect x="174" y="243" width="15.5" height="18" fill="#2a78d6"/>
-<path d="M191.54386201466667,243H299.4A4,4 0 0 1 303.4,247V257A4,4 0 0 1 299.4,261H191.54386201466667Z" fill="#1baf7a"/>
-<text x="309.4" y="257" font-size="14" fill="#1f2328">8.4 M</text>
+<path d="M191.536114296,243H298.8A4,4 0 0 1 302.8,247V257A4,4 0 0 1 298.8,261H191.536114296Z" fill="#1baf7a"/>
+<text x="308.8" y="257" font-size="14" fill="#1f2328">8.4 M</text>
 <text x="166" y="293" font-size="14" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
-<rect x="174" y="279" width="106.0" height="18" fill="#2a78d6"/>
-<path d="M281.97704664599996,279H380.7A4,4 0 0 1 384.7,283V293A4,4 0 0 1 380.7,297H281.97704664599996Z" fill="#1baf7a"/>
-<text x="390.7" y="293" font-size="14" fill="#1f2328">13.7 M</text>
+<rect x="174" y="279" width="105.5" height="18" fill="#2a78d6"/>
+<path d="M281.5097423826667,279H380.1A4,4 0 0 1 384.1,283V293A4,4 0 0 1 380.1,297H281.5097423826667Z" fill="#1baf7a"/>
+<text x="390.1" y="293" font-size="14" fill="#1f2328">13.7 M</text>
 <text x="166" y="329" font-size="14" fill="#1f2328" text-anchor="end">River</text>
-<rect x="174" y="315" width="46.5" height="18" fill="#2a78d6"/>
-<path d="M222.48331803466667,315H254.9A4,4 0 0 1 258.9,319V329A4,4 0 0 1 254.9,333H222.48331803466667Z" fill="#1baf7a"/>
-<text x="264.9" y="329" font-size="14" fill="#1f2328">5.5 M</text>
+<rect x="174" y="315" width="46.1" height="18" fill="#2a78d6"/>
+<path d="M222.13830293133333,315H255.4A4,4 0 0 1 259.4,319V329A4,4 0 0 1 255.4,333H222.13830293133333Z" fill="#1baf7a"/>
+<text x="265.4" y="329" font-size="14" fill="#1f2328">5.6 M</text>
 <text x="166" y="365" font-size="14" fill="#1f2328" text-anchor="end">Sidequest*</text>
-<rect x="174" y="351" width="164.1" height="18" fill="#2a78d6"/>
-<path d="M340.09875113600003,351H531.0A4,4 0 0 1 535.0,355V365A4,4 0 0 1 531.0,369H340.09875113600003Z" fill="#1baf7a"/>
-<text x="541.0" y="365" font-size="14" fill="#1f2328">23.5 M</text>
+<rect x="174" y="351" width="160.9" height="18" fill="#2a78d6"/>
+<path d="M336.9364487826666,351H521.4A4,4 0 0 1 525.4,355V365A4,4 0 0 1 521.4,369H336.9364487826666Z" fill="#1baf7a"/>
+<text x="531.4" y="365" font-size="14" fill="#1f2328">22.9 M</text>
 <text x="166" y="401" font-size="14" fill="#1f2328" text-anchor="end">Izi Queue</text>
-<rect x="174" y="387" width="111.6" height="18" fill="#2a78d6"/>
-<path d="M287.639718452,387H531.4A4,4 0 0 1 535.4,391V401A4,4 0 0 1 531.4,405H287.639718452Z" fill="#1baf7a"/>
-<text x="541.4" y="401" font-size="14" fill="#1f2328">23.6 M</text>
+<rect x="174" y="387" width="112.4" height="18" fill="#2a78d6"/>
+<path d="M288.38303788,387H531.8A4,4 0 0 1 535.8,391V401A4,4 0 0 1 531.8,405H288.38303788Z" fill="#1baf7a"/>
+<text x="541.8" y="401" font-size="14" fill="#1f2328">23.6 M</text>
 </g>
 </svg>

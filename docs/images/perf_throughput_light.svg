@@ -17,31 +17,31 @@
 <text x="620" y="411" font-size="12" fill="#59636e">jobs/s</text>
 <text x="0" y="436" font-size="13" fill="#59636e">*: enqueue after the COMMIT, not in the caller's transaction.</text>
 <text x="166" y="91" font-size="14" fill="#1f2328" text-anchor="end" font-weight="600">sqlane</text>
-<path d="M174,77H318.7A4,4 0 0 1 322.7,81V91A4,4 0 0 1 318.7,95H174Z" fill="#2a78d6"/>
-<text x="328.7" y="91" font-size="14" fill="#1f2328" font-weight="600">≥ 2,810 jobs/s</text>
+<path d="M174,77H313.1A4,4 0 0 1 317.1,81V91A4,4 0 0 1 313.1,95H174Z" fill="#2a78d6"/>
+<text x="323.1" y="91" font-size="14" fill="#1f2328" font-weight="600">≥ 2,700 jobs/s</text>
 <text x="166" y="127" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (Redis)*</text>
-<path d="M174,113H531.7A4,4 0 0 1 535.7,117V127A4,4 0 0 1 531.7,131H174Z" fill="#2a78d6"/>
-<text x="541.7" y="127" font-size="14" fill="#1f2328">≥ 6,820 jobs/s</text>
+<path d="M174,113H532.7A4,4 0 0 1 536.7,117V127A4,4 0 0 1 532.7,131H174Z" fill="#2a78d6"/>
+<text x="542.7" y="127" font-size="14" fill="#1f2328">≥ 6,840 jobs/s</text>
 <text x="166" y="163" font-size="14" fill="#1f2328" text-anchor="end">BullMQ (PostgreSQL)*</text>
-<path d="M174,149H331.8A4,4 0 0 1 335.8,153V163A4,4 0 0 1 331.8,167H174Z" fill="#2a78d6"/>
-<text x="341.8" y="163" font-size="14" fill="#1f2328">≥ 3,050 jobs/s</text>
+<path d="M174,149H332.0A4,4 0 0 1 336.0,153V163A4,4 0 0 1 332.0,167H174Z" fill="#2a78d6"/>
+<text x="342.0" y="163" font-size="14" fill="#1f2328">≥ 3,060 jobs/s</text>
 <text x="166" y="199" font-size="14" fill="#1f2328" text-anchor="end">pg-boss</text>
-<path d="M174,185H387.7A4,4 0 0 1 391.7,189V199A4,4 0 0 1 387.7,203H174Z" fill="#2a78d6"/>
-<text x="397.7" y="199" font-size="14" fill="#1f2328">≥ 4,110 jobs/s</text>
+<path d="M174,185H389.2A4,4 0 0 1 393.2,189V199A4,4 0 0 1 389.2,203H174Z" fill="#2a78d6"/>
+<text x="399.2" y="199" font-size="14" fill="#1f2328">≥ 4,140 jobs/s</text>
 <text x="166" y="235" font-size="14" fill="#1f2328" text-anchor="end">Graphile Worker</text>
-<path d="M174,221H261.0A4,4 0 0 1 265.0,225V235A4,4 0 0 1 261.0,239H174Z" fill="#2a78d6"/>
-<text x="271.0" y="235" font-size="14" fill="#1f2328">1,720 jobs/s</text>
+<path d="M174,221H261.1A4,4 0 0 1 265.1,225V235A4,4 0 0 1 261.1,239H174Z" fill="#2a78d6"/>
+<text x="271.1" y="235" font-size="14" fill="#1f2328">1,720 jobs/s</text>
 <text x="166" y="271" font-size="14" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
-<path d="M174,257H176.3A2.3147586943768053,2.3147586943768053 0 0 1 178.6,259.3147586943768V272.6852413056232A2.3147586943768053,2.3147586943768053 0 0 1 176.3,275H174Z" fill="#2a78d6"/>
+<path d="M174,257H176.3A2.3160916468996713,2.3160916468996713 0 0 1 178.6,259.3160916468997V272.6839083531003A2.3160916468996713,2.3160916468996713 0 0 1 176.3,275H174Z" fill="#2a78d6"/>
 <text x="184.6" y="271" font-size="14" fill="#1f2328">87 jobs/s</text>
 <text x="166" y="307" font-size="14" fill="#1f2328" text-anchor="end">River</text>
-<path d="M174,293H362.1A4,4 0 0 1 366.1,297V307A4,4 0 0 1 362.1,311H174Z" fill="#2a78d6"/>
-<text x="372.1" y="307" font-size="14" fill="#1f2328">≥ 3,620 jobs/s</text>
+<path d="M174,293H364.3A4,4 0 0 1 368.3,297V307A4,4 0 0 1 364.3,311H174Z" fill="#2a78d6"/>
+<text x="374.3" y="307" font-size="14" fill="#1f2328">≥ 3,670 jobs/s</text>
 <text x="166" y="343" font-size="14" fill="#1f2328" text-anchor="end">Sidequest*</text>
-<path d="M174,329H177.6A3.5600934386167196,3.5600934386167196 0 0 1 181.1,332.5600934386167V343.4399065613833A3.5600934386167196,3.5600934386167196 0 0 1 177.6,347H174Z" fill="#2a78d6"/>
-<text x="187.1" y="343" font-size="14" fill="#1f2328">134 jobs/s</text>
+<path d="M174,329H177.6A3.5814767825009937,3.5814767825009937 0 0 1 181.2,332.581476782501V343.418523217499A3.5814767825009937,3.5814767825009937 0 0 1 177.6,347H174Z" fill="#2a78d6"/>
+<text x="187.2" y="343" font-size="14" fill="#1f2328">135 jobs/s</text>
 <text x="166" y="379" font-size="14" fill="#1f2328" text-anchor="end">Izi Queue</text>
-<path d="M174,365H175.8A1.8218656670376547,1.8218656670376547 0 0 1 177.6,366.8218656670376V381.1781343329624A1.8218656670376547,1.8218656670376547 0 0 1 175.8,383H174Z" fill="#2a78d6"/>
+<path d="M174,365H175.8A1.8220051142135196,1.8220051142135196 0 0 1 177.6,366.82200511421354V381.17799488578646A1.8220051142135196,1.8220051142135196 0 0 1 175.8,383H174Z" fill="#2a78d6"/>
 <text x="183.6" y="379" font-size="14" fill="#1f2328">69 jobs/s</text>
 </g>
 </svg>

@@ -228,11 +228,11 @@ How sqlane compares with BullMQ, pg-boss and 5 more:
 
 |                                            | sqlane       | 7 other queues  |
 | ------------------------------------------ | ------------ | --------------- |
-| CPU instructions per job                   | **3.1 M**    | 3.9–29.6 M      |
-| SQL statements per job ¹                   | **3.0**      | 3.7–25.8        |
-| Idle database CPU, 1000 names              | **0.1 M/s**  | 0.07–350 M/s    |
-| Enqueue to handler start, p50 / p99        | **4 / 5 ms** | 3–58 / 3–200 ms |
-| Jobs per second, one worker with 8 slots ² | **2,810**    | 69–6,820        |
+| CPU instructions per job                   | **3.3 M**    | 3.9–29.6 M      |
+| SQL statements per job ¹                   | **3.0**      | 3.7–26.6        |
+| Idle database CPU, 1000 names              | **0.1 M/s**  | 0.07–347 M/s    |
+| Enqueue to handler start, p50 / p99        | **4 / 5 ms** | 3–60 / 4–202 ms |
+| Jobs per second, one worker with 8 slots ² | **2,700**    | 69–6,840        |
 
 PostgreSQL 17, 1 ms round trip, empty handlers. Lower is better, except jobs per second.
 
