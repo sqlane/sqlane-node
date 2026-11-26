@@ -55,8 +55,8 @@ bench/run_linux.sh vs-other-libs        # ENGINE=docker for Docker
   not enough (`sudo sysctl kernel.perf_event_paranoid=1`). Without it, the run warns, counts user space only, and
   records `kernelCounted: false`.
 
-On a Ryzen 5 3600 (6 cores, 12 threads), the whole run took 19 minutes on 18 November 2026: the checks 1.4, phase A of
-the jobs 7.2, phase B 3.6, the throughput 3.1, the schedules 3.2. `--only perf --libs sqlane` takes about 5
+On a Ryzen 5 3600 (6 cores, 12 threads), the whole run took 19 minutes on 26 November 2026: the checks 1.4, the jobs
+10.8 (phases A and B), the throughput 3.2, the schedules 2.8. `--only perf --libs sqlane` takes about 5
 (estimated).
 
 ### macOS: for development

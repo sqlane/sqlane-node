@@ -146,8 +146,8 @@ River has no rate limit; Boring Node Queue, Sidequest and Izi Queue only throttl
 
 ## Versions
 
-Checked on 18 November 2026 on PostgreSQL 17, on the Linux machine of the [performance
-comparison](performance_vs_other_libs.md#conditions): sqlane 7.0.0, [BullMQ](https://github.com/taskforcesh/bullmq)
+Checked on 26 November 2026 on PostgreSQL 17, on the Linux machine of the [performance
+comparison](performance_vs_other_libs.md#conditions): sqlane 10.1.1, [BullMQ](https://github.com/taskforcesh/bullmq)
 6.7.4, [pg-boss](https://github.com/timgit/pg-boss) 12.38.2, [Graphile Worker](https://github.com/graphile/worker)
 0.18.0, [Boring Node Queue](https://github.com/boringnode/queue) 0.10.0, [River for
 JavaScript](https://github.com/riverqueue/river) 0.3.2, [Sidequest](https://github.com/sidequestjs/sidequest) 1.17.0

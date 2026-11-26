@@ -23,22 +23,22 @@
 <path d="M174,149H289.2A4,4 0 0 1 293.2,153V163A4,4 0 0 1 289.2,167H174Z" fill="#2a78d6"/>
 <text x="299.2" y="163" font-size="14" fill="#1f2328">8.0</text>
 <text x="166" y="199" font-size="14" fill="#1f2328" text-anchor="end">pg-boss</text>
-<path d="M174,185H548.9A4,4 0 0 1 552.9,189V199A4,4 0 0 1 548.9,203H174Z" fill="#2a78d6"/>
-<text x="558.9" y="199" font-size="14" fill="#1f2328">25.4</text>
+<path d="M174,185H547.6A4,4 0 0 1 551.6,189V199A4,4 0 0 1 547.6,203H174Z" fill="#2a78d6"/>
+<text x="557.6" y="199" font-size="14" fill="#1f2328">25.3</text>
 <text x="166" y="235" font-size="14" fill="#1f2328" text-anchor="end">Graphile Worker</text>
 <path d="M174,221H230.7A4,4 0 0 1 234.7,225V235A4,4 0 0 1 230.7,239H174Z" fill="#2a78d6"/>
 <text x="240.7" y="235" font-size="14" fill="#1f2328">4.1</text>
 <text x="166" y="271" font-size="14" fill="#1f2328" text-anchor="end">Boring Node Queue</text>
-<path d="M174,257H554.9A4,4 0 0 1 558.9,261V271A4,4 0 0 1 554.9,275H174Z" fill="#2a78d6"/>
-<text x="564.9" y="271" font-size="14" fill="#1f2328">25.8</text>
+<path d="M174,257H566.4A4,4 0 0 1 570.4,261V271A4,4 0 0 1 566.4,275H174Z" fill="#2a78d6"/>
+<text x="576.4" y="271" font-size="14" fill="#1f2328">26.6</text>
 <text x="166" y="307" font-size="14" fill="#1f2328" text-anchor="end">River</text>
-<path d="M174,293H224.5A4,4 0 0 1 228.5,297V307A4,4 0 0 1 224.5,311H174Z" fill="#2a78d6"/>
-<text x="234.5" y="307" font-size="14" fill="#1f2328">3.7</text>
+<path d="M174,293H224.8A4,4 0 0 1 228.8,297V307A4,4 0 0 1 224.8,311H174Z" fill="#2a78d6"/>
+<text x="234.8" y="307" font-size="14" fill="#1f2328">3.7</text>
 <text x="166" y="343" font-size="14" fill="#1f2328" text-anchor="end">Sidequest*</text>
-<path d="M174,329H308.7A4,4 0 0 1 312.7,333V343A4,4 0 0 1 308.7,347H174Z" fill="#2a78d6"/>
-<text x="318.7" y="343" font-size="14" fill="#1f2328">9.3</text>
+<path d="M174,329H310.2A4,4 0 0 1 314.2,333V343A4,4 0 0 1 310.2,347H174Z" fill="#2a78d6"/>
+<text x="320.2" y="343" font-size="14" fill="#1f2328">9.4</text>
 <text x="166" y="379" font-size="14" fill="#1f2328" text-anchor="end">Izi Queue</text>
-<path d="M174,365H245.8A4,4 0 0 1 249.8,369V379A4,4 0 0 1 245.8,383H174Z" fill="#2a78d6"/>
-<text x="255.8" y="379" font-size="14" fill="#1f2328">5.1</text>
+<path d="M174,365H245.7A4,4 0 0 1 249.7,369V379A4,4 0 0 1 245.7,383H174Z" fill="#2a78d6"/>
+<text x="255.7" y="379" font-size="14" fill="#1f2328">5.1</text>
 </g>
 </svg>

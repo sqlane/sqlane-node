@@ -8,7 +8,6 @@
 // It writes a file only when its content changes: a second run changes nothing.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { SCENARIOS } from './regression/scenarios.mjs';
 
 /** @typedef {Record<string, any>} Row A row of `perf` in bench/compare/results.json */
 
@@ -1506,8 +1505,10 @@ function conditions() {
 }
 
 /**
- * The rows of the backends table: one operation of each scenario of `pnpm bench:regression` (bench/regression/ab.mjs),
- * at its steady load. Statements and instructions come from the same run, so they describe the same operation.
+ * The rows of the backends table, in order: one operation of each scenario of `pnpm bench:regression`
+ * (bench/regression/ab.mjs), at its steady load. Statements and instructions come from the same run, so they describe
+ * the same operation. The statement-only scenarios of bench/regression/scenarios.mjs (`pnpm bench:statements`) have no
+ * row.
  * @type {Record<string, string>}
  */
 const HOT_PATHS = {
@@ -1515,24 +1516,22 @@ const HOT_PATHS = {
     enqueue_many: '`enqueueMany` of 100 jobs',
     run: 'A job: its enqueue, claim, run and completion, over 1000 lanes',
     idle: 'A second of a worker with 1000 lanes and no job',
-    schedule: 'A schedule firing, one of 1000 `every: \'10s\'` schedules',
     global_limits: 'A job with one of 100 keys of a global limit of 1: its enqueue, claim, run and completion',
     global_rate_limits:
         'A job with one of 100 keys of a global rate limit of 1/s: its enqueue, claim, run and completion',
+    schedule: 'A schedule firing, one of 1000 `every: \'10s\'` schedules',
 };
 
 /**
  * @returns {string} sqlane on each backend: a table, and where its numbers come from
  */
 function backends() {
-    const names = SCENARIOS.map(scenario => scenario.name);
-    const unknown = [
-        ...names.filter(name => !HOT_PATHS[name]),
-        ...Object.keys(HOT_PATHS).filter(name => !names.includes(name)),
-    ];
+    const names = Object.keys(HOT_PATHS);
+    const measured = new Set([...(regression?.instructions.keys() ?? [])].map(key => key.slice(0, key.lastIndexOf('/'))));
+    const unknown = [...measured].filter(name => !HOT_PATHS[name]);
 
     if (unknown.length) {
-        throw new Error(`HOT_PATHS and the scenarios of bench/regression/scenarios.mjs differ: ${unknown.join(', ')}`);
+        throw new Error(`bench/regression/results.json has scenarios without a row in HOT_PATHS: ${unknown.join(', ')}`);
     }
 
     // The servers of the run, "PostgreSQL 17.11"…; the family alone when the file has no version
