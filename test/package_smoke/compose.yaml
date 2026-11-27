@@ -2,7 +2,7 @@
 # from this machine only. Ports 13306 and 15432, not to clash with a local MySQL or PostgreSQL.
 services:
   mysql:
-    image: mysql:8.4
+    image: mysql:26.10
     environment:
       MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
       MYSQL_DATABASE: app
