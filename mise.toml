@@ -1,12 +1,12 @@
 [tools]
 # Node.js for development; CI covers 22, 24 and 26
 node = "26"
-pnpm = "12.18.0"
-hk = "2.11.1"
-betterleaks = "v1.10.0"
-typos = "1.52.0"
+pnpm = "12.23.0"
+hk = "2.14.0"
+betterleaks = "v1.10.1"
+typos = "1.52.2"
 actionlint = "1.7.12"
-zizmor = "1.32.0"
+zizmor = "1.33.1"
 ls-lint = "2.3.2"
 
 [env]
