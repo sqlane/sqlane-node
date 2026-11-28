@@ -8,9 +8,9 @@
         ".": "./index.js"
     },
     "dependencies": {
-        "@mikro-orm/core": "6.6.17",
-        "@mikro-orm/mariadb": "6.6.17",
-        "@mikro-orm/mysql": "6.6.17",
-        "@mikro-orm/postgresql": "6.6.17"
+        "@mikro-orm/core": "6.6.19",
+        "@mikro-orm/mariadb": "6.6.19",
+        "@mikro-orm/mysql": "6.6.19",
+        "@mikro-orm/postgresql": "6.6.19"
     }
 }
